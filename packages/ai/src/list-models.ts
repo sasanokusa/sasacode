@@ -5,7 +5,10 @@ import type { Api } from "./types.ts";
 
 export interface ListedModel {
   id: string;
+  /** The context the server actually uses for this model. */
   contextWindow?: number;
+  /** The most the model supports, when the effective size is not known (Ollama without num_ctx). */
+  maxContext?: number;
   maxOutput?: number;
   /** Endpoints the model answers on, when the provider says (e.g. Command Code: "/messages"). */
   endpoints?: string[];
@@ -43,7 +46,26 @@ export async function listModels(p: ProviderConfig, apiKey: string | undefined, 
       });
     }
   }
-  return out.filter((m) => !NOT_CHAT.test(m.id));
+  const chat = out.filter((m) => !NOT_CHAT.test(m.id));
+  if (p.ollama) await Promise.all(chat.map((m) => ollamaDetails(p, m, signal)));
+  return chat;
+}
+
+/**
+ * Ollama's /v1/models has no sizes; its native /api/show has the trained context length and,
+ * when the Modelfile sets it, num_ctx (what requests actually get).
+ */
+async function ollamaDetails(p: ProviderConfig, m: ListedModel, signal?: AbortSignal): Promise<void> {
+  const root = (p.baseUrl ?? "http://localhost:11434/v1").replace(/\/v1\/?$/, "");
+  try {
+    const res = await fetch(`${root}/api/show`, { method: "POST", body: JSON.stringify({ model: m.id }), signal });
+    if (!res.ok) return;
+    const info = (await res.json()) as { model_info?: Record<string, unknown>; parameters?: string };
+    const trained = Object.entries(info.model_info ?? {}).find(([k]) => k.endsWith(".context_length"))?.[1];
+    const numCtx = /^num_ctx\s+(\d+)/m.exec(info.parameters ?? "")?.[1];
+    if (numCtx) m.contextWindow = Number(numCtx);
+    else if (typeof trained === "number") m.maxContext = trained;
+  } catch {}
 }
 
 export function apiForEndpoint(endpoint: string): Api | undefined {

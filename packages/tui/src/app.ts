@@ -39,7 +39,7 @@ export interface TuiHost {
   resolve(spec: string): ModelInfo;
   sessionsDir: string;
   historyPath?: string;
-  listModels(refresh?: boolean): Promise<{ spec: string; contextWindow?: number }[]>;
+  listModels(refresh?: boolean): Promise<{ spec: string; contextWindow?: number; maxContext?: number }[]>;
   loadPlugins(ui: UIBridge): Promise<void>;
   loadSession(path: string): Promise<void>;
   newSession(): Promise<void>;
@@ -418,12 +418,14 @@ class App {
     const quick = await Promise.race([pending, Bun.sleep(300).then(() => undefined)]);
     if (!quick) this.notify("プロバイダーからモデル一覧を取得しています…");
     const listed = quick ?? (await pending);
-    const ctx = new Map(listed.map((m) => [m.spec, m.contextWindow]));
+    const size = new Map(
+      listed.map((m) => [m.spec, m.contextWindow ? `${fmtTokens(m.contextWindow)} ctx` : m.maxContext ? `最大 ${fmtTokens(m.maxContext)}（num_ctx 未設定）` : ""]),
+    );
     const specs = [...new Set([current, ...(this.host.config.models ?? []), ...listed.map((m) => m.spec)])];
     return specs.map((s) => ({
       value: s,
       label: s,
-      description: [s === current ? "現在" : "", ctx.get(s) ? `${fmtTokens(ctx.get(s)!)} ctx` : ""].filter(Boolean).join(" · ") || undefined,
+      description: [s === current ? "現在" : "", size.get(s) ?? ""].filter(Boolean).join(" · ") || undefined,
     }));
   }
 
@@ -645,8 +647,10 @@ class App {
   }
 }
 
+/** 131072 → "128k" (context sizes are often powers of two), 1_050_000 → "1.05M", 1534 → "1.5k". */
 function fmtTokens(n: number): string {
-  if (n >= 1_000_000) return `${+(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000_000) return `${+(n / 1_000_000).toFixed(2)}M`;
+  if (n >= 1024 && n % 1024 === 0) return `${n / 1024}k`;
   return n >= 1000 ? `${+(n / 1000).toFixed(1)}k` : String(n);
 }
 

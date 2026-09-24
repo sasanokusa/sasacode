@@ -1,9 +1,12 @@
-import { API_ENDPOINT, listModels, type ModelInfo, type ProviderConfig } from "@sasacode/ai";
+import { API_ENDPOINT, KNOWN_MODELS, listModels, type ModelInfo, type ProviderConfig } from "@sasacode/ai";
 
 export interface ModelChoice {
   /** "<provider>/<model>" */
   spec: string;
+  /** Effective context window: from the provider, else sasacode's table of known models. */
   contextWindow?: number;
+  /** The model's maximum, shown when the effective size is unknown (Ollama without num_ctx). */
+  maxContext?: number;
 }
 
 const DEFAULT_HOST: Record<string, string> = {
@@ -75,7 +78,7 @@ export class ModelCatalog {
       if (m.contextWindow) info.contextWindow = m.contextWindow;
       if (m.maxOutput) info.maxOutput = m.maxOutput;
       if (Object.keys(info).length) this.discovered.set(spec, info);
-      out.push({ spec, contextWindow: m.contextWindow });
+      out.push({ spec, contextWindow: m.contextWindow ?? KNOWN_MODELS[m.id]?.contextWindow, maxContext: m.maxContext });
     }
     return out;
   }

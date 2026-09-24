@@ -90,7 +90,7 @@ sasacode -r <id> -p "続き"            # セッション ID を指定して続�
 | `commandcode` / `commandcode-responses` / `commandcode-anthropic` | Command Code の Chat Completions / Responses / Messages | `CMD_API_KEY` |
 | `ollama` | Chat Completions（localhost:11434） | 不要 |
 
-**モデル一覧の自動取得**：TUI の起動時に、キーのあるプロバイダー（と Ollama）の Models API（`GET /v1/models`）をバックグラウンドで呼び、`/model` に一覧とコンテキスト長を出す。取得したコンテキスト長は、フッターの使用率や圧縮のしきい値にも使う（設定の `modelOverrides` があればそちらが優先）。Command Code のように1つのキーで複数の API 形式を提供するサービスでは、モデルごとに対応する形式のプロバイダーへ自動で振り分ける（例：Claude 系は `commandcode-anthropic/…`）。
+**モデル一覧の自動取得**：TUI の起動時に、キーのあるプロバイダー（と Ollama）の Models API（`GET /v1/models`）をバックグラウンドで呼び、`/model` に一覧とコンテキスト長を出す。取得したコンテキスト長は、フッターの使用率や圧縮のしきい値にも使う（設定の `modelOverrides` があればそちらが優先）。Ollama は独自の `/api/show` から読み、Modelfile の `num_ctx` があればそれを実際の長さとして使い、なければモデルの最大長を参考として表示する。OpenAI の Models API はコンテキスト長を返さないので、組み込みのモデル表の値で補う。Command Code のように1つのキーで複数の API 形式を提供するサービスでは、モデルごとに対応する形式のプロバイダーへ自動で振り分ける（例：Claude 系は `commandcode-anthropic/…`）。
 
 **API キー**は次の順で探す：環境変数 → `~/.sasacode/.env` → 作業ディレクトリの `.env` → OS キーチェーン（macOS: `security add-generic-password -s sasacode -a <provider> -w`、Linux: `secret-tool store --label sasacode service sasacode account <provider>`）。どこでも空欄は無視する。セッションのログには、使用中のキーを `[REDACTED]` に置き換えてから書く。
 

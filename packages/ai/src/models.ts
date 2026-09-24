@@ -10,6 +10,8 @@ export interface ProviderConfig {
   label?: string;
   /** Model used when nothing is configured and this provider's key is set. */
   defaultModel?: string;
+  /** The server is Ollama: model details (context length) come from its native /api/show. */
+  ollama?: boolean;
 }
 
 /** Order matters: with no model configured, the first provider whose key is set supplies the default. */
@@ -24,7 +26,7 @@ export const BUILTIN_PROVIDERS: Record<string, ProviderConfig> = {
     label: "OpenRouter",
     defaultModel: "openrouter/auto",
   },
-  ollama: { api: "openai-chat", baseUrl: "http://localhost:11434/v1" },
+  ollama: { api: "openai-chat", baseUrl: "http://localhost:11434/v1", ollama: true },
   // Command Code serves all three formats on one key; Claude models answer on /messages only.
   commandcode: {
     api: "openai-chat",
@@ -47,6 +49,10 @@ const claude = (input: number, output: number, contextWindow = 1_000_000): Known
   images: true,
 });
 
+function gpt(contextWindow: number): Known {
+  return { contextWindow, maxOutput: 128_000, reasoning: true, images: true };
+}
+
 /** Known model metadata. Anything else gets conservative defaults and can be overridden in config. */
 export const KNOWN_MODELS: Record<string, Known> = {
   "claude-fable-5-1": claude(10, 50),
@@ -56,6 +62,18 @@ export const KNOWN_MODELS: Record<string, Known> = {
   "claude-sonnet-5": claude(2, 10),
   "claude-sonnet-4-6": claude(3, 15),
   "claude-haiku-4-5": { ...claude(1, 5, 200_000), reasoning: false },
+  // OpenAI's Models API does not report context windows; these come from what Command Code's
+  // Models API reports for the same models.
+  "gpt-6-astra": gpt(1_050_000),
+  "gpt-6-sol": gpt(1_050_000),
+  "gpt-6-luna": gpt(1_050_000),
+  "gpt-5.6-sol": gpt(1_050_000),
+  "gpt-5.6-terra": gpt(1_050_000),
+  "gpt-5.6-luna": gpt(1_050_000),
+  "gpt-5.5": gpt(400_000),
+  "gpt-5.4": gpt(400_000),
+  "gpt-5.4-mini": gpt(400_000),
+  "gpt-5.3-codex": gpt(400_000),
 };
 
 export const DEFAULT_MODEL = "anthropic/claude-opus-5";
