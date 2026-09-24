@@ -1,4 +1,4 @@
-import { appendFileSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync } from "node:fs";
 import {
   CombinedAutocompleteProvider,
   type Component,
@@ -60,6 +60,7 @@ class App {
   private editor: Editor;
   private loader?: Loader;
   private current?: AssistantView;
+  private currentSpacer?: Spacer;
   private tools = new Map<string, ToolView>();
   private queued: string[] = [];
   private totalCost = 0;
@@ -110,6 +111,9 @@ class App {
       this.exit = (code) => {
         void this.host.shutdown().finally(() => {
           this.tui.stop();
+          const s = this.host.agent.session;
+          // Without tmux the terminal is gone after this; leave the way back on screen.
+          if (s && existsSync(s.path)) process.stdout.write(`\r\x1b[2K${c.gray(`再開: sasacode -r ${s.id}`)}\n`);
           resolve(code);
         });
       };
@@ -208,9 +212,21 @@ class App {
         break;
       case "message_start":
         this.current = new AssistantView((call, view) => this.trackTool(call, view));
-        this.chat.addChild(new Spacer(1));
+        this.currentSpacer = new Spacer(1);
+        this.chat.addChild(this.currentSpacer);
         this.chat.addChild(this.current);
         break;
+      case "message_discarded":
+        // A plugin asked for this response to be generated again.
+        if (this.current) this.chat.removeChild(this.current);
+        if (this.currentSpacer) this.chat.removeChild(this.currentSpacer);
+        this.current = undefined;
+        break;
+      case "tool_repaired": {
+        const v = this.tools.get(e.call.id);
+        if (v) v.repairNote = e.note;
+        break;
+      }
       case "message_update":
         this.current?.update(e.message);
         break;
@@ -336,6 +352,9 @@ class App {
       { name: "clear", description: "新しいセッションを始める", run: () => this.clearCommand() },
       { name: "permission", description: "権限モードを切り替える", argumentHint: PERMISSION_MODES.join("|"), run: ({ args }) => this.permissionCommand(args) },
       { name: "fork", description: "過去のメッセージから会話を分岐する", run: () => this.forkCommand() },
+      { name: "session", description: "このセッションの ID と保存先", run: () => this.sessionCommand() },
+      { name: "exit", description: "終了する", run: () => this.exit?.(0) },
+      { name: "quit", description: "終了する（/exit と同じ）", run: () => this.exit?.(0) },
     ];
   }
 
@@ -361,7 +380,7 @@ class App {
         ...lines,
         c.bold("キー"),
         "  enter 送信 · shift/alt+enter 改行 · ↑↓ 履歴 · tab 補完",
-        "  esc 中断 · ctrl+o 詳細表示 · shift+tab 権限モード · ctrl+c×2 / ctrl+d 終了",
+        "  esc 中断 · ctrl+o 詳細表示 · shift+tab 権限モード · /exit・ctrl+c×2・ctrl+d 終了",
         c.gray("  実行中に送ったメッセージは次のターンでモデルに届きます"),
       ].join("\n"),
       (s) => s,
@@ -417,6 +436,19 @@ class App {
     this.totalCost = 0;
     this.updateFooter();
     this.notify("新しいセッションを開始しました");
+  }
+
+  private sessionCommand(): void {
+    const s = this.host.agent.session;
+    if (!s) {
+      this.notify("このセッションは保存していません（--no-session）");
+      return;
+    }
+    const saved = existsSync(s.path);
+    this.notify(
+      [`session ${s.id}`, saved ? s.path : "（最初のメッセージを送ると保存されます）", `再開: sasacode -r ${s.id}`].join("\n"),
+      (x) => x,
+    );
   }
 
   private async forkCommand(): Promise<void> {
@@ -546,6 +578,7 @@ class App {
       `権限: ${PERMISSION_MODE_LABELS[a.permissions.mode]}`,
       `ctx ${fmtTokens(this.contextTokens)} (${pct}%)`,
     ];
+    if (a.session) parts.push(`session ${a.session.id}`);
     if (this.totalCost > 0) parts.push(`$${this.totalCost.toFixed(3)}`);
     const plugins = [...this.host.host.status.values()];
     this.footer.setText(c.gray(parts.join(" · ")) + (plugins.length ? `\n${c.cyan(plugins.join(" · "))}` : ""));

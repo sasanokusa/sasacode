@@ -4,20 +4,20 @@ import {
   getProvider,
   type Message,
   type ModelInfo,
+  type SamplingOptions,
   textOf,
   type ThinkingLevel,
   type ToolCall,
-  type ToolResultMessage,
   type UserContent,
   type UserMessage,
 } from "@sasacode/ai";
-import type { CompleteOptions, HookName, StopCause, SubagentOptions, ToolDefinition, ToolResult } from "@sasacode/plugin-api";
+import type { CompleteOptions, HookName, StopCause, SubagentOptions, ToolDefinition } from "@sasacode/plugin-api";
 import { type AgentEvent, EventBus } from "./events.ts";
 import { HookRunner } from "./hooks.ts";
 import { type PermissionCheck, PermissionPolicy } from "./permission.ts";
 import type { SessionFile } from "./session.ts";
 import { loadedFromHistory, makeToolSearchTool, shouldDefer, type ToolSearchConfig } from "./tool-search.ts";
-import { validate } from "./validate.ts";
+import { executeTools, type Repair, repairCalls, type ToolRunContext } from "./tool-exec.ts";
 
 export interface ApprovalRequest extends PermissionCheck {
   call: ToolCall;
@@ -212,15 +212,16 @@ export class Agent {
         }
         turn++;
         this.events.emit({ type: "turn_start", turn });
-        let msg: AssistantMessage;
+        let turnResult: { message: AssistantMessage; repairs: Map<string, Repair> };
         try {
-          msg = await this.streamAssistant(ac.signal);
+          turnResult = await this.respond(ac.signal);
         } catch (e) {
           if (!(e instanceof ContextOverflowError)) throw e;
           if (await this.contextLimit(-1, limitRetries++)) continue;
           cause = "context_limit";
           break;
         }
+        const { message: msg, repairs } = turnResult;
         const calls = msg.content.filter((c): c is ToolCall => c.type === "tool_call");
         if (msg.stopReason === "aborted") {
           cause = "aborted";
@@ -231,7 +232,11 @@ export class Agent {
           break;
         }
         if (calls.length) {
-          const results = await this.executeTools(calls, msg.stopReason === "max_tokens", ac.signal);
+          const results = await executeTools(this.toolContext(), calls, {
+            truncated: msg.stopReason === "max_tokens",
+            signal: ac.signal,
+            repairs,
+          });
           for (const r of results) this.pushMessage(r);
         }
         this.events.emit({ type: "turn_end", turn });
@@ -296,7 +301,47 @@ export class Agent {
     return [...all.filter((t) => t.alwaysLoad || loaded.has(t.name)), this.searchTool];
   }
 
-  private async streamAssistant(signal: AbortSignal): Promise<AssistantMessage> {
+  /**
+   * One model response, settled: streamed (stream_delta may stop it), passed through
+   * assistant_message (which may rewrite it, ask again, or add a follow-up), its tool calls
+   * repaired (tool_call_raw), and stored.
+   */
+  private async respond(signal: AbortSignal): Promise<{ message: AssistantMessage; repairs: Map<string, Repair> }> {
+    for (let attempt = 0; ; attempt++) {
+      const { message, stopped } = await this.stream(signal);
+      const userAborted = message.stopReason === "aborted";
+      if (userAborted || stopped) {
+        // Half-streamed tool calls never ran and unsigned thinking cannot be replayed; keep what was finished.
+        message.content = message.content.filter((c) => c.type === "text" || (c.type === "thinking" && c.signature));
+      }
+      if (userAborted) {
+        this.interrupted = true;
+        if (message.content.length) this.pushMessage(message);
+        else this.events.emit({ type: "message_end", message });
+        return { message, repairs: new Map() };
+      }
+      let final = message;
+      let retry = false;
+      let inject: string | undefined;
+      await this.hooks.run("assistant_message", { message, stopped }, (r, ev) => {
+        if (r.message) final = ev.message = r.message;
+        if (r.retry) retry = true;
+        if (r.inject) inject = r.inject;
+      });
+      if (retry && attempt < 2 && !signal.aborted) {
+        this.events.emit({ type: "message_discarded", message: final });
+        continue;
+      }
+      const repairs = await repairCalls(this.toolContext(), final);
+      if (final.content.length) this.pushMessage(final);
+      else this.events.emit({ type: "message_end", message: final });
+      if (inject) this.queued.push([{ type: "text", text: inject }]);
+      return { message: final, repairs };
+    }
+  }
+
+  /** Stream one response. A stream_delta handler can end it early; that is reported as `stopped`. */
+  private async stream(signal: AbortSignal): Promise<{ message: AssistantMessage; stopped?: { plugin: string; reason: string } }> {
     const provider = getProvider(this.model.api);
     const apiKey = await this.opts.getApiKey?.(this.model.provider);
     this.session?.addSecret(apiKey);
@@ -305,152 +350,75 @@ export class Agent {
       if (r.prompt !== undefined) system = ev.prompt = r.prompt;
     });
     let messages = this.messages;
-    await this.hooks.run("before_request", { messages: [...messages], model: this.model }, (r, ev) => {
+    let sampling: SamplingOptions = {};
+    await this.hooks.run("before_request", { messages: [...messages], model: this.model, sampling }, (r, ev) => {
       if (r.messages) messages = ev.messages = r.messages;
+      if (r.sampling) sampling = ev.sampling = { ...sampling, ...r.sampling };
     });
+
+    // The request has its own controller so a plugin can stop it without it counting as a user abort.
+    const request = new AbortController();
+    const forward = () => request.abort();
+    signal.addEventListener("abort", forward, { once: true });
+    const watchDeltas = this.hooks.has("stream_delta");
+    const toolJson = new Map<number, string>();
+    let stopped: { plugin: string; reason: string } | undefined;
     let final: AssistantMessage | undefined;
-    for await (const ev of provider.stream({
-      model: this.model,
-      apiKey,
-      system,
-      messages,
-      tools: this.requestTools().map((t) => ({ name: t.name, description: t.description, parameters: t.parameters })),
-      thinking: this.thinking,
-      maxRetries: this.opts.maxRetries,
-      signal,
-    })) {
-      if (ev.type === "start") this.events.emit({ type: "message_start", message: ev.partial });
-      else if (ev.type === "done") final = ev.message;
-      else this.events.emit({ type: "message_update", message: ev.partial, event: ev });
+    try {
+      for await (const ev of provider.stream({
+        model: this.model,
+        apiKey,
+        system,
+        messages,
+        tools: this.requestTools().map((t) => ({ name: t.name, description: t.description, parameters: t.parameters })),
+        thinking: this.thinking,
+        maxRetries: this.opts.maxRetries,
+        sampling,
+        signal: request.signal,
+      })) {
+        if (ev.type === "start") this.events.emit({ type: "message_start", message: ev.partial });
+        else if (ev.type === "done") final = ev.message;
+        else {
+          this.events.emit({ type: "message_update", message: ev.partial, event: ev });
+          if (watchDeltas && !stopped && ev.type !== "toolcall_start") {
+            const block = ev.partial.content[ev.index];
+            const kind = ev.type === "text_delta" ? "text" : ev.type === "thinking_delta" ? "thinking" : "toolcall";
+            if (kind === "toolcall") toolJson.set(ev.index, (toolJson.get(ev.index) ?? "") + ev.delta);
+            const text = block?.type === "text" ? block.text : block?.type === "thinking" ? block.thinking : (toolJson.get(ev.index) ?? "");
+            this.hooks.runSync("stream_delta", { kind, index: ev.index, delta: ev.delta, text, message: ev.partial }, (r, _e, owner) => {
+              if (!r.stop) return;
+              stopped = { plugin: owner, reason: r.stop };
+              request.abort();
+              return false;
+            });
+          }
+        }
+      }
+    } finally {
+      signal.removeEventListener("abort", forward);
     }
     if (!final) throw new Error("provider stream ended without a final message");
-    if (final.stopReason === "aborted") {
-      // Half-streamed tool calls never ran; keep only what the model finished saying.
-      final.content = final.content.filter((c) => c.type === "text" || (c.type === "thinking" && c.signature));
-      this.interrupted = true;
-      if (!final.content.length) {
-        this.events.emit({ type: "message_end", message: final });
-        return final;
-      }
-    }
-    this.pushMessage(final);
-    return final;
+    if (stopped && !signal.aborted) final.stopReason = "stopped";
+    else stopped = undefined;
+    return { message: final, stopped };
   }
-
-  // ── tools ──────────────────────────────────────────────────────────
 
   private findTool(name: string): ToolDefinition<any> | undefined {
     return this.tools.get(name) ?? (name === this.searchTool.name ? this.searchTool : undefined);
   }
 
-  private async executeTools(calls: ToolCall[], truncated: boolean, signal: AbortSignal): Promise<ToolResultMessage[]> {
-    type Job = { call: ToolCall; tool?: ToolDefinition<any>; args?: Record<string, unknown>; result?: ToolResult };
-    const jobs: Job[] = [];
-    // Validation and permission prompts run one at a time, in order.
-    for (const call of calls) {
-      const job: Job = { call };
-      jobs.push(job);
-      if (signal.aborted) {
-        job.result = err("Interrupted by the user before this tool ran.");
-        continue;
-      }
-      const tool = this.findTool(call.name);
-      if (!tool) {
-        job.result = err(`Unknown tool "${call.name}". Available: ${[...this.tools.keys()].join(", ")}`);
-        continue;
-      }
-      if (truncated) {
-        job.result = err("The response hit max_tokens before this tool call was complete, so it was not run. Retry with smaller input.");
-        continue;
-      }
-      if (call.rawInput !== undefined) {
-        job.result = err(`Tool input was not valid JSON, so it was not run: ${JSON.stringify({ INVALID_JSON: call.rawInput })}`);
-        continue;
-      }
-      const problems = validate(tool.parameters, call.input);
-      if (problems.length) {
-        job.result = err(`Invalid arguments: ${problems.join("; ")}`);
-        continue;
-      }
-      const { args, denied } = await this.authorize(tool, call);
-      if (denied) job.result = denied;
-      else {
-        job.tool = tool;
-        job.args = args;
-      }
-    }
-
-    // Runs of concurrency-safe tools execute in parallel; everything else in order.
-    let i = 0;
-    while (i < jobs.length) {
-      const batch: Job[] = [];
-      const first = jobs[i]!;
-      if (first.tool?.concurrent) {
-        while (i < jobs.length && (jobs[i]!.result || jobs[i]!.tool?.concurrent)) batch.push(jobs[i++]!);
-      } else batch.push(jobs[i++]!);
-      await Promise.all(
-        batch.map((j) => (j.tool && !j.result ? this.runTool(j.tool, j.call, j.args!, signal).then((r) => (j.result = r)) : undefined)),
-      );
-    }
-
-    return jobs.map(({ call, result }) => ({
-      role: "tool",
-      toolCallId: call.id,
-      toolName: call.name,
-      content: result!.content,
-      isError: !!result!.isError,
-      timestamp: Date.now(),
-    }));
-  }
-
-  /** Plugins see the call first (tool_call hook), then the core policy and the user decide. */
-  private async authorize(tool: ToolDefinition<any>, call: ToolCall): Promise<{ args: Record<string, unknown>; denied?: ToolResult }> {
-    let args = call.input;
-    let forced: { decision: "allow" | "ask" | "deny"; reason: string } | undefined;
-    const rank = { allow: 0, ask: 1, deny: 2 };
-    await this.hooks.run("tool_call", { call, tool, args }, (r, ev) => {
-      if (r.args) args = ev.args = r.args;
-      if (r.decision && (!forced || rank[r.decision] > rank[forced.decision]))
-        forced = { decision: r.decision, reason: r.reason ?? "plugin" };
-      return forced?.decision !== "deny";
-    });
-    const check: PermissionCheck = { tool, args, cwd: this.cwd };
-    const verdict = forced ?? (await this.permissions.check(check, (c) => this.judge(c)));
-    if (verdict.decision === "allow") return { args };
-    if (verdict.decision === "deny") return { args, denied: err(`Permission denied (${verdict.reason}).`) };
-    if (!this.approve)
-      return {
-        args,
-        denied: err(`This call needs user approval (${verdict.reason}), but no user is available to approve it (non-interactive run). It was not executed.`),
-      };
-    const answer = await this.approve({ ...check, call, reason: verdict.reason });
-    if (answer.decision === "always") this.permissions.addRules({ allow: [PermissionPolicy.ruleFor(check)] });
-    if (answer.decision === "deny")
-      return { args, denied: err(`The user denied this tool call.${answer.feedback ? ` User feedback: ${answer.feedback}` : ""}`) };
-    return { args };
-  }
-
-  private async runTool(tool: ToolDefinition<any>, call: ToolCall, args: Record<string, unknown>, signal: AbortSignal): Promise<ToolResult> {
-    let summary = "";
-    try {
-      summary = tool.summary?.(args) ?? "";
-    } catch {}
-    this.events.emit({ type: "tool_start", call, summary });
-    let result: ToolResult;
-    try {
-      result = await tool.execute(args, {
-        cwd: this.cwd,
-        signal,
-        onUpdate: (text) => this.events.emit({ type: "tool_update", call, text }),
-      });
-    } catch (e) {
-      result = err(`Tool failed: ${e instanceof Error ? e.message : String(e)}`);
-    }
-    await this.hooks.run("tool_result", { call, result }, (r, ev) => {
-      if (r.result) result = ev.result = r.result;
-    });
-    this.events.emit({ type: "tool_end", call, result });
-    return result;
+  private toolContext(): ToolRunContext {
+    return {
+      cwd: this.cwd,
+      hooks: this.hooks,
+      events: this.events,
+      permissions: this.permissions,
+      approve: this.approve,
+      judge: (c) => this.judge(c),
+      session: this.session,
+      findTool: (n) => this.findTool(n),
+      allTools: () => [...this.getTools(), this.searchTool],
+    };
   }
 
   // ── plugin services ────────────────────────────────────────────────
@@ -549,8 +517,4 @@ Answer with one line of JSON: {"safe": true|false, "reason": "<short reason>"}`,
     const v = JSON.parse(m[0]);
     return { safe: v.safe === true, reason: String(v.reason ?? "") };
   }
-}
-
-function err(message: string): ToolResult {
-  return { content: [{ type: "text", text: message }], isError: true };
 }

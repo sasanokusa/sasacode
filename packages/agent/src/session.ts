@@ -10,6 +10,8 @@ export type SessionEntry =
   | { type: "model"; model: string }
   | { type: "permission_mode"; mode: string }
   | { type: "replace"; messages: Message[] }
+  /** What the model actually produced for a call that a tool_call_raw hook repaired. */
+  | { type: "tool_repair"; callId: string; original: { name: string; input: unknown; rawInput?: string }; repaired: { name: string; input: unknown }; note: string }
   | { type: "custom"; plugin: string; kind: string; data: unknown };
 
 export interface SessionInfo {

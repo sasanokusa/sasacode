@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import type { AgentEvent, StopCause } from "@sasacode/agent";
 import { textOf } from "@sasacode/ai";
 import type { Harness } from "./setup.ts";
@@ -24,8 +25,11 @@ export async function runHeadless(h: Harness, prompt: string, output: "text" | "
     else if (e.type === "tool_end" && e.result.isError) status(`  ⎿ ${textOf(e.result.content).split("\n").slice(-1)[0]}`);
     else if (e.type === "error") process.stderr.write(`error: ${e.error}\n`);
     else if (e.type === "context_limit") process.stderr.write("stopped: context window is full\n");
+    else if (e.type === "tool_repaired") status(`  ↻ repaired ${e.call.name}: ${e.note}`);
     else if (e.type === "plugin_error") process.stderr.write(`plugin ${e.plugin} (${e.hook}): ${e.error}\n`);
   });
+  const session = agent.session;
+  if (output === "jsonl") write(`${JSON.stringify({ type: "session", id: session?.id ?? null, path: session?.path ?? null })}\n`);
   await h.loadPlugins();
   // Unlike the TUI, a one-shot run should start with MCP servers and similar tools connected.
   await h.host.settle();
@@ -37,6 +41,8 @@ export async function runHeadless(h: Harness, prompt: string, output: "text" | "
   process.off("SIGINT", onSigint);
   await h.shutdown();
   if (output === "text" && cause !== "done") status(`[stopped: ${cause}]`);
+  // One-shot runs are how sasacode is driven without tmux: say how to continue this conversation.
+  if (output === "text" && session && existsSync(session.path)) status(`session ${session.id} · continue: sasacode -r ${session.id} -p "…"`);
   return cause === "done" ? 0 : 1;
 }
 

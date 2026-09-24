@@ -11,6 +11,7 @@ import {
   newAssistant,
   parseToolInput,
   type Provider,
+  samplingFields,
   type Request,
   type StreamEvent,
   type ThinkingContent,
@@ -51,6 +52,7 @@ export const openaiChatProvider: Provider = {
       }));
     if (model.reasoning && req.thinking && req.thinking !== "off")
       params.reasoning_effort = (req.thinking === "max" || req.thinking === "xhigh" ? "high" : req.thinking) as never;
+    Object.assign(params, samplingFields(req.sampling, ["temperature", "top_p", "frequency_penalty", "presence_penalty"]));
 
     const out = newAssistant(model);
     yield { type: "start", partial: out };

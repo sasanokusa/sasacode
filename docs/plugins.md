@@ -40,7 +40,7 @@ export default plugin;
 }
 ```
 
-- `apiVersion` がホストの API（現在 1.1.0）と互換でなければ、警告を出して読み込まない。
+- `apiVersion` がホストの API（現在 1.2.0）と互換でなければ、警告を出して読み込まない。
 - `skills` は `SKILL.md` を含むフォルダが並ぶディレクトリ。
 - `mcpServers` は設定ファイルの `mcpServers` と同じ形式。`${VAR}` は環境変数から展開される。
 
@@ -101,8 +101,13 @@ sasacode plugin remove <name>
 | `tool_result` | `{result}` で結果を書き換える・追記する |
 | `turn_end` / `agent_end` | `{inject}` でユーザーメッセージを足してループを続ける |
 | `context_limit` | コンテキストを空けてから（`session.replaceMessages`）、`{retry: true}` で続行する |
+| `stream_delta` | 生成中の差分ごと（同期のみ）。`{stop: 理由}` で生成を止める（1.2.0〜） |
+| `assistant_message` | 確定した応答。`{message}` で書き換え、`{retry: true}` で再生成（最大2回）、`{inject}` で続行する。途中で止めた応答には `stopped: {plugin, reason}` が付く（1.2.0〜） |
+| `tool_call_raw` | 検証前のツール呼び出し（`name`、`input`、壊れた JSON なら `rawInput`、`tools`）。`{name, input, note}` で修復する。`note` は tool_result の先頭でモデルに伝わる（1.2.0〜） |
 
-サブエージェントでは、`tool_call` / `tool_result` / `system_prompt` / `before_request` のハンドラは共有される。セッション系のフック（`session_*`、`user_prompt`、`turn_end`、`agent_end`、`context_limit`）は呼ばれない。
+1回の応答での順序は `before_request` → `stream_delta` … → `assistant_message` → `tool_call_raw` → 検証 → `tool_call` → 権限判定 → 実行 → `tool_result`。`before_request` は `{sampling}` で temperature や penalty、プロバイダー固有の値（`extraBody`）も変えられる。
+
+サブエージェントでは、`tool_call_raw` / `tool_call` / `tool_result` / `system_prompt` / `before_request` / `stream_delta` / `assistant_message` のハンドラは共有される。セッション系のフック（`session_*`、`user_prompt`、`turn_end`、`agent_end`、`context_limit`）は呼ばれない。
 
 ## 信頼と安全
 
@@ -117,6 +122,6 @@ sasacode plugin remove <name>
 }
 ```
 
-同梱プラグインの名前は `agents-md`、`compaction`、`subagent`、`todo`、`web-fetch`、`permission-presets`、`browsr`、`skills`、`mcp`。
+同梱プラグインの名前は `tool-repair`、`repetition-guard`、`agents-md`、`compaction`、`subagent`、`todo`、`web-fetch`、`permission-presets`、`browsr`、`skills`、`mcp`。
 
 プラグインを作るときは、組み込みの Skill を使うのが早い。TUI で `/skill:tool-authoring <作りたいもの>` と打つと、このリファレンスを読んだうえでモデルがプラグインを書く。

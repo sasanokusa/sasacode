@@ -7,13 +7,26 @@ import type {
   ModelInfo,
   Provider,
   ProviderConfig,
+  SamplingOptions,
+  StopReason,
   ToolCall,
   UserContent,
 } from "@sasacode/ai";
 
-export type { AssistantMessage, JSONSchema, Message, ModelInfo, Provider, ProviderConfig, ToolCall, UserContent } from "@sasacode/ai";
+export type {
+  AssistantMessage,
+  JSONSchema,
+  Message,
+  ModelInfo,
+  Provider,
+  ProviderConfig,
+  SamplingOptions,
+  StopReason,
+  ToolCall,
+  UserContent,
+} from "@sasacode/ai";
 
-export const PLUGIN_API_VERSION = "1.1.0";
+export const PLUGIN_API_VERSION = "1.2.0";
 
 // ── tools ────────────────────────────────────────────────────────────
 
@@ -73,7 +86,14 @@ export interface CommandDefinition {
 export type Decision = "allow" | "ask" | "deny";
 export type StopCause = "done" | "aborted" | "error" | "refusal" | "context_limit" | "max_turns";
 
-/** Each hook: the payload handlers receive and what they may return. Handlers run in registration order. */
+export type DeltaKind = "text" | "thinking" | "toolcall";
+
+/**
+ * Each hook: the payload handlers receive and what they may return. Handlers run in registration order.
+ * Order around one model response:
+ *   before_request → [stream_delta …] → assistant_message → tool_call_raw (per call)
+ *   → validation → tool_call → permission → execute → tool_result
+ */
 export interface HookMap {
   session_start: { event: { sessionId?: string; resumed: boolean }; result: void };
   session_end: { event: { sessionId?: string }; result: void };
@@ -81,8 +101,45 @@ export interface HookMap {
   user_prompt: { event: { content: UserContent[] }; result: { content?: UserContent[]; handled?: boolean } };
   /** Append to (or rewrite) the system prompt for this request. */
   system_prompt: { event: { prompt: string }; result: { prompt?: string } };
-  /** Change the messages sent in this request (not what is stored). */
-  before_request: { event: { messages: Message[]; model: ModelInfo }; result: { messages?: Message[] } };
+  /** Change the messages or sampling options of this request (not what is stored). */
+  before_request: {
+    event: { messages: Message[]; model: ModelInfo; sampling: SamplingOptions };
+    result: { messages?: Message[]; sampling?: SamplingOptions };
+  };
+  /**
+   * Called for every streamed delta. Must be synchronous and cheap (it runs on the stream).
+   * `text` is the block's accumulated text so far. Return `stop` to end generation early. (since 1.2.0)
+   */
+  stream_delta: {
+    event: { kind: DeltaKind; index: number; delta: string; text: string; message: Readonly<AssistantMessage> };
+    result: { stop?: string };
+  };
+  /**
+   * The finished response, before it is stored. `stopped` says which plugin ended it and why.
+   * Rewrite it (`message`), drop it and ask again (`retry`), or keep it and add a user
+   * message so the loop continues (`inject`). (since 1.2.0)
+   */
+  assistant_message: {
+    event: { message: AssistantMessage; stopped?: { plugin: string; reason: string } };
+    result: { message?: AssistantMessage; retry?: boolean; inject?: string };
+  };
+  /**
+   * A tool call as the model produced it, before the tool is looked up and arguments validated.
+   * `rawInput` is set when the arguments were not valid JSON. Return a corrected `name` / `input`
+   * and a short `note`; the model is told about the repair. Truncated calls (stopReason
+   * max_tokens) never reach this hook. (since 1.2.0)
+   */
+  tool_call_raw: {
+    event: {
+      call: Readonly<ToolCall>;
+      name: string;
+      input: Record<string, unknown>;
+      rawInput?: string;
+      tools: ToolDefinition<any>[];
+      stopReason: StopReason;
+    };
+    result: { name?: string; input?: Record<string, unknown>; note?: string };
+  };
   /** Rewrite arguments or decide permission before the core policy runs. */
   tool_call: {
     event: { call: ToolCall; tool: ToolDefinition<any>; args: Record<string, unknown> };

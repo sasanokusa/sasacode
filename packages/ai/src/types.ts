@@ -38,7 +38,8 @@ export interface UserMessage {
   timestamp: number;
 }
 
-export type StopReason = "stop" | "tool_use" | "max_tokens" | "refusal" | "aborted" | "error";
+/** `stopped`: a plugin ended generation early (e.g. repetition). */
+export type StopReason = "stop" | "tool_use" | "max_tokens" | "refusal" | "aborted" | "stopped" | "error";
 
 export interface Usage {
   input: number;
@@ -97,6 +98,16 @@ export interface ModelInfo {
   headers?: Record<string, string>;
 }
 
+/** Sampling knobs. Each adapter sends what its API understands; `extraBody` is merged into the request as-is. */
+export interface SamplingOptions {
+  temperature?: number;
+  topP?: number;
+  frequencyPenalty?: number;
+  presencePenalty?: number;
+  /** Provider-specific fields, e.g. vLLM's `repetition_penalty`. */
+  extraBody?: Record<string, unknown>;
+}
+
 export interface Request {
   model: ModelInfo;
   apiKey?: string;
@@ -106,6 +117,7 @@ export interface Request {
   thinking?: ThinkingLevel;
   maxTokens?: number;
   maxRetries?: number;
+  sampling?: SamplingOptions;
   signal?: AbortSignal;
 }
 
@@ -128,6 +140,20 @@ export class ContextOverflowError extends Error {
     super(message);
     this.name = "ContextOverflowError";
   }
+}
+
+/** Common sampling fields in the snake_case most HTTP APIs use, plus extraBody. Unset fields are omitted. */
+export function samplingFields(s: SamplingOptions | undefined, keys: ("temperature" | "top_p" | "frequency_penalty" | "presence_penalty")[]) {
+  if (!s) return {};
+  const all: Record<string, number | undefined> = {
+    temperature: s.temperature,
+    top_p: s.topP,
+    frequency_penalty: s.frequencyPenalty,
+    presence_penalty: s.presencePenalty,
+  };
+  const out: Record<string, unknown> = {};
+  for (const k of keys) if (all[k] !== undefined) out[k] = all[k];
+  return { ...out, ...s.extraBody };
 }
 
 export function emptyUsage(): Usage {

@@ -13,6 +13,7 @@ import {
   newAssistant,
   parseToolInput,
   type Provider,
+  samplingFields,
   type Request,
   type StopReason,
   type StreamEvent,
@@ -53,6 +54,8 @@ export const anthropicProvider: Provider = {
       params.thinking = { type: "adaptive", display: "summarized" };
       params.output_config = { effort: req.thinking };
     }
+    // Newer Claude models reject sampling parameters; only what a plugin or config set explicitly is sent.
+    Object.assign(params, samplingFields(req.sampling, ["temperature", "top_p"]));
 
     const out = newAssistant(model);
     const jsonBuf = new Map<number, string>();

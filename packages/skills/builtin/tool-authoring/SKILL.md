@@ -22,7 +22,7 @@ A plugin is a module whose default export receives a `PluginAPI`. Everything in 
 - One file: `~/.sasacode/plugins/<name>.ts` (all projects) or `<project>/.sasacode/plugins/<name>.ts` (this project; the user is asked to trust it on first load).
 - A package: a directory with `plugin.json`:
   ```json
-  { "name": "my-plugin", "version": "0.1.0", "apiVersion": "^1.1.0", "extensions": ["src/index.ts"], "skills": "skills" }
+  { "name": "my-plugin", "version": "0.1.0", "apiVersion": "^1.2.0", "extensions": ["src/index.ts"], "skills": "skills" }
   ```
   or the same fields under `"sasacode"` in `package.json`.
 - TypeScript runs as-is (Bun); no build step. `import ... from "@sasacode/plugin-api"` works without installing it.
@@ -96,11 +96,14 @@ api.registerCommand({
 | `session_start` / `session_end` | `{ sessionId, resumed }` | — (restore / clean up state) |
 | `user_prompt` | `{ content }` | `{ content }` to rewrite, `{ handled: true }` to consume |
 | `system_prompt` | `{ prompt }` | `{ prompt }` (append context) |
-| `before_request` | `{ messages, model }` | `{ messages }` for this request only |
+| `before_request` | `{ messages, model, sampling }` | `{ messages }` / `{ sampling }` for this request only |
 | `tool_call` | `{ call, tool, args }` | `{ args }`, `{ decision: "allow" \| "ask" \| "deny", reason }` |
 | `tool_result` | `{ call, result }` | `{ result }` (e.g. append lint output after `edit`) |
 | `turn_end` / `agent_end` | `{ turn, message }` / `{ cause }` | `{ inject: "text" }` to continue the loop |
 | `context_limit` | `{ tokens, contextWindow }` | `{ retry: true }` after freeing context |
+| `stream_delta` | `{ kind, index, delta, text, message }` — **synchronous only** | `{ stop: "reason" }` to end generation |
+| `assistant_message` | `{ message, stopped? }` | `{ message }`, `{ retry: true }`, `{ inject }` |
+| `tool_call_raw` | `{ name, input, rawInput?, tools, stopReason }` — before validation | `{ name, input, note }` (the model is told `note`) |
 
 Example — run a linter after every edit:
 

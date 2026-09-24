@@ -79,6 +79,8 @@ export class ToolView implements Component {
   diff?: string;
   result?: ToolResult;
   renderer?: ToolRenderer;
+  /** Set when a tool_call_raw hook fixed this call. */
+  repairNote?: string;
 
   constructor(public call: ToolCall) {}
 
@@ -86,6 +88,7 @@ export class ToolView implements Component {
     const dot = { pending: c.gray("○"), running: c.yellow("●"), done: c.green("●"), error: c.red("●") }[this.status];
     const summary = this.summary || argPreview(this.call.input);
     const lines = [truncateToWidth(`${dot} ${c.bold(this.call.name)}${c.gray(`(${summary})`)}`, width)];
+    if (this.repairNote) lines.push(truncateToWidth(c.gray(`  ↻ 修復: ${this.repairNote}`), width));
     const body = this.status === "running" ? this.live : this.output;
     let custom: string[] | undefined;
     if (this.renderer && this.status !== "running")

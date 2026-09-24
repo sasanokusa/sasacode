@@ -16,7 +16,7 @@ sasa-code-harness は TypeScript (Bun) で作るターミナル向けコーデ�
 
 **成功の目安**
 
-- コア（ループ・プロバイダー・組み込みツール）が 3,000 行程度に収まっている
+- コア（ループ・プロバイダー・組み込みツール）が 4,000 行程度に収まっている（当初 3,000 行。tool-call 修復・生成中フックの追加に合わせて 2026-09-24 に改訂）
 - 組み込みツールを含む全機能が、サードパーティと同じ公開プラグインAPIで実装されている
 - 日常のコーディング作業をこのハーネスだけで完結できる
 
@@ -99,7 +99,7 @@ sasa-code-harness は TypeScript (Bun) で作るターミナル向けコーデ�
 | --- | --- | --- |
 | FR-U01 | 複数行入力・入力履歴・貼り付けに対応したエディタ | Must |
 | FR-U02 | ストリーミング表示、ツール呼び出しと結果の折りたたみ表示 | Must |
-| FR-U03 | スラッシュコマンド（コアは /model /resume /clear /help /permission のみ、他はプラグインが追加） | Must |
+| FR-U03 | スラッシュコマンド（コアは /model /resume /clear /help /permission /fork /session /exit のみ、他はプラグインが追加） | Must |
 | FR-U04 | ヘッドレス実行（`sasacode -p "..."`、テキスト / JSONLイベント出力） | Must |
 | FR-U05 | プラグインがツール結果の描画・ステータス行・ダイアログを差し込める | Should |
 | FR-U06 | SDKとしてライブラリ利用できる（TUIなしでループを埋め込む） | Should |
@@ -158,13 +158,16 @@ sasa-code-harness は TypeScript (Bun) で作るターミナル向けコーデ�
 | session\_start / session\_end | セッション開始・終了 | 初期化、状態復元、後片付け |
 | user\_prompt | ユーザー入力の送信前 | 入力の変換・追記、処理して消費（LLMに渡さない） |
 | system\_prompt | リクエスト組み立て時 | システムプロンプトへの追記（AGENTS.md、Skills一覧はここで足す） |
-| before\_request | LLM呼び出し直前 | メッセージ列の変更（圧縮、キャッシュ制御） |
+| before\_request | LLM呼び出し直前 | メッセージ列の変更（圧縮、キャッシュ制御）、サンプリング設定の変更 |
+| stream\_delta | 生成中（テキスト・thinking・ツール引数の差分ごと） | 同期のみ。生成の途中停止（例: 反復の検出） |
+| assistant\_message | 応答の確定後、保存前 | 応答の書き換え、再生成、継続指示の注入 |
+| tool\_call\_raw | ツールの検索・引数検証の前 | 壊れた JSON・キー名・型・ツール名の修復。修復した内容はモデルに短く伝え、履歴には修復後の呼び出しを残し、元の出力はセッションに別途記録する。max\_tokens で途切れた呼び出しは対象外 |
 | tool\_call | ツール実行前 | 引数の変更、allow / ask / deny の判定 |
 | tool\_result | ツール実行後 | 結果の変更・追記（例: 編集後のリンタ結果を添える） |
 | turn\_end / agent\_end | ターン終了・ループ停止 | 通知、継続指示の注入 |
 | context\_limit | コンテキスト上限到達 | 圧縮して再開、または停止 |
 
-ハンドラは登録順に直列実行し、例外は該当プラグインのエラーとして表示してループは継続する。
+ハンドラは登録順に直列実行し、例外は該当プラグインのエラーとして表示してループは継続する。1回の応答での順序は before\_request → stream\_delta → assistant\_message → tool\_call\_raw → 検証 → tool\_call → 権限判定 → 実行 → tool\_result。
 
 ### 5.4 MCP
 

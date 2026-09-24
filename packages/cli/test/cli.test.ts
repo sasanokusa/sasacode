@@ -69,8 +69,44 @@ test("headless jsonl emits the whole run and exits 0", async () => {
     process.stdout.write = orig;
   }
   const events = lines.join("").trim().split("\n").map((l) => JSON.parse(l));
-  expect(events[0].type).toBe("message_end"); // the user message
+  expect(events[0]).toEqual({ type: "session", id: null, path: null }); // --no-session
+  expect(events[1].type).toBe("message_end"); // the user message
   expect(events.map((e) => e.type)).toContain("message_update");
   expect(events.at(-1)).toEqual({ type: "agent_end", cause: "done" });
   expect(JSON.stringify(events)).toContain("hello from replay");
+});
+
+test("one-shot runs can be chained with -r <id> -p (no tmux needed)", async () => {
+  writeConfigs({ providers: { test: { api: "replay" } }, model: "test/m" }, {});
+  const msg = (text: string) => ({
+    role: "assistant" as const,
+    content: [{ type: "text" as const, text }],
+    api: "replay",
+    provider: "test",
+    model: "m",
+    usage: emptyUsage(),
+    stopReason: "stop" as const,
+    timestamp: 0,
+  });
+  const provider = replayProvider([msg("first answer"), msg("second answer")]);
+  registerApi("replay", provider);
+  const quiet = <T>(fn: () => Promise<T>) => {
+    const w = process.stdout.write.bind(process.stdout);
+    const e = process.stderr.write.bind(process.stderr);
+    const err: string[] = [];
+    process.stdout.write = (() => true) as typeof process.stdout.write;
+    process.stderr.write = ((s: string) => (err.push(s), true)) as typeof process.stderr.write;
+    return fn().then(
+      (r) => ((process.stdout.write = w), (process.stderr.write = e), { r, err: err.join("") }),
+      (x) => ((process.stdout.write = w), (process.stderr.write = e), Promise.reject(x)),
+    );
+  };
+  const first = await setup({ cwd: proj });
+  const { err } = await quiet(() => runHeadless(first, "remember 42", "text"));
+  const id = first.agent.session!.id;
+  expect(err).toContain(`sasacode -r ${id} -p`);
+  const second = await setup({ cwd: proj, resume: id });
+  await quiet(() => runHeadless(second, "what number?", "text"));
+  expect(provider.requests[1]!.messages.map((m) => m.role)).toEqual(["user", "assistant", "user"]);
+  expect(JSON.stringify(provider.requests[1]!.messages[0])).toContain("remember 42");
 });

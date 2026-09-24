@@ -8,6 +8,7 @@ import {
   newAssistant,
   parseToolInput,
   type Provider,
+  samplingFields,
   type Request,
   type StreamEvent,
   type ThinkingContent,
@@ -41,6 +42,7 @@ export const openaiResponsesProvider: Provider = {
       // Stateless (store: false) reasoning continuity needs the encrypted reasoning items back.
       params.include = ["reasoning.encrypted_content"];
     }
+    Object.assign(params, samplingFields(req.sampling, ["temperature", "top_p"]));
 
     const out = newAssistant(model);
     yield { type: "start", partial: out };
