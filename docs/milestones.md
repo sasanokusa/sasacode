@@ -86,8 +86,8 @@ Anthropic ネイティブの tool search（Should）は未対応で、全プロ�
 | --- | --- | --- |
 | 起動から入力可能まで（プラグイン 0 個） | 300 ms 以内 | 単一バイナリで 86 ms、ソースから `bun` で約 100 ms |
 | 同上（プラグイン＋MCP サーバーあり） | 入力をブロックしない | 95 ms（読み込みは起動後にバックグラウンドで行う） |
-| コアの行数（ai + agent + plugin-api + tools） | 約 4,000 行（当初 3,000 行から改訂） | 3,061 行（v0.6.1） |
-| テスト | LLM なしで E2E | 73 テスト（13 ファイル）。replayProvider と、テスト用の MCP サーバー、偽の browsr-agent、偽の Models API を使う |
+| コアの行数（ai + agent + plugin-api + tools） | 約 4,000 行（当初 3,000 行から改訂） | 3,079 行（v0.6.2） |
+| テスト | LLM なしで E2E | 77 テスト（14 ファイル）。replayProvider と、テスト用の MCP サーバー、偽の browsr-agent、偽の Models API を使う。組み込み Skill `tool-authoring` のコード例も抜き出して実行する |
 
 ## 未検証・既知の制限
 

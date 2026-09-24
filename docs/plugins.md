@@ -131,7 +131,7 @@ before_request → stream_delta（生成中、差分ごと） → assistant_mess
 | `stream_delta` | 生成中、テキスト・thinking・ツール引数の差分ごと | `{kind, index, delta, text, message}`（`text` はそのブロックの累積） | `{stop: 理由}` で生成を止める。**同期のみ**で、Promise を返すとエラーとして無視される（1.2.0〜） |
 | `assistant_message` | 応答が確定し、保存する前 | `{message, stopped?}`（`stopped` は途中で止めたプラグインと理由） | `{message}` で書き換える。`{retry: true}` で捨てて取り直す（1回の応答につき最大2回）。`{inject}` でユーザーメッセージを足して続ける（1.2.0〜） |
 | `tool_call_raw` | ツールの検索と引数の検証の前 | `{call, name, input, rawInput?, tools, stopReason}`（`rawInput` は JSON として壊れていたときの生の文字列） | `{name, input, note}` で修復する。`note` は tool_result の先頭でモデルに伝わる。履歴には修復後の呼び出しを残し、元の出力はセッションに `tool_repair` として残る（署名付きの thinking を含む応答は、履歴を書き換えずに実行時だけ直す）。`max_tokens` で途切れた呼び出しでは呼ばれない（1.2.0〜） |
-| `tool_call` | 検証の後、権限判定の前 | `{call, tool, args}` | `{args}` で引数を書き換える。`{decision: "allow" \| "ask" \| "deny", reason}` で判定する（複数あれば deny > ask > allow の強いほう） |
+| `tool_call` | 検証の後、権限判定の前 | `{call, tool, args}` | `{args}` で引数を書き換える。`{decision: "allow" \| "ask" \| "deny", reason}` で判定する（複数あれば deny > ask > allow の強いほう）。プラグインの判定が置き換えるのは権限モードの既定の判定だけで、ユーザーの deny / ask ルールは常に効く |
 | `tool_result` | ツールの実行後 | `{call, result}` | `{result}` で結果を書き換える・追記する |
 | `turn_end` | 1ターン（応答とツールの実行）の後 | `{turn, message}` | `{inject}` でユーザーメッセージを足してループを続ける |
 | `agent_end` | ループが止まったとき | `{cause}`（`done` / `aborted` / `error` / `refusal` / `context_limit` / `max_turns`） | `{inject}` で次の実行を始める |

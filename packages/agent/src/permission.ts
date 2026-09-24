@@ -34,6 +34,8 @@ export interface PermissionCheck {
 export interface Verdict {
   decision: Decision;
   reason: string;
+  /** "rule": the user's (or a plugin's) explicit allow/ask/deny rule; "mode": the permission mode's default. */
+  source: "rule" | "mode";
 }
 
 /** Asks the model whether a call is safe. Used by the "agent" mode. */
@@ -61,9 +63,13 @@ export class PermissionPolicy {
   async check(c: PermissionCheck, judge?: Judge): Promise<Verdict> {
     for (const d of ["deny", "ask"] as const) {
       const hit = this.rules[d].find((r) => ruleMatches(r, c));
-      if (hit) return { decision: d, reason: `rule ${d}: ${hit.source}` };
+      if (hit) return { decision: d, reason: `rule ${d}: ${hit.source}`, source: "rule" };
     }
-    if (allowedByRules(this.rules.allow, c)) return { decision: "allow", reason: "allow rule" };
+    if (allowedByRules(this.rules.allow, c)) return { decision: "allow", reason: "allow rule", source: "rule" };
+    return { ...(await this.modeDecision(c, judge)), source: "mode" };
+  }
+
+  private async modeDecision(c: PermissionCheck, judge?: Judge): Promise<Omit<Verdict, "source">> {
     const insideCwd = (c.tool.paths?.(c.args, c.cwd) ?? []).every((p) => isInside(p, c.cwd));
     const hasPaths = !!c.tool.paths;
     switch (this.mode) {

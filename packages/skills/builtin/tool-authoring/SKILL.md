@@ -27,6 +27,7 @@ A plugin is a module whose default export receives a `PluginAPI`. Everything in 
   or the same fields under `"sasacode"` in `package.json`.
 - TypeScript runs as-is (Bun); no build step. `import ... from "@sasacode/plugin-api"` works without installing it.
 - New plugins load on the next start of sasacode. Tell the user to restart after you create one.
+- `apiVersion` `^1.3.0` needs sasacode 0.6 or later. Use the lowest version whose features you use (1.0 base, 1.1 `ready`, 1.2 `stream_delta` / `assistant_message` / `tool_call_raw` / sampling, 1.3 command `complete`).
 
 ## 3. Tool template
 
@@ -46,6 +47,9 @@ const plugin: Plugin = (api) => {
     kind: "other",                         // read | edit | exec | other (see permissions)
     concurrent: true,                      // may run in parallel with other concurrent tools
     summary: (a) => a.city,                // one-line label in the UI
+    // alwaysLoad: true,                   // see "Deferred loading" below
+    // paths: (a, cwd) => [...],           // files touched (permissions); for kind "edit"
+    // matchTarget: (a) => a.city,         // string matched by rules like weather(Tok*)
     async execute(args, ctx) {             // ctx: { cwd, signal, onUpdate(text) }
       const res = await fetch(`https://example.com/weather?q=${encodeURIComponent(args.city)}`, { signal: ctx.signal });
       if (!res.ok) return errorResult(`weather service returned ${res.status}; try the English city name`);
@@ -64,6 +68,7 @@ Guidelines:
 - **Images**: `{ type: "image", mediaType: "image/png", data: base64 }` in `content`.
 - **`details`** is for renderers and logs only; the model never sees it.
 - **Long work**: honour `ctx.signal` (abort) and stream progress with `ctx.onUpdate(text)`.
+- **Deferred loading**: when MCP and plugin tools together reach 30 tools (or 10% of the context window), their full definitions are no longer sent; the model sees a `tool_search` tool listing names and first-line descriptions and loads what it needs. Make the first line of the description say what the tool is for. Set `alwaysLoad: true` only for a tool that must always be visible (it costs context on every request).
 
 ## 4. Permissions
 
@@ -91,21 +96,33 @@ api.registerCommand({
 
 ## 6. Hooks
 
-`api.on(name, handler)`; handlers run in registration order; a throwing handler is reported and skipped.
+`api.on(name, handler)`. Handlers run in registration order; each one sees the event as changed by the ones before it. A handler that throws is reported as a plugin error and skipped; the loop goes on. Handlers may be `async` except `stream_delta`.
 
-| Hook | Receives | May return |
-| --- | --- | --- |
-| `session_start` / `session_end` | `{ sessionId, resumed }` | — (restore / clean up state) |
-| `user_prompt` | `{ content }` | `{ content }` to rewrite, `{ handled: true }` to consume |
-| `system_prompt` | `{ prompt }` | `{ prompt }` (append context) |
-| `before_request` | `{ messages, model, sampling }` | `{ messages }` / `{ sampling }` for this request only |
-| `tool_call` | `{ call, tool, args }` | `{ args }`, `{ decision: "allow" \| "ask" \| "deny", reason }` |
-| `tool_result` | `{ call, result }` | `{ result }` (e.g. append lint output after `edit`) |
-| `turn_end` / `agent_end` | `{ turn, message }` / `{ cause }` | `{ inject: "text" }` to continue the loop |
-| `context_limit` | `{ tokens, contextWindow }` | `{ retry: true }` after freeing context |
-| `stream_delta` | `{ kind, index, delta, text, message }` — **synchronous only** | `{ stop: "reason" }` to end generation |
-| `assistant_message` | `{ message, stopped? }` | `{ message }`, `{ retry: true }`, `{ inject }` |
-| `tool_call_raw` | `{ name, input, rawInput?, tools, stopReason }` — before validation | `{ name, input, note }` (the model is told `note`) |
+Order within one model response:
+
+```
+before_request → stream_delta (while streaming) → assistant_message
+  → for each tool call: tool_call_raw → lookup + schema validation → tool_call → permission → execute → tool_result
+  → turn_end
+```
+
+| Hook | When | Receives | May return |
+| --- | --- | --- | --- |
+| `session_start` | session started or resumed | `{ sessionId?, resumed }` | — (restore state from `api.session.entries`) |
+| `session_end` | before `/clear`, `/resume`, exit | `{ sessionId? }` | — (clean up) |
+| `user_prompt` | before user input goes to the model | `{ content }` | `{ content }` to rewrite; `{ handled: true }` to consume it |
+| `system_prompt` | every request | `{ prompt }` | `{ prompt }` (append context) |
+| `before_request` | right before the model call | `{ messages, model, sampling }` | `{ messages }` for this request only (history is unchanged); `{ sampling: { temperature?, topP?, frequencyPenalty?, presencePenalty?, extraBody? } }` (`extraBody` = provider-specific fields; Anthropic's newer models reject sampling fields) |
+| `stream_delta` | each streamed delta of text, thinking or tool-call arguments | `{ kind: "text" \| "thinking" \| "toolcall", index, delta, text, message }` — `text` is the block's accumulated text | `{ stop: "reason" }` ends generation. **Must be synchronous**: a returned Promise is ignored and reported. Keep it cheap (runs on every delta) |
+| `assistant_message` | response finished, before it is stored | `{ message, stopped? }` — `stopped: { plugin, reason }` when a `stream_delta` handler stopped it | `{ message }` to rewrite; `{ retry: true }` to discard and ask again (at most 2 retries per response); `{ inject: "text" }` to add a user message and continue |
+| `tool_call_raw` | before the tool is looked up and arguments validated | `{ call, name, input, rawInput?, tools, stopReason }` — `rawInput` is the raw string when the arguments were not valid JSON; `tools` includes deferred tools | `{ name?, input?, note }` to repair. The model sees `[harness repaired this call: <note>]` in the result; history keeps the repaired call (the original goes to the session log). Not called for calls cut off by `max_tokens` |
+| `tool_call` | after validation, before permission | `{ call, tool, args }` | `{ args }` to rewrite; `{ decision: "allow" \| "ask" \| "deny", reason }` (strongest wins: deny > ask > allow). A plugin's decision replaces the permission mode's default, but the user's own deny/ask rules still apply |
+| `tool_result` | after the tool ran | `{ call, result }` | `{ result }` to change or append |
+| `turn_end` | after a response and its tools | `{ turn, message }` | `{ inject: "text" }` to keep the loop going |
+| `agent_end` | the loop stopped | `{ cause }` — done, aborted, error, refusal, context_limit, max_turns | `{ inject: "text" }` to start another run |
+| `context_limit` | the context window is full | `{ tokens, contextWindow }` | free space with `api.session.replaceMessages`, then `{ retry: true }` (at most twice in a row) |
+
+Subagents (`api.agent.run`) share `system_prompt`, `before_request`, `stream_delta`, `assistant_message`, `tool_call_raw`, `tool_call` and `tool_result` handlers; session hooks (`session_*`, `user_prompt`, `turn_end`, `agent_end`, `context_limit`) are not called for them.
 
 Example — run a linter after every edit:
 
@@ -118,33 +135,66 @@ api.on("tool_result", async ({ call, result }) => {
 });
 ```
 
+Example — accept an argument alias a small model keeps using (runs before validation):
+
+```ts
+api.on("tool_call_raw", ({ name, input }) => {
+  if (name === "read" && "filename" in input && !("path" in input)) {
+    const { filename, ...rest } = input;
+    return { input: { ...rest, path: filename }, note: 'argument "filename" → "path"' };
+  }
+});
+```
+
+Example — stop a response that goes on too long, then continue with a nudge:
+
+```ts
+api.on("stream_delta", ({ kind, text }) => (kind === "text" && text.length > 20_000 ? { stop: "too long" } : undefined));
+api.on("assistant_message", ({ stopped }) => {
+  if (stopped?.plugin === api.name) return { inject: "Your answer was cut off for length. Summarize the rest briefly." };
+});
+```
+
 ## 7. Other API
 
 - `api.settings` — this plugin's settings from config: `"plugins": { "settings": { "<name>": { ... } } }`.
-- `api.ui` — `notify(msg, level)`, `confirm(title, msg)`, `select(title, options)`, `setStatus(key, text)`, `registerToolRenderer(tool, (call, result, {expanded, width}) => lines)`. Check `api.ui.interactive`: headless runs return false/undefined from confirm/select.
-- `api.session` — `append(kind, data)` / `entries(kind)` to persist state across resume; `messages()`; `replaceMessages(msgs)`; `inject(text, "next" | "now")`.
-- `api.agent` — `run({ prompt, excludeTools, model })` for a subagent with its own history; `complete({ system, messages })` for one tool-less model call; `model()`, `tools()`.
-- `api.registerProvider(name, { api, baseUrl, apiKeyEnv })` — add an LLM endpoint.
-- `api.ready(promise)` — report background startup work (headless runs wait for it).
-- `api.cwd`, `api.name`, `api.version` (plugin API version).
+- `api.ui` — `notify(msg, level?)`, `confirm(title, msg?)`, `select(title, options)`, `setStatus(key, text | undefined)` (footer), `registerToolRenderer(tool, (call, result, { expanded, width }) => lines | undefined)`. Check `api.ui.interactive`: headless runs return `false` from confirm and `undefined` from select.
+- `api.session` — `id`; `append(kind, data)` / `entries(kind)` to persist state across resume (restore it in `session_start`); `messages()`; `replaceMessages(msgs)` (persisted); `inject(text, "next" | "now")` ("next" = with the next turn or prompt, "now" = also start a run if idle).
+- `api.agent` — `run({ prompt, systemPrompt?, tools?, excludeTools?, model?, signal?, onProgress? })` → `{ text, messages, cause }`: a subagent with its own history, sharing tools, permissions and tool hooks; `complete({ system, messages, model?, maxTokens?, signal? })` → text: one model call without tools; `model()`, `tools()`.
+- `api.permissions.addRules({ allow?, ask?, deny? })` — rules like `mytool`, `mytool(pattern*)`, `bash(git status*)`.
+- `api.registerProvider(name, { api, baseUrl?, apiKeyEnv?, headers? }, implementation?)` — add an LLM endpoint; pass an implementation to add a new API format.
+- `api.ready(promise)` — report background startup work, e.g. connecting to a server; headless runs wait for it before the first request, the TUI does not.
+- `api.log(...)` — debug output, shown only with `SASACODE_DEBUG=1`.
+- `api.cwd`, `api.name`, `api.version` (the host's plugin API version).
 
 ## 8. Test it
 
-1. Unit-test `execute()` directly with a stub API:
+1. Unit-test with a stub API (`bun test-weather.ts`). The stub records tools, commands and hooks so you can call them directly:
    ```ts
    import plugin from "./weather.ts";
-   const tools: any[] = [];
-   await plugin({ registerTool: (t) => tools.push(t), registerCommand() {}, on() {}, ready() {}, settings: {}, cwd: process.cwd(),
-     permissions: { addRules() {} }, ui: { interactive: false, notify() {}, setStatus() {}, registerToolRenderer() {} } } as any);
+   const tools: any[] = [], commands: any[] = [], hooks: Record<string, Function[]> = {};
+   const api: any = {
+     version: "1.3.0", name: "weather", cwd: process.cwd(), settings: {},
+     registerTool: (t: any) => tools.push(t), registerCommand: (c: any) => commands.push(c), registerProvider() {},
+     on: (h: string, fn: Function) => (hooks[h] ??= []).push(fn), ready() {}, log() {},
+     permissions: { addRules() {} },
+     ui: { interactive: false, notify: console.log, confirm: async () => false, select: async () => undefined, setStatus() {}, registerToolRenderer() {} },
+     session: { id: undefined, append() {}, entries: () => [], messages: () => [], replaceMessages() {}, inject() {} },
+     agent: { model: () => ({ id: "test" }), tools: () => tools, run: async () => ({ text: "", messages: [], cause: "done" }), complete: async () => "" },
+   };
+   await plugin(api);
    console.log(await tools[0].execute({ city: "Tokyo" }, { cwd: process.cwd(), signal: new AbortController().signal }));
    ```
-2. End to end: `sasacode --no-session -p "Use the weather tool for Tokyo"` (add `--permission auto` only in a throwaway directory). `sasacode plugin list` shows what was found; load errors are printed as warnings.
+   Put the test file outside the plugins directory (every `.ts` directly in `plugins/` is loaded as a plugin).
+2. End to end, headless: `sasacode --no-session -p "Use the weather tool for Tokyo"`. A plugin in the project's `.sasacode/plugins/` is only loaded headless with `--trust-project` (interactively, the user is asked once). Tools that are not auto-approved need `--permission auto` — use it only in a throwaway directory. Load errors are printed as warnings; `sasacode plugin list` shows what was found.
 
 ## 9. Checklist
 
 - [ ] Name is unique and descriptive; description says what it returns.
 - [ ] Schema has `required` and `additionalProperties: false`.
 - [ ] Right `kind`; `paths` for file tools; no self-approval of risky tools.
+- [ ] Description's first line says what the tool is for (it is all the model sees when tools are deferred).
+- [ ] `stream_delta` handlers are synchronous and cheap; other hooks return only the fields they change.
 - [ ] Failures return `errorResult` with a hint; large output is cut with a notice.
 - [ ] `ctx.signal` honoured for anything slow.
 - [ ] Secrets come from `process.env` or settings, never hard-coded.

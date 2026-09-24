@@ -5,7 +5,7 @@ import type { ToolDefinition, ToolResult } from "@sasacode/plugin-api";
 import type { ApprovalAnswer, ApprovalRequest } from "./agent.ts";
 import type { AgentEvent, EventBus } from "./events.ts";
 import type { HookRunner } from "./hooks.ts";
-import { type Judge, type PermissionCheck, PermissionPolicy } from "./permission.ts";
+import { type Decision, type Judge, type PermissionCheck, PermissionPolicy } from "./permission.ts";
 import type { SessionFile } from "./session.ts";
 import { validate } from "./validate.ts";
 
@@ -150,6 +150,19 @@ function preflight(
   job.tool = tool;
 }
 
+/**
+ * A plugin's decision replaces the permission mode's default, but never the user's explicit
+ * deny/ask rules: the stricter of the two wins.
+ */
+async function decide(ctx: ToolRunContext, check: PermissionCheck, forced?: { decision: Decision; reason: string }) {
+  const policy = await ctx.permissions.check(check, forced ? undefined : ctx.judge);
+  if (!forced) return policy;
+  if (policy.source === "rule" && RANK[policy.decision] > RANK[forced.decision]) return policy;
+  return forced;
+}
+
+const RANK: Record<Decision, number> = { allow: 0, ask: 1, deny: 2 };
+
 /** Plugins see the call first (tool_call hook), then the core policy and the user decide. */
 async function authorize(
   ctx: ToolRunContext,
@@ -158,15 +171,14 @@ async function authorize(
   input: Record<string, unknown>,
 ): Promise<{ args: Record<string, unknown>; denied?: ToolResult }> {
   let args = input;
-  let forced: { decision: "allow" | "ask" | "deny"; reason: string } | undefined;
-  const rank = { allow: 0, ask: 1, deny: 2 };
+  let forced: { decision: Decision; reason: string } | undefined;
   await ctx.hooks.run("tool_call", { call, tool, args }, (r, ev) => {
     if (r.args) args = ev.args = r.args;
-    if (r.decision && (!forced || rank[r.decision] > rank[forced.decision])) forced = { decision: r.decision, reason: r.reason ?? "plugin" };
+    if (r.decision && (!forced || RANK[r.decision] > RANK[forced.decision])) forced = { decision: r.decision, reason: r.reason ?? "plugin" };
     return forced?.decision !== "deny";
   });
   const check: PermissionCheck = { tool, args, cwd: ctx.cwd };
-  const verdict = forced ?? (await ctx.permissions.check(check, ctx.judge));
+  const verdict = await decide(ctx, check, forced);
   if (verdict.decision === "allow") return { args };
   if (verdict.decision === "deny") return { args, denied: err(`Permission denied (${verdict.reason}).`) };
   if (!ctx.approve)
