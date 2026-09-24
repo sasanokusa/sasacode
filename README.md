@@ -60,7 +60,9 @@ sasacode -c                     # このディレクトリの直近セッショ�
 | `ollama` | Chat Completions（localhost:11434） | 不要 |
 | `commandcode` / `commandcode-responses` / `commandcode-anthropic` | Command Code の Chat Completions / Responses / Messages | `CMD_API_KEY` |
 
-キーは環境変数、なければ OS キーチェーン（macOS: `security add-generic-password -s sasacode -a <provider> -w`、Linux: `secret-tool store --label sasacode service sasacode account <provider>`）から読む。`.env` にも書ける：作業ディレクトリの `.env`（Bun が自動で読む）と `~/.sasacode/.env`（どのディレクトリから起動しても読む）の2か所。
+初回起動時に `~/.sasacode/.env`（パーミッション 600）を作る。対応プロバイダーのキーが空欄で並んでいるので、使うものだけ書けばよい。空欄のキーは未設定として扱い、呼び出しには使わない。`-m` も設定の `model` もないときは、キーが書かれている最初のプロバイダー（Anthropic → OpenAI → OpenRouter → Command Code の順）の既定モデルを使う。
+
+キーは次の順で探す：環境変数、`~/.sasacode/.env`、作業ディレクトリの `.env`（Bun が自動で読む。ここでも空欄は無視する）、OS キーチェーン（macOS: `security add-generic-password -s sasacode -a <provider> -w`、Linux: `secret-tool store --label sasacode service sasacode account <provider>`）。
 
 ## 設定
 

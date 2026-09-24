@@ -6,16 +6,33 @@ export interface ProviderConfig {
   /** Environment variable holding the API key. */
   apiKeyEnv?: string;
   headers?: Record<string, string>;
+  /** Shown in the generated ~/.sasacode/.env. */
+  label?: string;
+  /** Model used when nothing is configured and this provider's key is set. */
+  defaultModel?: string;
 }
 
+/** Order matters: with no model configured, the first provider whose key is set supplies the default. */
 export const BUILTIN_PROVIDERS: Record<string, ProviderConfig> = {
-  anthropic: { api: "anthropic", apiKeyEnv: "ANTHROPIC_API_KEY" },
-  openai: { api: "openai-responses", apiKeyEnv: "OPENAI_API_KEY" },
+  anthropic: { api: "anthropic", apiKeyEnv: "ANTHROPIC_API_KEY", label: "Anthropic", defaultModel: "claude-opus-5" },
+  openai: { api: "openai-responses", apiKeyEnv: "OPENAI_API_KEY", label: "OpenAI", defaultModel: "gpt-5.5" },
   "openai-chat": { api: "openai-chat", apiKeyEnv: "OPENAI_API_KEY" },
-  openrouter: { api: "openai-chat", baseUrl: "https://openrouter.ai/api/v1", apiKeyEnv: "OPENROUTER_API_KEY" },
+  openrouter: {
+    api: "openai-chat",
+    baseUrl: "https://openrouter.ai/api/v1",
+    apiKeyEnv: "OPENROUTER_API_KEY",
+    label: "OpenRouter",
+    defaultModel: "openrouter/auto",
+  },
   ollama: { api: "openai-chat", baseUrl: "http://localhost:11434/v1" },
   // Command Code serves all three formats on one key; Claude models answer on /messages only.
-  commandcode: { api: "openai-chat", baseUrl: "https://api.commandcode.ai/provider/v1", apiKeyEnv: "CMD_API_KEY" },
+  commandcode: {
+    api: "openai-chat",
+    baseUrl: "https://api.commandcode.ai/provider/v1",
+    apiKeyEnv: "CMD_API_KEY",
+    label: "Command Code",
+    defaultModel: "deepseek/deepseek-v4-flash",
+  },
   "commandcode-responses": { api: "openai-responses", baseUrl: "https://api.commandcode.ai/provider/v1", apiKeyEnv: "CMD_API_KEY" },
   "commandcode-anthropic": { api: "anthropic", baseUrl: "https://api.commandcode.ai/provider", apiKeyEnv: "CMD_API_KEY" },
 };
@@ -42,6 +59,13 @@ export const KNOWN_MODELS: Record<string, Known> = {
 };
 
 export const DEFAULT_MODEL = "anthropic/claude-opus-5";
+
+/** First provider with a non-empty key in the environment, as "<provider>/<model>". */
+export function defaultModelFor(providers: Record<string, ProviderConfig>, env: Record<string, string | undefined> = process.env): string {
+  for (const [name, p] of Object.entries(providers))
+    if (p.defaultModel && p.apiKeyEnv && env[p.apiKeyEnv]?.trim()) return `${name}/${p.defaultModel}`;
+  return DEFAULT_MODEL;
+}
 
 export function resolveModel(
   spec: string,

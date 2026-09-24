@@ -1,9 +1,10 @@
 #!/usr/bin/env bun
-import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 import { PERMISSION_MODES } from "@sasacode/agent";
+import { BUILTIN_PROVIDERS } from "@sasacode/ai";
 import { sasacodeHome } from "./config.ts";
+import { dropBlankKeys, ensureEnvFile, loadEnvFile } from "./env.ts";
 import { runHeadless } from "./headless.ts";
 import { pluginCommand } from "./loader.ts";
 import { setup } from "./setup.ts";
@@ -33,21 +34,6 @@ Subcommands:
   -h, --help
   -v, --version`;
 
-/** Bun already loads ./.env; ~/.sasacode/.env makes keys available from any directory. Existing vars win. */
-function loadHomeEnv(): void {
-  let text: string;
-  try {
-    text = readFileSync(join(sasacodeHome(), ".env"), "utf8");
-  } catch {
-    return;
-  }
-  for (const line of text.split("\n")) {
-    const m = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$/.exec(line);
-    if (!m || process.env[m[1]!]) continue;
-    process.env[m[1]!] = m[2]!.replace(/^(["'])(.*)\1$/, "$2");
-  }
-}
-
 /** Piped input is appended to -p. A pipe that stays open without data (e.g. a parent shell) is ignored. */
 async function readPipedStdin(): Promise<string> {
   if (process.stdin.isTTY) return "";
@@ -63,7 +49,11 @@ async function readPipedStdin(): Promise<string> {
 }
 
 async function main(): Promise<number> {
-  loadHomeEnv();
+  dropBlankKeys(BUILTIN_PROVIDERS);
+  const envPath = join(sasacodeHome(), ".env");
+  const created = ensureEnvFile(envPath, BUILTIN_PROVIDERS);
+  loadEnvFile(envPath);
+  if (created && process.stderr.isTTY) console.error(`created ${envPath}: add your API key there`);
   if (process.argv[2] === "plugin") return pluginCommand(process.argv.slice(3), process.cwd());
   const { values, positionals } = parseArgs({
     allowPositionals: true,

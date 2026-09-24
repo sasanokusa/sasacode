@@ -94,5 +94,4 @@ case ":$PATH:" in
 esac
 
 say ""
-say "Next: put an API key in ~/.sasacode/.env (e.g. ANTHROPIC_API_KEY=..., OPENAI_API_KEY=... or CMD_API_KEY=...)"
-say "then run: sasacode"
+say "Next: fill in an API key in ~/.sasacode/.env (blank entries are ignored), then run: sasacode"

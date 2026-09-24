@@ -14,7 +14,7 @@ import {
   sessionDir,
   type UIBridge,
 } from "@sasacode/agent";
-import { BUILTIN_PROVIDERS, DEFAULT_MODEL, type ModelInfo, type ProviderConfig, registerApi, resolveModel, type ThinkingLevel } from "@sasacode/ai";
+import { BUILTIN_PROVIDERS, defaultModelFor, type ModelInfo, type ProviderConfig, registerApi, resolveModel, type ThinkingLevel } from "@sasacode/ai";
 import { bundledPlugins } from "@sasacode/bundled";
 import { createMcpPlugin, type McpServerConfig } from "@sasacode/mcp";
 import { createSkillsPlugin } from "@sasacode/skills";
@@ -69,7 +69,7 @@ export async function setup(opts: SetupOptions): Promise<Harness> {
   mkdirSync(home, { recursive: true });
 
   const agent = new Agent({
-    model: resolve(opts.model ?? config.model ?? DEFAULT_MODEL),
+    model: resolve(opts.model ?? config.model ?? defaultModelFor(providers)),
     cwd: opts.cwd,
     systemPrompt: buildSystemPrompt({ cwd: opts.cwd, append: config.instructions ? [config.instructions] : [] }),
     thinking: (opts.thinking ?? config.thinking ?? "high") as ThinkingLevel,
