@@ -22,7 +22,7 @@ A plugin is a module whose default export receives a `PluginAPI`. Everything in 
 - One file: `~/.sasacode/plugins/<name>.ts` (all projects) or `<project>/.sasacode/plugins/<name>.ts` (this project; the user is asked to trust it on first load).
 - A package: a directory with `plugin.json`:
   ```json
-  { "name": "my-plugin", "version": "0.1.0", "apiVersion": "^1.2.0", "extensions": ["src/index.ts"], "skills": "skills" }
+  { "name": "my-plugin", "version": "0.1.0", "apiVersion": "^1.3.0", "extensions": ["src/index.ts"], "skills": "skills" }
   ```
   or the same fields under `"sasacode"` in `package.json`.
 - TypeScript runs as-is (Bun); no build step. `import ... from "@sasacode/plugin-api"` works without installing it.
@@ -84,6 +84,8 @@ api.registerCommand({
   async run({ args }) {
     api.session.inject(`Summarize git log --since=midnight${args ? ` --author=${args}` : ""}`, "now");
   },
+  // Optional: tab completion for the argument.
+  complete: (prefix) => ["alice", "bob"].filter((a) => a.startsWith(prefix)).map((a) => ({ value: a, label: a })),
 });
 ```
 

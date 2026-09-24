@@ -18,7 +18,8 @@ Usage:
 Options:
   -p, --print <prompt>           headless mode (stdin is appended when piped)
       --output <text|jsonl>      headless output format (default text)
-  -m, --model <provider/model>   e.g. anthropic/claude-opus-5, openai/gpt-5, ollama/qwen3.8:27b
+  -m, --model <provider/model>   e.g. anthropic/claude-opus-5, openai/gpt-5.5, ollama/gemma4:e4b
+                                 (the TUI's /model lists what your providers offer)
       --permission <mode>        ${PERMISSION_MODES.join(" | ")} (default edits)
       --thinking <level>         off | low | medium | high | xhigh | max
       --max-turns <n>            stop after n turns (default unlimited)

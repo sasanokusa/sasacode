@@ -26,7 +26,7 @@
 
   <h2>インストール</h2>
   <div class="copy"><pre><code id="cmd">curl -fsSL https://sasanokusa.com/sasacode/install.sh | sh</code></pre><button onclick="navigator.clipboard.writeText(document.getElementById('cmd').textContent);this.textContent='copied'">copy</button></div>
-  <p>macOS（Apple Silicon / Intel）と Linux（x64 / arm64、glibc / musl）の単一バイナリを <code>~/.local/bin/sasacode</code> に置きます。Windows は WSL から使えます。バイナリは <a href="https://github.com/sasanokusa/sasacode/releases">GitHub Releases</a> の最新版から取得し、SHA256 を検証します。バージョンを固定するには <code>SASACODE_VERSION=v0.6.0</code>、置き場所を変えるには <code>SASACODE_INSTALL_DIR=…</code> を付けてください。</p>
+  <p>macOS（Apple Silicon / Intel）と Linux（x64 / arm64、glibc / musl）の単一バイナリを <code>~/.local/bin/sasacode</code> に置きます。Windows は WSL から使えます。バイナリは <a href="https://github.com/sasanokusa/sasacode/releases">GitHub Releases</a> の最新版から取得し、SHA256 を検証します。バージョンを固定するには <code>SASACODE_VERSION=v0.6.1</code>、置き場所を変えるには <code>SASACODE_INSTALL_DIR=…</code> を付けてください。</p>
 
   <h2>使い方</h2>
 <pre><code># API キーを ~/.sasacode/.env に書く（例）
@@ -42,6 +42,8 @@ sasacode -m openai/gpt-5.5         # モデルを指定</code></pre>
     <li>read / write / edit / bash と、4段階の権限モード、セッションの保存・再開・分岐</li>
     <li>TypeScript プラグイン、MCP サーバー、Agent Skills（SKILL.md）をそのまま利用</li>
     <li>同梱プラグイン：AGENTS.md、コンテキスト圧縮、サブエージェント、TODO、Web 取得、browsr</li>
+    <li>小型モデル向け：壊れたツール呼び出しの修復と、同じ文の繰り返しの抑止</li>
+    <li><code>/model</code> でプロバイダーのモデル一覧から選べる。<code>~/.sasacode/.env</code> にキーを書くだけで始められる</li>
   </ul>
 
   <p>ソースとドキュメント：<a href="https://github.com/sasanokusa/sasacode">github.com/sasanokusa/sasacode</a> · <a href="latest">最新バージョン</a></p>

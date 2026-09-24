@@ -20,7 +20,7 @@ export interface Config {
   /** Projects whose .sasacode/config.json may loosen permissions. */
   trustedProjects?: string[];
   plugins?: {
-    /** Plugin names not to load (bundled ones included: agents-md, compaction, subagent, todo, web-fetch, permission-presets, browsr, skills, mcp). */
+    /** Plugin names not to load (bundled ones included: tool-repair, repetition-guard, agents-md, compaction, subagent, todo, web-fetch, permission-presets, browsr, skills, mcp). */
     disabled?: string[];
     /** Per-plugin settings, handed to the plugin as api.settings. */
     settings?: Record<string, Record<string, unknown>>;

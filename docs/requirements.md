@@ -144,12 +144,13 @@ sasa-code-harness は TypeScript (Bun) で作るターミナル向けコーデ�
 | API | できること | 優先度 |
 | --- | --- | --- |
 | registerTool | JSON Schema（または zod）付きのツールを追加・同名で上書き | Must |
-| registerCommand | スラッシュコマンドを追加 | Must |
+| registerCommand | スラッシュコマンドを追加（引数の補完候補も返せる） | Must |
 | on(event) | ライフサイクルイベントを購読し、値を変更・ブロック（5.3） | Must |
 | registerProvider | LLMプロバイダーを追加 | Should |
 | ui.\* | confirm / select / notify、ツール結果レンダラー、ステータス行の追加 | Should |
 | session.\* | セッションへの独自エントリ書き込み・読み出し、メッセージの注入 | Should |
 | agent.\* | サブループの起動（サブエージェントをプラグインで実装するため） | Should |
+| ready | 起動時の非同期処理（サーバー接続など）をホストに知らせる。ヘッドレス実行はそれを待ってから始める | Should |
 
 ### 5.3 フック（イベント）
 
