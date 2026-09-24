@@ -10,7 +10,7 @@ TypeScript (Bun) で作るターミナル向けコーディングエージェン
 curl -fsSL https://sasanokusa.com/sasacode/install.sh | sh
 ```
 
-macOS（arm64 / x64）と Linux（x64 / arm64、glibc / musl、AVX2 のない CPU 向けの baseline 版）の単一バイナリを `~/.local/bin/sasacode` に置く。Bun は不要。`SASACODE_VERSION=v0.4.0` で版を固定でき、`SASACODE_INSTALL_DIR` で置き場所を変えられる。同じファイルは [GitHub Releases](https://github.com/sasanokusa/sasacode/releases) にもある。
+macOS（arm64 / x64）と Linux（x64 / arm64、glibc / musl、AVX2 のない CPU 向けの baseline 版）の単一バイナリを `~/.local/bin/sasacode` に置く。Bun は不要。`SASACODE_VERSION=v0.5.0` で版を固定でき、`SASACODE_INSTALL_DIR` で置き場所を変えられる。インストーラーとバイナリは [GitHub Releases](https://github.com/sasanokusa/sasacode/releases) の最新版から取得する（sasanokusa.com の URL は最新リリースの `install.sh` へのリダイレクト）。
 
 **ソースから**（[Bun](https://bun.sh) 1.4 以上が必要）：
 
@@ -162,7 +162,7 @@ bun run typecheck
 bun run build     # dist/sasacode（このマシン向け）。--all で全ターゲット
 ```
 
-リリースの手順：`v*` タグを push すると GitHub Actions がバイナリをビルドして GitHub Release を作る（macOS 版は macOS のランナーでビルドし、起動を確認する）。その後 `scripts/publish-site.sh <version>` で sasanokusa.com/sasacode に同じファイルを置き、`latest` を切り替える。
+リリースの手順：`v*` タグを push すると GitHub Actions がバイナリをビルドして GitHub Release を作る（macOS 版は macOS のランナーでビルドし、起動を確認する）。sasanokusa.com からのインストールも、それだけで新しい版になる（サイトの案内ページを変えたときだけ `scripts/publish-site.sh` を実行する）。
 
 | パッケージ | 責務 |
 | --- | --- |

@@ -1,12 +1,7 @@
-# Installer and version pointer must never be served stale (Cloudflare or browsers).
-<FilesMatch "^(install\.sh|latest)$">
-  Header set Cache-Control "no-cache, no-store, must-revalidate"
-  ForceType text/plain
-</FilesMatch>
-<FilesMatch "\.tar\.gz$">
-  Header set Cache-Control "public, max-age=31536000, immutable"
-</FilesMatch>
-<FilesMatch "^SHA256SUMS$">
-  ForceType text/plain
-</FilesMatch>
+# The installer lives in the latest GitHub release (attached by the release workflow), so
+# publishing a release is enough; nothing on this site needs updating.
+RewriteEngine On
+RewriteRule ^install\.sh$ https://github.com/sasanokusa/sasacode/releases/latest/download/install.sh [R=302,L]
+RewriteRule ^latest$ https://github.com/sasanokusa/sasacode/releases/latest [R=302,L]
+Header always set Cache-Control "no-cache, no-store, must-revalidate" "expr=%{REQUEST_URI} =~ m#/(install\.sh|latest)$#"
 Options -Indexes

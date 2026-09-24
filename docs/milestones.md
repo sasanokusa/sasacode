@@ -61,7 +61,7 @@ Anthropic ネイティブの tool search（Should）は未対応で、全プロ�
 
 ### M4 以降の追加
 
-- **配布**：`curl -fsSL https://sasanokusa.com/sasacode/install.sh | sh` の1コマンドでインストールできる。インストーラーは OS・CPU・libc・AVX2 の有無を見て 7 種類のバイナリから選び、SHA256 を検証して配置し、起動できるかも確かめる。配布ファイルは GitHub Release と sasanokusa.com（Cloudflare Tunnel → Apache）の両方に置いている。
+- **配布**：`curl -fsSL https://sasanokusa.com/sasacode/install.sh | sh` の1コマンドでインストールできる。インストーラーは OS・CPU・libc・AVX2 の有無を見て 7 種類のバイナリから選び、SHA256 を検証して配置し、起動できるかも確かめる。インストーラーとバイナリは GitHub Releases の最新版から取得する。sasanokusa.com/sasacode/install.sh は最新リリースの install.sh へのリダイレクト（Cloudflare Tunnel → Apache の .htaccess）なので、タグを打つだけで配布も最新になる。
 - **browsr プラグイン**：browsr-4-agent の manifest v1 を読んで互換性を確かめ、`browsr-agent serve` を MCP サーバーとして起動する。`search` / `open` を元の名前のまま公開する。実モデルで、検索 → ページを開く → 出典付きで回答、という流れを確認した。
 - **組み込み Skill `tool-authoring`**：実モデルで `/skill:tool-authoring` から `now` ツールのプラグインを作らせ、テストを通し、作ったツールを sasacode から呼び出せることを確認した。
 - **プラグイン API 1.1.0**：`api.ready()` を追加した（既存を壊さない変更）。ヘッドレス実行では、MCP サーバーなどの起動処理を待ってから最初のリクエストを送る。

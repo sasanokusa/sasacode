@@ -2,13 +2,15 @@
 # sasacode installer
 #   curl -fsSL https://sasanokusa.com/sasacode/install.sh | sh
 #
+# Binaries come from GitHub Releases, so a new release is picked up without touching the site.
+#
 # Environment:
-#   SASACODE_VERSION       version to install, e.g. v0.4.0 (default: latest)
+#   SASACODE_VERSION       version to install, e.g. v0.5.0 (default: the latest release)
 #   SASACODE_INSTALL_DIR   where to put the binary (default: ~/.local/bin)
-#   SASACODE_DOWNLOAD_BASE download site (default: https://sasanokusa.com/sasacode)
+#   SASACODE_DOWNLOAD_BASE releases URL (default: https://github.com/sasanokusa/sasacode/releases)
 set -eu
 
-BASE="${SASACODE_DOWNLOAD_BASE:-https://sasanokusa.com/sasacode}"
+BASE="${SASACODE_DOWNLOAD_BASE:-https://github.com/sasanokusa/sasacode/releases}"
 INSTALL_DIR="${SASACODE_INSTALL_DIR:-$HOME/.local/bin}"
 VERSION="${SASACODE_VERSION:-}"
 
@@ -54,17 +56,18 @@ if [ "$os" = linux ]; then
 fi
 
 # ── download ────────────────────────────────────────────────────────
-if [ -z "$VERSION" ]; then
-  VERSION="$(fetch "$BASE/latest" | tr -d '[:space:]')" || die "could not read $BASE/latest"
+# Pin the release once, so the archive and its checksum always come from the same one.
+# (…/releases/latest redirects to …/releases/tag/<version>.)
+if [ -z "$VERSION" ] && command -v curl >/dev/null 2>&1; then
+  VERSION="$(curl -fsSLI -o /dev/null -w '%{url_effective}' "$BASE/latest" 2>/dev/null | sed -n 's|.*/tag/||p')" || VERSION=""
 fi
-[ -n "$VERSION" ] || die "could not determine the latest version"
+if [ -n "$VERSION" ]; then url="$BASE/download/$VERSION"; else url="$BASE/latest/download"; fi
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT INT TERM
 archive="sasacode-$target.tar.gz"
-url="$BASE/releases/$VERSION"
 
-say "Downloading sasacode $VERSION ($target)..."
+say "Downloading sasacode ${VERSION:-latest} ($target)..."
 fetch "$url/$archive" "$tmp/$archive" || die "download failed: $url/$archive"
 fetch "$url/SHA256SUMS" "$tmp/SHA256SUMS" || die "download failed: $url/SHA256SUMS"
 
