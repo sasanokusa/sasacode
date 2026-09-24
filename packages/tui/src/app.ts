@@ -4,13 +4,17 @@ import {
   type Component,
   Container,
   Editor,
+  getKeybindings,
   Loader,
   matchesKey,
   ProcessTerminal,
+  ScrollView,
   Spacer,
   type TUI,
   truncateToWidth,
+  TuiAltScreen,
   TuiMainScreen,
+  VStack,
 } from "@earendil-works/pi-tui";
 import {
   type Agent,
@@ -28,6 +32,7 @@ import { type ModelInfo, textOf, type ThinkingLevel, type ToolCall } from "@sasa
 import type { CommandDefinition, SelectOption } from "@sasacode/plugin-api";
 import { matchAmbiguousWidth } from "./ambiguous.ts";
 import { ApprovalDialog, Picker } from "./dialogs.ts";
+import { exitSummary, fmtDuration, UsageTally, usageLines } from "./summary.ts";
 import { c, editorTheme } from "./theme.ts";
 import { AssistantView, display, Notice, ToolView, UserView } from "./views.ts";
 
@@ -41,12 +46,15 @@ const EFFORT_LABELS: Record<ThinkingLevel, string> = {
   max: "最大（対応していないモデルでは xhigh 相当）",
 };
 
+/** Runs at least this long end with the terminal bell (tui.bell). */
+const BELL_AFTER_MS = 30_000;
+
 /** What the TUI needs from the CLI. */
 export interface TuiHost {
   agent: Agent;
   host: PluginHost;
   warnings: string[];
-  config: { models?: string[] };
+  config: { models?: string[]; tui?: { altScreen?: boolean; bell?: boolean } };
   resolve(spec: string): ModelInfo;
   sessionsDir: string;
   historyPath?: string;
@@ -77,24 +85,49 @@ class App {
   private queued: string[] = [];
   private totalCost = 0;
   private contextTokens = 0;
+  private usage = new UsageTally();
+  private runStarted = 0;
   private lastCtrlC = 0;
   private exit?: (code: number) => void;
   private ready?: Promise<void>;
   private approvals: Promise<unknown> = Promise.resolve();
 
   constructor(private host: TuiHost) {
-    this.tui = new TuiMainScreen(new ProcessTerminal());
+    // Full screen by default: the transcript scrolls above a fixed input line, and on exit the
+    // terminal comes back as it was, with a short summary instead of the whole conversation.
+    const fullscreen = host.config.tui?.altScreen !== false;
+    this.tui = fullscreen
+      ? new TuiAltScreen(new ProcessTerminal(), false, undefined, {
+          mouse: true,
+          wheelScrollLines: 3,
+          scrollToEndIndicator: () => c.inverse(" ↓ 最新へ (ctrl+end) "),
+        })
+      : new TuiMainScreen(new ProcessTerminal());
+    // home/end stay with the input line; the transcript jumps with ctrl+home/end.
+    if (fullscreen) getKeybindings().setUserBindings({ "tui.altScreen.top": "ctrl+home", "tui.altScreen.bottom": "ctrl+end" });
     this.editor = new Editor(this.tui, editorTheme, { paddingX: 1 });
     this.editor.onSubmit = (text) => this.submit(text);
     for (const h of this.loadHistory()) this.editor.addToHistory(h);
 
     const header = new Notice(`${c.bold("sasacode")} ${c.gray(host.agent.cwd)}\n${c.gray("/help でコマンド一覧 · esc で中断 · ctrl+o で詳細表示 · shift+tab で権限モード切替")}`);
     for (const w of host.warnings) this.chat.addChild(new Notice(`warning: ${w}`, c.yellow));
-    this.tui.addChild(header);
-    this.tui.addChild(this.chat);
-    this.tui.addChild(this.status);
-    this.tui.addChild(this.inputSlot);
-    this.tui.addChild(this.footer);
+    if (this.tui instanceof TuiAltScreen) {
+      const transcript = new Container();
+      transcript.addChild(header);
+      transcript.addChild(this.chat);
+      const dock = new VStack([
+        { component: this.status, shrink: 1, minSize: 0 },
+        { component: this.inputSlot, shrink: 1, minSize: 3 },
+        { component: this.footer, shrink: 1, minSize: 0 },
+      ]);
+      for (const part of [transcript, this.status, this.inputSlot, this.footer]) this.tui.addChild(part);
+      this.tui.setLayoutRoot(
+        new VStack([
+          { component: new ScrollView(transcript, { follow: "end", primary: true, overscroll: "chain", scrollbar: "auto" }), basis: 0, grow: 1, shrink: 1, minSize: 1 },
+          { component: dock, basis: "auto", grow: 0, shrink: 1, minSize: 1 },
+        ]),
+      );
+    } else for (const part of [header, this.chat, this.status, this.inputSlot, this.footer]) this.tui.addChild(part);
     this.showEditor();
 
     host.agent.approve = (req) => this.askApproval(req);
@@ -126,10 +159,11 @@ class App {
     return new Promise((resolve) => {
       this.exit = (code) => {
         void this.host.shutdown().finally(() => {
-          this.tui.stop();
+          // Full screen: leave without copying the transcript onto the normal screen (that is the point).
+          this.tui.stop({ preserveScreen: this.tui instanceof TuiAltScreen });
           const s = this.host.agent.session;
-          // Without tmux the terminal is gone after this; leave the way back on screen.
-          if (s && existsSync(s.path)) process.stdout.write(`\r\x1b[2K${c.gray(`再開: sasacode -r ${s.id}`)}\n`);
+          // What was used, and the way back (the session is gone from the screen now).
+          process.stdout.write(`\r\x1b[2K${exitSummary(this.usage, s && existsSync(s.path) ? s.id : undefined)}`);
           resolve(code);
         });
       };
@@ -212,6 +246,8 @@ class App {
     if (!text.trim()) return;
     this.editor.addToHistory(text);
     this.saveHistory(text);
+    // Whatever comes back appears at the end: follow it again if the user had scrolled up.
+    if (this.tui instanceof TuiAltScreen) this.tui.scrollToBottom();
     if (text.startsWith("/")) {
       void this.runCommand(text);
       return;
@@ -229,6 +265,7 @@ class App {
   private onEvent(e: AgentEvent): void {
     switch (e.type) {
       case "agent_start":
+        this.runStarted = Date.now();
         this.loader = new Loader(this.tui, c.cyan, c.gray, "考え中… (esc で中断)");
         this.loader.start();
         this.renderStatus();
@@ -266,6 +303,7 @@ class App {
           this.current?.update(m);
           for (const b of m.content) if (b.type === "tool_call") this.describeTool(b);
           this.totalCost += m.usage.cost;
+          this.usage.add(m);
           const ctx = m.usage.input + m.usage.cacheRead + m.usage.cacheWrite + m.usage.output;
           if (ctx) this.contextTokens = ctx;
           if (m.stopReason === "refusal") this.chat.addChild(new Notice("モデルが応答を拒否しました", c.yellow));
@@ -321,6 +359,8 @@ class App {
       case "agent_end":
         this.loader?.stop();
         this.loader = undefined;
+        // A run long enough to switch windows ends with the terminal bell (a badge or sound, per terminal).
+        if (this.host.config.tui?.bell !== false && e.cause !== "aborted" && Date.now() - this.runStarted >= BELL_AFTER_MS) process.stdout.write("\x07");
         if (e.cause === "aborted") this.chat.addChild(new Notice("中断しました", c.yellow));
         if (e.cause === "max_turns") void this.offerToContinue();
         if (e.cause === "stopped" && e.stopped) this.chat.addChild(new Notice(`${e.stopped.plugin} が停止しました: ${e.stopped.reason}`, c.yellow));
@@ -399,6 +439,8 @@ class App {
         run: ({ args }) => this.effortCommand(args),
         complete: async (prefix) => EFFORTS.filter((e) => e.startsWith(prefix)).map((e) => ({ value: e, label: e, description: EFFORT_LABELS[e] })),
       },
+      { name: "usage", description: "起動してから使ったトークン数・リクエスト数・料金", run: () => this.notify([c.bold(`使用量（起動から ${fmtDuration(Date.now() - this.usage.startedAt)}）`), ...usageLines(this.usage)].join("\n"), (s) => s) },
+      { name: "copy", description: "直前の応答をクリップボードにコピー", run: () => this.copyCommand() },
       { name: "resume", description: "過去のセッションを再開", run: () => this.resumeCommand() },
       { name: "clear", description: "新しいセッションを始める", run: () => this.clearCommand() },
       { name: "permission", description: "権限モードを切り替える", argumentHint: PERMISSION_MODES.join("|"), run: ({ args }) => this.permissionCommand(args) },
@@ -432,6 +474,12 @@ class App {
         c.bold("キー"),
         "  enter 送信 · shift/alt+enter 改行 · ↑↓ 履歴 · tab 補完",
         "  esc 中断 · ctrl+o 詳細表示 · shift+tab 権限モード · /exit・ctrl+c×2・ctrl+d 終了",
+        ...(this.tui instanceof TuiAltScreen
+          ? [
+              "  pageup/pagedown・ホイール スクロール · ctrl+↑↓ 前後の入力へ · ctrl+home/end 先頭・最新へ",
+              "  ctrl+shift+f 会話内を検索 · ドラッグで選択してコピー（端末の選択は option/alt を押しながら）",
+            ]
+          : []),
         c.gray("  実行中に送ったメッセージは次のターンでモデルに届きます"),
       ].join("\n"),
       (s) => s,
@@ -556,6 +604,25 @@ class App {
     }
     if (!PERMISSION_MODES.includes(mode)) throw new Error(`モードは ${PERMISSION_MODES.join(", ")} のいずれかです`);
     this.setMode(mode);
+  }
+
+  /** The last response's text, to the system clipboard (pbcopy / wl-copy / xclip, else OSC 52). */
+  private async copyCommand(): Promise<void> {
+    const last = [...this.host.agent.messages].reverse().find((m) => m.role === "assistant" && textOf(m.content).trim());
+    const text = last ? textOf(last.content).trim() : "";
+    if (!text) return this.notify("コピーする応答がありません", c.yellow);
+    const tools = process.platform === "darwin" ? [["pbcopy"]] : [["wl-copy"], ["xclip", "-selection", "clipboard"], ["xsel", "--clipboard", "--input"]];
+    for (const cmd of tools) {
+      try {
+        const p = Bun.spawn(cmd, { stdin: "pipe", stdout: "ignore", stderr: "ignore" });
+        p.stdin.write(text);
+        await p.stdin.end();
+        if ((await p.exited) === 0) return this.notify(`直前の応答をコピーしました（${text.length} 文字）`);
+      } catch {}
+    }
+    // No clipboard tool (e.g. over SSH): ask the terminal to do it.
+    process.stdout.write(`\x1b]52;c;${Buffer.from(text).toString("base64")}\x07`);
+    this.notify(`直前の応答をコピーしました（端末経由・${text.length} 文字）`);
   }
 
   private async effortCommand(args: string): Promise<void> {

@@ -29,6 +29,12 @@ export interface Config {
   tools?: { disabled?: string[] };
   mcpServers?: Record<string, McpServerConfig>;
   toolSearch?: ToolSearchConfig;
+  tui?: {
+    /** Full-screen transcript that disappears on exit, leaving a summary (default true). */
+    altScreen?: boolean;
+    /** Ring the terminal bell when a run that took a while finishes (default true). */
+    bell?: boolean;
+  };
 }
 
 export type McpServerConfig =
@@ -77,6 +83,7 @@ const CHECKS: Record<keyof Config, (v: unknown) => boolean> = {
   tools: (v) => isObject(v) && (v.disabled === undefined || isStrings(v.disabled)),
   mcpServers: isObjectOfObjects,
   toolSearch: isObject,
+  tui: (v) => isObject(v) && ["altScreen", "bell"].every((k) => v[k] === undefined || typeof v[k] === "boolean"),
 };
 
 export function sanitizeConfig(raw: unknown, source: string, warnings: string[]): Config {
@@ -137,7 +144,7 @@ export function splitProjectConfig(project: Config, global: Config): { safe: Con
     return !!BUILTIN_PROVIDERS[name] || !!global.providers?.[name];
   };
   // tools.disabled only adds to the user's list (see mergeConfig).
-  for (const key of ["thinking", "instructions", "toolSearch", "tools"] as const) if (project[key] !== undefined) (safe as any)[key] = project[key];
+  for (const key of ["thinking", "instructions", "toolSearch", "tools", "tui"] as const) if (project[key] !== undefined) (safe as any)[key] = project[key];
   // 0 turns means no limit, so it is the loosest value.
   const turns = (n: number | undefined) => (n ? n : Infinity);
   if (project.maxTurns !== undefined) (turns(project.maxTurns) <= turns(global.maxTurns ?? DEFAULT_MAX_TURNS) ? safe : elevated).maxTurns = project.maxTurns;

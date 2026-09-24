@@ -60,6 +60,8 @@ sasacode -r <id> -p "続き"            # セッション ID を指定して続�
 
 ### TUI
 
+全画面で動く。会話は上でスクロールし、入力欄とフッターは下に固定される。終了すると端末は起動前の状態に戻り、会話の代わりに要約（使ったトークン数・リクエスト数・料金・モデル・再開コマンド）だけが残る。従来どおり会話を端末に残したいときは、設定で `"tui": { "altScreen": false }` にする。
+
 | キー | 動作 |
 | --- | --- |
 | enter / shift+enter・alt+enter | 送信 / 改行 |
@@ -69,7 +71,12 @@ sasacode -r <id> -p "続き"            # セッション ID を指定して続�
 | 実行中に enter | メッセージを予約し、次のターンで届ける |
 | ctrl+o | ツール出力と thinking の折りたたみを切り替え |
 | shift+tab | 権限モードを順に切り替え |
-| `/exit`・ctrl+c ×2・ctrl+d | 終了（終了時に `再開: sasacode -r <id>` を表示） |
+| pageup / pagedown・ホイール | 会話をスクロール（上に戻っている間は右端にスクロールバーと「最新へ」を表示） |
+| ctrl+↑ / ctrl+↓ | 前 / 次の自分の入力へ移動 |
+| ctrl+home / ctrl+end | 会話の先頭 / 最新へ |
+| ctrl+shift+f | 会話の中を検索（enter で次、shift+enter で前、esc で閉じる） |
+| ドラッグ | 選択してクリップボードにコピー（端末の標準の選択は option / alt を押しながら） |
+| `/exit`・ctrl+c ×2・ctrl+d | 終了（使用量と `sasacode -r <id>` の要約を表示） |
 
 起動時に、①のような幅の曖昧な文字（East Asian Ambiguous）を端末が何マスで表示するかを問い合わせて、表示の計算を合わせる。端末が答えない場合は1マスとして扱う。`SASACODE_AMBIGUOUS_WIDTH=1` か `2` で明示できる。
 
@@ -78,10 +85,12 @@ sasacode -r <id> -p "続き"            # セッション ID を指定して続�
 | `/model` | プロバイダーから取得したモデル一覧から選ぶ。文字を打つと絞り込める。`/model <provider/model>` で直接指定、`/model --refresh` で取り直す |
 | `/resume` `/clear` `/fork` `/session` | 過去のセッション / 新しいセッション / 過去のメッセージから分岐 / ID と保存先 |
 | `/effort` | 推論の深さ（`off` / `low` / `medium` / `high` / `xhigh` / `max`）を切り替える。引数なしなら一覧から選ぶ。現在の値はフッターに出る |
+| `/usage` | 起動してから使ったトークン数（入力・出力・キャッシュ）、リクエスト数、料金 |
+| `/copy` | 直前の応答をクリップボードにコピー（pbcopy / wl-copy / xclip、なければ端末経由） |
 | `/permission` `/help` `/exit`（`/quit`） | 権限モード / ヘルプ / 終了 |
 | `/compact` `/mcp` `/skills` `/skill:<name>` `/presets` `/browsr` | 同梱プラグインのコマンド |
 
-フッターには、モデル、権限モード、コンテキストの使用量、セッション ID と、プラグインのステータス（MCP の接続数、TODO の進捗など）を出す。
+フッターには、モデル、推論の深さ、権限モード、コンテキストの使用量、セッション ID と、プラグインのステータス（MCP の接続数、TODO の進捗など）を出す。30 秒以上かかった実行が終わると、端末のベルを鳴らす（別の作業をしていても気づけるように。`"tui": { "bell": false }` で止める）。
 
 ## プロバイダーとモデル
 
@@ -137,6 +146,7 @@ sasacode -m llama/<モデル名>
   "plugins": { "disabled": ["web-fetch"], "settings": { "permission-presets": { "presets": ["guard", "tests"] } } },
   "tools": { "disabled": [] },
   "toolSearch": { "mode": "auto", "percent": 10, "count": 30 },
+  "tui": { "altScreen": true, "bell": true },
   "trustedProjects": ["/path/to/project"]
 }
 ```

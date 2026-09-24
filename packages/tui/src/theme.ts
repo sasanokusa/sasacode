@@ -8,6 +8,7 @@ export const c = {
   italic: sgr("3", "23"),
   underline: sgr("4", "24"),
   strike: sgr("9", "29"),
+  inverse: sgr("7", "27"),
   red: sgr("31", "39"),
   green: sgr("32", "39"),
   yellow: sgr("33", "39"),

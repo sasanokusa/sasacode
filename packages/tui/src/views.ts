@@ -14,7 +14,8 @@ export class UserView extends Text {
       .map((b) => (b.type === "text" ? b.text : "[image]"))
       .filter((t) => !t.startsWith("[The user interrupted"))
       .join("\n");
-    super(c.bgUser(`> ${text}`), 0, 0);
+    // OSC 133 "prompt start": terminals and the full-screen view (ctrl+up/down) jump between prompts.
+    super(`\x1b]133;A\x07${c.bgUser(`> ${text}`)}`, 0, 0);
   }
 }
 
