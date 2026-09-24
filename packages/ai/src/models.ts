@@ -2,7 +2,6 @@ import type { ModelInfo, ProviderConfig } from "./types.ts";
 
 export type { ProviderConfig } from "./types.ts";
 
-
 /** Order matters: with no model configured, the first provider whose key is set supplies the default. */
 export const BUILTIN_PROVIDERS: Record<string, ProviderConfig> = {
   anthropic: { api: "anthropic", apiKeyEnv: "ANTHROPIC_API_KEY", label: "Anthropic", defaultModel: "claude-opus-5" },
@@ -26,6 +25,9 @@ export const BUILTIN_PROVIDERS: Record<string, ProviderConfig> = {
   },
   "commandcode-responses": { api: "openai-responses", baseUrl: "https://api.commandcode.ai/provider/v1", apiKeyEnv: "CMD_API_KEY" },
   "commandcode-anthropic": { api: "anthropic", baseUrl: "https://api.commandcode.ai/provider", apiKeyEnv: "CMD_API_KEY" },
+  // A ChatGPT plan instead of an API key (`sasacode login`). The bundled openai-codex plugin
+  // implements the api; without it (plugins.disabled) these models are simply unavailable.
+  "openai-codex": { api: "openai-codex", baseUrl: "https://chatgpt.com/backend-api/codex", defaultModel: "gpt-5.5" },
 };
 
 type Known = Omit<ModelInfo, "id" | "provider" | "api" | "baseUrl">;

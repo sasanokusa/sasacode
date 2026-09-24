@@ -25,6 +25,7 @@ export function openaiClient(req: Request): OpenAI {
     baseURL: req.model.baseUrl,
     maxRetries: req.maxRetries ?? 8,
     defaultHeaders: req.model.headers,
+    ...(req.fetch ? { fetch: req.fetch } : {}),
   });
 }
 

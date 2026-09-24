@@ -21,7 +21,7 @@ export interface Config {
   /** Projects trusted without asking (global config only). */
   trustedProjects?: string[];
   plugins?: {
-    /** Plugin names not to load (bundled ones included: tool-repair, repetition-guard, agents-md, compaction, subagent, todo, web-fetch, permission-presets, browsr, skills, mcp). */
+    /** Plugin names not to load (bundled ones included: tool-repair, repetition-guard, agents-md, compaction, subagent, todo, web-fetch, permission-presets, browsr, openai-codex, skills, mcp). */
     disabled?: string[];
     /** Per-plugin settings, handed to the plugin as api.settings. */
     settings?: Record<string, Record<string, unknown>>;

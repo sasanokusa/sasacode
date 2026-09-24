@@ -119,6 +119,11 @@ export interface Request {
   maxRetries?: number;
   sampling?: SamplingOptions;
   signal?: AbortSignal;
+  /**
+   * Replaces the HTTP client's fetch, e.g. for a provider that wraps another and must adjust the
+   * request on the wire (the openai-codex plugin drops fields its backend rejects).
+   */
+  fetch?: typeof fetch;
 }
 
 export type StreamEvent =
@@ -133,6 +138,11 @@ export type StreamEvent =
 export interface Provider {
   api: Api;
   stream(req: Request): AsyncGenerator<StreamEvent>;
+  /**
+   * The models this provider offers, for /model. Without it, the provider's Models API is asked
+   * (GET /models for the OpenAI and Anthropic formats).
+   */
+  listModels?(config: ProviderConfig, apiKey: string | undefined, signal?: AbortSignal): Promise<{ id: string; contextWindow?: number; maxOutput?: number }[]>;
 }
 
 export class ContextOverflowError extends Error {

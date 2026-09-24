@@ -3,6 +3,7 @@ import agentsMd from "./agents-md.ts";
 import browsr from "./browsr.ts";
 import compaction from "./compaction.ts";
 import loopGuard from "./loop-guard.ts";
+import openaiCodex from "./openai-codex/index.ts";
 import permissionPresets from "./permission-presets.ts";
 import repetitionGuard from "./repetition-guard.ts";
 import subagent from "./subagent.ts";
@@ -16,6 +17,7 @@ export { PRESETS } from "./permission-presets.ts";
 export { detectRepetition } from "./repetition-guard.ts";
 export { closestName, editDistance, fitToSchema, repairJson } from "./tool-repair.ts";
 export { htmlToText } from "./web-fetch.ts";
+export { codexLogin, codexLogout, codexStatus, readCodexAuth } from "./openai-codex/index.ts";
 
 /** Officially shipped plugins. Each can be turned off with plugins.disabled. */
 export const bundledPlugins: Record<string, Plugin> = {
@@ -29,4 +31,5 @@ export const bundledPlugins: Record<string, Plugin> = {
   "web-fetch": webFetch,
   "permission-presets": permissionPresets,
   browsr,
+  "openai-codex": openaiCodex,
 };

@@ -24,7 +24,7 @@ export const openaiResponsesProvider: Provider = {
     const params: ResponseCreateParamsStreaming = {
       model: model.id,
       instructions: req.system,
-      input: toResponsesInput(req.messages, model.id),
+      input: toResponsesInput(req.messages, model),
       stream: true,
       store: false,
       max_output_tokens: req.maxTokens ?? model.maxOutput,
@@ -154,14 +154,15 @@ function inputContent(content: UserContent[]) {
   );
 }
 
-function toResponsesInput(messages: Message[], modelId: string): ResponseInputItem[] {
+function toResponsesInput(messages: Message[], model: Request["model"]): ResponseInputItem[] {
   const out: ResponseInputItem[] = [];
   for (const m of messages) {
     if (m.role === "user") out.push({ role: "user", content: inputContent(m.content) });
     else if (m.role === "tool")
       out.push({ type: "function_call_output", call_id: m.toolCallId, output: inputContent(m.content) });
     else {
-      const sameModel = m.api === "openai-responses" && m.model === modelId;
+      // Encrypted reasoning only goes back to the service and model that produced it.
+      const sameModel = m.api === model.api && m.provider === model.provider && m.model === model.id;
       for (const c of m.content) {
         if (c.type === "text") {
           if (c.text) out.push({ role: "assistant", content: c.text });

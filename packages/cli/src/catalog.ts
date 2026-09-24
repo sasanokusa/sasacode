@@ -1,4 +1,4 @@
-import { API_ENDPOINT, KNOWN_MODELS, listModels, type ModelInfo, type ProviderConfig } from "@sasacode/ai";
+import { API_ENDPOINT, getProvider, KNOWN_MODELS, type ListedModel, listModels, type ModelInfo, type Provider, type ProviderConfig } from "@sasacode/ai";
 
 export interface ModelChoice {
   /** "<provider>/<model>" */
@@ -66,7 +66,13 @@ export class ModelCatalog {
     const p = this.providers[primary]!;
     const key = await this.getKey(primary);
     if (p.apiKeyEnv && !key && !members.includes(this.currentProvider())) return [];
-    const models = await listModels(p, key, AbortSignal.timeout(8000));
+    // A provider implementation (e.g. from a plugin) may know its own models.
+    let impl: Provider | undefined;
+    try {
+      impl = getProvider(p.api);
+    } catch {}
+    const signal = AbortSignal.timeout(8000);
+    const models: ListedModel[] = impl?.listModels ? await impl.listModels(p, key, signal) : await listModels(p, key, signal);
     const out: ModelChoice[] = [];
     for (const m of models) {
       const target = m.endpoints

@@ -15,7 +15,7 @@ import {
   type UIBridge,
 } from "@sasacode/agent";
 import { BUILTIN_PROVIDERS, defaultModelFor, type ModelInfo, type ProviderConfig, registerApi, resolveModel, type ThinkingLevel } from "@sasacode/ai";
-import { bundledPlugins } from "@sasacode/bundled";
+import { bundledPlugins, readCodexAuth } from "@sasacode/bundled";
 import { createMcpPlugin, type McpServerConfig } from "@sasacode/mcp";
 import { createSkillsPlugin } from "@sasacode/skills";
 import builtinTools from "@sasacode/tools";
@@ -24,6 +24,15 @@ import { discoverPlugins, type FoundPlugin, importExtensions } from "./loader.ts
 import { type ModelChoice, ModelCatalog } from "./catalog.ts";
 import { resolveEndpoints } from "./endpoints.ts";
 import { resolveApiKey } from "./keys.ts";
+
+/**
+ * The first provider whose API key is set; with no key at all but a ChatGPT login, that plan.
+ */
+function defaultModel(providers: Record<string, ProviderConfig>, codex: boolean): string {
+  const anyKey = Object.values(providers).some((p) => p.apiKeyEnv && process.env[p.apiKeyEnv]?.trim());
+  if (!anyKey && codex && readCodexAuth()) return `openai-codex/${providers["openai-codex"]?.defaultModel ?? "gpt-5.5"}`;
+  return defaultModelFor(providers);
+}
 
 export interface SetupOptions {
   cwd: string;
@@ -84,7 +93,7 @@ export async function setup(opts: SetupOptions): Promise<Harness> {
   mkdirSync(home, { recursive: true });
 
   const agent = new Agent({
-    model: resolve(opts.model ?? config.model ?? defaultModelFor(providers)),
+    model: resolve(opts.model ?? config.model ?? defaultModel(providers, !config.plugins?.disabled?.includes("openai-codex"))),
     cwd: opts.cwd,
     systemPrompt: buildSystemPrompt({ cwd: opts.cwd, append: config.instructions ? [config.instructions] : [] }),
     thinking: (opts.thinking ?? config.thinking ?? "high") as ThinkingLevel,
@@ -115,6 +124,8 @@ export async function setup(opts: SetupOptions): Promise<Harness> {
   });
   // Built-in tools go through the same API as everything else (P2); they load first and synchronously.
   await host.load("builtin-tools", builtinTools);
+  // Loaded now, not with the other plugins: /model lists its models at startup.
+  if (!disabled.has("openai-codex")) await host.load("openai-codex", bundledPlugins["openai-codex"]!);
 
   let sessionEntries: Parameters<PluginHost["setSessionEntries"]>[0] = [];
   const startSession = async (resumed: boolean) => {
@@ -159,7 +170,7 @@ export async function setup(opts: SetupOptions): Promise<Harness> {
   const loadPlugins = (ui: UIBridge = headlessUI) =>
     (loading ??= (async () => {
       host.setUI(ui);
-      for (const [name, plugin] of Object.entries(bundledPlugins)) if (!disabled.has(name)) await host.load(name, plugin);
+      for (const [name, plugin] of Object.entries(bundledPlugins)) if (!disabled.has(name) && name !== "openai-codex") await host.load(name, plugin);
 
       const found = discoverPlugins(opts.cwd).filter((p) => !disabled.has(p.manifest.name));
       const skipped = found.filter((p) => p.scope === "project" && !trusted);

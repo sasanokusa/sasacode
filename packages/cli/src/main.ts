@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { parseArgs } from "node:util";
 import { PERMISSION_MODES } from "@sasacode/agent";
 import { BUILTIN_PROVIDERS } from "@sasacode/ai";
+import { codexLogin, codexLogout, codexStatus } from "@sasacode/bundled";
 import { sasacodeHome } from "./config.ts";
 import { dropBlankKeys, ensureEnvFile, loadEnvFile } from "./env.ts";
 import { runHeadless } from "./headless.ts";
@@ -39,6 +40,7 @@ Subcommands:
   sasacode endpoint add <name> <url> [--key-env VAR] [--project]   add a server (format detected)
   sasacode endpoint remove <name> [--project]
   sasacode endpoint list
+  sasacode login [status|logout]    use a ChatGPT plan instead of an API key (openai-codex/… models)
   -h, --help
   -v, --version`;
 
@@ -64,6 +66,7 @@ async function main(): Promise<number> {
   if (created && process.stderr.isTTY) console.error(`created ${envPath}: add your API key there`);
   if (process.argv[2] === "plugin") return pluginCommand(process.argv.slice(3), process.cwd());
   if (process.argv[2] === "endpoint") return endpointCommand(process.argv.slice(3), process.cwd());
+  if (process.argv[2] === "login") return loginCommand(process.argv[3]);
   const { values, positionals } = parseArgs({
     allowPositionals: true,
     options: {
@@ -133,4 +136,19 @@ function turnsArg(v: string): number {
   const n = Number(v);
   if (!Number.isInteger(n) || n < 0) throw new Error(`--max-turns needs a whole number (0 = no limit), got "${v}"`);
   return n;
+}
+
+async function loginCommand(sub: string | undefined): Promise<number> {
+  if (sub === "status") {
+    const s = codexStatus();
+    console.log(s.text);
+    return s.ok ? 0 : 1;
+  }
+  if (sub === "logout") {
+    console.log(codexLogout());
+    return 0;
+  }
+  if (sub) throw new Error(`unknown login subcommand "${sub}" (status, logout)`);
+  await codexLogin();
+  return 0;
 }

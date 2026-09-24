@@ -56,6 +56,7 @@ sasacode -r <id> -p "続き"            # セッション ID を指定して続�
 | `--trust-project` | プロジェクトを確認なしで信頼する（ヘッドレス向け。[プロジェクトの信頼](#プロジェクトの信頼)） |
 | `sasacode plugin install\|remove\|list` | プラグインの管理（npm か git URL） |
 | `sasacode endpoint add\|remove\|list` | 自前のサーバーの追加（形式は自動判別） |
+| `sasacode login [status\|logout]` | ChatGPT プランでログイン（`openai-codex/…` のモデル用） |
 
 ### TUI
 
@@ -92,6 +93,9 @@ sasacode -r <id> -p "続き"            # セッション ID を指定して続�
 | `openrouter` | Chat Completions | `OPENROUTER_API_KEY` |
 | `commandcode` / `commandcode-responses` / `commandcode-anthropic` | Command Code の Chat Completions / Responses / Messages | `CMD_API_KEY` |
 | `ollama` | Chat Completions（localhost:11434） | 不要 |
+| `openai-codex` | ChatGPT プランの Codex バックエンド（Responses） | 不要（`sasacode login` で ChatGPT アカウントにログイン） |
+
+**ChatGPT プランで使う**：`sasacode login` を実行するとブラウザが開き、ChatGPT アカウントでログインすると `openai-codex/…` のモデル（`/model` に一覧が出る）が API キーなしで使える。利用分はプランの Codex の枠から引かれる。認証情報は `~/.sasacode/codex-auth.json`（本人だけが読める権限）に保存し、期限が近づけば自動で更新する。SSH 先などでブラウザがこのマシンに戻れないときは、ログイン後にブラウザが表示した URL を貼り付ける。`sasacode login status` で状態を確認、`sasacode login logout` で削除。API キーが1つもなくログインだけしている場合は、`openai-codex/gpt-5.5` が既定のモデルになる。これは OpenAI の Codex CLI と同じ仕組み（公開クライアントと PKCE）を使う非公式の対応で、OpenAI の都合で使えなくなることがある。
 
 ### 自前のサーバー（llama.cpp、vLLM、LM Studio、プロキシなど）
 
@@ -182,6 +186,7 @@ sasacode -m llama/<モデル名>
 | `web-fetch` | `web_fetch` ツール。URL を取ってきてテキストにする |
 | `browsr` | [browsr-4-agent](https://github.com/sasanokusa/browsr-4-agent) による Web 検索（`search`）と本文の閲覧（`open`）。`browsr-agent` が PATH にあれば自動で起動する |
 | `permission-presets` | 権限ルールのプリセット（`guard`、`read-only-shell`、`tests`） |
+| `openai-codex` | ChatGPT プランのモデル（`openai-codex/…`）。`sasacode login` の認証情報を使う |
 | `skills` / `mcp` | Agent Skills と MCP のアダプタ |
 
 ### MCP
@@ -225,7 +230,7 @@ export default ((api) => {
 }) satisfies Plugin;
 ```
 
-公開 API（現在 1.4.0。1.4.0 で締め切り、1.x の間は追加だけ。[互換性の約束](docs/plugins.md#互換性の約束140-で確定)）でできることは次のとおり。
+公開 API（現在 1.5.0。1.4.0 で締め切り、1.x の間は追加だけ。[互換性の約束](docs/plugins.md#互換性の約束140-で確定)）でできることは次のとおり。
 
 - **登録**：ツール、スラッシュコマンド（引数の補完つき）、プロバイダー、権限ルール
 - **フック**：`session_start/end`、`user_prompt`、`system_prompt`、`before_request`、`stream_delta`、`assistant_message`、`tool_call_raw`、`tool_call`、`tool_result`、`turn_end`、`agent_end`、`context_limit`

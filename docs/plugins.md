@@ -46,7 +46,7 @@ npm のパッケージは `bun run pack:plugin-api` で `dist/plugin-api` に作
 }
 ```
 
-- `apiVersion` がホストの API（現在 1.4.0）と互換でなければ、警告を出して読み込まない。
+- `apiVersion` がホストの API（現在 1.5.0）と互換でなければ、警告を出して読み込まない。
 - `skills` は `SKILL.md` を含むフォルダが並ぶディレクトリ。
 - `mcpServers` は設定ファイルの `mcpServers` と同じ形式。`${VAR}` は環境変数から展開される。
 
@@ -62,7 +62,7 @@ sasacode plugin remove <name>
 
 ## API リファレンス
 
-公開 API は `@sasacode/plugin-api` の `PluginAPI` で、現在の版は 1.4.0。変更の履歴は[最後の表](#api-の版)にある。
+公開 API は `@sasacode/plugin-api` の `PluginAPI` で、現在の版は 1.5.0。変更の履歴は[最後の表](#api-の版)にある。
 
 ### PluginAPI
 
@@ -154,6 +154,7 @@ before_request → stream_delta（生成中、差分ごと） → assistant_mess
 | 1.2.0 | `stream_delta`、`assistant_message`、`tool_call_raw` の各フック。`before_request` の `sampling` |
 | 1.3.0 | コマンドの `complete(prefix)`（引数の補完） |
 | 1.4.0 | `tool_result` が実行されなかった呼び出しでも呼ばれる（`ran` で区別）。`turn_end` の `stop` で実行を終えられる（停止理由 `stopped`） |
+| 1.5.0 | `Provider.listModels`（プロバイダーが自分のモデル一覧を返す）と `Request.fetch`（通信の差し替え）。別のプロバイダーを包むプロバイダーを書ける |
 
 どれも既存のプラグインを壊さない追加。ただし 1.4.0 から、`tool_result` を「実行された」合図として数えているプラグインは `ran` を見る必要がある。
 
@@ -179,6 +180,6 @@ before_request → stream_delta（生成中、差分ごと） → assistant_mess
 }
 ```
 
-同梱プラグインの名前は `tool-repair`、`repetition-guard`、`loop-guard`、`agents-md`、`compaction`、`subagent`、`todo`、`web-fetch`、`permission-presets`、`browsr`、`skills`、`mcp`。
+同梱プラグインの名前は `tool-repair`、`repetition-guard`、`loop-guard`、`agents-md`、`compaction`、`subagent`、`todo`、`web-fetch`、`permission-presets`、`browsr`、`openai-codex`、`skills`、`mcp`。
 
 プラグインを作るときは、組み込みの Skill を使うのが早い。TUI で `/skill:tool-authoring <作りたいもの>` と打つと、このリファレンスを読んだうえでモデルがプラグインを書く。
