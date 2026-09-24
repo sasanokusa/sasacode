@@ -146,15 +146,19 @@ export class Padded implements Component {
     private child: Component,
     private left: number,
     private right: number,
+    /** Blank lines above and below. */
+    private top = 0,
+    private bottom = 0,
   ) {}
   render(width: number): string[] {
     const inner = Math.max(10, width - this.left - this.right);
     const pad = " ".repeat(Math.max(0, Math.min(this.left, width - inner)));
     // A prompt mark (OSC 133) must stay at the start of the line to be found.
-    return this.child.render(inner).map((l) => {
+    const lines = this.child.render(inner).map((l) => {
       const mark = PROMPT_MARK.exec(l)?.[0];
       return mark ? mark + pad + l.slice(mark.length) : pad + l;
     });
+    return [...Array<string>(this.top).fill(""), ...lines, ...Array<string>(this.bottom).fill("")];
   }
   invalidate(): void {
     this.child.invalidate();

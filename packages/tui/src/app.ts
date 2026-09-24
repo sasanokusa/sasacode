@@ -46,6 +46,9 @@ const EFFORT_LABELS: Record<ThinkingLevel, string> = {
   max: "最大（対応していないモデルでは xhigh 相当）",
 };
 
+/** Columns left free at both sides of everything on screen. */
+const MARGIN = 2;
+
 /** Runs at least this long end with the terminal bell (tui.bell). */
 const BELL_AFTER_MS = 30_000;
 
@@ -114,24 +117,27 @@ class App {
     const body = new Container();
     body.addChild(header);
     body.addChild(this.chat);
-    // Breathing room at the edges; the status and footer line up with the input's own padding.
-    const transcript = new Padded(body, 2, 2);
-    const status = new Padded(this.status, 1, 1);
-    const footer = new Padded(this.footer, 1, 1);
+    // One margin for everything, as a terminal block would give it: the transcript, the input
+    // (its rules end short of the edges) and the footer share the same left and right edge, with a
+    // blank line above the transcript and below the footer.
+    const transcript = new Padded(body, MARGIN, MARGIN, fullscreen ? 1 : 0);
+    const status = new Padded(this.status, MARGIN, MARGIN);
+    const input = new Padded(this.inputSlot, MARGIN, MARGIN);
+    const footer = new Padded(this.footer, MARGIN, MARGIN, 0, fullscreen ? 1 : 0);
     if (this.tui instanceof TuiAltScreen) {
       const dock = new VStack([
         { component: status, shrink: 1, minSize: 0 },
-        { component: this.inputSlot, shrink: 1, minSize: 3 },
+        { component: input, shrink: 1, minSize: 3 },
         { component: footer, shrink: 1, minSize: 0 },
       ]);
-      for (const part of [transcript, status, this.inputSlot, footer]) this.tui.addChild(part);
+      for (const part of [transcript, status, input, footer]) this.tui.addChild(part);
       this.tui.setLayoutRoot(
         new VStack([
           { component: new ScrollView(transcript, { follow: "end", primary: true, overscroll: "chain", scrollbar: "auto" }), basis: 0, grow: 1, shrink: 1, minSize: 1 },
           { component: dock, basis: "auto", grow: 0, shrink: 1, minSize: 1 },
         ]),
       );
-    } else for (const part of [transcript, status, this.inputSlot, footer]) this.tui.addChild(part);
+    } else for (const part of [transcript, status, input, footer]) this.tui.addChild(part);
     this.showEditor();
 
     host.agent.approve = (req) => this.askApproval(req);
