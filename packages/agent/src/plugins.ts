@@ -50,6 +50,8 @@ export class PluginHost {
   readonly status = new Map<string, string>();
   readonly plugins: LoadedPlugin[] = [];
   readonly toolOwners = new Map<string, string>();
+  /** Background startup work reported through api.ready(). */
+  readonly pending: Promise<unknown>[] = [];
   onChange?: () => void;
   private ui: UIBridge = headlessUI;
   private pendingNotices: [string, "info" | "warning" | "error"][] = [];
@@ -78,6 +80,11 @@ export class PluginHost {
       this.notify(`plugin ${name} failed to load: ${error}`, "error");
       return false;
     }
+  }
+
+  /** Wait for background startup work, at most `timeoutMs`. */
+  async settle(timeoutMs = 30_000): Promise<void> {
+    await Promise.race([Promise.all(this.pending), Bun.sleep(timeoutMs)]);
   }
 
   notify(message: string, level: "info" | "warning" | "error" = "info"): void {
@@ -127,6 +134,9 @@ export class PluginHost {
       },
       on(event, handler) {
         agent.hooks.on(event, handler, name);
+      },
+      ready(work) {
+        host.pending.push(work.catch(() => {}));
       },
       permissions: { addRules: (rules) => agent.permissions.addRules(rules) },
       ui,

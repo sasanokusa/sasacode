@@ -1,5 +1,6 @@
 import type { Plugin } from "@sasacode/plugin-api";
 import agentsMd from "./agents-md.ts";
+import browsr from "./browsr.ts";
 import compaction from "./compaction.ts";
 import permissionPresets from "./permission-presets.ts";
 import subagent from "./subagent.ts";
@@ -19,4 +20,5 @@ export const bundledPlugins: Record<string, Plugin> = {
   todo,
   "web-fetch": webFetch,
   "permission-presets": permissionPresets,
+  browsr,
 };

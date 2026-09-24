@@ -13,7 +13,7 @@ import type {
 
 export type { AssistantMessage, JSONSchema, Message, ModelInfo, Provider, ProviderConfig, ToolCall, UserContent } from "@sasacode/ai";
 
-export const PLUGIN_API_VERSION = "1.0.0";
+export const PLUGIN_API_VERSION = "1.1.0";
 
 // ── tools ────────────────────────────────────────────────────────────
 
@@ -189,6 +189,11 @@ export interface PluginAPI {
   /** Add a provider (`name`) and, optionally, the implementation for its api (FR-P06). */
   registerProvider(name: string, config: ProviderConfig, implementation?: Provider): void;
   on<K extends HookName>(event: K, handler: HookHandler<K>): void;
+  /**
+   * Report background startup work (e.g. connecting a server). Headless runs wait for it before
+   * the first request; the TUI does not block on it. (since 1.1.0)
+   */
+  ready(work: Promise<unknown>): void;
   permissions: { addRules(rules: PermissionRules): void };
   ui: PluginUI;
   session: PluginSession;

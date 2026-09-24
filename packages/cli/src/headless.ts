@@ -27,6 +27,8 @@ export async function runHeadless(h: Harness, prompt: string, output: "text" | "
     else if (e.type === "plugin_error") process.stderr.write(`plugin ${e.plugin} (${e.hook}): ${e.error}\n`);
   });
   await h.loadPlugins();
+  // Unlike the TUI, a one-shot run should start with MCP servers and similar tools connected.
+  await h.host.settle();
   const onSigint = () => agent.abort();
   process.on("SIGINT", onSigint);
   const cause: StopCause = await agent.prompt(prompt);

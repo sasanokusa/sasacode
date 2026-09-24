@@ -58,3 +58,25 @@ test("plugin: lists skills in the system prompt, allows reading them, /skill:<na
   await cmd.run({ args: "" });
   await agent.prompt("go"); // queued skill content is delivered with the next prompt
 });
+
+test("built-in tool-authoring skill is written out, listed, and callable as /skill:tool-authoring", async () => {
+  const builtinDir = join(root, "builtin");
+  const agent = new Agent({
+    model: { id: "m", provider: "t", api: "replay", contextWindow: 1e5, maxOutput: 1e3 },
+    cwd: root,
+    systemPrompt: "",
+    permissions: new PermissionPolicy("edits"),
+  });
+  const host = new PluginHost({ agent, cwd: root });
+  await host.load("skills", createSkillsPlugin([], { builtinDir }));
+  const path = join(builtinDir, "tool-authoring", "SKILL.md");
+  expect(parseFrontmatter(await Bun.file(path).text()).name).toBe("tool-authoring");
+  expect(host.commands.map((c) => c.name)).toContain("skill:tool-authoring");
+  expect((await agent.permissions.check({ tool: readTool, args: { path }, cwd: root })).decision).toBe("allow");
+  // A user skill with the same name wins over the built-in.
+  const user = join(root, "user-skills");
+  skill(user, "ta", "name: tool-authoring\ndescription: my own version");
+  const host2 = new PluginHost({ agent, cwd: root });
+  await host2.load("skills", createSkillsPlugin([user], { builtinDir }));
+  expect(host2.commands.find((c) => c.name === "skill:tool-authoring")?.description).toBe("my own version");
+});

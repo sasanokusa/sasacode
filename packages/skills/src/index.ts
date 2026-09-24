@@ -1,6 +1,9 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { Plugin } from "@sasacode/plugin-api";
+import { materializeBuiltinSkills } from "./builtin.ts";
+
+export { BUILTIN_SKILLS, materializeBuiltinSkills } from "./builtin.ts";
 
 export interface Skill {
   name: string;
@@ -48,8 +51,17 @@ export function discoverSkills(dirs: string[]): Skill[] {
  * Agent Skills adapter: only name, description and path go into the system prompt; the model
  * reads SKILL.md with the read tool when it needs it (progressive disclosure, A3).
  */
-export function createSkillsPlugin(dirs: string[]): Plugin {
+export function createSkillsPlugin(dirs: string[], opts: { builtinDir?: string } = {}): Plugin {
   return (api) => {
+    if (opts.builtinDir) {
+      // Built-ins come first so a user or project skill with the same name overrides them.
+      try {
+        materializeBuiltinSkills(opts.builtinDir);
+        dirs = [opts.builtinDir, ...dirs];
+      } catch (e) {
+        api.ui.notify(`built-in skills unavailable: ${(e as Error).message}`, "warning");
+      }
+    }
     const skills = discoverSkills(dirs);
     if (!skills.length) return;
     // Skill files live outside the project too (~/.sasacode/skills); reading them must not prompt every time.

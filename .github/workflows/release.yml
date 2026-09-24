@@ -1,26 +1,58 @@
 name: release
-# Push a tag like v0.2.0 to build single-file binaries and attach them to a GitHub release.
+# Push a tag like v0.4.0: build single-file binaries (macOS ones on macOS, so they are natively
+# signed and smoke-tested), then attach them to a GitHub release.
 on:
   push:
     tags: ["v*"]
 permissions:
   contents: write
 jobs:
-  release:
-    runs-on: ubuntu-latest
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: macos-latest
+            targets: darwin
+          - os: ubuntu-latest
+            targets: linux
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
       - run: bun test
-      - run: bun run build --all
-      - name: Create release
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - run: bun run build --targets ${{ matrix.targets }}
+      - name: Smoke test the native binary
+        run: |
+          case "$(uname -s)-$(uname -m)" in
+            Darwin-arm64) b=dist/sasacode-darwin-arm64 ;;
+            Linux-x86_64) b=dist/sasacode-linux-x64 ;;
+          esac
+          "$b" --version
+      - name: Package
         run: |
           cd dist
           for f in sasacode-*; do
             case "$f" in *.map) ;; *) tar czf "$f.tar.gz" "$f" ;; esac
           done
-          shasum -a 256 *.tar.gz > SHA256SUMS
-          gh release create "$GITHUB_REF_NAME" --generate-notes *.tar.gz SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.targets }}
+          path: dist/*.tar.gz
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v5
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd dist
+          sha256sum *.tar.gz > SHA256SUMS
+          cp ../scripts/install.sh .
+          gh release create "$GITHUB_REF_NAME" --generate-notes *.tar.gz SHA256SUMS install.sh

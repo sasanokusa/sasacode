@@ -16,11 +16,13 @@ export type McpServerConfig = (
   alwaysLoad?: boolean;
   /** Per-call timeout in ms (default 10 minutes). */
   timeout?: number;
+  /** "plain" registers tools under their own names instead of mcp__<server>__<tool>. */
+  toolNames?: "prefixed" | "plain";
 };
 
 const MAX_OUTPUT = 100_000;
 
-interface ServerState {
+export interface ServerState {
   name: string;
   status: "connecting" | "connected" | "failed" | "closed";
   error?: string;
@@ -40,23 +42,43 @@ export function toolName(server: string, tool: string): string {
   return `mcp__${server}__${tool}`.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 64);
 }
 
+/**
+ * Connect servers in the background and register their tools as they come up. Closes them on
+ * session_end. Other plugins (e.g. browsr) reuse this to wrap a specific MCP server.
+ */
+export function connectServers(
+  api: PluginAPI,
+  servers: Record<string, McpServerConfig>,
+  onChange?: (states: Map<string, ServerState>) => void,
+): Map<string, ServerState> {
+  const states = new Map<string, ServerState>();
+  const changed = () => onChange?.(states);
+  for (const [name, cfg] of Object.entries(servers)) {
+    if (cfg.disabled) continue;
+    const state: ServerState = { name, status: "connecting", tools: [], stderr: "" };
+    states.set(name, state);
+    api.ready(connect(api, name, cfg, state, changed));
+  }
+  changed();
+  api.on("session_end", async () => {
+    await Promise.all(
+      [...states.values()].map((s) => {
+        s.status = "closed"; // expected shutdown, not a crash
+        return s.client?.close().catch(() => {});
+      }),
+    );
+  });
+  return states;
+}
+
 /** The MCP adapter is an ordinary plugin: servers connect in the background and register tools as they come up. */
 export function createMcpPlugin(servers: Record<string, McpServerConfig>): Plugin {
   return (api) => {
-    const states = new Map<string, ServerState>();
-    const updateStatus = () => {
-      const all = [...states.values()];
-      if (!all.length) return;
-      const ok = all.filter((s) => s.status === "connected").length;
-      api.ui.setStatus("servers", `MCP ${ok}/${all.length}`);
-    };
-    for (const [name, cfg] of Object.entries(servers)) {
-      if (cfg.disabled) continue;
-      const state: ServerState = { name, status: "connecting", tools: [], stderr: "" };
-      states.set(name, state);
-      void connect(api, name, cfg, state, updateStatus);
-    }
-    updateStatus();
+    const states = connectServers(api, servers, (all) => {
+      if (!all.size) return;
+      const ok = [...all.values()].filter((s) => s.status === "connected").length;
+      api.ui.setStatus("servers", `MCP ${ok}/${all.size}`);
+    });
 
     api.registerCommand({
       name: "mcp",
@@ -72,15 +94,6 @@ export function createMcpPlugin(servers: Record<string, McpServerConfig>): Plugi
         );
         api.ui.notify(lines.join("\n"));
       },
-    });
-
-    api.on("session_end", async () => {
-      await Promise.all(
-        [...states.values()].map((s) => {
-          s.status = "closed"; // expected shutdown, not a crash
-          return s.client?.close().catch(() => {});
-        }),
-      );
     });
   };
 }
@@ -134,14 +147,13 @@ async function registerTools(api: PluginAPI, server: string, cfg: McpServerConfi
   state.tools = tools.map((t) => t.name);
   for (const t of tools) {
     api.registerTool({
-      name: toolName(server, t.name),
+      name: cfg.toolNames === "plain" ? t.name : toolName(server, t.name),
       description: t.description ?? t.title ?? t.name,
       parameters: t.inputSchema as Record<string, unknown>,
       // Server annotations are hints from outside our trust boundary, so MCP tools always go through approval.
       kind: "other",
       concurrent: t.annotations?.readOnlyHint === true,
       alwaysLoad: cfg.alwaysLoad,
-      matchTarget: (a) => JSON.stringify(a),
       async execute(args, ctx) {
         if (state.status !== "connected") return errorResult(`MCP server ${server} is not connected (${state.error ?? state.status}).`);
         try {

@@ -159,7 +159,7 @@ export async function setup(opts: SetupOptions): Promise<Harness> {
 
       if (!disabled.has("skills")) {
         const dirs = [join(home, "skills"), join(opts.cwd, ".sasacode", "skills"), ...usable.flatMap((p) => (p.manifest.skills ? [join(p.dir, p.manifest.skills)] : []))];
-        await host.load("skills", createSkillsPlugin(dirs));
+        await host.load("skills", createSkillsPlugin(dirs, { builtinDir: join(home, "builtin-skills") }));
       }
       if (!disabled.has("mcp")) {
         const servers: Record<string, McpServerConfig> = {};

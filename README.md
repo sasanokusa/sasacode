@@ -6,7 +6,11 @@ TypeScript (Bun) で作るターミナル向けコーディングエージェン
 
 ## インストール
 
-**単一バイナリ**（Bun は不要）：[Releases](https://github.com/sasanokusa/sasacode/releases) から自分の OS / CPU 向けの `sasacode-<os>-<arch>.tar.gz` を落とし、展開して PATH に置く。自分でビルドする場合は `bun run build`（`dist/sasacode`）、全ターゲット分なら `bun run build --all`。
+```bash
+curl -fsSL https://sasanokusa.com/sasacode/install.sh | sh
+```
+
+macOS（arm64 / x64）と Linux（x64 / arm64、glibc / musl、AVX2 のない CPU 向けの baseline 版）の単一バイナリを `~/.local/bin/sasacode` に置く。Bun は不要。`SASACODE_VERSION=v0.4.0` で版を固定でき、`SASACODE_INSTALL_DIR` で置き場所を変えられる。同じファイルは [GitHub Releases](https://github.com/sasanokusa/sasacode/releases) にもある。
 
 **ソースから**（[Bun](https://bun.sh) 1.4 以上が必要）：
 
@@ -109,11 +113,12 @@ sasacode -c                     # このディレクトリの直近セッショ�
 
 | 名前 | 内容 |
 | --- | --- |
-| `agents-md` | `~/.sasacode/AGENTS.md` と、リポジトリのルートから作業ディレクトリまでの各 `AGENTS.md` をシステムプロンプトに加える（CLAUDE.md は読まない） |
+| `agents-md` | `~/.sasacode/AGENTS.md` と、リポジトリのルートから作業ディレクトリまでの各 `AGENTS.md` をシステムプロンプトに加える |
 | `compaction` | コンテキストが 80%（`threshold`）に達するか上限に達したら、古い履歴を要約して置き換える。`/compact` で手動実行 |
 | `subagent` | `task` ツール。独立した履歴のサブエージェントに作業を任せ、最終報告だけを受け取る。1ターンに複数あれば並行実行する |
 | `todo` | `todo_write` ツール。作業計画をセッションに保存し、ステータス行に進捗を出す |
 | `web-fetch` | `web_fetch` ツール。URL を取得してテキストにする（ネットワークを使うので確認対象） |
+| `browsr` | [browsr-4-agent](https://github.com/sasanokusa/browsr-4-agent) による Web 検索（`search`）と本文の閲覧（`open`）。`browsr-agent` が PATH にあれば、MCP サーバーとして自動で起動する（`uv tool install browsr-4-agent && browsr-agent setup`）。`plugins.settings.browsr` の `command` / `mode`（`standard` / `single`）/ `config` で変えられる |
 | `permission-presets` | 権限ルールのプリセット。既定で `guard`（sudo、`rm -rf ~`、force push、`\| sh` などを常に拒否）。ほかに `read-only-shell`、`tests` |
 | `skills` | Agent Skills（`SKILL.md`）のアダプタ |
 | `mcp` | MCP のアダプタ |
@@ -135,6 +140,8 @@ stdio と Streamable HTTP に対応。ツールは `mcp__<server>__<tool>` と�
 
 `~/.sasacode/skills/<name>/SKILL.md`、`.sasacode/skills/<name>/SKILL.md`、プラグインの `skills` ディレクトリを探す。対応するのは標準の Agent Skills 形式（frontmatter に `name` と `description`）。システムプロンプトには名前・説明・パスだけを載せ、本文はモデルが必要になったときに read ツールで読む。`/skill:<name>` で明示的に読み込ませることもできる。
 
+組み込みの Skill として `tool-authoring`（sasacode のツール・コマンド・プラグインの作り方のリファレンス）を同梱している。`/skill:tool-authoring 天気を返すツールを作って` のように使う。同名の Skill を `~/.sasacode/skills` に置けば、そちらが優先される。
+
 ### ツールの遅延ロード
 
 MCP とプラグインのツールの定義が、合計でコンテキストの 10% 以上になるか、30 個以上になると、定義を送るのをやめる。代わりに名前と説明の一覧を持つ `tool_search` ツールだけを渡し、モデルは必要なツールを検索して読み込む。組み込み4ツールと `alwaysLoad` 付きのツールは常に送る。閾値は `toolSearch: { mode: "auto" | "always" | "never", percent: 10, count: 30 }` で変えられる。
@@ -148,7 +155,10 @@ MCP とプラグインのツールの定義が、合計でコンテキストの 
 ```bash
 bun test          # LLM なしの E2E を含む全テスト（replayProvider で応答を再生）
 bun run typecheck
+bun run build     # dist/sasacode（このマシン向け）。--all で全ターゲット
 ```
+
+リリースの手順：`v*` タグを push すると GitHub Actions がバイナリをビルドして GitHub Release を作る（macOS 版は macOS のランナーでビルドし、起動を確認する）。その後 `scripts/publish-site.sh <version>` で sasanokusa.com/sasacode に同じファイルを置き、`latest` を切り替える。
 
 | パッケージ | 責務 |
 | --- | --- |

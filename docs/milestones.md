@@ -55,9 +55,16 @@ Anthropic ネイティブの tool search（Should）は未対応で、全プロ�
 完了条件「単一バイナリで配布できる」。
 
 - `bun run build` で `dist/sasacode`（約 65MB）ができる。`node_modules` のない場所で次の点を確認した：ヘッドレス実行、`~/.sasacode/plugins` の TS プラグイン（`@sasacode/plugin-api` の import を含む）、MCP stdio サーバー、パイプ入力、TUI の起動。
-- `.github/workflows/release.yml`：`v*` タグを push すると、darwin-arm64 / darwin-x64 / linux-x64 / linux-arm64 のバイナリをビルドして GitHub Release に添付する。
+- `.github/workflows/release.yml`：`v*` タグを push すると、7 種類のバイナリ（darwin-arm64 / darwin-x64 / linux-x64 / linux-x64-baseline / linux-arm64 / linux-x64-musl / linux-arm64-musl）をビルドして GitHub Release に添付する。macOS 版は macOS のランナーでビルドし、起動を確認する。
 - npm 向け：各パッケージに公開用のメタデータを入れ、`bun pm pack` での梱包を確認した。まだ公開はしていない。
 - 同梱プラグイン：`agents-md`、`compaction`、`subagent`、`todo`、`web-fetch`、`permission-presets`。どれもテストがあり、TUI で実モデルを使って確認した（TODO の表示とステータス行、サブエージェント、`/compact` の後も内容を覚えていること）。
+
+### M4 以降の追加
+
+- **配布**：`curl -fsSL https://sasanokusa.com/sasacode/install.sh | sh` の1コマンドでインストールできる。インストーラーは OS・CPU・libc・AVX2 の有無を見て 7 種類のバイナリから選び、SHA256 を検証して配置し、起動できるかも確かめる。配布ファイルは GitHub Release と sasanokusa.com（Cloudflare Tunnel → Apache）の両方に置いている。
+- **browsr プラグイン**：browsr-4-agent の manifest v1 を読んで互換性を確かめ、`browsr-agent serve` を MCP サーバーとして起動する。`search` / `open` を元の名前のまま公開する。実モデルで、検索 → ページを開く → 出典付きで回答、という流れを確認した。
+- **組み込み Skill `tool-authoring`**：実モデルで `/skill:tool-authoring` から `now` ツールのプラグインを作らせ、テストを通し、作ったツールを sasacode から呼び出せることを確認した。
+- **プラグイン API 1.1.0**：`api.ready()` を追加した（既存を壊さない変更）。ヘッドレス実行では、MCP サーバーなどの起動処理を待ってから最初のリクエストを送る。
 
 ## 非機能要件の実測（M4 時点）
 
@@ -66,7 +73,7 @@ Anthropic ネイティブの tool search（Should）は未対応で、全プロ�
 | 起動から入力可能まで（プラグイン 0 個） | 300 ms 以内 | 単一バイナリで 86 ms、ソースから `bun` で約 100 ms |
 | 同上（プラグイン＋MCP サーバーあり） | 入力をブロックしない | 95 ms（読み込みは起動後にバックグラウンドで行う） |
 | コアの行数（ai + agent + plugin-api + tools） | 約 3,000 行 | 2,691 行 |
-| テスト | LLM なしで E2E | 53 テスト（9 ファイル）。replayProvider と、テスト用の MCP サーバーを使う |
+| テスト | LLM なしで E2E | 56 テスト（9 ファイル）。replayProvider と、テスト用の MCP サーバー、偽の browsr-agent を使う |
 
 ## 未検証・既知の制限
 

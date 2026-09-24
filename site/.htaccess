@@ -1,0 +1,12 @@
+# Installer and version pointer must never be served stale (Cloudflare or browsers).
+<FilesMatch "^(install\.sh|latest)$">
+  Header set Cache-Control "no-cache, no-store, must-revalidate"
+  ForceType text/plain
+</FilesMatch>
+<FilesMatch "\.tar\.gz$">
+  Header set Cache-Control "public, max-age=31536000, immutable"
+</FilesMatch>
+<FilesMatch "^SHA256SUMS$">
+  ForceType text/plain
+</FilesMatch>
+Options -Indexes

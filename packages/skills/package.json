@@ -18,7 +18,8 @@
     "directory": "packages/skills"
   },
   "files": [
-    "src"
+    "src",
+    "builtin"
   ],
   "publishConfig": {
     "access": "public"

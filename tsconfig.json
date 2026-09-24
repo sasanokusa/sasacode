@@ -9,7 +9,12 @@
     "skipLibCheck": true,
     "noUncheckedIndexedAccess": false,
     "verbatimModuleSyntax": true,
-    "types": ["bun"]
+    "types": [
+      "bun"
+    ]
   },
-  "include": ["packages/*/src/**/*.ts", "packages/*/test/**/*.ts"]
+  "include": [
+    "packages/*/src/**/*.ts",
+    "packages/*/test/**/*.ts"
+  ]
 }
