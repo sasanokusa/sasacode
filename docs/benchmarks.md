@@ -1,6 +1,6 @@
 # ベンチマーク
 
-`bench/run.ts` は、実際のコーディング作業（`bench/tasks.ts`）をこのリポジトリの複製に対して実行し、トークン数・キャッシュのヒット率・速度・成否を記録する。LLM 以外の条件を揃えて比べられるよう、ヘッドレスの CLI（`--output jsonl`）を通して測る。
+手元のベンチマークスクリプト（`bench/`、リポジトリには含めない）は、実際のコーディング作業をこのリポジトリの複製に対して実行し、トークン数・キャッシュのヒット率・速度・成否を記録する。LLM 以外の条件を揃えて比べられるよう、ヘッドレスの CLI（`--output jsonl`）を通して測る。
 
 ```bash
 bun bench/run.ts --model <provider/model> --budget 1000000 --bin ~/.local/bin/sasacode --env ~/.sasacode/.env --context 1000000
@@ -13,7 +13,7 @@ bun bench/summarize.ts bench/results/<結果>.jsonl
 
 ## DeepSeek V4.1 Flash（2026-09-24、sasacode v0.6.3）
 
-モデル：`commandcode/deepseek/deepseek-v4.1-flash`（Command Code 経由、Chat Completions 形式）。結果の生データは `bench/results/2026-09-24T05-13-37_commandcode_deepseek_deepseek-v4.1-flash.jsonl`。
+モデル：`commandcode/deepseek/deepseek-v4.1-flash`（Command Code 経由、Chat Completions 形式）。生データは手元の `bench/results/` にある。
 
 | | |
 | --- | --- |

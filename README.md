@@ -55,6 +55,7 @@ sasacode -r <id> -p "続き"            # セッション ID を指定して続�
 | `-c` / `-r <id>` / `--no-session` | 再開 / ID を指定して再開 / 保存しない |
 | `--trust-project` | ヘッドレスで、プロジェクトのプラグインと MCP サーバーを確認なしで読み込む |
 | `sasacode plugin install\|remove\|list` | プラグインの管理（npm か git URL） |
+| `sasacode endpoint add\|remove\|list` | 自前のサーバーの追加（形式は自動判別） |
 
 ### TUI
 
@@ -89,6 +90,19 @@ sasacode -r <id> -p "続き"            # セッション ID を指定して続�
 | `openrouter` | Chat Completions | `OPENROUTER_API_KEY` |
 | `commandcode` / `commandcode-responses` / `commandcode-anthropic` | Command Code の Chat Completions / Responses / Messages | `CMD_API_KEY` |
 | `ollama` | Chat Completions（localhost:11434） | 不要 |
+
+### 自前のサーバー（llama.cpp、vLLM、LM Studio、プロキシなど）
+
+```bash
+sasacode endpoint add llama http://192.168.1.20:8080            # 形式を判別して ~/.sasacode/config.json に保存
+sasacode endpoint add mygw https://llm.example.com/v1 --key-env MYGW_KEY
+sasacode endpoint list
+sasacode -m llama/<モデル名>
+```
+
+`GET /v1/models` の応答から、OpenAI 形式（Chat Completions で呼ぶ）か Anthropic 形式（Messages で呼ぶ）かを自動で判別し、URL も各形式の SDK に合わせて整える。llama.cpp と Ollama は、それぞれ `/props` と `/api/show` から実際のコンテキスト長も取る。追加したサーバーのモデルは、`/model` の一覧に自動で出る。設定ファイルに `"providers": { "llama": { "baseUrl": "http://…" } }` と URL だけ書いた場合も、起動時に判別する（結果は `~/.sasacode/endpoints.json` にキャッシュする）。
+
+信頼されていないプロジェクトの `.sasacode/config.json` で追加できるのは、キーを使わない新しいプロバイダーだけ。既存のプロバイダーの接続先を変えたり、`apiKeyEnv` や `headers` を付けたりする設定は、そのプロジェクトを `trustedProjects` に入れるまで無視する（クローンしたリポジトリが API キーを別のサーバーへ送らせないため）。
 
 **モデル一覧の自動取得**：TUI の起動時に、キーのあるプロバイダー（と Ollama）の Models API（`GET /v1/models`）をバックグラウンドで呼び、`/model` に一覧とコンテキスト長を出す。取得したコンテキスト長は、フッターの使用率や圧縮のしきい値にも使う（設定の `modelOverrides` があればそちらが優先）。Ollama は独自の `/api/show` から読み、Modelfile の `num_ctx` があればそれを実際の長さとして使い、なければモデルの最大長を参考として表示する。OpenAI の Models API はコンテキスト長を返さないので、組み込みのモデル表の値で補う。Command Code のように1つのキーで複数の API 形式を提供するサービスでは、モデルごとに対応する形式のプロバイダーへ自動で振り分ける（例：Claude 系は `commandcode-anthropic/…`）。
 
@@ -215,7 +229,6 @@ export default ((api) => {
 bun test            # LLM なしの E2E を含む全テスト（応答の再生と、テスト用の MCP サーバーを使う）
 bun run typecheck
 bun run build       # dist/sasacode（このマシン向け）。--all で全ターゲット
-bun bench/run.ts --model <provider/model> …   # 実際の作業でトークン・キャッシュ・速度を測る（docs/benchmarks.md）
 ```
 
 **リリースの手順**：`v*` のタグを push すると、GitHub Actions がバイナリをビルドして GitHub Release を作る。macOS 版は macOS のランナーでビルドし、起動を確認する。sasanokusa.com からのインストールも、それだけで新しい版になる。案内ページを変えたときだけ `scripts/publish-site.sh` を実行する。

@@ -6,6 +6,7 @@ import { BUILTIN_PROVIDERS } from "@sasacode/ai";
 import { sasacodeHome } from "./config.ts";
 import { dropBlankKeys, ensureEnvFile, loadEnvFile } from "./env.ts";
 import { runHeadless } from "./headless.ts";
+import { endpointCommand } from "./endpoints.ts";
 import { pluginCommand } from "./loader.ts";
 import { setup } from "./setup.ts";
 
@@ -32,6 +33,9 @@ Subcommands:
   sasacode plugin install <npm-spec|git-url> [--project]
   sasacode plugin remove <name> [--project]
   sasacode plugin list
+  sasacode endpoint add <name> <url> [--key-env VAR] [--project]   add a server (format detected)
+  sasacode endpoint remove <name> [--project]
+  sasacode endpoint list
   -h, --help
   -v, --version`;
 
@@ -56,6 +60,7 @@ async function main(): Promise<number> {
   loadEnvFile(envPath);
   if (created && process.stderr.isTTY) console.error(`created ${envPath}: add your API key there`);
   if (process.argv[2] === "plugin") return pluginCommand(process.argv.slice(3), process.cwd());
+  if (process.argv[2] === "endpoint") return endpointCommand(process.argv.slice(3), process.cwd());
   const { values, positionals } = parseArgs({
     allowPositionals: true,
     options: {

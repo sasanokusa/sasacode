@@ -38,9 +38,11 @@ export async function listModels(p: ProviderConfig, apiKey: string | undefined, 
     for await (const m of client.models.list({ signal })) {
       const x = m as unknown as Record<string, unknown>;
       const top = x.top_provider as Record<string, unknown> | undefined; // OpenRouter
+      const meta = x.meta as Record<string, unknown> | undefined; // llama.cpp
       out.push({
         id: m.id,
-        contextWindow: num(x.context_length) ?? num(x.context_window) ?? num(x.max_input_tokens),
+        maxContext: num(meta?.n_ctx_train),
+        contextWindow: num(x.context_length) ?? num(x.context_window) ?? num(x.max_input_tokens) ?? num(meta?.n_ctx),
         maxOutput: num(top?.max_completion_tokens) ?? num(x.max_output_tokens),
         endpoints: Array.isArray(x.supported_endpoints) ? (x.supported_endpoints as string[]) : undefined,
       });
@@ -48,7 +50,20 @@ export async function listModels(p: ProviderConfig, apiKey: string | undefined, 
   }
   const chat = out.filter((m) => !NOT_CHAT.test(m.id));
   if (p.ollama) await Promise.all(chat.map((m) => ollamaDetails(p, m, signal)));
+  if (p.llamacpp) await llamacppContext(p, chat, signal);
   return chat;
+}
+
+/** llama-server serves one model; /props has the context each request slot gets. */
+async function llamacppContext(p: ProviderConfig, models: ListedModel[], signal?: AbortSignal): Promise<void> {
+  const root = (p.baseUrl ?? "").replace(/\/v1\/?$/, "");
+  try {
+    const res = await fetch(`${root}/props`, { signal, headers: p.headers });
+    if (!res.ok) return;
+    const props = (await res.json()) as { default_generation_settings?: { n_ctx?: number } };
+    const nCtx = props.default_generation_settings?.n_ctx;
+    if (typeof nCtx === "number" && nCtx > 0) for (const m of models) m.contextWindow = nCtx;
+  } catch {}
 }
 
 /**

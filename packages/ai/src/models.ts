@@ -12,6 +12,8 @@ export interface ProviderConfig {
   defaultModel?: string;
   /** The server is Ollama: model details (context length) come from its native /api/show. */
   ollama?: boolean;
+  /** The server is llama.cpp's llama-server: the context size comes from its /props. */
+  llamacpp?: boolean;
 }
 
 /** Order matters: with no model configured, the first provider whose key is set supplies the default. */

@@ -6,3 +6,6 @@ dist/
 .env.*
 !.env.example
 *.bun-build
+
+# local benchmark scripts and results
+bench/

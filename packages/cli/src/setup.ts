@@ -22,6 +22,7 @@ import builtinTools from "@sasacode/tools";
 import { type Config, loadConfig, sasacodeHome } from "./config.ts";
 import { discoverPlugins, type FoundPlugin, importExtensions, isTrusted, projectFingerprint, saveTrust } from "./loader.ts";
 import { type ModelChoice, ModelCatalog } from "./catalog.ts";
+import { resolveEndpoints } from "./endpoints.ts";
 import { resolveApiKey } from "./keys.ts";
 
 export interface SetupOptions {
@@ -63,6 +64,8 @@ export async function setup(opts: SetupOptions): Promise<Harness> {
   const providers: Record<string, ProviderConfig> = { ...BUILTIN_PROVIDERS };
   for (const [name, p] of Object.entries(config.providers ?? {}))
     providers[name] = { ...providers[name], ...p } as ProviderConfig;
+  // Custom endpoints configured with only a URL: detect OpenAI- or Anthropic-style (cached).
+  await resolveEndpoints(providers, (p) => resolveApiKey(p, providers[p]), warnings);
   // What the Models API reported fills in context windows; explicit modelOverrides in config win.
   let catalog: ModelCatalog;
   const overrides = () => {

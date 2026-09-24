@@ -2,13 +2,14 @@ import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { PermissionMode, PermissionRules, ToolSearchConfig } from "@sasacode/agent";
-import type { ModelInfo, ProviderConfig, ThinkingLevel } from "@sasacode/ai";
+import { BUILTIN_PROVIDERS, type ModelInfo, type ProviderConfig, type ThinkingLevel } from "@sasacode/ai";
 
 export interface Config {
   model?: string;
   /** Models offered by /model. */
   models?: string[];
   thinking?: ThinkingLevel;
+  /** Extra or overridden providers. Without `api`, the format is detected from `baseUrl`. */
   providers?: Record<string, Partial<ProviderConfig>>;
   /** Per-model metadata overrides keyed by "provider/model" (contextWindow, price, ...). */
   modelOverrides?: Record<string, Partial<ModelInfo>>;
@@ -85,6 +86,19 @@ export function loadConfig(cwd: string): LoadedConfig & { projectMcp: string[] }
       );
       project.permissions = { ...rest, ...(mode === "ask" || mode === "edits" ? { mode } : {}) };
     }
+  }
+  // Nor may it send the user's API keys somewhere: it can add keyless providers (a local server)
+  // but not redefine existing ones or attach a key or headers.
+  if (!global.trustedProjects?.includes(cwd) && project.providers) {
+    const kept: typeof project.providers = {};
+    for (const [name, p] of Object.entries(project.providers)) {
+      if (BUILTIN_PROVIDERS[name] || global.providers?.[name] || p.apiKeyEnv || p.headers)
+        warnings.push(
+          `.sasacode/config.json provider "${name}" redefines a provider or uses an API key / headers; ignored until "${cwd}" is added to trustedProjects in ${join(sasacodeHome(), "config.json")}.`,
+        );
+      else kept[name] = p;
+    }
+    project.providers = kept;
   }
   return { config: mergeConfig(global, project), warnings, projectMcp };
 }
