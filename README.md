@@ -231,7 +231,7 @@ export default ((api) => {
 }) satisfies Plugin;
 ```
 
-公開 API（現在 1.5.0。1.4.0 で締め切り、1.x の間は追加だけ。[互換性の約束](docs/plugins.md#互換性の約束140-で確定)）でできることは次のとおり。
+公開 API（現在 1.6.0。1.4.0 で締め切り、1.x の間は追加だけ。[互換性の約束](docs/plugins.md#互換性の約束140-で確定)）でできることは次のとおり。
 
 - **登録**：ツール、スラッシュコマンド（引数の補完つき）、プロバイダー、権限ルール
 - **フック**：`session_start/end`、`user_prompt`、`system_prompt`、`before_request`、`stream_delta`、`assistant_message`、`tool_call_raw`、`tool_call`、`tool_result`、`turn_end`、`agent_end`、`context_limit`

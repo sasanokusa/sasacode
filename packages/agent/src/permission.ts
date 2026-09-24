@@ -107,6 +107,11 @@ export class PermissionPolicy {
   }
 }
 
+/** A rule written for this tool, or for the tool whose rules it takes on (permissionsAs). */
+function covers(rule: ParsedRule, tool: ToolDefinition<any>): boolean {
+  return rule.tool.test(tool.name) || (!!tool.permissionsAs && rule.tool.test(tool.permissionsAs));
+}
+
 function parseRule(source: string): ParsedRule {
   const m = /^([^()]+?)(?:\((.*)\))?$/s.exec(source.trim());
   if (!m) throw new Error(`invalid permission rule: ${source}`);
@@ -127,7 +132,7 @@ const SUBSTITUTION = /\$\(|`|<\(|>/;
  * allow rules only when every spelling does, so a symlink cannot smuggle a path past either.
  */
 function ruleMatches(rule: ParsedRule, c: PermissionCheck, forAllow = false): boolean {
-  if (!rule.tool.test(c.tool.name)) return false;
+  if (!covers(rule, c.tool)) return false;
   if (rule.pattern === undefined) return true;
   const target = c.tool.matchTarget?.(c.args);
   if (target !== undefined) {
@@ -221,7 +226,7 @@ function segments(command: string): string[] {
 
 /** For commands, every chained piece must be covered by some allow rule, and substitutions never are. */
 function allowedByRules(rules: ParsedRule[], c: PermissionCheck): boolean {
-  const mine = rules.filter((r) => r.tool.test(c.tool.name));
+  const mine = rules.filter((r) => covers(r, c.tool));
   if (!mine.length) return false;
   if (mine.some((r) => r.pattern === undefined)) return true;
   const target = c.tool.matchTarget?.(c.args);

@@ -46,7 +46,7 @@ npm のパッケージは `bun run pack:plugin-api` で `dist/plugin-api` に作
 }
 ```
 
-- `apiVersion` がホストの API（現在 1.5.0）と互換でなければ、警告を出して読み込まない。
+- `apiVersion` がホストの API（現在 1.6.0）と互換でなければ、警告を出して読み込まない。
 - `skills` は `SKILL.md` を含むフォルダが並ぶディレクトリ。
 - `mcpServers` は設定ファイルの `mcpServers` と同じ形式。`${VAR}` は環境変数から展開される。
 
@@ -62,7 +62,7 @@ sasacode plugin remove <name>
 
 ## API リファレンス
 
-公開 API は `@sasacode/plugin-api` の `PluginAPI` で、現在の版は 1.5.0。変更の履歴は[最後の表](#api-の版)にある。
+公開 API は `@sasacode/plugin-api` の `PluginAPI` で、現在の版は 1.6.0。変更の履歴は[最後の表](#api-の版)にある。
 
 ### PluginAPI
 
@@ -97,6 +97,7 @@ sasacode plugin remove <name>
 | `kind` | `read` / `edit` / `exec` / `other`。権限の判定に使う。既定のモード `edits` で自動で許可されるのは、作業ディレクトリ内の read / edit だけ |
 | `paths(args, cwd)` | 触るファイル。パスのルール（`edit(src/**)`）の照合と、作業ディレクトリの内側かどうかの判定に使う |
 | `matchTarget(args)` | パターンのルール（`bash(git *)`）で照合する文字列 |
+| `permissionsAs` | 別のツール名のルールも当てる（1.6.0〜）。シェルのコマンドを別の方法で動かすツール（バックグラウンド実行、リモート実行など）に `"bash"` と書けば、利用者の `bash(sudo *)` などの deny / ask / allow ルールと `guard` プリセットが、このツールの `matchTarget` に対してそのまま効く。自分の名前のルールも引き続き効く |
 | `concurrent` | 同じターンの、ほかの concurrent なツールと並行して実行してよい |
 | `alwaysLoad` | ツールの遅延ロードが有効でも、常に定義を送る |
 | `summary(args)` | UI に出す1行の要約 |
@@ -155,6 +156,7 @@ before_request → stream_delta（生成中、差分ごと） → assistant_mess
 | 1.3.0 | コマンドの `complete(prefix)`（引数の補完） |
 | 1.4.0 | `tool_result` が実行されなかった呼び出しでも呼ばれる（`ran` で区別）。`turn_end` の `stop` で実行を終えられる（停止理由 `stopped`） |
 | 1.5.0 | `Provider.listModels`（プロバイダーが自分のモデル一覧を返す）と `Request.fetch`（通信の差し替え）。別のプロバイダーを包むプロバイダーを書ける |
+| 1.6.0 | ツールの `permissionsAs`（別のツール名の権限ルールも当てる） |
 
 どれも既存のプラグインを壊さない追加。ただし 1.4.0 から、`tool_result` を「実行された」合図として数えているプラグインは `ran` を見る必要がある。
 

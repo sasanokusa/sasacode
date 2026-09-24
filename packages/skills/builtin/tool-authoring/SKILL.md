@@ -27,7 +27,7 @@ A plugin is a module whose default export receives a `PluginAPI`. Everything in 
   or the same fields under `"sasacode"` in `package.json`.
 - TypeScript runs as-is (Bun); no build step. `import ... from "@sasacode/plugin-api"` works without installing it. For editor types, `npm install --save-dev @sasacode/plugin-api` (published on npm; its version is the API version).
 - New plugins load on the next start of sasacode. Tell the user to restart after you create one.
-- `apiVersion` `^1.4.0` needs sasacode 0.8 or later. Use the lowest version whose features you use (1.0 base, 1.1 `ready`, 1.2 `stream_delta` / `assistant_message` / `tool_call_raw` / sampling, 1.3 command `complete`, 1.4 `tool_result` for calls that did not run (`ran`), `turn_end` `stop`, 1.5 `Provider.listModels` and `Request.fetch`). The API was frozen at 1.4: 1.x only adds, so ignore fields and values you do not know. Only `@sasacode/plugin-api` exports are public.
+- `apiVersion` `^1.4.0` needs sasacode 0.8 or later. Use the lowest version whose features you use (1.0 base, 1.1 `ready`, 1.2 `stream_delta` / `assistant_message` / `tool_call_raw` / sampling, 1.3 command `complete`, 1.4 `tool_result` for calls that did not run (`ran`), `turn_end` `stop`, 1.5 `Provider.listModels` and `Request.fetch`, 1.6 `permissionsAs`). The API was frozen at 1.4: 1.x only adds, so ignore fields and values you do not know. Only `@sasacode/plugin-api` exports are public.
 
 ## 3. Tool template
 
@@ -77,6 +77,7 @@ The user's mode decides what runs without asking. In the default mode (`edits`),
 - `kind`: `read` (no side effects), `edit` (changes files — implement `paths`), `exec` (arbitrary effects), `other`.
 - `paths(args, cwd)`: absolute paths the call touches; enables rules like `mytool(src/**)` and the in-cwd check.
 - `matchTarget(args)`: string for pattern rules like `mytool(deploy staging*)`.
+- `permissionsAs: "bash"` (1.6): for a tool that runs shell commands some other way (in the background, over SSH). The user's `bash(...)` rules and the guard preset then apply to it, matched against `matchTarget`, so it cannot become a way around them. Always set this on such tools.
 - A harmless tool may pre-approve itself: `api.permissions.addRules({ allow: ["mytool"] })`. Do this only when a call cannot hurt anything.
 
 ## 5. Commands
@@ -174,7 +175,7 @@ api.on("assistant_message", ({ stopped }) => {
    import plugin from "./weather.ts";
    const tools: any[] = [], commands: any[] = [], hooks: Record<string, Function[]> = {};
    const api: any = {
-     version: "1.5.0", name: "weather", cwd: process.cwd(), settings: {},
+     version: "1.6.0", name: "weather", cwd: process.cwd(), settings: {},
      registerTool: (t: any) => tools.push(t), registerCommand: (c: any) => commands.push(c), registerProvider() {},
      on: (h: string, fn: Function) => (hooks[h] ??= []).push(fn), ready() {}, log() {},
      permissions: { addRules() {} },

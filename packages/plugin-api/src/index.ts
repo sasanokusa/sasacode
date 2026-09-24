@@ -26,7 +26,7 @@ export type {
   UserContent,
 } from "@sasacode/ai";
 
-export const PLUGIN_API_VERSION = "1.5.0";
+export const PLUGIN_API_VERSION = "1.6.0";
 
 // ── tools ────────────────────────────────────────────────────────────
 
@@ -63,6 +63,13 @@ export interface ToolDefinition<Args = Record<string, any>> {
   paths?(args: Args, cwd: string): string[];
   /** String matched by permission patterns such as `bash(git *)`. */
   matchTarget?(args: Args): string;
+  /**
+   * Also judged by the permission rules written for this tool name, e.g. "bash" for a tool that
+   * runs shell commands another way (in the background, remotely): the user's `bash(sudo *)`
+   * deny rules, the guard preset and `bash(git status*)` allow rules then cover it too, matched
+   * against this tool's matchTarget / paths. Its own rules still apply. (since 1.6.0)
+   */
+  permissionsAs?: string;
   /** One-line label for UIs, e.g. the command or path. */
   summary?(args: Args): string;
   execute(args: Args, ctx: ToolContext): Promise<ToolResult>;

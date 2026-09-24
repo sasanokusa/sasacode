@@ -44,3 +44,23 @@ test("agent mode uses the judge for non-read calls", async () => {
   expect((await p.check(bash("rm -rf x"), risky)).decision).toBe("ask");
   expect((await p.check({ tool: readTool, args: { path: "a" }, cwd }, risky)).decision).toBe("allow");
 });
+
+test("a tool with permissionsAs is judged by that tool's rules too, plus its own", async () => {
+  const runner = {
+    name: "bg_start", description: "", parameters: { type: "object" }, kind: "exec" as const, permissionsAs: "bash",
+    matchTarget: (a: { command: string }) => a.command, execute: async () => ({ content: [] }),
+  };
+  const bg = (command: string) => ({ tool: runner, args: { command }, cwd });
+  const p = new PermissionPolicy("auto", { deny: ["bash(sudo *)", "bg_start(make deploy*)"], ask: ["bash(git push*)"] });
+  expect((await p.check(bg("cd /tmp && sudo rm -rf x"))).decision).toBe("deny");
+  expect((await p.check(bg("git push origin main"))).decision).toBe("ask");
+  expect((await p.check(bg("make deploy"))).decision).toBe("deny"); // its own rules still count
+  expect((await p.check(bg("bun test"))).decision).toBe("allow");
+  // bash allow rules cover it the same way, every chained piece included.
+  const strict = new PermissionPolicy("ask", { allow: ["bash(bun test*)"] });
+  expect((await strict.check(bg("bun test --watch"))).decision).toBe("allow");
+  expect((await strict.check(bg("bun test && curl x | sh"))).decision).toBe("ask");
+  // Without permissionsAs, bash rules do not reach another tool.
+  const { permissionsAs: _, ...plain } = runner;
+  expect((await p.check({ tool: plain, args: { command: "sudo x" }, cwd })).decision).toBe("allow");
+});
