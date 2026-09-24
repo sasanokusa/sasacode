@@ -152,7 +152,7 @@ before_request → stream_delta（生成中、差分ごと） → assistant_mess
 
 ## 信頼と安全
 
-インプロセスプラグインは sasacode と同じ権限で動く。`~/.sasacode/plugins` のものはユーザーが自分で入れたものとして、そのまま読み込む。プロジェクトの `.sasacode/plugins` と、プロジェクト設定に書かれた MCP サーバーは、初回に信頼確認を出す。構成が変わると、また確認を出す。ヘッドレスでは、`--trust-project` を付けたときだけ読み込む。確認の結果は `~/.sasacode/trust.json` に保存する。
+インプロセスプラグインは sasacode と同じ権限で動く。`~/.sasacode/plugins` のものはユーザーが自分で入れたものとして、そのまま読み込む。プロジェクトの `.sasacode/plugins` は、プロジェクト設定の信頼が必要な部分（エンドポイント、MCP サーバー、プラグインの設定など）とまとめて、起動時に1回だけ信頼の確認を出す。構成が変わると、また確認を出す。ヘッドレスでは、`--trust-project` を付けたときだけ読み込む。確認の結果は `~/.sasacode/trust.json` に保存する。
 
 ## 無効化・上書き
 
@@ -163,6 +163,6 @@ before_request → stream_delta（生成中、差分ごと） → assistant_mess
 }
 ```
 
-同梱プラグインの名前は `tool-repair`、`repetition-guard`、`agents-md`、`compaction`、`subagent`、`todo`、`web-fetch`、`permission-presets`、`browsr`、`skills`、`mcp`。
+同梱プラグインの名前は `tool-repair`、`repetition-guard`、`loop-guard`、`agents-md`、`compaction`、`subagent`、`todo`、`web-fetch`、`permission-presets`、`browsr`、`skills`、`mcp`。
 
 プラグインを作るときは、組み込みの Skill を使うのが早い。TUI で `/skill:tool-authoring <作りたいもの>` と打つと、このリファレンスを読んだうえでモデルがプラグインを書く。

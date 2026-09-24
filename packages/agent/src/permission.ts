@@ -1,4 +1,5 @@
-import { isAbsolute, relative, resolve } from "node:path";
+import { realpathSync } from "node:fs";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type { ToolDefinition } from "@sasacode/plugin-api";
 
 /**
@@ -70,7 +71,8 @@ export class PermissionPolicy {
   }
 
   private async modeDecision(c: PermissionCheck, judge?: Judge): Promise<Omit<Verdict, "source">> {
-    const insideCwd = (c.tool.paths?.(c.args, c.cwd) ?? []).every((p) => isInside(p, c.cwd));
+    // Through a symlink, a path inside the project can point anywhere: judge where it really goes.
+    const insideCwd = (c.tool.paths?.(c.args, c.cwd) ?? []).every((p) => isInside(realPath(p), realPath(c.cwd)));
     const hasPaths = !!c.tool.paths;
     switch (this.mode) {
       case "auto":
@@ -117,7 +119,11 @@ const CHAIN = /&&|\|\||;|\||\n|&/;
 // Substitutions and output redirection can do anything, so allow rules never cover them.
 const SUBSTITUTION = /\$\(|`|<\(|>/;
 
-function ruleMatches(rule: ParsedRule, c: PermissionCheck): boolean {
+/**
+ * deny/ask rules match when any spelling of a path does (as written, or with symlinks resolved);
+ * allow rules only when every spelling does, so a symlink cannot smuggle a path past either.
+ */
+function ruleMatches(rule: ParsedRule, c: PermissionCheck, forAllow = false): boolean {
   if (!rule.tool.test(c.tool.name)) return false;
   if (rule.pattern === undefined) return true;
   const target = c.tool.matchTarget?.(c.args);
@@ -127,8 +133,38 @@ function ruleMatches(rule: ParsedRule, c: PermissionCheck): boolean {
   }
   const paths = c.tool.paths?.(c.args, c.cwd) ?? [];
   if (!paths.length) return false;
-  const glob = new Bun.Glob(isAbsolute(rule.pattern) ? rule.pattern : resolve(c.cwd, rule.pattern));
-  return paths.every((p) => glob.match(p));
+  // Compare like with like. A relative pattern is anchored at the working directory's real path,
+  // but links inside the project are not followed (a repo could point `src` at ~/.ssh). An
+  // absolute pattern is the user's own path: its fixed part is resolved (/var → /private/var).
+  const pattern = rule.pattern;
+  const variants = isAbsolute(pattern) ? [pattern, realPattern(pattern)] : [resolve(c.cwd, pattern), resolve(realPath(c.cwd), pattern)];
+  const globs = [...new Set(variants)].map((g) => new Bun.Glob(g));
+  const hit = (p: string) => globs.some((g) => g.match(p));
+  const spellings = paths.flatMap((p) => [p, realPath(p)]);
+  return forAllow ? spellings.every(hit) : spellings.some(hit);
+}
+
+/** A glob with the directories before its first wildcard resolved through symlinks. */
+function realPattern(glob: string): string {
+  const parts = glob.split("/");
+  const firstWild = parts.findIndex((s) => /[*?[{]/.test(s));
+  if (firstWild <= 0) return realPath(glob);
+  return [realPath(parts.slice(0, firstWild).join("/") || "/"), ...parts.slice(firstWild)].join("/");
+}
+
+/** `p` with symlinks resolved. For a path that does not exist yet, its nearest existing ancestor is. */
+export function realPath(p: string): string {
+  const rest: string[] = [];
+  let cur = p;
+  while (true) {
+    try {
+      return join(realpathSync(cur), ...rest);
+    } catch {}
+    const parent = dirname(cur);
+    if (parent === cur) return p;
+    rest.unshift(basename(cur));
+    cur = parent;
+  }
 }
 
 function segments(command: string): string[] {
@@ -144,7 +180,7 @@ function allowedByRules(rules: ParsedRule[], c: PermissionCheck): boolean {
   if (!mine.length) return false;
   if (mine.some((r) => r.pattern === undefined)) return true;
   const target = c.tool.matchTarget?.(c.args);
-  if (target === undefined) return mine.some((r) => ruleMatches(r, c));
+  if (target === undefined) return mine.some((r) => ruleMatches(r, c, true));
   if (SUBSTITUTION.test(target)) return false;
   return segments(target).every((s) => mine.some((r) => wildcard(r.pattern!).test(s)));
 }

@@ -85,7 +85,7 @@ export async function endpointCommand(args: string[], cwd: string): Promise<numb
     config.providers = { ...config.providers, [name]: provider };
     writeJson(path, config);
     console.log(`saved to ${path}${models[0] ? ` — try: sasacode -m ${name}/${models[0].id}` : ""}`);
-    if (project && keyEnv) console.log(`note: a project provider that uses ${keyEnv} only takes effect once this project is in trustedProjects`);
+    if (project) console.log("note: endpoints in a project config are used once you trust the project (sasacode asks on the next start)");
     return 0;
   }
   if (sub === "remove" && name) {

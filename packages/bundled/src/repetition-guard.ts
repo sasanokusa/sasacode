@@ -11,8 +11,10 @@ export interface RepetitionLimits {
   minRepeats: number;
   /** Total characters the copies must cover. */
   minSpan: number;
-  /** Shortest unit considered (short runs like "-----" are usually intentional). */
+  /** Shortest unit for the normal rule (short runs like "-----" are usually intentional). */
   minUnit: number;
+  /** Units shorter than minUnit ("なるほど。") stop only after covering this many characters. */
+  shortMinSpan: number;
 }
 
 /**
@@ -25,11 +27,12 @@ export function detectRepetition(text: string, limits: RepetitionLimits): Repeti
   const prev = text.lastIndexOf(probe, text.length - probe.length - 1);
   if (prev < 0) return undefined;
   const period = text.length - probe.length - prev;
-  if (period < limits.minUnit) return undefined;
   const unit = text.slice(-period);
   let count = 1;
   while (text.length - (count + 1) * period >= 0 && text.slice(text.length - (count + 1) * period, text.length - count * period) === unit) count++;
-  return count >= limits.minRepeats && count * period >= limits.minSpan ? { unit, count } : undefined;
+  const span = count * period;
+  if (period < limits.minUnit) return span >= limits.shortMinSpan && count >= 20 ? { unit, count } : undefined;
+  return count >= limits.minRepeats && span >= limits.minSpan ? { unit, count } : undefined;
 }
 
 const INJECT =
@@ -40,15 +43,26 @@ const INJECT =
  * trims the repeats, and tells the model. Tool-call arguments get looser limits, since file
  * contents can repeat legitimately.
  *
- * settings: { minRepeats?, minSpan?, minUnit?, toolcallMinRepeats?, toolcallMinSpan?,
- *             checkEvery?, maxStopsPerRun?, samplingAfterStop?: SamplingOptions }
+ * settings: { minRepeats?, minSpan?, minUnit?, shortMinSpan?, toolcallMinRepeats?, toolcallMinSpan?,
+ *             toolcallShortMinSpan?, checkEvery?, maxStopsPerRun?, samplingAfterStop?: SamplingOptions }
  */
 const repetitionGuard: Plugin = (api) => {
   const num = (k: string, d: number) => (typeof api.settings[k] === "number" ? (api.settings[k] as number) : d);
+  const prose: RepetitionLimits = {
+    minRepeats: num("minRepeats", 4),
+    minSpan: num("minSpan", 200),
+    minUnit: num("minUnit", 10),
+    shortMinSpan: num("shortMinSpan", 400),
+  };
   const limits: Record<DeltaKind, RepetitionLimits> = {
-    text: { minRepeats: num("minRepeats", 4), minSpan: num("minSpan", 200), minUnit: num("minUnit", 10) },
-    thinking: { minRepeats: num("minRepeats", 4), minSpan: num("minSpan", 200), minUnit: num("minUnit", 10) },
-    toolcall: { minRepeats: num("toolcallMinRepeats", 8), minSpan: num("toolcallMinSpan", 2000), minUnit: num("minUnit", 10) },
+    text: prose,
+    thinking: prose,
+    toolcall: {
+      minRepeats: num("toolcallMinRepeats", 8),
+      minSpan: num("toolcallMinSpan", 2000),
+      minUnit: num("minUnit", 10),
+      shortMinSpan: num("toolcallShortMinSpan", 4000),
+    },
   };
   const checkEvery = num("checkEvery", 128);
   const maxStops = num("maxStopsPerRun", 2);

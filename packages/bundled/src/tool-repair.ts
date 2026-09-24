@@ -11,7 +11,8 @@ const NAME_PREFIX = /^(functions|function|tools|tool|default_api|api)[.:/]/i;
 /**
  * Repairs tool calls before they are validated: broken JSON, misspelled tool names, renamed
  * arguments ("file" → "path"), and values of the wrong type ("20" → 20). Only unambiguous fixes
- * are made; the core tells the model what was changed.
+ * are made; the core tells the model what was changed. Unknown arguments are dropped only for
+ * read-only tools; elsewhere they may carry intent, so validation sends them back to the model.
  *
  * settings: { json?: boolean, names?: boolean, schema?: boolean }  (all default true)
  */
@@ -41,7 +42,7 @@ const toolRepair: Plugin = (api) => {
       notes.push(fixed.fixes.length ? `JSON: ${fixed.fixes.join(", ")}` : "JSON re-parsed");
     }
     if (tool && on("schema")) {
-      const fitted = fitToSchema(value, tool.parameters);
+      const fitted = fitToSchema(value, tool.parameters, { dropUnknown: tool.kind === "read" });
       if (fitted.fixes.length) {
         value = fitted.value;
         changed = true;

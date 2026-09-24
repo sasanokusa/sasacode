@@ -22,6 +22,8 @@ await $`rm -rf dist && mkdir -p dist`;
 for (const target of chosen) {
   const out = target ? `dist/sasacode-${target.replace(/^bun-/, "")}` : "dist/sasacode";
   const targetArgs = target ? [`--target=${target}`] : [];
-  await $`bun build ${entry} --compile --minify --sourcemap ${targetArgs} --outfile ${out}`;
+  // The working directory is an untrusted repository: never pick up its bunfig.toml (preload
+  // scripts would run as sasacode) or .env (e.g. ANTHROPIC_BASE_URL would reroute API keys).
+  await $`bun build ${entry} --compile --minify --sourcemap --no-compile-autoload-bunfig --no-compile-autoload-dotenv ${targetArgs} --outfile ${out}`;
   console.log(`built ${out}`);
 }

@@ -89,8 +89,12 @@ function readEntries(path: string): SessionEntry[] {
   return out;
 }
 
-/** Rebuild conversation state from entries, dropping a trailing turn that never completed. */
-export function restore(entries: SessionEntry[]): { messages: Message[]; model?: string; permissionMode?: string } {
+/**
+ * Rebuild conversation state from entries. Tool calls that never got a result (a crash mid-turn)
+ * get one saying so; `repaired` tells the caller to persist that (a replace entry), so the next
+ * restore sees the same history.
+ */
+export function restore(entries: SessionEntry[]): { messages: Message[]; model?: string; permissionMode?: string; repaired: boolean } {
   const messages: Message[] = [];
   let model: string | undefined;
   let permissionMode: string | undefined;
@@ -103,22 +107,39 @@ export function restore(entries: SessionEntry[]): { messages: Message[]; model?:
     else if (e.type === "model") model = e.model;
     else if (e.type === "permission_mode") permissionMode = e.mode;
   }
-  return { messages: trimIncomplete(messages), model, permissionMode };
+  const settled = settleToolCalls(messages);
+  return { messages: settled, model, permissionMode, repaired: settled.length !== messages.length };
 }
 
-export function trimIncomplete(messages: Message[]): Message[] {
-  // Find the last assistant message; if its tool calls are not all answered, cut it and what follows.
-  for (let i = messages.length - 1; i >= 0; i--) {
+const NOT_RUN = "[This tool call was not run: the session ended before it could execute.]";
+
+/**
+ * Every tool call must be followed by its result before the next user or assistant message
+ * (all APIs reject history otherwise). Add an error result for each call that has none,
+ * anywhere in the history.
+ */
+export function settleToolCalls(messages: Message[]): Message[] {
+  const out: Message[] = [];
+  for (let i = 0; i < messages.length; i++) {
     const m = messages[i]!;
+    out.push(m);
     if (m.role !== "assistant") continue;
-    const ids = m.content.filter((c) => c.type === "tool_call").map((c) => c.id);
-    const answered = new Set(
-      messages.slice(i + 1).flatMap((r) => (r.role === "tool" ? [r.toolCallId] : [])),
-    );
-    if (ids.every((id) => answered.has(id))) return messages;
-    return messages.slice(0, i);
+    const calls = m.content.filter((c) => c.type === "tool_call");
+    if (!calls.length) continue;
+    // The results of this turn are the tool messages right after it.
+    let j = i + 1;
+    const answered = new Set<string>();
+    for (; j < messages.length && messages[j]!.role === "tool"; j++) {
+      const r = messages[j] as Extract<Message, { role: "tool" }>;
+      answered.add(r.toolCallId);
+      out.push(r);
+    }
+    for (const c of calls)
+      if (!answered.has(c.id))
+        out.push({ role: "tool", toolCallId: c.id, toolName: c.name, content: [{ type: "text", text: NOT_RUN }], isError: true, timestamp: m.timestamp });
+    i = j - 1;
   }
-  return messages;
+  return out;
 }
 
 export function listSessions(dir: string): SessionInfo[] {

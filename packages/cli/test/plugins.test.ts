@@ -3,7 +3,8 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { emptyUsage, registerApi, replayProvider } from "@sasacode/ai";
-import { discoverPlugins, isTrusted } from "../src/loader.ts";
+import { discoverPlugins } from "../src/loader.ts";
+import { assessProject, isTrusted, saveTrust } from "../src/trust.ts";
 import { setup } from "../src/setup.ts";
 
 // A fresh directory per test: Bun caches module resolution per path within a process.
@@ -67,25 +68,27 @@ test("trusted project: plugin tools, commands and skills load; incompatible API 
   expect(JSON.stringify(h.agent.messages)).toContain("hi from proj_hi");
 });
 
-test("interactive trust prompt: accepting saves trust for this fingerprint", async () => {
-  const h = await setup({ cwd: proj, noSession: true });
-  const asked: string[] = [];
-  await h.loadPlugins({ interactive: true, notify() {}, confirm: async (t, m) => (asked.push(`${t} ${m}`), true), select: async () => undefined });
-  expect(asked[0]).toContain("plugin proj-hi");
-  expect(h.agent.getTools().map((t) => t.name)).toContain("proj_hi");
-  const again = await setup({ cwd: proj, noSession: true });
-  await again.loadPlugins({ interactive: true, notify() {}, confirm: async () => false, select: async () => undefined });
-  expect(again.agent.getTools().map((t) => t.name)).toContain("proj_hi"); // no second prompt needed
-  // A new project plugin changes the fingerprint.
+test("one trust decision covers project plugins and elevated config; it is remembered until they change", async () => {
+  write(join(proj, ".sasacode", "config.json"), JSON.stringify({ mcpServers: { fx: { command: "true" } } }));
+  const t = assessProject(proj);
+  expect(t.items).toEqual(expect.arrayContaining(["plugin proj-hi", "plugin future", "MCP server fx"]));
+  expect(isTrusted(proj, t)).toBe(false);
+  saveTrust(proj, t);
+  expect(isTrusted(proj, assessProject(proj))).toBe(true);
+  // A new project plugin changes the fingerprint: asked again.
   write(join(proj, ".sasacode", "plugins", "new.ts"), PLUGIN("new_one"));
-  const third = await setup({ cwd: proj, noSession: true });
-  await third.loadPlugins();
-  expect(third.agent.getTools().map((t) => t.name)).not.toContain("proj_hi");
+  expect(isTrusted(proj, assessProject(proj))).toBe(false);
+  // The legacy trustedProjects list in the global config still counts.
+  write(join(home, "config.json"), JSON.stringify({ trustedProjects: [proj] }));
+  expect(isTrusted(proj, assessProject(proj))).toBe(true);
+  // A project with nothing risky needs no trust.
+  const plain = mkdtempSync(join(tmpdir(), "plain-"));
+  expect(assessProject(plain).items).toEqual([]);
 });
 
 test("plugins.disabled and tools.disabled switch things off (P3)", async () => {
   write(join(proj, ".sasacode", "config.json"), JSON.stringify({ plugins: { disabled: ["todo", "global-hi"] }, tools: { disabled: ["bash", "web_fetch"] } }));
-  const h = await setup({ cwd: proj, noSession: true });
+  const h = await setup({ cwd: proj, noSession: true, trustProject: true }); // disabling plugins is a trusted setting
   await h.loadPlugins();
   const tools = h.agent.getTools().map((t) => t.name);
   expect(tools).not.toContain("todo_write");
@@ -100,5 +103,4 @@ test("a plugin can replace a built-in tool by name", async () => {
   const h = await setup({ cwd: proj, noSession: true });
   await h.loadPlugins();
   expect(h.agent.getTools().find((t) => t.name === "read")?.description).toBe("custom read");
-  expect(isTrusted(proj, "nope")).toBe(false);
 });

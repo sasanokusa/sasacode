@@ -1,10 +1,8 @@
-import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import * as pluginApi from "@sasacode/plugin-api";
 import { isCompatible, type Plugin } from "@sasacode/plugin-api";
-import type { McpServerConfig } from "./config.ts";
-import { sasacodeHome } from "./config.ts";
+import { type McpServerConfig, sasacodeHome } from "./config.ts";
 
 export interface Manifest {
   name: string;
@@ -105,27 +103,6 @@ export async function importExtensions(p: FoundPlugin): Promise<Plugin[]> {
     out.push(fn);
   }
   return out;
-}
-
-// ── trust for project-local plugins and MCP servers ─────────────────
-
-const trustFile = () => join(sasacodeHome(), "trust.json");
-
-/** Changes whenever the set of project plugins or MCP servers changes, so the prompt comes back. */
-export function projectFingerprint(plugins: FoundPlugin[], mcp: Record<string, McpServerConfig>): string {
-  const data = JSON.stringify({ plugins: plugins.map((p) => p.manifest).sort((a, b) => a.name.localeCompare(b.name)), mcp });
-  return createHash("sha256").update(data).digest("hex").slice(0, 16);
-}
-
-export function isTrusted(cwd: string, fingerprint: string): boolean {
-  return readJson(trustFile())?.[cwd] === fingerprint;
-}
-
-export function saveTrust(cwd: string, fingerprint: string): void {
-  const all = readJson(trustFile()) ?? {};
-  all[cwd] = fingerprint;
-  mkdirSync(dirname(trustFile()), { recursive: true });
-  writeFileSync(trustFile(), `${JSON.stringify(all, null, 2)}\n`);
 }
 
 // ── install / list / remove ─────────────────────────────────────────

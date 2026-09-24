@@ -41,6 +41,7 @@ export const editTool: ToolDefinition<Args> = {
     const after = args.replace_all
       ? before.split(args.old_string).join(args.new_string)
       : before.replace(args.old_string, () => args.new_string);
+    if (ctx.signal.aborted) return errorResult("Interrupted by the user; the file was not changed.");
     await writeFile(path, after);
     const diff = lineDiff(before, after);
     return {

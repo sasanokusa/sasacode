@@ -2,6 +2,7 @@ import type { Plugin } from "@sasacode/plugin-api";
 import agentsMd from "./agents-md.ts";
 import browsr from "./browsr.ts";
 import compaction from "./compaction.ts";
+import loopGuard from "./loop-guard.ts";
 import permissionPresets from "./permission-presets.ts";
 import repetitionGuard from "./repetition-guard.ts";
 import subagent from "./subagent.ts";
@@ -20,6 +21,7 @@ export { htmlToText } from "./web-fetch.ts";
 export const bundledPlugins: Record<string, Plugin> = {
   "tool-repair": toolRepair,
   "repetition-guard": repetitionGuard,
+  "loop-guard": loopGuard,
   "agents-md": agentsMd,
   compaction,
   subagent,

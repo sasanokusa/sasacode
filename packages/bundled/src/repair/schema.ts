@@ -65,7 +65,12 @@ function parseJson(s: string): unknown {
 }
 
 /** Convert one value toward the schema's type. Returns the value unchanged when no safe conversion exists. */
-function convert(v: unknown, schema: JSONSchema, at: string, fixes: string[]): unknown {
+interface Opts {
+  /** Drop arguments the schema does not know. Only safe where ignoring a constraint cannot change what happens. */
+  dropUnknown: boolean;
+}
+
+function convert(v: unknown, schema: JSONSchema, at: string, fixes: string[], o: Opts): unknown {
   const types = typesOf(schema);
   if (Array.isArray(schema.enum) && typeof v === "string" && !schema.enum.includes(v)) {
     const hit = (schema.enum as unknown[]).filter((e) => typeof e === "string" && e.toLowerCase() === v.toLowerCase());
@@ -75,7 +80,7 @@ function convert(v: unknown, schema: JSONSchema, at: string, fixes: string[]): u
     }
   }
   if (!types.length || types.some((t) => matches(t, v))) {
-    return types.includes("object") || types.includes("array") ? recurse(v, schema, at, fixes) : v;
+    return types.includes("object") || types.includes("array") ? recurse(v, schema, at, fixes, o) : v;
   }
   const show = (x: unknown) => JSON.stringify(x);
   for (const t of types) {
@@ -87,19 +92,19 @@ function convert(v: unknown, schema: JSONSchema, at: string, fixes: string[]): u
     else if (t === "array" && v !== null && v !== undefined) out = [v];
     if (out !== undefined && matches(t, out)) {
       fixes.push(`${at}: ${show(v).slice(0, 40)} → ${show(out).slice(0, 40)}`);
-      return recurse(out, schema, at, fixes);
+      return recurse(out, schema, at, fixes, o);
     }
   }
   return v;
 }
 
-function recurse(v: unknown, schema: JSONSchema, at: string, fixes: string[]): unknown {
-  if (Array.isArray(v) && schema.items) return v.map((x, i) => convert(x, schema.items as JSONSchema, `${at}[${i}]`, fixes));
-  if (v && typeof v === "object" && !Array.isArray(v) && schema.properties) return fixObject(v as Record<string, unknown>, schema, `${at}.`, fixes);
+function recurse(v: unknown, schema: JSONSchema, at: string, fixes: string[], o: Opts): unknown {
+  if (Array.isArray(v) && schema.items) return v.map((x, i) => convert(x, schema.items as JSONSchema, `${at}[${i}]`, fixes, o));
+  if (v && typeof v === "object" && !Array.isArray(v) && schema.properties) return fixObject(v as Record<string, unknown>, schema, `${at}.`, fixes, o);
   return v;
 }
 
-function fixObject(input: Record<string, unknown>, schema: JSONSchema, prefix: string, fixes: string[]): Record<string, unknown> {
+function fixObject(input: Record<string, unknown>, schema: JSONSchema, prefix: string, fixes: string[], o: Opts): Record<string, unknown> {
   const props = (schema.properties ?? {}) as Record<string, JSONSchema>;
   const required = new Set((schema.required as string[] | undefined) ?? []);
   const out: Record<string, unknown> = {};
@@ -112,21 +117,26 @@ function fixObject(input: Record<string, unknown>, schema: JSONSchema, prefix: s
     if (target) {
       out[target] = input[k];
       fixes.push(`argument "${prefix}${k}" → "${prefix}${target}"`);
-    } else if (schema.additionalProperties === false) {
+    } else if (schema.additionalProperties === false && o.dropUnknown) {
       fixes.push(`dropped unknown argument "${prefix}${k}"`);
-    } else out[k] = input[k];
+    } else out[k] = input[k]; // kept: validation reports it and the model decides
   }
   for (const [k, v] of Object.entries(out)) {
     if (v === null && !required.has(k) && !typesOf(props[k] ?? {}).includes("null")) {
       delete out[k];
       fixes.push(`dropped null "${prefix}${k}"`);
-    } else if (props[k]) out[k] = convert(v, props[k]!, `${prefix}${k}`, fixes);
+    } else if (props[k]) out[k] = convert(v, props[k]!, `${prefix}${k}`, fixes, o);
   }
   return out;
 }
 
-/** Rename, convert and drop arguments so they fit `schema`; each change is listed in `fixes`. */
-export function fitToSchema(input: Record<string, unknown>, schema: JSONSchema): Repaired<Record<string, unknown>> {
+/**
+ * Rename and convert arguments so they fit `schema`; each change is listed in `fixes`.
+ * Unknown arguments are dropped only with `dropUnknown` (read-only tools): on a tool that changes
+ * things, an argument like `overwrite: false` may be a constraint the model meant, so it is left
+ * for validation to report instead of being silently ignored.
+ */
+export function fitToSchema(input: Record<string, unknown>, schema: JSONSchema, opts: Partial<Opts> = {}): Repaired<Record<string, unknown>> {
   const fixes: string[] = [];
-  return { value: fixObject(input, schema, "", fixes), fixes };
+  return { value: fixObject(input, schema, "", fixes, { dropUnknown: opts.dropUnknown ?? false }), fixes };
 }

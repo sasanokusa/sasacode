@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { Agent, PermissionPolicy, PluginHost } from "@sasacode/agent";
 import { type AssistantMessage, emptyUsage, registerApi, replayProvider } from "@sasacode/ai";
-import builtinTools, { editTool, readTool } from "@sasacode/tools";
+import builtinTools, { editTool, readTool, writeTool } from "@sasacode/tools";
 import { bundledPlugins, closestName, detectRepetition, fitToSchema, repairJson } from "../src/index.ts";
 
 test("repairJson: the usual small-model mistakes", () => {
@@ -33,10 +33,15 @@ test("fitToSchema: rename, convert and drop only when unambiguous", () => {
     new_string: "y",
     replace_all: true,
   });
-  // Unknown extra argument with no candidate is dropped (additionalProperties: false) and reported.
-  expect(fitToSchema({ path: "a", encoding: "utf8" }, readTool.parameters)).toEqual({
+  // Unknown extra argument with no candidate: dropped only when allowed (read-only tools) and reported.
+  expect(fitToSchema({ path: "a", encoding: "utf8" }, readTool.parameters, { dropUnknown: true })).toEqual({
     value: { path: "a" },
     fixes: ['dropped unknown argument "encoding"'],
+  });
+  // On a tool that changes things it may be a constraint the model meant: kept for validation to report.
+  expect(fitToSchema({ file: "a", content: "x", overwrite: false }, writeTool.parameters)).toEqual({
+    value: { path: "a", content: "x", overwrite: false },
+    fixes: ['argument "file" → "path"'],
   });
   // "20abc" is not a number: left for validation to report.
   expect(fitToSchema({ path: "a", limit: "20abc" }, readTool.parameters).value).toEqual({ path: "a", limit: "20abc" });
@@ -109,10 +114,11 @@ test("tool-repair plugin: a broken call from a small model runs, and the model l
 });
 
 test("detectRepetition: loops are found, ordinary text and short runs are not", () => {
-  const limits = { minRepeats: 4, minSpan: 200, minUnit: 10 };
+  const limits = { minRepeats: 4, minSpan: 200, minUnit: 10, shortMinSpan: 400 };
   const loop = `Intro text. ${"I will now check the file again. ".repeat(8)}`;
   expect(detectRepetition(loop, limits)).toMatchObject({ unit: "I will now check the file again. ", count: 8 });
-  expect(detectRepetition("x".repeat(500), limits)).toBeUndefined(); // unit shorter than minUnit
+  expect(detectRepetition("x".repeat(300), limits)).toBeUndefined(); // a short unit needs a longer run …
+  expect(detectRepetition("x".repeat(500), limits)).toMatchObject({ unit: "x" }); // … but is caught then
   expect(detectRepetition("A normal paragraph that goes on for a while without repeating itself. ".repeat(1) + "abc".repeat(10), limits)).toBeUndefined();
   expect(detectRepetition("same line here\n".repeat(3), limits)).toBeUndefined(); // too few copies
 });
@@ -125,4 +131,27 @@ test("repetition-guard: stops the loop, keeps one copy, and tells the model", as
   expect(kept.content).toEqual([{ type: "text", text: "Let me think. I should read the config file first. " }]);
   expect(JSON.stringify(provider.requests[1]!.messages[2])).toContain("kept repeating the same text");
   expect(agent.messages.at(-1)).toMatchObject({ content: [{ text: "Reading it now." }] });
+});
+
+test("detectRepetition: short units need a long run; code and tables do not trip it", () => {
+  const limits = { minRepeats: 4, minSpan: 200, minUnit: 10, shortMinSpan: 400 };
+  expect(detectRepetition("なるほど。".repeat(100), limits)).toMatchObject({ unit: "なるほど。", count: 100 });
+  expect(detectRepetition(`見出し\n${"なるほど。".repeat(30)}`, limits)).toBeUndefined(); // 150 chars: not yet
+  const table = ["| a | b |", "| --- | --- |", ...Array.from({ length: 40 }, (_, i) => `| row ${i} | ${i * 7} |`)].join("\n");
+  expect(detectRepetition(table, limits)).toBeUndefined();
+  const code = Array.from({ length: 60 }, (_, i) => `  const v${i} = values[${i}] ?? 0;\n`).join("");
+  expect(detectRepetition(code, limits)).toBeUndefined();
+  expect(detectRepetition(`${"=".repeat(80)}\nTitle\n${"=".repeat(80)}`, limits)).toBeUndefined();
+});
+
+test("tool-repair keeps a mutating tool's unknown argument, so the model is asked again", async () => {
+  const { provider } = await run(
+    [
+      reply([{ type: "tool_call", id: "1", name: "write", input: { path: "never-written.txt", content: "x", overwrite: false } }], 11),
+      reply([{ type: "text", text: "ok" }], 12),
+    ],
+    "tool-repair",
+  );
+  const result = JSON.stringify(provider.requests[1]!.messages.at(-1));
+  expect(result).toContain("input.overwrite is not an allowed property");
 });

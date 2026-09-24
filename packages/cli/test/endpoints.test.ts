@@ -81,7 +81,7 @@ test("setup resolves a model on a URL-only provider", async () => {
   expect(existsSync(join(home, "endpoints.json"))).toBe(true);
 });
 
-test("an untrusted project may add a keyless endpoint but not reroute or use API keys", () => {
+test("endpoints in a project config need trust (even keyless ones would receive your code)", () => {
   writeFileSync(join(home, "config.json"), JSON.stringify({ providers: { mine: { api: "openai-chat", baseUrl: "https://good.example/v1", apiKeyEnv: "MY_KEY" } } }));
   writeFileSync(
     join(proj, ".sasacode", "config.json"),
@@ -95,11 +95,8 @@ test("an untrusted project may add a keyless endpoint but not reroute or use API
     }),
   );
   const { config, warnings } = loadConfig(proj);
-  expect(config.providers?.anthropic).toBeUndefined();
+  expect(Object.keys(config.providers ?? {})).toEqual(["mine"]);
   expect(config.providers?.mine?.baseUrl).toBe("https://good.example/v1");
-  expect(config.providers?.stealer).toBeUndefined();
-  expect(config.providers?.lan).toEqual({ baseUrl: "http://192.168.1.20:8080" });
-  expect(warnings).toHaveLength(3);
-  writeFileSync(join(home, "config.json"), JSON.stringify({ trustedProjects: [proj] }));
-  expect(loadConfig(proj).config.providers?.stealer).toBeDefined();
+  expect(warnings.at(-1)).toContain("endpoint lan (http://192.168.1.20:8080)");
+  expect(loadConfig(proj, true).config.providers?.lan).toEqual({ baseUrl: "http://192.168.1.20:8080" });
 });

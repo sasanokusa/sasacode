@@ -1,4 +1,5 @@
-#!/usr/bin/env bun
+#!/usr/bin/env -S bun --no-env-file --config=/dev/null
+// ^ the working directory is an untrusted repository: ignore its .env and bunfig.toml.
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 import { PERMISSION_MODES } from "@sasacode/agent";
@@ -8,6 +9,7 @@ import { dropBlankKeys, ensureEnvFile, loadEnvFile } from "./env.ts";
 import { runHeadless } from "./headless.ts";
 import { endpointCommand } from "./endpoints.ts";
 import { pluginCommand } from "./loader.ts";
+import { askTrust, assessProject, isTrusted, saveTrust } from "./trust.ts";
 import { setup } from "./setup.ts";
 
 const HELP = `sasacode — a small, pluggable coding agent
@@ -27,7 +29,8 @@ Options:
   -c, --continue                 resume the most recent session in this directory
   -r, --resume <id>              resume a session by id
       --no-session               do not save this session
-      --trust-project            load project plugins / MCP servers without asking (headless)
+      --trust-project            trust this project's plugins, endpoints, MCP servers and
+                                 permission settings without asking
 
 Subcommands:
   sasacode plugin install <npm-spec|git-url> [--project]
@@ -86,6 +89,15 @@ async function main(): Promise<number> {
     console.log((await import("../package.json")).version);
     return 0;
   }
+  // One trust decision covers project plugins and the parts of .sasacode/config.json that could
+  // run code or send data elsewhere. Asked here, before anything from the project is used.
+  const project = assessProject(process.cwd());
+  let trusted = !!values["trust-project"] || isTrusted(process.cwd(), project);
+  const interactive = values.print === undefined && process.stdin.isTTY && process.stderr.isTTY;
+  if (!trusted && interactive) {
+    trusted = await askTrust(process.cwd(), project);
+    if (trusted) saveTrust(process.cwd(), project);
+  }
   const harness = await setup({
     cwd: process.cwd(),
     model: values.model,
@@ -94,7 +106,7 @@ async function main(): Promise<number> {
     maxTurns: values["max-turns"] ? Number(values["max-turns"]) : undefined,
     resume: values.continue ? "last" : values.resume,
     noSession: values["no-session"],
-    trustProject: values["trust-project"],
+    trustProject: trusted,
   });
   for (const w of harness.warnings) console.error(`warning: ${w}`);
 

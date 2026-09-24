@@ -53,7 +53,7 @@ sasacode -r <id> -p "続き"            # セッション ID を指定して続�
 | `--thinking <off\|low\|medium\|high\|xhigh\|max>` | 推論の深さ |
 | `--max-turns <n>` | ターン数の上限（既定は無制限） |
 | `-c` / `-r <id>` / `--no-session` | 再開 / ID を指定して再開 / 保存しない |
-| `--trust-project` | ヘッドレスで、プロジェクトのプラグインと MCP サーバーを確認なしで読み込む |
+| `--trust-project` | プロジェクトを確認なしで信頼する（ヘッドレス向け。[プロジェクトの信頼](#プロジェクトの信頼)） |
 | `sasacode plugin install\|remove\|list` | プラグインの管理（npm か git URL） |
 | `sasacode endpoint add\|remove\|list` | 自前のサーバーの追加（形式は自動判別） |
 
@@ -102,15 +102,15 @@ sasacode -m llama/<モデル名>
 
 `GET /v1/models` の応答から、OpenAI 形式（Chat Completions で呼ぶ）か Anthropic 形式（Messages で呼ぶ）かを自動で判別し、URL も各形式の SDK に合わせて整える。llama.cpp と Ollama は、それぞれ `/props` と `/api/show` から実際のコンテキスト長も取る。追加したサーバーのモデルは、`/model` の一覧に自動で出る。設定ファイルに `"providers": { "llama": { "baseUrl": "http://…" } }` と URL だけ書いた場合も、起動時に判別する（結果は `~/.sasacode/endpoints.json` にキャッシュする）。
 
-信頼されていないプロジェクトの `.sasacode/config.json` で追加できるのは、キーを使わない新しいプロバイダーだけ。既存のプロバイダーの接続先を変えたり、`apiKeyEnv` や `headers` を付けたりする設定は、そのプロジェクトを `trustedProjects` に入れるまで無視する（クローンしたリポジトリが API キーを別のサーバーへ送らせないため）。
+プロジェクトの `.sasacode/config.json` に書いたエンドポイントは、そのプロジェクトを信頼するまで使わない（[プロジェクトの信頼](#プロジェクトの信頼)）。キーを使わないサーバーでも、会話とコードが送られるため。
 
 **モデル一覧の自動取得**：TUI の起動時に、キーのあるプロバイダー（と Ollama）の Models API（`GET /v1/models`）をバックグラウンドで呼び、`/model` に一覧とコンテキスト長を出す。取得したコンテキスト長は、フッターの使用率や圧縮のしきい値にも使う（設定の `modelOverrides` があればそちらが優先）。Ollama は独自の `/api/show` から読み、Modelfile の `num_ctx` があればそれを実際の長さとして使い、なければモデルの最大長を参考として表示する。OpenAI の Models API はコンテキスト長を返さないので、組み込みのモデル表の値で補う。Command Code のように1つのキーで複数の API 形式を提供するサービスでは、モデルごとに対応する形式のプロバイダーへ自動で振り分ける（例：Claude 系は `commandcode-anthropic/…`）。
 
-**API キー**は次の順で探す：環境変数 → `~/.sasacode/.env` → 作業ディレクトリの `.env` → OS キーチェーン（macOS: `security add-generic-password -s sasacode -a <provider> -w`、Linux: `secret-tool store --label sasacode service sasacode account <provider>`）。どこでも空欄は無視する。セッションのログには、使用中のキーを `[REDACTED]` に置き換えてから書く。
+**API キー**は次の順で探す：シェルの環境変数 → `~/.sasacode/.env` → OS キーチェーン（macOS: `security add-generic-password -s sasacode -a <provider> -w`、Linux: `secret-tool store --label sasacode service sasacode account <provider>`）。どこでも空欄は無視する。作業ディレクトリの `.env` と `bunfig.toml` は読まない（リポジトリが `ANTHROPIC_BASE_URL` などで接続先を差し替えたり、起動時にスクリプトを実行させたりできないようにするため）。セッションのログには、使用中のキーを `[REDACTED]` に置き換えてから書く。
 
 ## 設定
 
-`~/.sasacode/config.json`（全体）と `<project>/.sasacode/config.json`（プロジェクト）をマージし、プロジェクトが優先する。権限ルールの配列は両方を連結する。
+`~/.sasacode/config.json`（全体）と `<project>/.sasacode/config.json`（プロジェクト）をマージし、プロジェクトが優先する。ただし、プロジェクト設定のうち信頼が必要な部分は、信頼するまで使わない（下記）。権限ルールの配列は両方を連結し、全体設定の deny / ask をプロジェクト側から消すことはできない。型の合わない値や未知のキーは、警告を出して無視する。
 
 ```json
 {
@@ -149,7 +149,17 @@ sasacode -m llama/<モデル名>
 - 判定の順番は deny → ask → allow → モード。allow ルールで通るのは、`&&` `;` `|` でつないだコマンドの**すべて**が許可されている場合だけ。`$(…)`、バッククォート、`>` を含むコマンドは、allow ルールでは通らない。
 - 同梱の `permission-presets` が、既定で `guard`（sudo、`rm -rf ~`、force push、`| sh` などを常に拒否）を有効にしている。
 - ヘッドレスでは確認できる人がいないので、確認が必要な呼び出しは実行せず、その理由をモデルに返す。
-- クローンしたリポジトリが勝手に承認を外せないよう、プロジェクト設定で `mode: auto|agent` や `allow` を書いても、全体設定の `trustedProjects` に入れるまで効かない。プロジェクトのプラグインと MCP サーバーは、初回に信頼の確認を出す。
+- パスは、シンボリックリンクをたどった先（実パス）で判定する。作業ディレクトリ内のリンクが外を指していれば、外への操作として扱う。プロジェクト内のリンクで、ルールの対象をすり替えることもできない。
+- 中断（esc）した後は、承認済みでもまだ始まっていないツールは実行しない。
+
+### プロジェクトの信頼
+
+クローンしたリポジトリは、そのままでは「制限を強める」ことしかできない。次のものは、コードを実行するか、データの送り先を変えうるので、プロジェクトを信頼するまで使わない。
+
+- `.sasacode/plugins` のプラグイン
+- `.sasacode/config.json` の `providers`（エンドポイント）、`modelOverrides`、`plugins`（無効化と設定）、`mcpServers`、`allow` ルール、全体設定より緩い権限モード、そのプロジェクトにしかないプロバイダーを指す `model`
+
+これらがあるプロジェクトで起動すると、最初に一覧を出して信頼するかを尋ねる（ヘッドレスでは `--trust-project`）。答えは `~/.sasacode/trust.json` に保存し、内容が変わったら再び尋ねる。全体設定の `trustedProjects` に入れたプロジェクトは、尋ねずに信頼する。モデルの選択、`thinking`、`instructions`、deny / ask ルールの追加、より厳しい権限モードなどは、信頼しなくても使う。
 
 ## プラグイン・MCP・Skills
 
@@ -158,7 +168,8 @@ sasacode -m llama/<モデル名>
 | 名前 | 内容 |
 | --- | --- |
 | `tool-repair` | 検証の前に、壊れたツール呼び出しを直す。直す対象は、JSON の崩れ（末尾カンマ、閉じ括弧、クォートのないキー、`True`/`None`、コードフェンス、二重エンコード）、キー名（`file` → `path`）、型（`"20"` → `20`）、ツール名の typo。候補が1つに絞れるときだけ直す。直したことはモデルに短く伝え、履歴には直した後の形を残し、元の出力はセッションに記録する |
-| `repetition-guard` | 生成中に同じ文を繰り返し始めたら止め、1回分だけ残して、続きを促す |
+| `repetition-guard` | 生成中に同じ文を繰り返し始めたら止め、1回分だけ残して、続きを促す（「なるほど。」のような短い繰り返しも、長く続けば止める） |
+| `loop-guard` | 同じツールを同じ引数で呼んで同じ結果が返ることが続いたら、3回目に注意を添え、5回目は実行しない。同じエラーの繰り返しも知らせる。途中でファイルを変更すれば数え直す |
 | `agents-md` | `~/.sasacode/AGENTS.md` と、リポジトリのルートから作業ディレクトリまでの `AGENTS.md` を読む（CLAUDE.md は読まない） |
 | `compaction` | コンテキストが 80% に達するか上限に来たら、古い履歴を要約する。`/compact` で手動実行 |
 | `subagent` | `task` ツール。別の履歴を持つサブエージェントに作業を任せ、報告だけを受け取る（1ターンに複数あれば並行して動く） |

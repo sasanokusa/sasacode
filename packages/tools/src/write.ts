@@ -1,6 +1,6 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import { text, type ToolDefinition } from "@sasacode/plugin-api";
+import { errorResult, text, type ToolDefinition } from "@sasacode/plugin-api";
 import { lineDiff, resolvePath } from "./util.ts";
 
 interface Args {
@@ -25,6 +25,7 @@ export const writeTool: ToolDefinition<Args> = {
   paths: (a, cwd) => [resolvePath(a.path, cwd)],
   summary: (a) => a.path,
   async execute(args, ctx) {
+    if (ctx.signal.aborted) return errorResult("Interrupted by the user; nothing was written.");
     const path = resolvePath(args.path, ctx.cwd);
     const before = await readFile(path, "utf8").catch(() => undefined);
     await mkdir(dirname(path), { recursive: true });

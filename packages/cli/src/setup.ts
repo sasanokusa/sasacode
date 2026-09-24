@@ -20,7 +20,7 @@ import { createMcpPlugin, type McpServerConfig } from "@sasacode/mcp";
 import { createSkillsPlugin } from "@sasacode/skills";
 import builtinTools from "@sasacode/tools";
 import { type Config, loadConfig, sasacodeHome } from "./config.ts";
-import { discoverPlugins, type FoundPlugin, importExtensions, isTrusted, projectFingerprint, saveTrust } from "./loader.ts";
+import { discoverPlugins, type FoundPlugin, importExtensions } from "./loader.ts";
 import { type ModelChoice, ModelCatalog } from "./catalog.ts";
 import { resolveEndpoints } from "./endpoints.ts";
 import { resolveApiKey } from "./keys.ts";
@@ -34,7 +34,7 @@ export interface SetupOptions {
   /** "last" = most recent session in cwd, otherwise a session id or path. */
   resume?: string;
   noSession?: boolean;
-  /** Trust project-local plugins and MCP servers without asking (headless). */
+  /** The project is trusted: its plugins and the elevated part of its config are used. */
   trustProject?: boolean;
 }
 
@@ -60,7 +60,9 @@ export interface Harness {
 }
 
 export async function setup(opts: SetupOptions): Promise<Harness> {
-  const { config, warnings, projectMcp } = loadConfig(opts.cwd);
+  // Decided before setup (asked on the terminal, --trust-project, or remembered).
+  const trusted = !!opts.trustProject;
+  const { config, warnings } = loadConfig(opts.cwd, trusted);
   const providers: Record<string, ProviderConfig> = { ...BUILTIN_PROVIDERS };
   for (const [name, p] of Object.entries(config.providers ?? {}))
     providers[name] = { ...providers[name], ...p } as ProviderConfig;
@@ -126,6 +128,8 @@ export async function setup(opts: SetupOptions): Promise<Harness> {
     const state = restore(entries);
     agent.messages = state.messages;
     agent.session = file;
+    // Record the repair, so restoring again (after more turns are appended) gives the same history.
+    if (state.repaired) file.append({ type: "replace", messages: state.messages });
     sessionEntries = entries;
     if (state.model) {
       try {
@@ -158,22 +162,9 @@ export async function setup(opts: SetupOptions): Promise<Harness> {
       for (const [name, plugin] of Object.entries(bundledPlugins)) if (!disabled.has(name)) await host.load(name, plugin);
 
       const found = discoverPlugins(opts.cwd).filter((p) => !disabled.has(p.manifest.name));
-      const projectPlugins = found.filter((p) => p.scope === "project");
-      const projectServers = Object.fromEntries(projectMcp.map((n) => [n, config.mcpServers![n]!]));
-      let trusted = true;
-      if (projectPlugins.length || projectMcp.length) {
-        const fp = projectFingerprint(projectPlugins, projectServers as Record<string, McpServerConfig>);
-        trusted = opts.trustProject || isTrusted(opts.cwd, fp);
-        if (!trusted && ui.interactive) {
-          const names = [...projectPlugins.map((p) => `plugin ${p.manifest.name}`), ...projectMcp.map((n) => `MCP ${n}`)];
-          trusted = await ui.confirm(
-            "このプロジェクトのプラグイン / MCP サーバーを信頼しますか？",
-            `${names.join(", ")}\nインプロセスプラグインと MCP サーバーはあなたの権限でコードを実行します。`,
-          );
-          if (trusted) saveTrust(opts.cwd, fp);
-        }
-        if (!trusted) host.notify("プロジェクトのプラグイン / MCP サーバーは信頼されていないため読み込みません（headless では --trust-project）", "warning");
-      }
+      const skipped = found.filter((p) => p.scope === "project" && !trusted);
+      if (skipped.length)
+        host.notify(`project plugins not loaded until you trust this project: ${skipped.map((p) => p.manifest.name).join(", ")}`, "warning");
       const usable = found.filter((p) => p.scope === "global" || trusted);
 
       if (!disabled.has("skills")) {
@@ -182,7 +173,8 @@ export async function setup(opts: SetupOptions): Promise<Harness> {
       }
       if (!disabled.has("mcp")) {
         const servers: Record<string, McpServerConfig> = {};
-        for (const [n, s] of Object.entries(config.mcpServers ?? {})) if (trusted || !projectMcp.includes(n)) servers[n] = s as McpServerConfig;
+        // Project MCP servers are only in `config` when the project is trusted.
+        for (const [n, s] of Object.entries(config.mcpServers ?? {})) servers[n] = s as McpServerConfig;
         for (const p of usable) Object.assign(servers, p.manifest.mcpServers ?? {});
         await host.load("mcp", createMcpPlugin(servers));
       }

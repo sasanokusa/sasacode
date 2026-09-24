@@ -114,6 +114,8 @@ export async function executeTools(
     } else batch.push(jobs[i++]!);
     await Promise.all(
       batch.map(async (j) => {
+        // Approvals happen up front; a call must not start once the user has interrupted.
+        if (!j.result && opts.signal.aborted) j.result = err("Interrupted by the user before this tool ran.");
         if (!j.result) j.result = await runTool(ctx, j.tool!, j.call, j.args!, opts.signal);
       }),
     );
