@@ -311,8 +311,7 @@ class App {
         this.loader = undefined;
         if (e.cause === "aborted") this.chat.addChild(new Notice("中断しました", c.yellow));
         if (e.cause === "max_turns") void this.offerToContinue();
-        if (e.cause === "no_progress")
-          this.chat.addChild(new Notice("ツール呼び出しが実行されないターンが続いたため停止しました。指示を変えて続けてください。", c.yellow));
+        if (e.cause === "stopped" && e.stopped) this.chat.addChild(new Notice(`${e.stopped.plugin} が停止しました: ${e.stopped.reason}`, c.yellow));
         this.renderStatus();
         break;
     }

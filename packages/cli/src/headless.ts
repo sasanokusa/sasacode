@@ -35,12 +35,16 @@ export async function runHeadless(h: Harness, prompt: string, output: "text" | "
   await h.host.settle();
   const onSigint = () => agent.abort();
   process.on("SIGINT", onSigint);
+  let stoppedBy = "";
+  agent.events.on((e) => {
+    if (e.type === "agent_end" && e.stopped) stoppedBy = `${e.stopped.plugin}: ${e.stopped.reason}`;
+  });
   const cause: StopCause = await agent.prompt(prompt);
   // Plugins may inject follow-ups (agent_end); wait for everything to settle.
   await agent.waitForIdle();
   process.off("SIGINT", onSigint);
   await h.shutdown();
-  if (output === "text" && cause !== "done") status(`[stopped: ${cause}${STOP_HINT[cause] ? ` — ${STOP_HINT[cause]}` : ""}]`);
+  if (output === "text" && cause !== "done") status(`[stopped: ${cause}${stoppedBy ? ` — ${stoppedBy}` : STOP_HINT[cause] ? ` — ${STOP_HINT[cause]}` : ""}]`);
   // One-shot runs are how sasacode is driven without tmux: say how to continue this conversation.
   if (output === "text" && session && existsSync(session.path)) status(`session ${session.id} · continue: sasacode -r ${session.id} -p "…"`);
   return cause === "done" ? 0 : 1;
@@ -48,7 +52,6 @@ export async function runHeadless(h: Harness, prompt: string, output: "text" | "
 
 const STOP_HINT: Partial<Record<StopCause, string>> = {
   max_turns: "turn limit reached (--max-turns or maxTurns in config; 0 = no limit)",
-  no_progress: "several turns in a row where no tool call could run",
 };
 
 /** message_update carries the whole partial message; the delta is enough for a log. */

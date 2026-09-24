@@ -201,3 +201,19 @@ export function parseToolInput(json: string): { input: Record<string, unknown>; 
   } catch {}
   return { input: {}, rawInput: json };
 }
+
+export interface ProviderConfig {
+  api: Api;
+  baseUrl?: string;
+  /** Environment variable holding the API key. */
+  apiKeyEnv?: string;
+  headers?: Record<string, string>;
+  /** Shown in the generated ~/.sasacode/.env. */
+  label?: string;
+  /** Model used when nothing is configured and this provider's key is set. */
+  defaultModel?: string;
+  /** The server is Ollama: model details (context length) come from its native /api/show. */
+  ollama?: boolean;
+  /** The server is llama.cpp's llama-server: the context size comes from its /props. */
+  llamacpp?: boolean;
+}

@@ -90,14 +90,13 @@ interface Job {
 /**
  * Runs the calls of one response. Results are passed to `onResult` in call order, each as soon as
  * it and those before it are final, so they are saved before the next call starts (a crash then
- * loses at most the calls in flight). Returns how many calls actually ran.
+ * loses at most the calls in flight).
  */
 export async function executeTools(
   ctx: ToolRunContext,
   calls: ToolCall[],
   opts: { truncated: boolean; signal: AbortSignal; repairs: Map<string, Repair>; onResult: (m: ToolResultMessage) => void },
-): Promise<number> {
-  let ran = 0;
+): Promise<void> {
   const jobs: Job[] = [];
   let flushed = 0;
   const messages = new Map<Job, ToolResultMessage>();
@@ -146,12 +145,10 @@ export async function executeTools(
         if (j.result) return;
         // Approvals happen up front; a call must not start once the user has interrupted.
         if (opts.signal.aborted) return finish(j, err("Interrupted by the user before this tool ran."), false);
-        ran++;
         await finish(j, await runTool(ctx, j.tool!, j.call, j.args!, opts.signal), true);
       }),
     );
   }
-  return ran;
 }
 
 /** Checks that need no user: returns an error result when the call cannot run. */

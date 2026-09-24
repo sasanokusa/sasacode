@@ -133,8 +133,8 @@ before_request → stream_delta（生成中、差分ごと） → assistant_mess
 | `tool_call_raw` | ツールの検索と引数の検証の前 | `{call, name, input, rawInput?, tools, stopReason}`（`rawInput` は JSON として壊れていたときの生の文字列） | `{name, input, note}` で修復する。`note` は tool_result の先頭でモデルに伝わる。履歴には修復後の呼び出しを残し、元の出力はセッションに `tool_repair` として残る（署名付きの thinking を含む応答は、履歴を書き換えずに実行時だけ直す）。`max_tokens` で途切れた呼び出しでは呼ばれない（1.2.0〜） |
 | `tool_call` | 検証の後、権限判定の前 | `{call, tool, args}` | `{args}` で引数を書き換える。`{decision: "allow" \| "ask" \| "deny", reason}` で判定する（複数あれば deny > ask > allow の強いほう）。プラグインの判定が置き換えるのは権限モードの既定の判定だけで、ユーザーの deny / ask ルールは常に効く |
 | `tool_result` | 呼び出しごとの結果が決まったとき | `{call, result, ran}`。`ran: false` は実行されなかった呼び出し（未知のツール、引数の不備、拒否、中断）。1.4.0 より前は、実行された呼び出しでしか呼ばれなかった | `{result}` で結果を書き換える・追記する |
-| `turn_end` | 1ターン（応答とツールの実行）の後 | `{turn, message}` | `{inject}` でユーザーメッセージを足してループを続ける |
-| `agent_end` | ループが止まったとき | `{cause}`（`done` / `aborted` / `error` / `refusal` / `context_limit` / `max_turns` / `no_progress`） | `{inject}` で次の実行を始める |
+| `turn_end` | 1ターン（応答とツールの実行）の後 | `{turn, message}` | `{inject}` でユーザーメッセージを足してループを続ける。`{stop: 理由}` で実行を終える（1.4.0〜）。コアは権限・中断・コンテキスト上限でしか止まらないので、それ以外の理由で止めるのはプラグインの役割 |
+| `agent_end` | ループが止まったとき | `{cause}`（`done` / `aborted` / `error` / `refusal` / `context_limit` / `max_turns` / `stopped`）。`stopped` のときは `stopped: {plugin, reason}` も付く | `{inject}` で次の実行を始める |
 | `context_limit` | コンテキストが上限に達したとき | `{tokens, contextWindow}` | `session.replaceMessages` で空けてから `{retry: true}` で続ける（連続2回まで） |
 
 サブエージェント（`agent.run`）は、`system_prompt` / `before_request` / `stream_delta` / `assistant_message` / `tool_call_raw` / `tool_call` / `tool_result` のハンドラを共有する。セッション系のフック（`session_*`、`user_prompt`、`turn_end`、`agent_end`、`context_limit`）は、サブエージェントでは呼ばれない。
@@ -147,9 +147,18 @@ before_request → stream_delta（生成中、差分ごと） → assistant_mess
 | 1.1.0 | `ready(promise)` |
 | 1.2.0 | `stream_delta`、`assistant_message`、`tool_call_raw` の各フック。`before_request` の `sampling` |
 | 1.3.0 | コマンドの `complete(prefix)`（引数の補完） |
-| 1.4.0 | `tool_result` が実行されなかった呼び出しでも呼ばれる（`ran` で区別）。停止理由 `no_progress` |
+| 1.4.0 | `tool_result` が実行されなかった呼び出しでも呼ばれる（`ran` で区別）。`turn_end` の `stop` で実行を終えられる（停止理由 `stopped`） |
 
-どれも既存のプラグインを壊さない追加。ただし 1.4.0 から、`tool_result` を「実行された」合図として数えているプラグインは `ran` を見る必要がある。`apiVersion` に `^1.0.0` と書いたプラグインは、そのまま動く。
+どれも既存のプラグインを壊さない追加。ただし 1.4.0 から、`tool_result` を「実行された」合図として数えているプラグインは `ran` を見る必要がある。
+
+### 互換性の約束（1.4.0 で確定）
+
+1.4.0 で API を締め切った。以降、1.x の間は次を守る。
+
+- 公開するのは `@sasacode/plugin-api` が export する型・関数・定数と、ここに書いたフックの呼ばれ方だけ。`@sasacode/agent` などの内部パッケージを直接使うコードは対象外。
+- 1.x の変更は追加だけにする（新しいフック、イベントや結果の省略可能なフィールド、`StopCause` などの新しい値）。プラグインは、知らないフィールドや値を無視すること。
+- 既存のものを変える・消すのは 2.0 だけ。その前に少なくとも1つのマイナー版で非推奨と告知し、ドキュメントと型に `@deprecated` を付ける。
+- 挙動の不具合の修正（例：呼ばれるべきフックが呼ばれていなかった）は、互換を壊す変更とはみなさない。修正の内容は上の表に書く。`apiVersion` に `^1.0.0` と書いたプラグインは、そのまま動く。
 
 ## 信頼と安全
 

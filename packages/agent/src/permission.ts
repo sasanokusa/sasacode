@@ -1,5 +1,5 @@
-import { lstatSync, readlinkSync, realpathSync } from "node:fs";
-import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { lstatSync, readlinkSync } from "node:fs";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type { ToolDefinition } from "@sasacode/plugin-api";
 
 /**
@@ -157,35 +157,47 @@ function realPattern(glob: string): string {
 }
 
 /**
- * `p` with symlinks resolved. For a path that does not exist yet, its nearest existing ancestor is,
- * and a link whose target does not exist yet is followed to that target (writing through it would
- * create the target). Throws when the path cannot be resolved (a link loop, no permission).
+ * `p` with symlinks resolved, walked one component at a time as the OS does: a link's target is
+ * put in front of the rest of the path before any ".." that follows is applied (so `pivot/..`
+ * inside a link goes up from where `pivot` really points). Parts that do not exist yet are kept as
+ * written, and so is a link whose target does not exist yet, followed to that target (writing
+ * through it would create it). Throws when the path cannot be resolved safely (a link loop, no
+ * permission, ".." below a part that does not exist).
  */
-export function realPath(p: string, hops = 0): string {
-  const rest: string[] = [];
-  let cur = p;
-  while (true) {
-    try {
-      return join(realpathSync(cur), ...rest);
-    } catch (e) {
-      if (!missing(e)) throw e;
+export function realPath(p: string): string {
+  const todo = p.split("/").filter(Boolean);
+  let done = "/";
+  let absent = false;
+  let hops = 0;
+  while (todo.length) {
+    const part = todo.shift()!;
+    if (part === ".") continue;
+    if (part === "..") {
+      // The OS would fail here, but the folder may be created in between: do not guess.
+      if (absent) throw new Error(`cannot resolve ${p}: ".." below a path that does not exist`);
+      done = dirname(done);
+      continue;
     }
-    let link: string | undefined;
-    try {
-      if (lstatSync(cur).isSymbolicLink()) link = readlinkSync(cur);
-      else throw new Error(`cannot resolve ${cur}`); // exists, yet realpath failed
-    } catch (e) {
-      if (!missing(e)) throw e;
+    const next = join(done, part);
+    if (!absent) {
+      let link: string | undefined;
+      try {
+        const st = lstatSync(next);
+        if (st.isSymbolicLink()) link = readlinkSync(next);
+      } catch (e) {
+        if (!missing(e)) throw e;
+        absent = true;
+      }
+      if (link !== undefined) {
+        if (++hops > 40) throw new Error(`too many symlinks: ${p}`);
+        todo.unshift(...link.split("/").filter(Boolean));
+        if (isAbsolute(link)) done = "/";
+        continue;
+      }
     }
-    if (link !== undefined) {
-      if (hops >= 40) throw new Error(`too many symlinks: ${p}`);
-      return realPath(join(resolve(dirname(cur), link), ...rest), hops + 1);
-    }
-    const parent = dirname(cur);
-    if (parent === cur) return p;
-    rest.unshift(basename(cur));
-    cur = parent;
+    done = next;
   }
+  return done;
 }
 
 function missing(e: unknown): boolean {

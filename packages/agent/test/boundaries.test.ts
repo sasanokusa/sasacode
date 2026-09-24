@@ -1,11 +1,11 @@
 // Regressions from the v0.6.3 and v0.7.0 reviews: symlink escapes, work after an interrupt, restores, runaway loops.
 import { afterAll, expect, test } from "bun:test";
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type AssistantMessage, emptyUsage, type Message, registerApi, replayProvider } from "@sasacode/ai";
 import { editTool, readTool, writeTool } from "@sasacode/tools";
-import { Agent, listSessions, PermissionPolicy, restore, SessionFile, sessionDir } from "../src/index.ts";
+import { Agent, listSessions, PermissionPolicy, realPath, restore, SessionFile, sessionDir } from "../src/index.ts";
 
 const root = mkdtempSync(join(tmpdir(), "sasacode-bounds-"));
 afterAll(() => rmSync(root, { recursive: true, force: true }));
@@ -46,6 +46,17 @@ test("a link to a file that does not exist yet is judged by its target", async (
   symlinkSync("loop-a", join(proj, "loop-b"));
   const auto = new PermissionPolicy("auto");
   expect((await auto.check({ tool: writeTool, args: { path: "loop-a", content: "x" }, cwd: proj })).decision).toBe("ask");
+});
+
+test("a link whose target goes up through another link is followed as the OS does", async () => {
+  mkdirSync(join(outside, "child"));
+  symlinkSync("../outside/child", join(proj, "pivot"));
+  symlinkSync("pivot/../new-through-pivot.txt", join(proj, "entry"));
+  expect(realPath(join(proj, "entry"))).toBe(join(realpathSync(outside), "new-through-pivot.txt"));
+  const p = new PermissionPolicy("edits");
+  expect((await p.check({ tool: writeTool, args: { path: "entry", content: "x" }, cwd: proj })).decision).toBe("ask");
+  // Existing paths resolve exactly like realpath (on macOS, /var is itself a link).
+  expect(realPath(join(proj, "linked", "secret.txt"))).toBe(realpathSync(join(outside, "secret.txt")));
 });
 
 test("write stops if interrupted while it waits on the file system", async () => {
@@ -140,13 +151,13 @@ test("each result is saved before the next call starts", async () => {
   expect(saved[1]).toContain("probe ran"); // the first call's result was on disk when the second started
 });
 
-test("a run whose calls keep being refused stops after 5 such turns", async () => {
+test("the core does not end a run for lack of progress (A6): that is left to plugins and maxTurns", async () => {
   const bad = (i: number) => turn([{ type: "tool_call", id: String(i), name: "no_such_tool", input: {} }]);
   const provider = replayProvider(Array.from({ length: 20 }, (_, i) => bad(i)));
   registerApi("replay", provider);
-  const agent = new Agent({ model, cwd: proj, systemPrompt: "", permissions: new PermissionPolicy("auto"), tools: [readTool] });
-  expect(await agent.prompt("go")).toBe("no_progress");
-  expect(provider.requests).toHaveLength(5);
+  const agent = new Agent({ model, cwd: proj, systemPrompt: "", permissions: new PermissionPolicy("auto"), tools: [readTool], maxTurns: 8 });
+  expect(await agent.prompt("go")).toBe("max_turns");
+  expect(provider.requests).toHaveLength(8);
 });
 
 test("a torn last line is set aside before the session is appended to", () => {

@@ -25,7 +25,7 @@ curl -fsSL https://sasanokusa.com/sasacode/install.sh | sh
 
 - macOS（arm64 / x64）と Linux（x64 / arm64、glibc / musl、AVX2 のない CPU 向けの baseline 版）の単一バイナリ。Bun は不要。
 - インストーラーもバイナリも、[GitHub Releases](https://github.com/sasanokusa/sasacode/releases) の最新版から取得して SHA256 を検証する。sasanokusa.com の URL は、最新リリースの `install.sh` へのリダイレクト。
-- `SASACODE_VERSION=v0.7.1` で版を固定でき、`SASACODE_INSTALL_DIR` で置き場所を変えられる。Windows は WSL から使う。
+- `SASACODE_VERSION=v0.8.0` で版を固定でき、`SASACODE_INSTALL_DIR` で置き場所を変えられる。Windows は WSL から使う。
 
 ソースから使う場合（[Bun](https://bun.sh) 1.4 以上）：
 
@@ -136,7 +136,7 @@ sasacode -m llama/<モデル名>
 
 `models` は `/model` の一覧の先頭に出す。`providers` で OpenAI 互換や Anthropic 互換のエンドポイントを足せる。
 
-`maxTurns`（既定 200、0 で無制限）は、1回の依頼でモデルに送るリクエスト数の上限。達すると、対話では続けるかを尋ね、ヘッドレスでは止まる。これとは別に、ツール呼び出しがどれも実行されない（拒否や引数の不備が続く）ターンが5回続いたら、そこで止める。
+`maxTurns`（既定 200、0 で無制限）は、1回の依頼でモデルに送るリクエスト数の上限。達すると、対話では続けるかを尋ね、ヘッドレスでは止まる。これとは別に、同梱の `loop-guard` が、ツール呼び出しがどれも実行されない（拒否や引数の不備が続く）ターンが5回続いたら実行を止める（`plugins.settings["loop-guard"].noProgressTurns` で変更、0 で無効）。
 
 ### 権限
 
@@ -172,7 +172,7 @@ sasacode -m llama/<モデル名>
 | --- | --- |
 | `tool-repair` | 検証の前に、壊れたツール呼び出しを直す。直す対象は、JSON の崩れ（末尾カンマ、閉じ括弧、クォートのないキー、`True`/`None`、コードフェンス、二重エンコード）、キー名（`file` → `path`）、型（`"20"` → `20`）、ツール名の typo。候補が1つに絞れるときだけ直す。直したことはモデルに短く伝え、履歴には直した後の形を残し、元の出力はセッションに記録する |
 | `repetition-guard` | 生成中に同じ文を繰り返し始めたら止め、1回分だけ残して、続きを促す（「なるほど。」のような短い繰り返しも、長く続けば止める） |
-| `loop-guard` | 同じツール呼び出し（または A→B→A→B のような3手までの周期）が同じ結果で続いたら、3回目に注意を添え、5回目は実行しない。同じ応答の中の重複した呼び出しは1回だけ実行する。同じエラーの繰り返し（引数の不備などで実行されなかった呼び出しを含む）も知らせる。途中でファイルを変更すれば数え直す |
+| `loop-guard` | 同じツール呼び出し（または A→B→A→B のような3手までの周期）が同じ結果で続いたら、3回目に注意を添え、5回目からはその周期の呼び出しをすべて止める（ファイルを変更するか、次の依頼で解除）。同じ応答の中で、間に状態を変えうる呼び出しがない重複は1回だけ実行する。同じエラーの繰り返し（引数の不備などで実行されなかった呼び出しを含む）も知らせる。ツールが1件も実行されないターンが5回続いたら、実行を止める |
 | `agents-md` | `~/.sasacode/AGENTS.md` と、リポジトリのルートから作業ディレクトリまでの `AGENTS.md` を読む（CLAUDE.md は読まない） |
 | `compaction` | コンテキストが 80% に達するか上限に来たら、古い履歴を要約する。`/compact` で手動実行 |
 | `subagent` | `task` ツール。別の履歴を持つサブエージェントに作業を任せ、報告だけを受け取る（1ターンに複数あれば並行して動く） |
@@ -223,7 +223,7 @@ export default ((api) => {
 }) satisfies Plugin;
 ```
 
-公開 API（現在 1.4.0、semver で管理）でできることは次のとおり。
+公開 API（現在 1.4.0。1.4.0 で締め切り、1.x の間は追加だけ。[互換性の約束](docs/plugins.md#互換性の約束140-で確定)）でできることは次のとおり。
 
 - **登録**：ツール、スラッシュコマンド（引数の補完つき）、プロバイダー、権限ルール
 - **フック**：`session_start/end`、`user_prompt`、`system_prompt`、`before_request`、`stream_delta`、`assistant_message`、`tool_call_raw`、`tool_call`、`tool_result`、`turn_end`、`agent_end`、`context_limit`

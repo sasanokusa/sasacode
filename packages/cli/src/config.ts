@@ -94,16 +94,19 @@ export function sanitizeConfig(raw: unknown, source: string, warnings: string[])
   return out as Config;
 }
 
+/** Lists that both levels add to. Anything else named "disabled" (mcpServers.<name>.disabled) is a plain value. */
+const ACCUMULATE = ["permissions.allow", "permissions.ask", "permissions.deny", "tools.disabled", "plugins.disabled"];
+
 /**
  * Later values win; objects merge recursively. Permission rules and disabled lists accumulate
  * (never replace), so a project cannot drop the user's deny rules or re-enable what they turned off.
  */
 export function mergeConfig(base: Config, over: Config): Config {
-  const merge = (a: any, b: any, key = ""): any => {
-    if (["allow", "ask", "deny", "disabled"].includes(key)) return [...new Set([...(a ?? []), ...(b ?? [])])];
+  const merge = (a: any, b: any, path = ""): any => {
+    if (ACCUMULATE.includes(path) && Array.isArray(a) && Array.isArray(b)) return [...new Set([...a, ...b])];
     if (isObject(a) && isObject(b)) {
       const out: Record<string, unknown> = { ...a };
-      for (const [k, v] of Object.entries(b)) out[k] = k in a ? merge(a[k], v, k) : v;
+      for (const [k, v] of Object.entries(b)) out[k] = k in a ? merge(a[k], v, path ? `${path}.${k}` : k) : v;
       return out;
     }
     return b === undefined ? a : b;

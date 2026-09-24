@@ -1,20 +1,7 @@
-import type { Api, ModelInfo } from "./types.ts";
+import type { ModelInfo, ProviderConfig } from "./types.ts";
 
-export interface ProviderConfig {
-  api: Api;
-  baseUrl?: string;
-  /** Environment variable holding the API key. */
-  apiKeyEnv?: string;
-  headers?: Record<string, string>;
-  /** Shown in the generated ~/.sasacode/.env. */
-  label?: string;
-  /** Model used when nothing is configured and this provider's key is set. */
-  defaultModel?: string;
-  /** The server is Ollama: model details (context length) come from its native /api/show. */
-  ollama?: boolean;
-  /** The server is llama.cpp's llama-server: the context size comes from its /props. */
-  llamacpp?: boolean;
-}
+export type { ProviderConfig } from "./types.ts";
+
 
 /** Order matters: with no model configured, the first provider whose key is set supplies the default. */
 export const BUILTIN_PROVIDERS: Record<string, ProviderConfig> = {

@@ -86,8 +86,8 @@ export interface CommandDefinition {
 // ── hooks (requirements 5.3) ─────────────────────────────────────────
 
 export type Decision = "allow" | "ask" | "deny";
-/** `no_progress`: several turns in a row where no tool call ran (all rejected or denied). (since 1.4.0) */
-export type StopCause = "done" | "aborted" | "error" | "refusal" | "context_limit" | "max_turns" | "no_progress";
+/** `stopped`: a plugin ended the run from turn_end (which one and why is in agent_end's `stopped`). (since 1.4.0) */
+export type StopCause = "done" | "aborted" | "error" | "refusal" | "context_limit" | "max_turns" | "stopped";
 
 export type DeltaKind = "text" | "thinking" | "toolcall";
 
@@ -154,9 +154,14 @@ export interface HookMap {
    * (`ran` since 1.4.0; before that, only calls that ran reached this hook.)
    */
   tool_result: { event: { call: ToolCall; result: ToolResult; ran: boolean }; result: { result?: ToolResult } };
-  /** Return `inject` to add a user message and keep the loop going. */
-  turn_end: { event: { turn: number; message: AssistantMessage }; result: { inject?: string } };
-  agent_end: { event: { cause: StopCause }; result: { inject?: string } };
+  /**
+   * Return `inject` to add a user message and keep the loop going, or `stop` (a reason) to end the
+   * run here, e.g. when it makes no progress (`stop` since 1.4.0). The core itself only stops for
+   * permission, interrupts and the context limit (principle A6); anything else is a plugin's call.
+   */
+  turn_end: { event: { turn: number; message: AssistantMessage }; result: { inject?: string; stop?: string } };
+  /** `stopped` is set when cause is "stopped" (since 1.4.0). */
+  agent_end: { event: { cause: StopCause; stopped?: { plugin: string; reason: string } }; result: { inject?: string } };
   /** Free up context (e.g. session.replaceMessages) and return `retry` to continue. */
   context_limit: { event: { tokens: number; contextWindow: number }; result: { retry?: boolean } };
 }

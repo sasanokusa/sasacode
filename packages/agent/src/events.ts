@@ -20,7 +20,7 @@ export type AgentEvent =
   /** A response a plugin asked to regenerate (assistant_message → retry); UIs should drop it. */
   | { type: "message_discarded"; message: AssistantMessage }
   | { type: "tool_repaired"; call: ToolCall; from: { name: string; input: unknown; rawInput?: string }; note: string }
-  | { type: "agent_end"; cause: StopCause };
+  | { type: "agent_end"; cause: StopCause; stopped?: { plugin: string; reason: string } };
 
 type Listener<T> = (event: T) => void;
 

@@ -27,7 +27,7 @@ A plugin is a module whose default export receives a `PluginAPI`. Everything in 
   or the same fields under `"sasacode"` in `package.json`.
 - TypeScript runs as-is (Bun); no build step. `import ... from "@sasacode/plugin-api"` works without installing it.
 - New plugins load on the next start of sasacode. Tell the user to restart after you create one.
-- `apiVersion` `^1.4.0` needs sasacode 0.8 or later. Use the lowest version whose features you use (1.0 base, 1.1 `ready`, 1.2 `stream_delta` / `assistant_message` / `tool_call_raw` / sampling, 1.3 command `complete`, 1.4 `tool_result` for calls that did not run, `ran`).
+- `apiVersion` `^1.4.0` needs sasacode 0.8 or later. Use the lowest version whose features you use (1.0 base, 1.1 `ready`, 1.2 `stream_delta` / `assistant_message` / `tool_call_raw` / sampling, 1.3 command `complete`, 1.4 `tool_result` for calls that did not run (`ran`), `turn_end` `stop`). The API is frozen at 1.4: 1.x only adds, so ignore fields and values you do not know. Only `@sasacode/plugin-api` exports are public.
 
 ## 3. Tool template
 
@@ -118,8 +118,8 @@ before_request → stream_delta (while streaming) → assistant_message
 | `tool_call_raw` | before the tool is looked up and arguments validated | `{ call, name, input, rawInput?, tools, stopReason }` — `rawInput` is the raw string when the arguments were not valid JSON; `tools` includes deferred tools | `{ name?, input?, note }` to repair. The model sees `[harness repaired this call: <note>]` in the result; history keeps the repaired call (the original goes to the session log). Not called for calls cut off by `max_tokens` |
 | `tool_call` | after validation, before permission | `{ call, tool, args }` | `{ args }` to rewrite; `{ decision: "allow" \| "ask" \| "deny", reason }` (strongest wins: deny > ask > allow). A plugin's decision replaces the permission mode's default, but the user's own deny/ask rules still apply |
 | `tool_result` | a call's result is final | `{ call, result, ran }` — `ran: false` for calls that never ran (unknown tool, invalid arguments, denied, interrupted) | `{ result }` to change or append |
-| `turn_end` | after a response and its tools | `{ turn, message }` | `{ inject: "text" }` to keep the loop going |
-| `agent_end` | the loop stopped | `{ cause }` — done, aborted, error, refusal, context_limit, max_turns, no_progress | `{ inject: "text" }` to start another run |
+| `turn_end` | after a response and its tools | `{ turn, message }` | `{ inject: "text" }` to keep the loop going, or `{ stop: "reason" }` to end the run (1.4) |
+| `agent_end` | the loop stopped | `{ cause }` — done, aborted, error, refusal, context_limit, max_turns, stopped (with `stopped: { plugin, reason }`) | `{ inject: "text" }` to start another run |
 | `context_limit` | the context window is full | `{ tokens, contextWindow }` | free space with `api.session.replaceMessages`, then `{ retry: true }` (at most twice in a row) |
 
 Subagents (`api.agent.run`) share `system_prompt`, `before_request`, `stream_delta`, `assistant_message`, `tool_call_raw`, `tool_call` and `tool_result` handlers; session hooks (`session_*`, `user_prompt`, `turn_end`, `agent_end`, `context_limit`) are not called for them.

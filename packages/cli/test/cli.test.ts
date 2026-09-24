@@ -32,6 +32,9 @@ test("project config wins; permission rules from both levels are kept", () => {
   expect(merged.thinking).toBe("high");
   expect(merged.permissions?.deny).toEqual(["bash(rm *)", "edit(.env)"]);
   expect(merged.providers?.a).toEqual({ baseUrl: "g", headers: { h: "1" } });
+  // An MCP server's own `disabled` is a plain switch the project may flip, not a list.
+  const mcp = mergeConfig({ mcpServers: { demo: { command: "x", disabled: false } } }, { mcpServers: { demo: { command: "x", disabled: true } } });
+  expect(mcp.mcpServers?.demo?.disabled).toBe(true);
 });
 
 test("an untrusted project can only tighten: no looser mode, allow rules, plugins, endpoints or overrides", () => {

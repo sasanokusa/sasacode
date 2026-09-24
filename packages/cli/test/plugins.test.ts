@@ -1,5 +1,5 @@
 import { afterAll, beforeEach, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { emptyUsage, registerApi, replayProvider } from "@sasacode/ai";
@@ -89,6 +89,23 @@ test("one trust decision covers project plugins and elevated config; it is remem
   // A project with nothing risky needs no trust.
   const plain = mkdtempSync(join(tmpdir(), "plain-"));
   expect(assessProject(plain).items).toEqual([]);
+});
+
+test("trust follows a plugin folder that is a link, and never vouches for code it could not read", () => {
+  const elsewhere = join(proj, "..", "linked-plugin");
+  write(join(elsewhere, "plugin.json"), JSON.stringify({ apiVersion: "^1.0.0", extensions: ["main.ts"] }));
+  write(join(elsewhere, "main.ts"), PLUGIN("linked"));
+  symlinkSync(elsewhere, join(proj, ".sasacode", "plugins", "linked"));
+  saveTrust(proj, assessProject(proj));
+  expect(isTrusted(proj, assessProject(proj))).toBe(true);
+  write(join(elsewhere, "main.ts"), PLUGIN("linked_changed")); // same name, same manifest
+  expect(isTrusted(proj, assessProject(proj))).toBe(false);
+  // Too many files to read: asked every time, even right after saying yes.
+  for (let i = 0; i < 5001; i++) write(join(proj, ".sasacode", "plugins", "aaa-bulk", `f${i}.txt`), "x");
+  const t = assessProject(proj);
+  expect(t.complete).toBe(false);
+  saveTrust(proj, t);
+  expect(isTrusted(proj, assessProject(proj))).toBe(false);
 });
 
 test("plugins.disabled and tools.disabled switch things off (P3)", async () => {

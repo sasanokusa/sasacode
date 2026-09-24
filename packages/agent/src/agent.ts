@@ -45,11 +45,6 @@ export interface AgentOptions {
   /** Unlimited unless set (A7). */
   maxTurns?: number;
   maxRetries?: number;
-  /**
-   * Stop after this many turns in a row whose tool calls were all rejected or denied, none run
-   * (default 5; 0 disables). Guards against a model asking for the same refused call forever.
-   */
-  noProgressTurns?: number;
 }
 
 const INTERRUPTED_NOTE = "[The user interrupted the previous response.]";
@@ -209,8 +204,7 @@ export class Agent {
     let cause: StopCause = "done";
     let turn = 0;
     let limitRetries = 0;
-    let idle = 0;
-    const maxIdle = this.opts.noProgressTurns ?? 5;
+    let stopped: { plugin: string; reason: string } | undefined;
     try {
       while (true) {
         if (this.maxTurns && turn >= this.maxTurns) {
@@ -239,13 +233,12 @@ export class Agent {
           break;
         }
         if (calls.length) {
-          const ran = await executeTools(this.toolContext(), calls, {
+          await executeTools(this.toolContext(), calls, {
             truncated: msg.stopReason === "max_tokens",
             signal: ac.signal,
             repairs,
             onResult: (r) => this.pushMessage(r),
           });
-          idle = ran ? 0 : idle + 1;
         }
         this.events.emit({ type: "turn_end", turn });
         if (ac.signal.aborted) {
@@ -255,12 +248,20 @@ export class Agent {
         }
         let injected = false;
         const gen = this.generation;
-        await this.hooks.run("turn_end", { turn, message: msg }, (r) => {
+        await this.hooks.run("turn_end", { turn, message: msg }, (r, _ev, plugin) => {
+          if (r.stop) {
+            stopped = { plugin, reason: r.stop };
+            return false;
+          }
           if (r.inject) {
             this.queued.push([{ type: "text", text: r.inject }]);
             injected = true;
           }
         });
+        if (stopped) {
+          cause = "stopped";
+          break;
+        }
         const used = msg.usage.input + msg.usage.cacheRead + msg.usage.cacheWrite + msg.usage.output;
         if (gen === this.generation && used >= this.model.contextWindow - Math.min(this.model.maxOutput, 16_384)) {
           if (await this.contextLimit(used, limitRetries++)) continue;
@@ -268,10 +269,6 @@ export class Agent {
           break;
         }
         limitRetries = 0;
-        if (maxIdle && idle >= maxIdle) {
-          cause = "no_progress";
-          break;
-        }
         if (!this.drainQueue() && !calls.length && !injected) break;
       }
     } catch (e) {
@@ -280,10 +277,10 @@ export class Agent {
     } finally {
       this.abortController = undefined;
     }
-    await this.hooks.run("agent_end", { cause }, (r) => {
+    await this.hooks.run("agent_end", { cause, stopped }, (r) => {
       if (r.inject) this.queued.push([{ type: "text", text: r.inject }]);
     });
-    this.events.emit({ type: "agent_end", cause });
+    this.events.emit({ type: "agent_end", cause, stopped });
     return cause;
   }
 
