@@ -34,7 +34,7 @@ import { matchAmbiguousWidth } from "./ambiguous.ts";
 import { ApprovalDialog, Picker } from "./dialogs.ts";
 import { exitSummary, fmtDuration, UsageTally, usageLines } from "./summary.ts";
 import { c, editorTheme } from "./theme.ts";
-import { AssistantView, display, Notice, ToolView, UserView } from "./views.ts";
+import { AssistantView, display, Notice, Padded, ToolView, UserView } from "./views.ts";
 
 const EFFORTS: ThinkingLevel[] = ["off", "low", "medium", "high", "xhigh", "max"];
 const EFFORT_LABELS: Record<ThinkingLevel, string> = {
@@ -111,23 +111,27 @@ class App {
 
     const header = new Notice(`${c.bold("sasacode")} ${c.gray(host.agent.cwd)}\n${c.gray("/help でコマンド一覧 · esc で中断 · ctrl+o で詳細表示 · shift+tab で権限モード切替")}`);
     for (const w of host.warnings) this.chat.addChild(new Notice(`warning: ${w}`, c.yellow));
+    const body = new Container();
+    body.addChild(header);
+    body.addChild(this.chat);
+    // Breathing room at the edges; the status and footer line up with the input's own padding.
+    const transcript = new Padded(body, 2, 2);
+    const status = new Padded(this.status, 1, 1);
+    const footer = new Padded(this.footer, 1, 1);
     if (this.tui instanceof TuiAltScreen) {
-      const transcript = new Container();
-      transcript.addChild(header);
-      transcript.addChild(this.chat);
       const dock = new VStack([
-        { component: this.status, shrink: 1, minSize: 0 },
+        { component: status, shrink: 1, minSize: 0 },
         { component: this.inputSlot, shrink: 1, minSize: 3 },
-        { component: this.footer, shrink: 1, minSize: 0 },
+        { component: footer, shrink: 1, minSize: 0 },
       ]);
-      for (const part of [transcript, this.status, this.inputSlot, this.footer]) this.tui.addChild(part);
+      for (const part of [transcript, status, this.inputSlot, footer]) this.tui.addChild(part);
       this.tui.setLayoutRoot(
         new VStack([
           { component: new ScrollView(transcript, { follow: "end", primary: true, overscroll: "chain", scrollbar: "auto" }), basis: 0, grow: 1, shrink: 1, minSize: 1 },
           { component: dock, basis: "auto", grow: 0, shrink: 1, minSize: 1 },
         ]),
       );
-    } else for (const part of [header, this.chat, this.status, this.inputSlot, this.footer]) this.tui.addChild(part);
+    } else for (const part of [transcript, status, this.inputSlot, footer]) this.tui.addChild(part);
     this.showEditor();
 
     host.agent.approve = (req) => this.askApproval(req);

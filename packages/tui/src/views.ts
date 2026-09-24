@@ -137,3 +137,26 @@ export class Notice extends Text {
     super(color(text), 0, 0);
   }
 }
+
+const PROMPT_MARK = /^\x1b\]133;A(?:\x07|\x1b\\)/;
+
+/** Margins around a component, so text does not run into the terminal's edges or the scrollbar. */
+export class Padded implements Component {
+  constructor(
+    private child: Component,
+    private left: number,
+    private right: number,
+  ) {}
+  render(width: number): string[] {
+    const inner = Math.max(10, width - this.left - this.right);
+    const pad = " ".repeat(Math.max(0, Math.min(this.left, width - inner)));
+    // A prompt mark (OSC 133) must stay at the start of the line to be found.
+    return this.child.render(inner).map((l) => {
+      const mark = PROMPT_MARK.exec(l)?.[0];
+      return mark ? mark + pad + l.slice(mark.length) : pad + l;
+    });
+  }
+  invalidate(): void {
+    this.child.invalidate();
+  }
+}
