@@ -33,6 +33,7 @@ export const readTool: ToolDefinition<Args> = {
     additionalProperties: false,
   },
   kind: "read",
+  alwaysLoad: true,
   concurrent: true,
   paths: (a, cwd) => [resolvePath(a.path, cwd)],
   summary: (a) => a.path + (a.offset ? `:${a.offset}` : ""),

@@ -1,7 +1,7 @@
 import type { AssistantMessage, Message, StreamEvent, ToolCall } from "@sasacode/ai";
-import type { ToolResult } from "@sasacode/plugin-api";
+import type { StopCause, ToolResult } from "@sasacode/plugin-api";
 
-export type StopCause = "done" | "aborted" | "error" | "refusal" | "context_limit" | "max_turns";
+export type { StopCause };
 
 export type AgentEvent =
   | { type: "agent_start" }
@@ -15,6 +15,8 @@ export type AgentEvent =
   | { type: "turn_end"; turn: number }
   | { type: "context_limit"; tokens: number; contextWindow: number }
   | { type: "error"; error: string }
+  | { type: "plugin_error"; plugin: string; hook: string; error: string }
+  | { type: "messages_replaced" }
   | { type: "agent_end"; cause: StopCause };
 
 type Listener<T> = (event: T) => void;

@@ -24,11 +24,16 @@ export async function runHeadless(h: Harness, prompt: string, output: "text" | "
     else if (e.type === "tool_end" && e.result.isError) status(`  ⎿ ${textOf(e.result.content).split("\n").slice(-1)[0]}`);
     else if (e.type === "error") process.stderr.write(`error: ${e.error}\n`);
     else if (e.type === "context_limit") process.stderr.write("stopped: context window is full\n");
+    else if (e.type === "plugin_error") process.stderr.write(`plugin ${e.plugin} (${e.hook}): ${e.error}\n`);
   });
+  await h.loadPlugins();
   const onSigint = () => agent.abort();
   process.on("SIGINT", onSigint);
   const cause: StopCause = await agent.prompt(prompt);
+  // Plugins may inject follow-ups (agent_end); wait for everything to settle.
+  await agent.waitForIdle();
   process.off("SIGINT", onSigint);
+  await h.shutdown();
   if (output === "text" && cause !== "done") status(`[stopped: ${cause}]`);
   return cause === "done" ? 0 : 1;
 }

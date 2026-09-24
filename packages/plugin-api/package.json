@@ -1,2 +1,22 @@
-{ "name": "@sasacode/plugin-api", "version": "0.1.0", "type": "module", "main": "src/index.ts",
-  "dependencies": { "@sasacode/ai": "workspace:*" } }
+{
+  "name": "@sasacode/plugin-api",
+  "version": "0.4.0",
+  "type": "module",
+  "main": "src/index.ts",
+  "dependencies": {
+    "@sasacode/ai": "workspace:*"
+  },
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sasanokusa/sasacode.git",
+    "directory": "packages/plugin-api"
+  },
+  "files": [
+    "src"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "description": "Public plugin API types for sasacode (the only package plugins need)"
+}

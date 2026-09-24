@@ -1,2 +1,24 @@
-{ "name": "@sasacode/tui", "version": "0.1.0", "type": "module", "main": "src/index.ts",
-  "dependencies": { "@sasacode/agent": "workspace:*", "@sasacode/ai": "workspace:*", "@sasacode/plugin-api": "workspace:*", "@earendil-works/pi-tui": "^0.87.1" } }
+{
+  "name": "@sasacode/tui",
+  "version": "0.4.0",
+  "type": "module",
+  "main": "src/index.ts",
+  "dependencies": {
+    "@sasacode/agent": "workspace:*",
+    "@sasacode/ai": "workspace:*",
+    "@sasacode/plugin-api": "workspace:*",
+    "@earendil-works/pi-tui": "^0.87.1"
+  },
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sasanokusa/sasacode.git",
+    "directory": "packages/tui"
+  },
+  "files": [
+    "src"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
+}

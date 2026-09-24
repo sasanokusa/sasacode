@@ -1,3 +1,35 @@
-{ "name": "@sasacode/cli", "version": "0.1.0", "type": "module", "main": "src/main.ts",
-  "bin": { "sasacode": "src/main.ts" },
-  "dependencies": { "@sasacode/agent": "workspace:*", "@sasacode/ai": "workspace:*", "@sasacode/plugin-api": "workspace:*", "@sasacode/tools": "workspace:*", "@sasacode/tui": "workspace:*" } }
+{
+  "name": "@sasacode/cli",
+  "version": "0.4.0",
+  "type": "module",
+  "main": "src/main.ts",
+  "bin": {
+    "sasacode": "src/main.ts"
+  },
+  "dependencies": {
+    "@sasacode/agent": "workspace:*",
+    "@sasacode/ai": "workspace:*",
+    "@sasacode/plugin-api": "workspace:*",
+    "@sasacode/tools": "workspace:*",
+    "@sasacode/tui": "workspace:*",
+    "@sasacode/bundled": "workspace:*",
+    "@sasacode/mcp": "workspace:*",
+    "@sasacode/skills": "workspace:*"
+  },
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sasanokusa/sasacode.git",
+    "directory": "packages/cli"
+  },
+  "files": [
+    "src"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "description": "sasacode: a small, pluggable coding agent for the terminal (requires Bun)",
+  "engines": {
+    "bun": ">=1.4.0"
+  }
+}

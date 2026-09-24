@@ -25,6 +25,7 @@ export const bashTool: ToolDefinition<Args> = {
     additionalProperties: false,
   },
   kind: "exec",
+  alwaysLoad: true,
   matchTarget: (a) => a.command,
   summary: (a) => a.command,
   execute(args, ctx) {

@@ -22,7 +22,7 @@ export class Picker implements Component, Focusable {
   render(width: number): string[] {
     return [
       truncateToWidth(c.gray("─".repeat(width)), width),
-      truncateToWidth(c.bold(this.title), width),
+      ...this.title.split("\n").map((l, i) => truncateToWidth(i === 0 ? c.bold(l) : c.gray(l), width)),
       ...this.list.render(width),
       truncateToWidth(c.gray("↑↓ で選択 · enter で決定 · esc でキャンセル"), width),
     ];

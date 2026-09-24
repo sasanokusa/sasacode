@@ -21,9 +21,11 @@ import {
   PERMISSION_MODE_LABELS,
   PERMISSION_MODES,
   type PermissionMode,
+  type PluginHost,
+  type UIBridge,
 } from "@sasacode/agent";
 import { type ModelInfo, textOf, type ToolCall } from "@sasacode/ai";
-import type { CommandDefinition } from "@sasacode/plugin-api";
+import type { CommandDefinition, SelectOption } from "@sasacode/plugin-api";
 import { ApprovalDialog, Picker } from "./dialogs.ts";
 import { c, editorTheme } from "./theme.ts";
 import { AssistantView, display, Notice, ToolView, UserView } from "./views.ts";
@@ -31,14 +33,17 @@ import { AssistantView, display, Notice, ToolView, UserView } from "./views.ts";
 /** What the TUI needs from the CLI. */
 export interface TuiHost {
   agent: Agent;
+  host: PluginHost;
   warnings: string[];
-  commands: CommandDefinition[];
   config: { models?: string[] };
   resolve(spec: string): ModelInfo;
   sessionsDir: string;
   historyPath?: string;
-  loadSession(path: string): void;
-  newSession(): void;
+  loadPlugins(ui: UIBridge): Promise<void>;
+  loadSession(path: string): Promise<void>;
+  newSession(): Promise<void>;
+  fork(index: number): Promise<void>;
+  shutdown(): Promise<void>;
 }
 
 export async function runTui(host: TuiHost, initialPrompt = ""): Promise<number> {
@@ -61,18 +66,12 @@ class App {
   private contextTokens = 0;
   private lastCtrlC = 0;
   private exit?: (code: number) => void;
-  private commands: CommandDefinition[];
+  private ready?: Promise<void>;
+  private approvals: Promise<unknown> = Promise.resolve();
 
   constructor(private host: TuiHost) {
     this.tui = new TuiMainScreen(new ProcessTerminal());
     this.editor = new Editor(this.tui, editorTheme, { paddingX: 1 });
-    this.commands = [...this.coreCommands(), ...host.commands];
-    this.editor.setAutocompleteProvider(
-      new CombinedAutocompleteProvider(
-        this.commands.map((cmd) => ({ name: cmd.name, description: cmd.description, argumentHint: cmd.argumentHint })),
-        host.agent.cwd,
-      ),
-    );
     this.editor.onSubmit = (text) => this.submit(text);
     for (const h of this.loadHistory()) this.editor.addToHistory(h);
 
@@ -86,21 +85,58 @@ class App {
     this.showEditor();
 
     host.agent.approve = (req) => this.askApproval(req);
+    host.host.onChange = () => {
+      this.refreshCommands();
+      this.updateFooter();
+      this.tui.requestRender();
+    };
     host.agent.events.on((e) => this.onEvent(e));
     this.tui.addInputListener((data) => this.onKey(data));
     this.renderHistory();
     this.updateFooter();
   }
 
-  run(initialPrompt: string): Promise<number> {
+  async run(initialPrompt: string): Promise<number> {
+    // The core commands are registered through the public plugin API like any other (P2).
+    await this.host.host.load("core-commands", (api) => {
+      for (const cmd of this.coreCommands()) api.registerCommand(cmd);
+    });
+    this.refreshCommands();
     this.tui.start();
+    // Plugins and MCP servers load in the background so input is never blocked (NFR).
+    this.ready = this.host.loadPlugins(this.bridge()).catch((e) => this.notify(`plugin loading failed: ${e.message}`, c.red));
     if (initialPrompt.trim()) this.submit(initialPrompt);
     return new Promise((resolve) => {
       this.exit = (code) => {
-        this.tui.stop();
-        resolve(code);
+        void this.host.shutdown().finally(() => {
+          this.tui.stop();
+          resolve(code);
+        });
       };
     });
+  }
+
+  private refreshCommands(): void {
+    this.editor.setAutocompleteProvider(
+      new CombinedAutocompleteProvider(
+        this.host.host.commands.map((cmd) => ({ name: cmd.name, description: cmd.description, argumentHint: cmd.argumentHint })),
+        this.host.agent.cwd,
+      ),
+    );
+  }
+
+  /** How plugins reach the user (api.ui). */
+  private bridge(): UIBridge {
+    return {
+      interactive: true,
+      notify: (m, level) => this.notify(m, level === "error" ? c.red : level === "warning" ? c.yellow : c.gray),
+      confirm: async (title, message) =>
+        (await this.pick(message ? `${title}\n${message}` : title, [
+          { value: "yes", label: "はい" },
+          { value: "no", label: "いいえ" },
+        ])) === "yes",
+      select: (title, options: SelectOption[]) => this.pick(title, options),
+    };
   }
 
   // ── input ──────────────────────────────────────────────────────────
@@ -158,7 +194,7 @@ class App {
       this.queued.push(text);
       this.renderStatus();
     }
-    void agent.prompt(text);
+    void (this.ready ?? Promise.resolve()).then(() => agent.prompt(text));
   }
 
   // ── agent events ───────────────────────────────────────────────────
@@ -171,7 +207,7 @@ class App {
         this.renderStatus();
         break;
       case "message_start":
-        this.current = new AssistantView((call, view) => this.tools.set(call.id, view));
+        this.current = new AssistantView((call, view) => this.trackTool(call, view));
         this.chat.addChild(new Spacer(1));
         this.chat.addChild(this.current);
         break;
@@ -225,6 +261,7 @@ class App {
         if (v) {
           v.output = textOf(e.result.content);
           v.diff = typeof e.result.details?.diff === "string" ? e.result.details.diff : undefined;
+          v.result = e.result;
           v.status = e.result.isError ? "error" : "done";
         }
         this.loader?.setMessage("考え中… (esc で中断)");
@@ -235,6 +272,12 @@ class App {
         break;
       case "error":
         this.chat.addChild(new Notice(`エラー: ${e.error}`, c.red));
+        break;
+      case "plugin_error":
+        this.chat.addChild(new Notice(`プラグイン ${e.plugin} の ${e.hook} ハンドラでエラー: ${e.error}`, c.red));
+        break;
+      case "messages_replaced":
+        this.resetView();
         break;
       case "agent_end":
         this.loader?.stop();
@@ -247,6 +290,11 @@ class App {
     this.tui.requestRender();
   }
 
+  private trackTool(call: ToolCall, view: ToolView): void {
+    this.tools.set(call.id, view);
+    view.renderer = this.host.host.renderers.get(call.name);
+  }
+
   private describeTool(call: ToolCall): void {
     const view = this.tools.get(call.id);
     const tool = this.host.agent.getTools().find((t) => t.name === call.name);
@@ -257,7 +305,14 @@ class App {
     }
   }
 
+  /** Subagents can ask in parallel; dialogs are shown one at a time. */
   private askApproval(req: ApprovalRequest): Promise<ApprovalAnswer> {
+    const next = this.approvals.then(() => this.showApproval(req));
+    this.approvals = next.catch(() => {});
+    return next;
+  }
+
+  private showApproval(req: ApprovalRequest): Promise<ApprovalAnswer> {
     return new Promise((resolve) => {
       let summary = "";
       try {
@@ -280,12 +335,13 @@ class App {
       { name: "resume", description: "過去のセッションを再開", run: () => this.resumeCommand() },
       { name: "clear", description: "新しいセッションを始める", run: () => this.clearCommand() },
       { name: "permission", description: "権限モードを切り替える", argumentHint: PERMISSION_MODES.join("|"), run: ({ args }) => this.permissionCommand(args) },
+      { name: "fork", description: "過去のメッセージから会話を分岐する", run: () => this.forkCommand() },
     ];
   }
 
   private async runCommand(text: string): Promise<void> {
     const [name = "", ...rest] = text.slice(1).split(/\s+/);
-    const cmd = this.commands.find((c) => c.name === name);
+    const cmd = this.host.host.commands.find((c) => c.name === name);
     if (!cmd) {
       this.notify(`不明なコマンド: /${name}（/help で一覧）`, c.yellow);
       return;
@@ -298,7 +354,7 @@ class App {
   }
 
   private help(): void {
-    const lines = this.commands.map((cmd) => `  /${cmd.name}${cmd.argumentHint ? ` ${c.gray(cmd.argumentHint)}` : ""}  ${c.gray(cmd.description)}`);
+    const lines = this.host.host.commands.map((cmd) => `  /${cmd.name}${cmd.argumentHint ? ` ${c.gray(cmd.argumentHint)}` : ""}  ${c.gray(cmd.description)}`);
     this.notify(
       [
         c.bold("コマンド"),
@@ -347,7 +403,7 @@ class App {
     if (!picked) return;
     if (this.host.agent.isRunning) this.host.agent.abort();
     await this.host.agent.waitForIdle();
-    this.host.loadSession(picked);
+    await this.host.loadSession(picked);
     this.resetView();
     this.notify("セッションを再開しました");
   }
@@ -355,12 +411,36 @@ class App {
   private async clearCommand(): Promise<void> {
     if (this.host.agent.isRunning) this.host.agent.abort();
     await this.host.agent.waitForIdle();
-    this.host.newSession();
+    await this.host.newSession();
     this.resetView();
     this.contextTokens = 0;
     this.totalCost = 0;
     this.updateFooter();
     this.notify("新しいセッションを開始しました");
+  }
+
+  private async forkCommand(): Promise<void> {
+    const agent = this.host.agent;
+    const users = agent.messages
+      .map((m, i) => ({ m, i }))
+      .filter(({ m }) => m.role === "user" && !textOf(m.content).startsWith("[Summary of"));
+    if (!users.length) {
+      this.notify("分岐できるメッセージがありません");
+      return;
+    }
+    const picked = await this.pick(
+      "どのメッセージから分岐しますか（その直前までの会話で新しいセッションを作り、入力欄に戻します）",
+      users.reverse().map(({ m, i }) => ({ value: String(i), label: textOf(m.content).replace(/\s+/g, " ").slice(0, 70) })),
+    );
+    if (picked === undefined) return;
+    if (agent.isRunning) agent.abort();
+    await agent.waitForIdle();
+    const index = Number(picked);
+    const text = textOf(agent.messages[index]!.content).replace(/^\[The user interrupted the previous response\.\]/, "");
+    await this.host.fork(index);
+    this.resetView();
+    this.editor.setText(text);
+    this.notify("分岐しました。編集して送信してください");
   }
 
   private async permissionCommand(args: string): Promise<void> {
@@ -388,7 +468,7 @@ class App {
 
   // ── view helpers ───────────────────────────────────────────────────
 
-  private pick(title: string, items: { value: string; label: string; description?: string }[]): Promise<string | undefined> {
+  private pick(title: string, items: SelectOption[]): Promise<string | undefined> {
     return new Promise((resolve) => {
       this.showInput(
         new Picker(title, items, (item) => {
@@ -426,7 +506,10 @@ class App {
   private resetView(): void {
     this.chat.clear();
     this.tools.clear();
+    this.contextTokens = 0;
+    this.totalCost = 0;
     this.renderHistory();
+    this.updateFooter();
     this.tui.requestRender(true);
   }
 
@@ -437,7 +520,7 @@ class App {
         this.chat.addChild(new Spacer(1));
         this.chat.addChild(new UserView(m.content));
       } else if (m.role === "assistant") {
-        const view = new AssistantView((call, v) => this.tools.set(call.id, v));
+        const view = new AssistantView((call, v) => this.trackTool(call, v));
         this.chat.addChild(new Spacer(1));
         this.chat.addChild(view);
         view.update(m);
@@ -464,7 +547,8 @@ class App {
       `ctx ${fmtTokens(this.contextTokens)} (${pct}%)`,
     ];
     if (this.totalCost > 0) parts.push(`$${this.totalCost.toFixed(3)}`);
-    this.footer.setText(c.gray(parts.join(" · ")));
+    const plugins = [...this.host.host.status.values()];
+    this.footer.setText(c.gray(parts.join(" · ")) + (plugins.length ? `\n${c.cyan(plugins.join(" · "))}` : ""));
   }
 
   private loadHistory(): string[] {
@@ -499,7 +583,7 @@ class Line implements Component {
     this.text = t;
   }
   render(width: number): string[] {
-    return [truncateToWidth(this.text, width)];
+    return this.text.split("\n").map((l) => truncateToWidth(l, width));
   }
   invalidate(): void {}
 }

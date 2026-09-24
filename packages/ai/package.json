@@ -1,2 +1,22 @@
-{ "name": "@sasacode/ai", "version": "0.1.0", "type": "module", "main": "src/index.ts",
-  "dependencies": { "@anthropic-ai/sdk": "^0.128.0", "openai": "^7.23.0" } }
+{
+  "name": "@sasacode/ai",
+  "version": "0.4.0",
+  "type": "module",
+  "main": "src/index.ts",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.128.0",
+    "openai": "^7.23.0"
+  },
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sasanokusa/sasacode.git",
+    "directory": "packages/ai"
+  },
+  "files": [
+    "src"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
+}

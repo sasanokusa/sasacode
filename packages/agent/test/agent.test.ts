@@ -12,7 +12,7 @@ import {
   replayProvider,
 } from "@sasacode/ai";
 import builtinTools, { bashTool, editTool, readTool, writeTool } from "@sasacode/tools";
-import { Agent, type AgentEvent, PermissionPolicy, restore, SessionFile } from "../src/index.ts";
+import { Agent, type AgentEvent, PermissionPolicy, PluginHost, restore, SessionFile } from "../src/index.ts";
 
 const dir = mkdtempSync(join(tmpdir(), "sasacode-agent-"));
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
@@ -197,8 +197,10 @@ test("sessions persist every message, redact secrets, and resume to the last com
   expect(again.messages.at(-1)).toMatchObject({ role: "assistant", content: [{ text: "done" }] });
 });
 
-test("built-in tools register through the plugin API", () => {
-  const names: string[] = [];
-  builtinTools({ registerTool: (t) => names.push(t.name), registerCommand: () => {} });
-  expect(names).toEqual(["read", "write", "edit", "bash"]);
+test("built-in tools register through the plugin API", async () => {
+  const agent = new Agent({ model, cwd: dir, systemPrompt: "s" });
+  const host = new PluginHost({ agent, cwd: dir });
+  await host.load("builtin-tools", builtinTools);
+  expect(agent.getTools().map((t) => t.name)).toEqual(["read", "write", "edit", "bash"]);
+  expect(host.toolOwners.get("bash")).toBe("builtin-tools");
 });

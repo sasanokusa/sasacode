@@ -1,0 +1,26 @@
+{
+  "name": "@sasacode/skills",
+  "version": "0.4.0",
+  "type": "module",
+  "main": "src/index.ts",
+  "dependencies": {
+    "@sasacode/plugin-api": "workspace:*"
+  },
+  "devDependencies": {
+    "@sasacode/agent": "workspace:*",
+    "@sasacode/ai": "workspace:*",
+    "@sasacode/tools": "workspace:*"
+  },
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sasanokusa/sasacode.git",
+    "directory": "packages/skills"
+  },
+  "files": [
+    "src"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
+}

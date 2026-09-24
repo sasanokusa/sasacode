@@ -2,17 +2,21 @@
 
 TypeScript (Bun) で作るターミナル向けコーディングエージェントのハーネス。コアは「エージェントループ・最小ツール・TUI」だけで、それ以外はプラグインで足す。要件は [docs/requirements.md](docs/requirements.md)。
 
-現在の到達点は **M1（日常利用）**。TUI、セッション保存・再開、2階層設定、権限確認まで動く。プラグインAPI（フック等）は M2。
+現在の到達点は **M4**。要件定義書のマイルストーン M0〜M4（骨格、日常利用、プラグインAPI、MCP・Skills・ツール遅延ロード、同梱プラグインと単一バイナリ配布）まで実装済み。
 
 ## インストール
 
-[Bun](https://bun.sh) 1.4 以上が必要。
+**単一バイナリ**（Bun は不要）：[Releases](https://github.com/sasanokusa/sasacode/releases) から自分の OS / CPU 向けの `sasacode-<os>-<arch>.tar.gz` を落とし、展開して PATH に置く。自分でビルドする場合は `bun run build`（`dist/sasacode`）、全ターゲット分なら `bun run build --all`。
+
+**ソースから**（[Bun](https://bun.sh) 1.4 以上が必要）：
 
 ```bash
 git clone https://github.com/sasanokusa/sasacode && cd sasacode
 bun install
 ln -s "$PWD/packages/cli/src/main.ts" ~/.local/bin/sasacode   # PATH の通ったディレクトリへ
 ```
+
+npm 向けのパッケージ情報（`@sasacode/cli` ほか）は用意してあるが、npm にはまだ公開していない。
 
 ## 使い方
 
@@ -36,7 +40,8 @@ sasacode -c                     # このディレクトリの直近セッショ�
 | ctrl+o | ツール出力・thinking の折りたたみを切替 |
 | shift+tab | 権限モードを順に切替 |
 | ctrl+c ×2 / ctrl+d | 終了 |
-| `/model` `/resume` `/clear` `/help` `/permission` | コアのスラッシュコマンド |
+| `/model` `/resume` `/clear` `/help` `/permission` `/fork` | コアのスラッシュコマンド |
+| `/compact` `/mcp` `/skills` `/skill:<name>` `/presets` | 同梱プラグインのコマンド |
 
 ## プロバイダーとモデル
 
@@ -72,7 +77,11 @@ sasacode -c                     # このディレクトリの直近セッショ�
   },
   "instructions": "システムプロンプトに追記するテキスト",
   "maxTurns": 0,
-  "trustedProjects": ["/path/to/project"]
+  "trustedProjects": ["/path/to/project"],
+  "mcpServers": { "name": { "command": "…" } },
+  "plugins": { "disabled": ["web-fetch"], "settings": { "permission-presets": { "presets": ["guard", "tests"] } } },
+  "tools": { "disabled": [] },
+  "toolSearch": { "mode": "auto", "percent": 10, "count": 30 }
 }
 ```
 
@@ -92,9 +101,47 @@ sasacode -c                     # このディレクトリの直近セッショ�
 
 ヘッドレスでは確認できる人がいないので、「確認」になった呼び出しは実行せず、その理由を tool_result としてモデルに返す。
 
+## プラグイン・MCP・Skills
+
+コアに入っているのは、ループ、プロバイダー、4つの組み込みツール、TUI、セッション、権限だけ。それ以外はすべてプラグインで、組み込みツールも同じ公開 API で登録している。書き方は [docs/plugins.md](docs/plugins.md) を参照。
+
+### 同梱プラグイン（`plugins.disabled` で外せる）
+
+| 名前 | 内容 |
+| --- | --- |
+| `agents-md` | `~/.sasacode/AGENTS.md` と、リポジトリのルートから作業ディレクトリまでの各 `AGENTS.md` をシステムプロンプトに加える（CLAUDE.md は読まない） |
+| `compaction` | コンテキストが 80%（`threshold`）に達するか上限に達したら、古い履歴を要約して置き換える。`/compact` で手動実行 |
+| `subagent` | `task` ツール。独立した履歴のサブエージェントに作業を任せ、最終報告だけを受け取る。1ターンに複数あれば並行実行する |
+| `todo` | `todo_write` ツール。作業計画をセッションに保存し、ステータス行に進捗を出す |
+| `web-fetch` | `web_fetch` ツール。URL を取得してテキストにする（ネットワークを使うので確認対象） |
+| `permission-presets` | 権限ルールのプリセット。既定で `guard`（sudo、`rm -rf ~`、force push、`\| sh` などを常に拒否）。ほかに `read-only-shell`、`tests` |
+| `skills` | Agent Skills（`SKILL.md`）のアダプタ |
+| `mcp` | MCP のアダプタ |
+
+### MCP
+
+```json
+{
+  "mcpServers": {
+    "github": { "command": "npx", "args": ["-y", "@modelcontextprotocol/server-github"], "env": { "GITHUB_TOKEN": "${GITHUB_TOKEN}" } },
+    "remote": { "url": "https://example.com/mcp", "headers": { "Authorization": "Bearer ${REMOTE_TOKEN}" } }
+  }
+}
+```
+
+stdio と Streamable HTTP に対応。ツールは `mcp__<server>__<tool>` という名前になり、通常のツールと同じ権限判定とフックを通る。prompts はスラッシュコマンドになる。サーバーはバックグラウンドで接続するので、起動を待たせない。
+
+### Skills
+
+`~/.sasacode/skills/<name>/SKILL.md`、`.sasacode/skills/<name>/SKILL.md`、プラグインの `skills` ディレクトリを探す。対応するのは標準の Agent Skills 形式（frontmatter に `name` と `description`）。システムプロンプトには名前・説明・パスだけを載せ、本文はモデルが必要になったときに read ツールで読む。`/skill:<name>` で明示的に読み込ませることもできる。
+
+### ツールの遅延ロード
+
+MCP とプラグインのツールの定義が、合計でコンテキストの 10% 以上になるか、30 個以上になると、定義を送るのをやめる。代わりに名前と説明の一覧を持つ `tool_search` ツールだけを渡し、モデルは必要なツールを検索して読み込む。組み込み4ツールと `alwaysLoad` 付きのツールは常に送る。閾値は `toolSearch: { mode: "auto" | "always" | "never", percent: 10, count: 30 }` で変えられる。
+
 ## セッション
 
-`~/.sasacode/sessions/<cwd>/<日時>_<id>.jsonl` にメッセージを1件ずつ追記保存する。書きかけの行や、結果が揃っていないツール呼び出しは再開時に切り捨て、最後に完了したターンから再開する。使用中の API キーは書き込み前に `[REDACTED]` に置換する。`SASACODE_HOME` で `~/.sasacode` の場所を変えられる。
+`~/.sasacode/sessions/<cwd>/<日時>_<id>.jsonl` にメッセージを1件ずつ追記保存する。`/fork` を使うと、過去の任意のメッセージの直前から新しいセッションに分岐できる。書きかけの行や、結果が揃っていないツール呼び出しは再開時に切り捨て、最後に完了したターンから再開する。使用中の API キーは書き込み前に `[REDACTED]` に置換する。`SASACODE_HOME` で `~/.sasacode` の場所を変えられる。
 
 ## 開発
 
@@ -107,9 +154,12 @@ bun run typecheck
 | --- | --- |
 | `@sasacode/ai` | 正規化メッセージ型、Anthropic / OpenAI Chat / OpenAI Responses アダプタ、録画・再生プロバイダー |
 | `@sasacode/agent` | ループ、イベントバス、権限判定、セッション JSONL、システムプロンプト |
-| `@sasacode/plugin-api` | プラグインが依存する型（M1 時点では registerTool / registerCommand） |
+| `@sasacode/plugin-api` | プラグインが依存する唯一の公開 API（semver 管理、現在 1.0.0） |
 | `@sasacode/tools` | read / write / edit / bash（plugin-api 経由で登録） |
 | `@sasacode/tui` | pi-tui の上に作った対話 UI |
-| `@sasacode/cli` | 引数解析、設定マージ、APIキー解決、ヘッドレス実行 |
+| `@sasacode/cli` | 引数解析、設定マージ、APIキー解決、プラグインの検出・読み込み・信頼確認、ヘッドレス実行 |
+| `@sasacode/mcp` | MCP アダプタ（プラグイン） |
+| `@sasacode/skills` | Skills アダプタ（プラグイン） |
+| `@sasacode/bundled` | 同梱プラグイン |
 
-実行時の依存パッケージとその理由は [docs/dependencies.md](docs/dependencies.md)、M1 時点の実測値と未検証の項目は [docs/milestones.md](docs/milestones.md) にまとめている。
+実行時の依存パッケージとその理由は [docs/dependencies.md](docs/dependencies.md)、各マイルストーンでの検証結果と実測値は [docs/milestones.md](docs/milestones.md)、プラグインの書き方は [docs/plugins.md](docs/plugins.md) にまとめている。

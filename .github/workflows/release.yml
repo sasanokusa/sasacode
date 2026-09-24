@@ -1,0 +1,26 @@
+name: release
+# Push a tag like v0.2.0 to build single-file binaries and attach them to a GitHub release.
+on:
+  push:
+    tags: ["v*"]
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - run: bun test
+      - run: bun run build --all
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd dist
+          for f in sasacode-*; do
+            case "$f" in *.map) ;; *) tar czf "$f.tar.gz" "$f" ;; esac
+          done
+          shasum -a 256 *.tar.gz > SHA256SUMS
+          gh release create "$GITHUB_REF_NAME" --generate-notes *.tar.gz SHA256SUMS

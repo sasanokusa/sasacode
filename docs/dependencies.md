@@ -6,6 +6,7 @@
 | --- | --- | --- | --- |
 | `@anthropic-ai/sdk` | `@sasacode/ai` | Messages API のストリーミング、型付きエラー、429 / 5xx / overloaded の指数バックオフ再試行（FR-L07）、`ant auth login` プロファイルからの認証をまとめて提供する。SSE パーサーと再試行を自前で書くよりコードが小さく、API の変更にも追従しやすい | fetch と自前の SSE パーサー：thinking の署名、`eager_input_streaming`、エラー分類を自前で追う必要がある |
 | `openai` | `@sasacode/ai` | Chat Completions と Responses の両方を1つの SDK で扱え、`baseURL` を変えるだけで OpenRouter / vLLM / Ollama / Command Code に対応できる（FR-P02・P03）。再試行も内蔵 | 自前実装：Responses のイベント種別が多く、保守の負担が大きい |
+| `@modelcontextprotocol/sdk` | `@sasacode/mcp` | 公式の MCP クライアント。プロトコルのバージョン交渉、stdio と Streamable HTTP のトランスポート、セッション ID、進捗通知によるタイムアウト延長を仕様どおりに扱える。単一バイナリに含まれるのは import しているクライアント部分だけ（サーバー用の express などは入らない） | 自前の JSON-RPC 実装：HTTP 側のセッション管理や SSE の再接続まで追うと、保守の負担が大きい |
 | `@earendil-works/pi-tui` | `@sasacode/tui` | 決定事項 8.2。差分描画、同期出力、IME 対応エディタ、貼り付け処理、Markdown 表示がそろっていて、依存は `marked` と `get-east-asian-width` の2つだけ | OpenTUI（ネイティブバイナリに依存）、Ink（React が入る） |
 
 ## pi-tui の Bun 上での検証（M1 冒頭）

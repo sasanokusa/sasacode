@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import type { PermissionMode, PermissionRules } from "@sasacode/agent";
+import type { PermissionMode, PermissionRules, ToolSearchConfig } from "@sasacode/agent";
 import type { ModelInfo, ProviderConfig, ThinkingLevel } from "@sasacode/ai";
 
 export interface Config {
@@ -19,7 +19,20 @@ export interface Config {
   maxRetries?: number;
   /** Projects whose .sasacode/config.json may loosen permissions. */
   trustedProjects?: string[];
+  plugins?: {
+    /** Plugin names not to load (bundled ones included: agents-md, compaction, subagent, todo, web-fetch, permission-presets, skills, mcp). */
+    disabled?: string[];
+    /** Per-plugin settings, handed to the plugin as api.settings. */
+    settings?: Record<string, Record<string, unknown>>;
+  };
+  tools?: { disabled?: string[] };
+  mcpServers?: Record<string, McpServerConfig>;
+  toolSearch?: ToolSearchConfig;
 }
+
+export type McpServerConfig =
+  | { command: string; args?: string[]; env?: Record<string, string>; cwd?: string; disabled?: boolean; alwaysLoad?: boolean }
+  | { url: string; headers?: Record<string, string>; disabled?: boolean; alwaysLoad?: boolean };
 
 export function sasacodeHome(): string {
   return process.env.SASACODE_HOME ?? join(homedir(), ".sasacode");
@@ -57,9 +70,11 @@ export interface LoadedConfig {
   warnings: string[];
 }
 
-export function loadConfig(cwd: string): LoadedConfig {
+export function loadConfig(cwd: string): LoadedConfig & { projectMcp: string[] } {
   const global = readJson(join(sasacodeHome(), "config.json"));
   const project = readJson(join(cwd, ".sasacode", "config.json"));
+  // MCP servers defined by the project run code on this machine, so they need the trust prompt.
+  const projectMcp = Object.keys(project.mcpServers ?? {});
   const warnings: string[] = [];
   // A cloned repo must not be able to switch off approvals by itself.
   if (!global.trustedProjects?.includes(cwd) && project.permissions) {
@@ -71,5 +86,5 @@ export function loadConfig(cwd: string): LoadedConfig {
       project.permissions = { ...rest, ...(mode === "ask" || mode === "edits" ? { mode } : {}) };
     }
   }
-  return { config: mergeConfig(global, project), warnings };
+  return { config: mergeConfig(global, project), warnings, projectMcp };
 }

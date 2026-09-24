@@ -5,6 +5,7 @@ import { parseArgs } from "node:util";
 import { PERMISSION_MODES } from "@sasacode/agent";
 import { sasacodeHome } from "./config.ts";
 import { runHeadless } from "./headless.ts";
+import { pluginCommand } from "./loader.ts";
 import { setup } from "./setup.ts";
 
 const HELP = `sasacode — a small, pluggable coding agent
@@ -23,6 +24,12 @@ Options:
   -c, --continue                 resume the most recent session in this directory
   -r, --resume <id>              resume a session by id
       --no-session               do not save this session
+      --trust-project            load project plugins / MCP servers without asking (headless)
+
+Subcommands:
+  sasacode plugin install <npm-spec|git-url> [--project]
+  sasacode plugin remove <name> [--project]
+  sasacode plugin list
   -h, --help
   -v, --version`;
 
@@ -41,8 +48,23 @@ function loadHomeEnv(): void {
   }
 }
 
+/** Piped input is appended to -p. A pipe that stays open without data (e.g. a parent shell) is ignored. */
+async function readPipedStdin(): Promise<string> {
+  if (process.stdin.isTTY) return "";
+  const reader = Bun.stdin.stream().getReader();
+  const first = await Promise.race([reader.read(), Bun.sleep(300).then(() => undefined)]);
+  if (!first || first.done) {
+    reader.releaseLock();
+    return "";
+  }
+  const chunks = [first.value];
+  for (let r = await reader.read(); !r.done; r = await reader.read()) chunks.push(r.value);
+  return Buffer.concat(chunks).toString("utf8");
+}
+
 async function main(): Promise<number> {
   loadHomeEnv();
+  if (process.argv[2] === "plugin") return pluginCommand(process.argv.slice(3), process.cwd());
   const { values, positionals } = parseArgs({
     allowPositionals: true,
     options: {
@@ -55,6 +77,7 @@ async function main(): Promise<number> {
       continue: { type: "boolean", short: "c" },
       resume: { type: "string", short: "r" },
       "no-session": { type: "boolean" },
+      "trust-project": { type: "boolean" },
       help: { type: "boolean", short: "h" },
       version: { type: "boolean", short: "v" },
     },
@@ -75,15 +98,14 @@ async function main(): Promise<number> {
     maxTurns: values["max-turns"] ? Number(values["max-turns"]) : undefined,
     resume: values.continue ? "last" : values.resume,
     noSession: values["no-session"],
+    trustProject: values["trust-project"],
   });
   for (const w of harness.warnings) console.error(`warning: ${w}`);
 
   if (values.print !== undefined) {
     let prompt = [values.print, ...positionals].join(" ");
-    if (!process.stdin.isTTY) {
-      const piped = await new Response(Bun.stdin.stream()).text();
-      if (piped.trim()) prompt = `${prompt}\n\n${piped}`;
-    }
+    const piped = await readPipedStdin();
+    if (piped.trim()) prompt = `${prompt}\n\n${piped}`;
     if (values.output !== "text" && values.output !== "jsonl") throw new Error("--output must be text or jsonl");
     return runHeadless(harness, prompt, values.output);
   }

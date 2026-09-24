@@ -9,7 +9,8 @@ export type SessionEntry =
   | { type: "message"; message: Message }
   | { type: "model"; model: string }
   | { type: "permission_mode"; mode: string }
-  | { type: "custom"; kind: string; data: unknown };
+  | { type: "replace"; messages: Message[] }
+  | { type: "custom"; plugin: string; kind: string; data: unknown };
 
 export interface SessionInfo {
   id: string;
@@ -96,7 +97,8 @@ export function restore(entries: SessionEntry[]): { messages: Message[]; model?:
       messages.push(e.message);
       // The model that answered last is the one to continue with.
       if (e.message.role === "assistant") model = `${e.message.provider}/${e.message.model}`;
-    } else if (e.type === "model") model = e.model;
+    } else if (e.type === "replace") messages.splice(0, messages.length, ...e.messages);
+    else if (e.type === "model") model = e.model;
     else if (e.type === "permission_mode") permissionMode = e.mode;
   }
   return { messages: trimIncomplete(messages), model, permissionMode };
@@ -131,10 +133,9 @@ export function listSessions(dir: string): SessionInfo[] {
       const entries = readEntries(path);
       const head = entries[0];
       if (head?.type !== "session") continue;
-      const msgs = entries.filter((e) => e.type === "message");
-      const firstUser = msgs.find((e) => e.message.role === "user");
+      const firstUser = entries.find((e) => e.type === "message" && e.message.role === "user");
       const firstPrompt =
-        firstUser?.message.role === "user"
+        firstUser?.type === "message" && firstUser.message.role === "user"
           ? firstUser.message.content.map((c) => (c.type === "text" ? c.text : "[image]")).join(" ")
           : "";
       out.push({
@@ -144,7 +145,7 @@ export function listSessions(dir: string): SessionInfo[] {
         createdAt: head.createdAt,
         modifiedAt: statSync(path).mtime,
         firstPrompt,
-        messageCount: msgs.length,
+        messageCount: restore(entries).messages.length,
       });
     } catch {}
   }

@@ -2,12 +2,15 @@
   "name": "sasa-code-harness",
   "private": true,
   "type": "module",
-  "workspaces": ["packages/*"],
+  "workspaces": [
+    "packages/*"
+  ],
   "scripts": {
     "sasacode": "bun packages/cli/src/main.ts",
     "test": "bun test",
     "typecheck": "tsc --noEmit -p .",
-    "loc": "wc -l packages/{ai,agent,plugin-api,tools}/src/*.ts | tail -1"
+    "build": "bun scripts/build.ts",
+    "loc": "cat packages/{ai,agent,plugin-api,tools}/src/*.ts | wc -l"
   },
   "devDependencies": {
     "@types/bun": "^1.4.2",

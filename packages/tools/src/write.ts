@@ -21,6 +21,7 @@ export const writeTool: ToolDefinition<Args> = {
     additionalProperties: false,
   },
   kind: "edit",
+  alwaysLoad: true,
   paths: (a, cwd) => [resolvePath(a.path, cwd)],
   summary: (a) => a.path,
   async execute(args, ctx) {

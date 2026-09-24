@@ -1,5 +1,6 @@
 import { type Component, Container, Markdown, Text, truncateToWidth } from "@earendil-works/pi-tui";
 import type { AssistantMessage, ToolCall, UserContent } from "@sasacode/ai";
+import type { ToolRenderer, ToolResult } from "@sasacode/plugin-api";
 import { c, markdownTheme } from "./theme.ts";
 
 /** Shared flag toggled by ctrl+o: show full tool output and thinking. */
@@ -76,6 +77,8 @@ export class ToolView implements Component {
   live = "";
   output = "";
   diff?: string;
+  result?: ToolResult;
+  renderer?: ToolRenderer;
 
   constructor(public call: ToolCall) {}
 
@@ -84,7 +87,13 @@ export class ToolView implements Component {
     const summary = this.summary || argPreview(this.call.input);
     const lines = [truncateToWidth(`${dot} ${c.bold(this.call.name)}${c.gray(`(${summary})`)}`, width)];
     const body = this.status === "running" ? this.live : this.output;
-    if (this.diff && this.status === "done") lines.push(...renderDiff(this.diff, width));
+    let custom: string[] | undefined;
+    if (this.renderer && this.status !== "running")
+      try {
+        custom = this.renderer(this.call, this.result, { expanded: display.expanded, width })?.map((l) => truncateToWidth(l, width));
+      } catch {}
+    if (custom) lines.push(...custom);
+    else if (this.diff && this.status === "done") lines.push(...renderDiff(this.diff, width));
     else if (body.trim()) {
       const all = body.trimEnd().split("\n");
       const shown = display.expanded ? all : this.status === "running" ? all.slice(-COLLAPSED_LINES) : all.slice(0, COLLAPSED_LINES);

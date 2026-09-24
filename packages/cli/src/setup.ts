@@ -1,20 +1,26 @@
+import { mkdirSync } from "node:fs";
+import { join } from "node:path";
 import {
   Agent,
   buildSystemPrompt,
+  headlessUI,
   listSessions,
   PERMISSION_MODES,
   type PermissionMode,
   PermissionPolicy,
+  PluginHost,
   restore,
   SessionFile,
   sessionDir,
+  type UIBridge,
 } from "@sasacode/agent";
-import { BUILTIN_PROVIDERS, DEFAULT_MODEL, type ModelInfo, type ProviderConfig, resolveModel, type ThinkingLevel } from "@sasacode/ai";
-import type { CommandDefinition, PluginAPI, ToolDefinition } from "@sasacode/plugin-api";
-import { mkdirSync } from "node:fs";
-import { join } from "node:path";
+import { BUILTIN_PROVIDERS, DEFAULT_MODEL, type ModelInfo, type ProviderConfig, registerApi, resolveModel, type ThinkingLevel } from "@sasacode/ai";
+import { bundledPlugins } from "@sasacode/bundled";
+import { createMcpPlugin, type McpServerConfig } from "@sasacode/mcp";
+import { createSkillsPlugin } from "@sasacode/skills";
 import builtinTools from "@sasacode/tools";
 import { type Config, loadConfig, sasacodeHome } from "./config.ts";
+import { discoverPlugins, type FoundPlugin, importExtensions, isTrusted, projectFingerprint, saveTrust } from "./loader.ts";
 import { resolveApiKey } from "./keys.ts";
 
 export interface SetupOptions {
@@ -26,87 +32,94 @@ export interface SetupOptions {
   /** "last" = most recent session in cwd, otherwise a session id or path. */
   resume?: string;
   noSession?: boolean;
+  /** Trust project-local plugins and MCP servers without asking (headless). */
+  trustProject?: boolean;
 }
 
 export interface Harness {
   agent: Agent;
+  host: PluginHost;
   config: Config;
   warnings: string[];
-  commands: CommandDefinition[];
   providers: Record<string, ProviderConfig>;
   resolve(spec: string): ModelInfo;
   sessionsDir: string;
   historyPath: string;
+  /** Load bundled, MCP, Skills and third-party plugins, then start the session. Safe to call once. */
+  loadPlugins(ui?: UIBridge): Promise<void>;
   /** Replace the agent's conversation with a stored session. */
-  loadSession(path: string): void;
-  newSession(): void;
+  loadSession(path: string): Promise<void>;
+  newSession(): Promise<void>;
+  /** New session holding the conversation up to (not including) message `index`. */
+  fork(index: number): Promise<void>;
+  shutdown(): Promise<void>;
 }
 
 export async function setup(opts: SetupOptions): Promise<Harness> {
-  const { config, warnings } = loadConfig(opts.cwd);
+  const { config, warnings, projectMcp } = loadConfig(opts.cwd);
   const providers: Record<string, ProviderConfig> = { ...BUILTIN_PROVIDERS };
   for (const [name, p] of Object.entries(config.providers ?? {}))
     providers[name] = { ...providers[name], ...p } as ProviderConfig;
   const resolve = (spec: string) => resolveModel(spec, providers, config.modelOverrides);
 
-  // Everything, built-ins included, goes through the plugin API (P2).
-  const tools: ToolDefinition<any>[] = [];
-  const commands: CommandDefinition[] = [];
-  const api: PluginAPI = {
-    registerTool(t) {
-      const i = tools.findIndex((x) => x.name === t.name);
-      if (i >= 0) tools[i] = t;
-      else tools.push(t);
-    },
-    registerCommand(c) {
-      commands.push(c);
-    },
-  };
-  await builtinTools(api);
-
   const mode = (opts.permission ?? config.permissions?.mode ?? "edits") as PermissionMode;
   if (!PERMISSION_MODES.includes(mode)) throw new Error(`unknown permission mode "${mode}" (${PERMISSION_MODES.join(", ")})`);
-  const sessionsDir = sessionDir(sasacodeHome(), opts.cwd);
-  mkdirSync(sasacodeHome(), { recursive: true });
+  const home = sasacodeHome();
+  const sessionsDir = sessionDir(home, opts.cwd);
+  mkdirSync(home, { recursive: true });
 
   const agent = new Agent({
     model: resolve(opts.model ?? config.model ?? DEFAULT_MODEL),
     cwd: opts.cwd,
     systemPrompt: buildSystemPrompt({ cwd: opts.cwd, append: config.instructions ? [config.instructions] : [] }),
-    tools,
     thinking: (opts.thinking ?? config.thinking ?? "high") as ThinkingLevel,
     permissions: new PermissionPolicy(mode, config.permissions),
     getApiKey: (p) => resolveApiKey(p, providers[p]),
+    resolveModel: resolve,
     maxTurns: opts.maxTurns ?? config.maxTurns,
     maxRetries: config.maxRetries,
+    toolSearch: config.toolSearch,
   });
 
-  const harness: Harness = {
+  const disabled = new Set(config.plugins?.disabled ?? []);
+  const host = new PluginHost({
     agent,
-    config,
-    warnings,
-    commands,
-    providers,
-    resolve,
-    sessionsDir,
-    historyPath: join(sasacodeHome(), "history.jsonl"),
-    loadSession(path) {
-      const { file, entries } = SessionFile.open(path);
-      const state = restore(entries);
-      agent.messages = state.messages;
-      agent.session = file;
-      if (state.model) {
-        try {
-          agent.model = resolve(state.model);
-        } catch (e) {
-          warnings.push(`session model ${state.model} unavailable: ${(e as Error).message}`);
-        }
+    cwd: opts.cwd,
+    settings: (name) => config.plugins?.settings?.[name] ?? {},
+    disabledTools: config.tools?.disabled,
+    registerProvider(name, cfg, impl) {
+      providers[name] = cfg;
+      if (impl) registerApi(cfg.api, impl);
+    },
+  });
+  // Built-in tools go through the same API as everything else (P2); they load first and synchronously.
+  await host.load("builtin-tools", builtinTools);
+
+  let sessionEntries: Parameters<PluginHost["setSessionEntries"]>[0] = [];
+  const startSession = async (resumed: boolean) => {
+    host.setSessionEntries(sessionEntries);
+    await agent.hooks.run("session_start", { sessionId: agent.session?.id, resumed });
+  };
+  const endSession = () => agent.hooks.run("session_end", { sessionId: agent.session?.id });
+
+  const openSession = (path: string) => {
+    const { file, entries } = SessionFile.open(path);
+    const state = restore(entries);
+    agent.messages = state.messages;
+    agent.session = file;
+    sessionEntries = entries;
+    if (state.model) {
+      try {
+        agent.model = resolve(state.model);
+      } catch (e) {
+        warnings.push(`session model ${state.model} unavailable: ${(e as Error).message}`);
       }
-    },
-    newSession() {
-      agent.messages = [];
-      agent.session = opts.noSession ? undefined : SessionFile.create(sessionsDir, opts.cwd);
-    },
+    }
+  };
+  const createSession = () => {
+    agent.messages = [];
+    agent.session = opts.noSession ? undefined : SessionFile.create(sessionsDir, opts.cwd);
+    sessionEntries = [];
   };
 
   if (opts.resume) {
@@ -116,7 +129,90 @@ export async function setup(opts: SetupOptions): Promise<Harness> {
         ? list[0]
         : list.find((s) => s.id === opts.resume || s.path === opts.resume || s.id.startsWith(opts.resume!));
     if (!target) throw new Error(opts.resume === "last" ? "no previous session in this directory" : `session not found: ${opts.resume}`);
-    harness.loadSession(target.path);
-  } else harness.newSession();
-  return harness;
+    openSession(target.path);
+  } else createSession();
+
+  let loading: Promise<void> | undefined;
+  const loadPlugins = (ui: UIBridge = headlessUI) =>
+    (loading ??= (async () => {
+      host.setUI(ui);
+      for (const [name, plugin] of Object.entries(bundledPlugins)) if (!disabled.has(name)) await host.load(name, plugin);
+
+      const found = discoverPlugins(opts.cwd).filter((p) => !disabled.has(p.manifest.name));
+      const projectPlugins = found.filter((p) => p.scope === "project");
+      const projectServers = Object.fromEntries(projectMcp.map((n) => [n, config.mcpServers![n]!]));
+      let trusted = true;
+      if (projectPlugins.length || projectMcp.length) {
+        const fp = projectFingerprint(projectPlugins, projectServers as Record<string, McpServerConfig>);
+        trusted = opts.trustProject || isTrusted(opts.cwd, fp);
+        if (!trusted && ui.interactive) {
+          const names = [...projectPlugins.map((p) => `plugin ${p.manifest.name}`), ...projectMcp.map((n) => `MCP ${n}`)];
+          trusted = await ui.confirm(
+            "このプロジェクトのプラグイン / MCP サーバーを信頼しますか？",
+            `${names.join(", ")}\nインプロセスプラグインと MCP サーバーはあなたの権限でコードを実行します。`,
+          );
+          if (trusted) saveTrust(opts.cwd, fp);
+        }
+        if (!trusted) host.notify("プロジェクトのプラグイン / MCP サーバーは信頼されていないため読み込みません（headless では --trust-project）", "warning");
+      }
+      const usable = found.filter((p) => p.scope === "global" || trusted);
+
+      if (!disabled.has("skills")) {
+        const dirs = [join(home, "skills"), join(opts.cwd, ".sasacode", "skills"), ...usable.flatMap((p) => (p.manifest.skills ? [join(p.dir, p.manifest.skills)] : []))];
+        await host.load("skills", createSkillsPlugin(dirs));
+      }
+      if (!disabled.has("mcp")) {
+        const servers: Record<string, McpServerConfig> = {};
+        for (const [n, s] of Object.entries(config.mcpServers ?? {})) if (trusted || !projectMcp.includes(n)) servers[n] = s as McpServerConfig;
+        for (const p of usable) Object.assign(servers, p.manifest.mcpServers ?? {});
+        await host.load("mcp", createMcpPlugin(servers));
+      }
+      for (const p of usable) await loadExternal(host, p);
+      await startSession(!!opts.resume);
+    })());
+
+  return {
+    agent,
+    host,
+    config,
+    warnings,
+    providers,
+    resolve,
+    sessionsDir,
+    historyPath: join(home, "history.jsonl"),
+    loadPlugins,
+    async loadSession(path) {
+      await endSession();
+      openSession(path);
+      await startSession(true);
+    },
+    async newSession() {
+      await endSession();
+      createSession();
+      await startSession(false);
+    },
+    async fork(index) {
+      const kept = agent.messages.slice(0, index);
+      await endSession();
+      createSession();
+      for (const m of kept) agent.session?.append({ type: "message", message: m });
+      agent.messages = kept;
+      await startSession(false);
+    },
+    async shutdown() {
+      await endSession();
+    },
+  };
+}
+
+async function loadExternal(host: PluginHost, p: FoundPlugin): Promise<void> {
+  let exts;
+  try {
+    exts = await importExtensions(p);
+  } catch (e) {
+    host.plugins.push({ name: p.manifest.name, error: (e as Error).message });
+    host.notify(`plugin ${p.manifest.name} skipped: ${(e as Error).message}`, "warning");
+    return;
+  }
+  for (const [i, fn] of exts.entries()) await host.load(exts.length > 1 ? `${p.manifest.name}#${i}` : p.manifest.name, fn);
 }
