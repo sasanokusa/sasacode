@@ -21,7 +21,13 @@ const plugin: Plugin = (api) => {
 export default plugin;
 ```
 
-`@sasacode/plugin-api` はインストールしなくても import できる（ホストが自分の実装を渡す）。型補完が欲しければ devDependency として入れる。
+`@sasacode/plugin-api` はインストールしなくても import できる（ホストが自分の実装を渡す）。型補完が欲しければ、npm の [`@sasacode/plugin-api`](https://www.npmjs.com/package/@sasacode/plugin-api) を devDependency として入れる。パッケージの版はプラグイン API の版と同じ。
+
+```bash
+npm install --save-dev @sasacode/plugin-api
+```
+
+npm のパッケージは `bun run pack:plugin-api` で `dist/plugin-api` に作る（型と小さな関数だけで、プロバイダーの SDK は含まない）。API の版を上げたら作り直して公開する。
 
 ## パッケージにする
 

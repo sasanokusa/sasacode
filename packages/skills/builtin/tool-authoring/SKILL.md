@@ -25,7 +25,7 @@ A plugin is a module whose default export receives a `PluginAPI`. Everything in 
   { "name": "my-plugin", "version": "0.1.0", "apiVersion": "^1.4.0", "extensions": ["src/index.ts"], "skills": "skills" }
   ```
   or the same fields under `"sasacode"` in `package.json`.
-- TypeScript runs as-is (Bun); no build step. `import ... from "@sasacode/plugin-api"` works without installing it.
+- TypeScript runs as-is (Bun); no build step. `import ... from "@sasacode/plugin-api"` works without installing it. For editor types, `npm install --save-dev @sasacode/plugin-api` (published on npm; its version is the API version).
 - New plugins load on the next start of sasacode. Tell the user to restart after you create one.
 - `apiVersion` `^1.4.0` needs sasacode 0.8 or later. Use the lowest version whose features you use (1.0 base, 1.1 `ready`, 1.2 `stream_delta` / `assistant_message` / `tool_call_raw` / sampling, 1.3 command `complete`, 1.4 `tool_result` for calls that did not run (`ran`), `turn_end` `stop`). The API is frozen at 1.4: 1.x only adds, so ignore fields and values you do not know. Only `@sasacode/plugin-api` exports are public.
 

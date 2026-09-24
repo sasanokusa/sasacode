@@ -207,7 +207,7 @@ MCP とプラグインのツールの定義が、合計でコンテキストの 
 
 ### プラグインを書く
 
-`~/.sasacode/plugins/hello.ts` に置くだけで読み込む（ビルドは不要）。
+`~/.sasacode/plugins/hello.ts` に置くだけで読み込む（ビルドは不要）。エディタで型補完を使うなら `npm install --save-dev @sasacode/plugin-api`（[npm](https://www.npmjs.com/package/@sasacode/plugin-api)）。
 
 ```ts
 import { text, type Plugin } from "@sasacode/plugin-api";
@@ -251,7 +251,7 @@ bun run build       # dist/sasacode（このマシン向け）。--all で全タ
 | --- | --- |
 | `@sasacode/ai` | 正規化したメッセージ型、Anthropic / OpenAI Chat / OpenAI Responses のアダプタ、Models API、応答の録画・再生 |
 | `@sasacode/agent` | ループ、フック、ツール実行（修復・検証・権限）、ツールの遅延ロード、セッション、プラグインのホスト |
-| `@sasacode/plugin-api` | プラグインが依存する唯一の公開 API |
+| `@sasacode/plugin-api` | プラグインが依存する唯一の公開 API（npm で公開） |
 | `@sasacode/tools` | read / write / edit / bash（プラグイン API で登録） |
 | `@sasacode/tui` | pi-tui の上に作った対話 UI |
 | `@sasacode/cli` | 引数、設定、キー、モデル一覧、プラグインの検出・読み込み・信頼確認、ヘッドレス実行 |
