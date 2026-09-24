@@ -53,7 +53,7 @@ function isObject(v: unknown): v is Record<string, unknown> {
 }
 
 const isString = (v: unknown) => typeof v === "string";
-const isNumber = (v: unknown) => typeof v === "number" && Number.isFinite(v);
+const isCount = (max: number) => (v: unknown) => Number.isInteger(v) && (v as number) >= 0 && (v as number) <= max;
 const isStrings = (v: unknown) => Array.isArray(v) && v.every(isString);
 const isObjectOfObjects = (v: unknown) => isObject(v) && Object.values(v).every(isObject);
 const THINKING = ["off", "low", "medium", "high", "xhigh", "max"];
@@ -70,8 +70,8 @@ const CHECKS: Record<keyof Config, (v: unknown) => boolean> = {
     ["allow", "ask", "deny"].every((k) => v[k] === undefined || isStrings(v[k])) &&
     (v.mode === undefined || PERMISSION_MODES.includes(v.mode as PermissionMode)),
   instructions: isString,
-  maxTurns: isNumber,
-  maxRetries: isNumber,
+  maxTurns: isCount(100_000),
+  maxRetries: isCount(20),
   trustedProjects: isStrings,
   plugins: (v) => isObject(v) && (v.disabled === undefined || isStrings(v.disabled)) && (v.settings === undefined || isObjectOfObjects(v.settings)),
   tools: (v) => isObject(v) && (v.disabled === undefined || isStrings(v.disabled)),
@@ -94,10 +94,13 @@ export function sanitizeConfig(raw: unknown, source: string, warnings: string[])
   return out as Config;
 }
 
-/** Later values win; objects merge recursively; permission rule lists concatenate (never replace). */
+/**
+ * Later values win; objects merge recursively. Permission rules and disabled lists accumulate
+ * (never replace), so a project cannot drop the user's deny rules or re-enable what they turned off.
+ */
 export function mergeConfig(base: Config, over: Config): Config {
   const merge = (a: any, b: any, key = ""): any => {
-    if (["allow", "ask", "deny"].includes(key)) return [...(a ?? []), ...(b ?? [])];
+    if (["allow", "ask", "deny", "disabled"].includes(key)) return [...new Set([...(a ?? []), ...(b ?? [])])];
     if (isObject(a) && isObject(b)) {
       const out: Record<string, unknown> = { ...a };
       for (const [k, v] of Object.entries(b)) out[k] = k in a ? merge(a[k], v, k) : v;
@@ -108,6 +111,9 @@ export function mergeConfig(base: Config, over: Config): Config {
   return merge(base, over);
 }
 
+/** The SDKs' retry count when none is configured. */
+const DEFAULT_RETRIES = 8;
+
 /** How much a mode restricts: a project may only move to an equal or stricter one without trust. */
 const MODE_STRENGTH: Record<PermissionMode, number> = { auto: 0, agent: 1, edits: 2, ask: 3 };
 
@@ -115,7 +121,8 @@ const MODE_STRENGTH: Record<PermissionMode, number> = { auto: 0, agent: 1, edits
  * Split a project's config into what it may set on its own and what needs the user's trust.
  * Without trust a project can only tighten things: it cannot add endpoints (even keyless ones
  * would receive your code), change model metadata (baseUrl could reroute keys), configure or
- * disable plugins, start MCP servers, add allow rules, or loosen the permission mode.
+ * disable plugins, start MCP servers, add allow rules, loosen the permission mode, or raise the
+ * turn and retry limits.
  */
 export function splitProjectConfig(project: Config, global: Config): { safe: Config; elevated: Config } {
   const safe: Config = {};
@@ -124,8 +131,13 @@ export function splitProjectConfig(project: Config, global: Config): { safe: Con
     const name = spec.slice(0, spec.indexOf("/"));
     return !!BUILTIN_PROVIDERS[name] || !!global.providers?.[name];
   };
-  for (const key of ["thinking", "instructions", "toolSearch", "maxTurns", "maxRetries", "tools"] as const)
-    if (project[key] !== undefined) (safe as any)[key] = project[key];
+  // tools.disabled only adds to the user's list (see mergeConfig).
+  for (const key of ["thinking", "instructions", "toolSearch", "tools"] as const) if (project[key] !== undefined) (safe as any)[key] = project[key];
+  // 0 turns means no limit, so it is the loosest value.
+  const turns = (n: number | undefined) => (n ? n : Infinity);
+  if (project.maxTurns !== undefined) (turns(project.maxTurns) <= turns(global.maxTurns) ? safe : elevated).maxTurns = project.maxTurns;
+  if (project.maxRetries !== undefined)
+    (project.maxRetries <= (global.maxRetries ?? DEFAULT_RETRIES) ? safe : elevated).maxRetries = project.maxRetries;
   if (project.model !== undefined) (knownProvider(project.model) ? safe : elevated).model = project.model;
   if (project.models) {
     const [ok, rest] = [project.models.filter(knownProvider), project.models.filter((m) => !knownProvider(m))];
@@ -159,6 +171,8 @@ export function describeElevated(e: Config): string[] {
   if (e.plugins?.settings) out.push(`settings for plugins ${Object.keys(e.plugins.settings).join(", ")}`);
   if (e.permissions?.allow?.length) out.push(`allow rules ${e.permissions.allow.join(", ")}`);
   if (e.permissions?.mode) out.push(`permission mode ${e.permissions.mode}`);
+  if (e.maxTurns !== undefined) out.push(`maxTurns ${e.maxTurns || "unlimited"}`);
+  if (e.maxRetries !== undefined) out.push(`maxRetries ${e.maxRetries}`);
   return out;
 }
 

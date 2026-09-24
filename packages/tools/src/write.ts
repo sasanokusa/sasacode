@@ -25,10 +25,14 @@ export const writeTool: ToolDefinition<Args> = {
   paths: (a, cwd) => [resolvePath(a.path, cwd)],
   summary: (a) => a.path,
   async execute(args, ctx) {
-    if (ctx.signal.aborted) return errorResult("Interrupted by the user; nothing was written.");
+    // Checked again after every wait: an interrupt must stop changes that have not started yet.
+    const interrupted = () => errorResult("Interrupted by the user; nothing was written.");
+    if (ctx.signal.aborted) return interrupted();
     const path = resolvePath(args.path, ctx.cwd);
     const before = await readFile(path, "utf8").catch(() => undefined);
+    if (ctx.signal.aborted) return interrupted();
     await mkdir(dirname(path), { recursive: true });
+    if (ctx.signal.aborted) return interrupted();
     await writeFile(path, args.content);
     const lines = args.content.split("\n").length;
     return {

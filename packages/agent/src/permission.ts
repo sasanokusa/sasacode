@@ -1,4 +1,4 @@
-import { realpathSync } from "node:fs";
+import { lstatSync, readlinkSync, realpathSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type { ToolDefinition } from "@sasacode/plugin-api";
 
@@ -66,13 +66,16 @@ export class PermissionPolicy {
       const hit = this.rules[d].find((r) => ruleMatches(r, c));
       if (hit) return { decision: d, reason: `rule ${d}: ${hit.source}`, source: "rule" };
     }
+    // Where a path really goes cannot be told (a link loop, no permission): let the user decide.
+    const unclear = (c.tool.paths?.(c.args, c.cwd) ?? []).find((p) => tryRealPath(p) === undefined);
+    if (unclear) return { decision: "ask", reason: `cannot resolve ${unclear}`, source: "rule" };
     if (allowedByRules(this.rules.allow, c)) return { decision: "allow", reason: "allow rule", source: "rule" };
     return { ...(await this.modeDecision(c, judge)), source: "mode" };
   }
 
   private async modeDecision(c: PermissionCheck, judge?: Judge): Promise<Omit<Verdict, "source">> {
     // Through a symlink, a path inside the project can point anywhere: judge where it really goes.
-    const insideCwd = (c.tool.paths?.(c.args, c.cwd) ?? []).every((p) => isInside(realPath(p), realPath(c.cwd)));
+    const insideCwd = (c.tool.paths?.(c.args, c.cwd) ?? []).every((p) => isInside(tryRealPath(p) ?? p, tryRealPath(c.cwd) ?? c.cwd));
     const hasPaths = !!c.tool.paths;
     switch (this.mode) {
       case "auto":
@@ -137,10 +140,10 @@ function ruleMatches(rule: ParsedRule, c: PermissionCheck, forAllow = false): bo
   // but links inside the project are not followed (a repo could point `src` at ~/.ssh). An
   // absolute pattern is the user's own path: its fixed part is resolved (/var → /private/var).
   const pattern = rule.pattern;
-  const variants = isAbsolute(pattern) ? [pattern, realPattern(pattern)] : [resolve(c.cwd, pattern), resolve(realPath(c.cwd), pattern)];
+  const variants = isAbsolute(pattern) ? [pattern, realPattern(pattern)] : [resolve(c.cwd, pattern), resolve(tryRealPath(c.cwd) ?? c.cwd, pattern)];
   const globs = [...new Set(variants)].map((g) => new Bun.Glob(g));
   const hit = (p: string) => globs.some((g) => g.match(p));
-  const spellings = paths.flatMap((p) => [p, realPath(p)]);
+  const spellings = paths.flatMap((p) => [p, tryRealPath(p) ?? p]);
   return forAllow ? spellings.every(hit) : spellings.some(hit);
 }
 
@@ -148,22 +151,52 @@ function ruleMatches(rule: ParsedRule, c: PermissionCheck, forAllow = false): bo
 function realPattern(glob: string): string {
   const parts = glob.split("/");
   const firstWild = parts.findIndex((s) => /[*?[{]/.test(s));
-  if (firstWild <= 0) return realPath(glob);
-  return [realPath(parts.slice(0, firstWild).join("/") || "/"), ...parts.slice(firstWild)].join("/");
+  if (firstWild <= 0) return tryRealPath(glob) ?? glob;
+  const fixed = parts.slice(0, firstWild).join("/") || "/";
+  return [tryRealPath(fixed) ?? fixed, ...parts.slice(firstWild)].join("/");
 }
 
-/** `p` with symlinks resolved. For a path that does not exist yet, its nearest existing ancestor is. */
-export function realPath(p: string): string {
+/**
+ * `p` with symlinks resolved. For a path that does not exist yet, its nearest existing ancestor is,
+ * and a link whose target does not exist yet is followed to that target (writing through it would
+ * create the target). Throws when the path cannot be resolved (a link loop, no permission).
+ */
+export function realPath(p: string, hops = 0): string {
   const rest: string[] = [];
   let cur = p;
   while (true) {
     try {
       return join(realpathSync(cur), ...rest);
-    } catch {}
+    } catch (e) {
+      if (!missing(e)) throw e;
+    }
+    let link: string | undefined;
+    try {
+      if (lstatSync(cur).isSymbolicLink()) link = readlinkSync(cur);
+      else throw new Error(`cannot resolve ${cur}`); // exists, yet realpath failed
+    } catch (e) {
+      if (!missing(e)) throw e;
+    }
+    if (link !== undefined) {
+      if (hops >= 40) throw new Error(`too many symlinks: ${p}`);
+      return realPath(join(resolve(dirname(cur), link), ...rest), hops + 1);
+    }
     const parent = dirname(cur);
     if (parent === cur) return p;
     rest.unshift(basename(cur));
     cur = parent;
+  }
+}
+
+function missing(e: unknown): boolean {
+  return (e as NodeJS.ErrnoException).code === "ENOENT";
+}
+
+function tryRealPath(p: string): string | undefined {
+  try {
+    return realPath(p);
+  } catch {
+    return undefined;
   }
 }
 

@@ -33,6 +33,30 @@ test("paths through a symlink are judged by where they really go", async () => {
   expect((await abs.check({ tool: readTool, args: { path: `${outside}/secret.txt` }, cwd: proj })).decision).toBe("allow");
 });
 
+test("a link to a file that does not exist yet is judged by its target", async () => {
+  symlinkSync("../outside/new.txt", join(proj, "dangling.txt"));
+  symlinkSync("../outside/newdir", join(proj, "dangling-dir"));
+  const p = new PermissionPolicy("edits");
+  expect((await p.check({ tool: writeTool, args: { path: "dangling.txt", content: "x" }, cwd: proj })).decision).toBe("ask");
+  expect((await p.check({ tool: writeTool, args: { path: "dangling-dir/a/b.txt", content: "x" }, cwd: proj })).decision).toBe("ask");
+  const deny = new PermissionPolicy("auto", { deny: [`write(${outside}/**)`] });
+  expect((await deny.check({ tool: writeTool, args: { path: "dangling.txt", content: "x" }, cwd: proj })).decision).toBe("deny");
+  // A link loop cannot be resolved at all: the user decides, even in auto mode.
+  symlinkSync("loop-b", join(proj, "loop-a"));
+  symlinkSync("loop-a", join(proj, "loop-b"));
+  const auto = new PermissionPolicy("auto");
+  expect((await auto.check({ tool: writeTool, args: { path: "loop-a", content: "x" }, cwd: proj })).decision).toBe("ask");
+});
+
+test("write stops if interrupted while it waits on the file system", async () => {
+  writeFileSync(join(proj, "w.txt"), "old");
+  const ac = new AbortController();
+  const pending = writeTool.execute({ path: "w.txt", content: "new" }, { cwd: proj, signal: ac.signal });
+  ac.abort(); // the tool is now waiting on readFile
+  expect((await pending).isError).toBe(true);
+  expect(readFileSync(join(proj, "w.txt"), "utf8")).toBe("old");
+});
+
 test("write and edit do nothing once interrupted", async () => {
   const ac = new AbortController();
   ac.abort();

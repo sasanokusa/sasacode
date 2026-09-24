@@ -59,11 +59,31 @@ test("an untrusted project can only tighten: no looser mode, allow rules, plugin
   expect(loadConfig(proj, true).config.permissions).toEqual({ mode: "edits", deny: ["bash(rm *)", "edit(.env)"], allow: ["bash"], ask: ["bash(git push*)"] });
 });
 
+test("an untrusted project cannot re-enable disabled tools or raise the turn and retry limits", () => {
+  writeConfigs({ tools: { disabled: ["write", "edit", "bash"] }, maxTurns: 10 }, { tools: { disabled: [] }, maxTurns: 0, maxRetries: 12 });
+  const { config, elevated } = loadConfig(proj);
+  expect(config.tools?.disabled).toEqual(["write", "edit", "bash"]);
+  expect(config.maxTurns).toBe(10);
+  expect(config.maxRetries).toBeUndefined();
+  expect(Object.keys(elevated).sort()).toEqual(["maxRetries", "maxTurns"]);
+  // Tightening needs no trust: more disabled tools and lower limits apply at once.
+  writeConfigs({ tools: { disabled: ["bash"] }, maxTurns: 10 }, { tools: { disabled: ["web_fetch"] }, maxTurns: 5, maxRetries: 2 });
+  const tight = loadConfig(proj);
+  expect(tight.config.tools?.disabled).toEqual(["bash", "web_fetch"]);
+  expect([tight.config.maxTurns, tight.config.maxRetries]).toEqual([5, 2]);
+  expect(tight.elevated).toEqual({});
+  // Trusted, the limits are the project's; disabled tools stay disabled either way.
+  writeConfigs({ tools: { disabled: ["bash"] }, maxTurns: 10 }, { tools: { disabled: [] }, maxTurns: 0 });
+  expect(loadConfig(proj, true).config.tools?.disabled).toEqual(["bash"]);
+  expect(loadConfig(proj, true).config.maxTurns).toBe(0);
+});
+
 test("invalid values are dropped with a warning instead of merged", () => {
-  writeConfigs({ permissions: { deny: ["bash(rm *)"] } }, { permissions: { deny: null }, maxTurns: "lots", nonsense: 1 } as never);
+  writeConfigs({ permissions: { deny: ["bash(rm *)"] } }, { permissions: { deny: null }, maxTurns: "lots", maxRetries: 2.5, nonsense: 1 } as never);
   const { config, warnings } = loadConfig(proj, true);
   expect(config.permissions?.deny).toEqual(["bash(rm *)"]);
   expect(config.maxTurns).toBeUndefined();
+  expect(config.maxRetries).toBeUndefined();
   expect(warnings.join("\n")).toContain('"permissions" has an invalid value');
   expect(warnings.join("\n")).toContain('unknown key "nonsense"');
 });
