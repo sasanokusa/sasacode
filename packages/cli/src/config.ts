@@ -111,6 +111,8 @@ export function mergeConfig(base: Config, over: Config): Config {
   return merge(base, over);
 }
 
+/** Turns per run when none is configured: long tasks fit, a runaway loop stops. 0 means no limit. */
+export const DEFAULT_MAX_TURNS = 200;
 /** The SDKs' retry count when none is configured. */
 const DEFAULT_RETRIES = 8;
 
@@ -135,7 +137,7 @@ export function splitProjectConfig(project: Config, global: Config): { safe: Con
   for (const key of ["thinking", "instructions", "toolSearch", "tools"] as const) if (project[key] !== undefined) (safe as any)[key] = project[key];
   // 0 turns means no limit, so it is the loosest value.
   const turns = (n: number | undefined) => (n ? n : Infinity);
-  if (project.maxTurns !== undefined) (turns(project.maxTurns) <= turns(global.maxTurns) ? safe : elevated).maxTurns = project.maxTurns;
+  if (project.maxTurns !== undefined) (turns(project.maxTurns) <= turns(global.maxTurns ?? DEFAULT_MAX_TURNS) ? safe : elevated).maxTurns = project.maxTurns;
   if (project.maxRetries !== undefined)
     (project.maxRetries <= (global.maxRetries ?? DEFAULT_RETRIES) ? safe : elevated).maxRetries = project.maxRetries;
   if (project.model !== undefined) (knownProvider(project.model) ? safe : elevated).model = project.model;

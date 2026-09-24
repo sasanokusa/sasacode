@@ -26,7 +26,7 @@ export type {
   UserContent,
 } from "@sasacode/ai";
 
-export const PLUGIN_API_VERSION = "1.3.0";
+export const PLUGIN_API_VERSION = "1.4.0";
 
 // ── tools ────────────────────────────────────────────────────────────
 
@@ -86,7 +86,8 @@ export interface CommandDefinition {
 // ── hooks (requirements 5.3) ─────────────────────────────────────────
 
 export type Decision = "allow" | "ask" | "deny";
-export type StopCause = "done" | "aborted" | "error" | "refusal" | "context_limit" | "max_turns";
+/** `no_progress`: several turns in a row where no tool call ran (all rejected or denied). (since 1.4.0) */
+export type StopCause = "done" | "aborted" | "error" | "refusal" | "context_limit" | "max_turns" | "no_progress";
 
 export type DeltaKind = "text" | "thinking" | "toolcall";
 
@@ -147,7 +148,12 @@ export interface HookMap {
     event: { call: ToolCall; tool: ToolDefinition<any>; args: Record<string, unknown> };
     result: { args?: Record<string, unknown>; decision?: Decision; reason?: string };
   };
-  tool_result: { event: { call: ToolCall; result: ToolResult }; result: { result?: ToolResult } };
+  /**
+   * Every call's result, including calls that never ran (`ran: false`: unknown tool, invalid
+   * arguments, denied, interrupted), so a plugin can see a model repeating the same mistake.
+   * (`ran` since 1.4.0; before that, only calls that ran reached this hook.)
+   */
+  tool_result: { event: { call: ToolCall; result: ToolResult; ran: boolean }; result: { result?: ToolResult } };
   /** Return `inject` to add a user message and keep the loop going. */
   turn_end: { event: { turn: number; message: AssistantMessage }; result: { inject?: string } };
   agent_end: { event: { cause: StopCause }; result: { inject?: string } };

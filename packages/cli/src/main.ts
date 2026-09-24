@@ -25,7 +25,7 @@ Options:
                                  (the TUI's /model lists what your providers offer)
       --permission <mode>        ${PERMISSION_MODES.join(" | ")} (default edits)
       --thinking <level>         off | low | medium | high | xhigh | max
-      --max-turns <n>            stop after n turns (default unlimited)
+      --max-turns <n>            turns per run before stopping (default 200; 0 = no limit)
   -c, --continue                 resume the most recent session in this directory
   -r, --resume <id>              resume a session by id
       --no-session               do not save this session
@@ -103,7 +103,7 @@ async function main(): Promise<number> {
     model: values.model,
     permission: values.permission,
     thinking: values.thinking,
-    maxTurns: values["max-turns"] ? Number(values["max-turns"]) : undefined,
+    maxTurns: values["max-turns"] ? turnsArg(values["max-turns"]) : undefined,
     resume: values.continue ? "last" : values.resume,
     noSession: values["no-session"],
     trustProject: trusted,
@@ -128,3 +128,9 @@ main().then(
     process.exit(1);
   },
 );
+
+function turnsArg(v: string): number {
+  const n = Number(v);
+  if (!Number.isInteger(n) || n < 0) throw new Error(`--max-turns needs a whole number (0 = no limit), got "${v}"`);
+  return n;
+}

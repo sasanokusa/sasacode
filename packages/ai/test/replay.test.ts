@@ -48,3 +48,27 @@ test("an abort between deltas ends with the text so far and no half tool call", 
   expect(done.message.stopReason).toBe("aborted");
   expect(done.message.content).toEqual([{ type: "text", text: "hell" }]);
 });
+
+test("interleaved blocks are replayed in the order their deltas arrived", async () => {
+  const two: AssistantMessage = {
+    ...msg,
+    content: [
+      { type: "tool_call", id: "1", name: "read", input: { path: "a" } },
+      { type: "tool_call", id: "2", name: "read", input: { path: "b" } },
+    ],
+  };
+  const rec = {
+    request: { model: "m", messageCount: 0, tools: [] },
+    deltas: [
+      { type: "toolcall_delta" as const, index: 0, delta: '{"path":' },
+      { type: "toolcall_delta" as const, index: 1, delta: '{"path":' },
+      { type: "toolcall_delta" as const, index: 0, delta: '"a"}' },
+      { type: "toolcall_delta" as const, index: 1, delta: '"b"}' },
+    ],
+    message: two,
+  };
+  const events = await collect(replayProvider([rec]).stream(req()));
+  const order = events.filter((e) => e.type === "toolcall_delta").map((e) => (e as { index: number }).index);
+  expect(order).toEqual([0, 1, 0, 1]);
+  expect(events.at(-1)).toEqual({ type: "done", message: two });
+});

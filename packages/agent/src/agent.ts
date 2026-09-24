@@ -45,6 +45,11 @@ export interface AgentOptions {
   /** Unlimited unless set (A7). */
   maxTurns?: number;
   maxRetries?: number;
+  /**
+   * Stop after this many turns in a row whose tool calls were all rejected or denied, none run
+   * (default 5; 0 disables). Guards against a model asking for the same refused call forever.
+   */
+  noProgressTurns?: number;
 }
 
 const INTERRUPTED_NOTE = "[The user interrupted the previous response.]";
@@ -204,6 +209,8 @@ export class Agent {
     let cause: StopCause = "done";
     let turn = 0;
     let limitRetries = 0;
+    let idle = 0;
+    const maxIdle = this.opts.noProgressTurns ?? 5;
     try {
       while (true) {
         if (this.maxTurns && turn >= this.maxTurns) {
@@ -232,12 +239,13 @@ export class Agent {
           break;
         }
         if (calls.length) {
-          const results = await executeTools(this.toolContext(), calls, {
+          const ran = await executeTools(this.toolContext(), calls, {
             truncated: msg.stopReason === "max_tokens",
             signal: ac.signal,
             repairs,
+            onResult: (r) => this.pushMessage(r),
           });
-          for (const r of results) this.pushMessage(r);
+          idle = ran ? 0 : idle + 1;
         }
         this.events.emit({ type: "turn_end", turn });
         if (ac.signal.aborted) {
@@ -260,6 +268,10 @@ export class Agent {
           break;
         }
         limitRetries = 0;
+        if (maxIdle && idle >= maxIdle) {
+          cause = "no_progress";
+          break;
+        }
         if (!this.drainQueue() && !calls.length && !injected) break;
       }
     } catch (e) {

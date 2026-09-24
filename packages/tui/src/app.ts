@@ -310,11 +310,24 @@ class App {
         this.loader?.stop();
         this.loader = undefined;
         if (e.cause === "aborted") this.chat.addChild(new Notice("中断しました", c.yellow));
-        if (e.cause === "max_turns") this.chat.addChild(new Notice("最大ターン数に達しました", c.yellow));
+        if (e.cause === "max_turns") void this.offerToContinue();
+        if (e.cause === "no_progress")
+          this.chat.addChild(new Notice("ツール呼び出しが実行されないターンが続いたため停止しました。指示を変えて続けてください。", c.yellow));
         this.renderStatus();
         break;
     }
     this.tui.requestRender();
+  }
+
+  /** At the turn limit, the user decides whether the run goes on for another round of turns. */
+  private async offerToContinue(): Promise<void> {
+    const agent = this.host.agent;
+    await agent.waitForIdle();
+    const more = await this.pick(`最大ターン数（${agent.maxTurns}）に達しました。続けますか？`, [
+      { value: "yes", label: `続ける（さらに ${agent.maxTurns} ターンまで）` },
+      { value: "no", label: "ここで止める" },
+    ]);
+    if (more === "yes") void agent.continue();
   }
 
   private trackTool(call: ToolCall, view: ToolView): void {
@@ -443,7 +456,7 @@ class App {
   }
 
   private async resumeCommand(): Promise<void> {
-    const sessions = listSessions(this.host.sessionsDir).filter((s) => s.path !== this.host.agent.session?.path);
+    const sessions = listSessions(this.host.sessionsDir, this.host.agent.cwd).filter((s) => s.path !== this.host.agent.session?.path);
     if (!sessions.length) {
       this.notify("このディレクトリの過去セッションはありません");
       return;

@@ -19,7 +19,7 @@ import { bundledPlugins } from "@sasacode/bundled";
 import { createMcpPlugin, type McpServerConfig } from "@sasacode/mcp";
 import { createSkillsPlugin } from "@sasacode/skills";
 import builtinTools from "@sasacode/tools";
-import { type Config, loadConfig, sasacodeHome } from "./config.ts";
+import { type Config, DEFAULT_MAX_TURNS, loadConfig, sasacodeHome } from "./config.ts";
 import { discoverPlugins, type FoundPlugin, importExtensions } from "./loader.ts";
 import { type ModelChoice, ModelCatalog } from "./catalog.ts";
 import { resolveEndpoints } from "./endpoints.ts";
@@ -91,7 +91,7 @@ export async function setup(opts: SetupOptions): Promise<Harness> {
     permissions: new PermissionPolicy(mode, config.permissions),
     getApiKey: (p) => resolveApiKey(p, providers[p]),
     resolveModel: resolve,
-    maxTurns: opts.maxTurns ?? config.maxTurns,
+    maxTurns: opts.maxTurns ?? config.maxTurns ?? DEFAULT_MAX_TURNS,
     maxRetries: config.maxRetries,
     toolSearch: config.toolSearch,
   });
@@ -146,7 +146,7 @@ export async function setup(opts: SetupOptions): Promise<Harness> {
   };
 
   if (opts.resume) {
-    const list = listSessions(sessionsDir);
+    const list = listSessions(sessionsDir, opts.cwd);
     const target =
       opts.resume === "last"
         ? list[0]

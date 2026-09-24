@@ -53,9 +53,9 @@ function chunks(s: string, size: number | undefined): string[] {
 }
 
 /**
- * Replays recordings in order, one per request: the recorded deltas when there are any,
- * otherwise each block split by `chunkSize`. Also accepts bare assistant messages for
- * hand-written scripts. An abort is honoured between deltas, like a real stream.
+ * Replays recordings in order, one per request: the recorded deltas in the order they arrived
+ * (blocks can interleave), otherwise each block in turn split by `chunkSize`. Also accepts bare
+ * assistant messages for hand-written scripts. An abort is honoured between deltas, like a real stream.
  */
 export function replayProvider(
   source: string | Array<Recording | AssistantMessage>,
@@ -80,31 +80,48 @@ export function replayProvider(
       const rec: Recording = "role" in item ? { request: {} as Recording["request"], deltas: [], message: item } : item;
       const message: AssistantMessage = structuredClone(rec.message);
       const partial: AssistantMessage = { ...message, content: [] };
+      const blocks = message.content;
+      const kindOf = (i: number): Delta["type"] =>
+        blocks[i]!.type === "text" ? "text_delta" : blocks[i]!.type === "thinking" ? "thinking_delta" : "toolcall_delta";
+      // Blocks without recorded deltas are streamed whole (or in chunks), in block order, after the rest.
+      const recorded = new Set(rec.deltas.map((d) => d.index));
+      const deltas: Delta[] = [...rec.deltas];
+      for (const [index, block] of blocks.entries()) {
+        if (recorded.has(index)) continue;
+        const text = block.type === "text" ? block.text : block.type === "thinking" ? block.thinking : (block.rawInput ?? JSON.stringify(block.input));
+        for (const delta of chunks(text, opts.chunkSize)) deltas.push({ type: kindOf(index), index, delta });
+      }
+      const remaining = new Map<number, number>();
+      for (const d of deltas) remaining.set(d.index, (remaining.get(d.index) ?? 0) + 1);
+      const complete = new Set<number>();
       yield { type: "start", partial };
-      for (const [index, block] of message.content.entries()) {
-        const recorded = rec.deltas.filter((d) => d.index === index);
-        const source = block.type === "text" ? block.text : block.type === "thinking" ? block.thinking : (block.rawInput ?? JSON.stringify(block.input));
-        const kind: Delta["type"] = block.type === "text" ? "text_delta" : block.type === "thinking" ? "thinking_delta" : "toolcall_delta";
-        const deltas = recorded.length ? recorded.map((d) => d.delta) : chunks(source, opts.chunkSize);
-        if (block.type === "tool_call") {
-          partial.content[index] = { type: "tool_call", id: block.id, name: block.name, input: {} };
-          yield { type: "toolcall_start", index, id: block.id, name: block.name, partial };
-        } else partial.content[index] = block.type === "text" ? { type: "text", text: "" } : { type: "thinking", thinking: "" };
-        for (const delta of deltas) {
-          await Promise.resolve();
-          if (req.signal?.aborted) {
-            partial.stopReason = "aborted";
-            // Like a real stream: finished blocks and the text so far stay; a half-streamed call does not.
-            partial.content = partial.content.filter((c, i) => i < index || c.type !== "tool_call");
-            yield { type: "done", message: partial };
-            return;
-          }
-          const b = partial.content[index]!;
-          if (b.type === "text") b.text += delta;
-          else if (b.type === "thinking") b.thinking += delta;
-          yield { type: kind, index, delta, partial } as StreamEvent;
+      for (const d of deltas) {
+        const block = blocks[d.index];
+        if (!block) continue;
+        if (partial.content[d.index] === undefined) {
+          if (block.type === "tool_call") {
+            partial.content[d.index] = { type: "tool_call", id: block.id, name: block.name, input: {} };
+            yield { type: "toolcall_start", index: d.index, id: block.id, name: block.name, partial };
+          } else partial.content[d.index] = block.type === "text" ? { type: "text", text: "" } : { type: "thinking", thinking: "" };
         }
-        partial.content[index] = block; // complete (signature, parsed input)
+        await Promise.resolve();
+        if (req.signal?.aborted) {
+          partial.stopReason = "aborted";
+          // Like a real stream: finished blocks and the text so far stay; a half-streamed call does not.
+          partial.content = partial.content.filter((c, i) => c && (c.type !== "tool_call" || complete.has(i)));
+          yield { type: "done", message: partial };
+          return;
+        }
+        const b = partial.content[d.index]!;
+        if (b.type === "text") b.text += d.delta;
+        else if (b.type === "thinking") b.thinking += d.delta;
+        yield { type: kindOf(d.index), index: d.index, delta: d.delta, partial } as StreamEvent;
+        const left = remaining.get(d.index)! - 1;
+        remaining.set(d.index, left);
+        if (!left) {
+          partial.content[d.index] = block; // complete (signature, parsed input)
+          complete.add(d.index);
+        }
       }
       yield { type: "done", message };
     },

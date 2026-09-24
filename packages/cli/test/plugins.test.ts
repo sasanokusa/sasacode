@@ -78,6 +78,11 @@ test("one trust decision covers project plugins and elevated config; it is remem
   // A new project plugin changes the fingerprint: asked again.
   write(join(proj, ".sasacode", "plugins", "new.ts"), PLUGIN("new_one"));
   expect(isTrusted(proj, assessProject(proj))).toBe(false);
+  saveTrust(proj, assessProject(proj));
+  expect(isTrusted(proj, assessProject(proj))).toBe(true);
+  // So does a change to a trusted plugin's code alone, same name and manifest.
+  write(join(proj, ".sasacode", "plugins", "new.ts"), PLUGIN("new_one").replace("new_one", "new_one_changed"));
+  expect(isTrusted(proj, assessProject(proj))).toBe(false);
   // The legacy trustedProjects list in the global config still counts.
   write(join(home, "config.json"), JSON.stringify({ trustedProjects: [proj] }));
   expect(isTrusted(proj, assessProject(proj))).toBe(true);

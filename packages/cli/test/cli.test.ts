@@ -66,6 +66,9 @@ test("an untrusted project cannot re-enable disabled tools or raise the turn and
   expect(config.maxTurns).toBe(10);
   expect(config.maxRetries).toBeUndefined();
   expect(Object.keys(elevated).sort()).toEqual(["maxRetries", "maxTurns"]);
+  // Without a global value the default (200) is what may not be raised.
+  writeConfigs({}, { maxTurns: 500 });
+  expect(loadConfig(proj).elevated).toEqual({ maxTurns: 500 });
   // Tightening needs no trust: more disabled tools and lower limits apply at once.
   writeConfigs({ tools: { disabled: ["bash"] }, maxTurns: 10 }, { tools: { disabled: ["web_fetch"] }, maxTurns: 5, maxRetries: 2 });
   const tight = loadConfig(proj);

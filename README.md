@@ -51,7 +51,7 @@ sasacode -r <id> -p "続き"            # セッション ID を指定して続�
 | `-m <provider/model>` | モデル（例 `anthropic/claude-opus-5`、`openai/gpt-5.5`、`ollama/gemma4:e4b`） |
 | `--permission <edits\|ask\|agent\|auto>` | 権限モード（既定 `edits`） |
 | `--thinking <off\|low\|medium\|high\|xhigh\|max>` | 推論の深さ |
-| `--max-turns <n>` | ターン数の上限（既定は無制限） |
+| `--max-turns <n>` | 1回の実行のターン数の上限（既定 200、0 で無制限） |
 | `-c` / `-r <id>` / `--no-session` | 再開 / ID を指定して再開 / 保存しない |
 | `--trust-project` | プロジェクトを確認なしで信頼する（ヘッドレス向け。[プロジェクトの信頼](#プロジェクトの信頼)） |
 | `sasacode plugin install\|remove\|list` | プラグインの管理（npm か git URL） |
@@ -136,6 +136,8 @@ sasacode -m llama/<モデル名>
 
 `models` は `/model` の一覧の先頭に出す。`providers` で OpenAI 互換や Anthropic 互換のエンドポイントを足せる。
 
+`maxTurns`（既定 200、0 で無制限）は、1回の依頼でモデルに送るリクエスト数の上限。達すると、対話では続けるかを尋ね、ヘッドレスでは止まる。これとは別に、ツール呼び出しがどれも実行されない（拒否や引数の不備が続く）ターンが5回続いたら、そこで止める。
+
 ### 権限
 
 | モード | 動作 |
@@ -160,7 +162,7 @@ sasacode -m llama/<モデル名>
 - `.sasacode/plugins` のプラグイン
 - `.sasacode/config.json` の `providers`（エンドポイント）、`modelOverrides`、`plugins`（無効化と設定）、`mcpServers`、`allow` ルール、全体設定より緩い権限モード、全体設定より大きい `maxTurns`（0 は上限なし）と `maxRetries`、そのプロジェクトにしかないプロバイダーを指す `model`
 
-これらがあるプロジェクトで起動すると、最初に一覧を出して信頼するかを尋ねる（ヘッドレスでは `--trust-project`）。答えは `~/.sasacode/trust.json` に保存し、上の設定やプラグインの構成（manifest）が変わったら再び尋ねる。プラグインのコードだけが変わった場合は、まだ尋ね直さない。全体設定の `trustedProjects` に入れたプロジェクトは、尋ねずに信頼する。モデルの選択、`thinking`、`instructions`、deny / ask ルールやツール無効化の追加、より厳しい権限モードや小さい上限などは、信頼しなくても使う。
+これらがあるプロジェクトで起動すると、最初に一覧を出して信頼するかを尋ねる（ヘッドレスでは `--trust-project`）。答えは `~/.sasacode/trust.json` に保存し、上の設定かプラグインのコード（`.sasacode/plugins` 以下のファイル。依存パッケージの中身は除く）が変わったら再び尋ねる。全体設定の `trustedProjects` に入れたプロジェクトは、尋ねずに信頼する。モデルの選択、`thinking`、`instructions`、deny / ask ルールやツール無効化の追加、より厳しい権限モードや小さい上限などは、信頼しなくても使う。
 
 ## プラグイン・MCP・Skills
 
@@ -170,7 +172,7 @@ sasacode -m llama/<モデル名>
 | --- | --- |
 | `tool-repair` | 検証の前に、壊れたツール呼び出しを直す。直す対象は、JSON の崩れ（末尾カンマ、閉じ括弧、クォートのないキー、`True`/`None`、コードフェンス、二重エンコード）、キー名（`file` → `path`）、型（`"20"` → `20`）、ツール名の typo。候補が1つに絞れるときだけ直す。直したことはモデルに短く伝え、履歴には直した後の形を残し、元の出力はセッションに記録する |
 | `repetition-guard` | 生成中に同じ文を繰り返し始めたら止め、1回分だけ残して、続きを促す（「なるほど。」のような短い繰り返しも、長く続けば止める） |
-| `loop-guard` | 同じツールを同じ引数で呼んで同じ結果が返ることが続いたら、3回目に注意を添え、5回目は実行しない。同じエラーの繰り返しも知らせる。途中でファイルを変更すれば数え直す |
+| `loop-guard` | 同じツール呼び出し（または A→B→A→B のような3手までの周期）が同じ結果で続いたら、3回目に注意を添え、5回目は実行しない。同じ応答の中の重複した呼び出しは1回だけ実行する。同じエラーの繰り返し（引数の不備などで実行されなかった呼び出しを含む）も知らせる。途中でファイルを変更すれば数え直す |
 | `agents-md` | `~/.sasacode/AGENTS.md` と、リポジトリのルートから作業ディレクトリまでの `AGENTS.md` を読む（CLAUDE.md は読まない） |
 | `compaction` | コンテキストが 80% に達するか上限に来たら、古い履歴を要約する。`/compact` で手動実行 |
 | `subagent` | `task` ツール。別の履歴を持つサブエージェントに作業を任せ、報告だけを受け取る（1ターンに複数あれば並行して動く） |
@@ -221,7 +223,7 @@ export default ((api) => {
 }) satisfies Plugin;
 ```
 
-公開 API（現在 1.3.0、semver で管理）でできることは次のとおり。
+公開 API（現在 1.4.0、semver で管理）でできることは次のとおり。
 
 - **登録**：ツール、スラッシュコマンド（引数の補完つき）、プロバイダー、権限ルール
 - **フック**：`session_start/end`、`user_prompt`、`system_prompt`、`before_request`、`stream_delta`、`assistant_message`、`tool_call_raw`、`tool_call`、`tool_result`、`turn_end`、`agent_end`、`context_limit`
@@ -233,7 +235,7 @@ export default ((api) => {
 
 ## セッション
 
-`~/.sasacode/sessions/<作業ディレクトリ>/<日時>_<id>.jsonl` に、メッセージを1件ずつ追記して保存する。途中で強制終了しても、最後に完了したターンから再開できる。セッション ID は、TUI のフッター、`/session`、終了時の表示、ヘッドレスの出力（テキストなら stderr の最後、JSONL なら先頭の `{"type":"session"}`）に出す。`SASACODE_HOME` で `~/.sasacode` の場所を変えられる。
+`~/.sasacode/sessions/<作業ディレクトリ>-<ハッシュ>/<日時>_<id>.jsonl` に、メッセージとツールの結果を1件ずつ追記して保存する。途中で強制終了しても再開できる。結果が保存される前に止まった呼び出しは「実行されたか不明」としてモデルに伝え、状態を確かめてからやり直させる。書きかけの最終行は `<ファイル>.torn` に退避する。セッション ID は、TUI のフッター、`/session`、終了時の表示、ヘッドレスの出力（テキストなら stderr の最後、JSONL なら先頭の `{"type":"session"}`）に出す。`SASACODE_HOME` で `~/.sasacode` の場所を変えられる。
 
 ## 開発
 

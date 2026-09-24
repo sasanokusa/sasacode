@@ -1,5 +1,6 @@
-import { appendFileSync, mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { createHash } from "node:crypto";
+import { appendFileSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, truncateSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import type { Message } from "@sasacode/ai";
 
 export const SESSION_VERSION = 1;
@@ -24,8 +25,24 @@ export interface SessionInfo {
   messageCount: number;
 }
 
+function normalizeCwd(cwd: string): string {
+  try {
+    return realpathSync(resolve(cwd));
+  } catch {
+    return resolve(cwd);
+  }
+}
+
+/** The folder name used before 0.8: different paths could map to the same one (/a-b/c, /a/b-c). */
+function legacyName(cwd: string): string {
+  return cwd.replace(/[\\/:]+/g, "-").replace(/^-/, "");
+}
+
+/** Readable name plus a hash of the real path, so two directories never share a folder. */
 export function sessionDir(root: string, cwd: string): string {
-  return join(root, "sessions", cwd.replace(/[\\/:]+/g, "-").replace(/^-/, ""));
+  const real = normalizeCwd(cwd);
+  const hash = createHash("sha256").update(real).digest("hex").slice(0, 8);
+  return join(root, "sessions", `${legacyName(real).slice(-80)}-${hash}`);
 }
 
 /** Append-only JSONL log. Every entry is flushed immediately so a crash loses nothing that was complete. */
@@ -53,6 +70,7 @@ export class SessionFile {
   }
 
   static open(path: string, secrets: string[] = []): { file: SessionFile; entries: SessionEntry[] } {
+    repairTail(path);
     const entries = readEntries(path);
     const head = entries[0];
     if (head?.type !== "session") throw new Error(`${path} is not a session file`);
@@ -73,6 +91,24 @@ export class SessionFile {
     // Never persist API keys, even if a tool echoed one.
     for (const s of this.secrets) line = line.replaceAll(s, "[REDACTED]");
     appendFileSync(this.path, `${line}\n`);
+  }
+}
+
+/**
+ * A crash can leave the last line half written. Appending after it would glue the next entry onto
+ * it and lose that too: finish a complete line, or move a torn one to `<file>.torn`.
+ */
+function repairTail(path: string): void {
+  const raw = readFileSync(path, "utf8");
+  if (!raw || raw.endsWith("\n")) return;
+  const cut = raw.lastIndexOf("\n") + 1;
+  const tail = raw.slice(cut);
+  try {
+    JSON.parse(tail);
+    appendFileSync(path, "\n");
+  } catch {
+    appendFileSync(`${path}.torn`, `${tail}\n`);
+    truncateSync(path, Buffer.byteLength(raw.slice(0, cut)));
   }
 }
 
@@ -111,7 +147,9 @@ export function restore(entries: SessionEntry[]): { messages: Message[]; model?:
   return { messages: settled, model, permissionMode, repaired: settled.length !== messages.length };
 }
 
-const NOT_RUN = "[This tool call was not run: the session ended before it could execute.]";
+// No result was saved, which does not mean the call did nothing: it may have run just before a crash.
+const NO_RESULT =
+  "[Result unknown: the session ended before this call's result was saved. It may or may not have run. If it changes anything, check the current state before running it again.]";
 
 /**
  * Every tool call must be followed by its result before the next user or assistant message
@@ -136,26 +174,31 @@ export function settleToolCalls(messages: Message[]): Message[] {
     }
     for (const c of calls)
       if (!answered.has(c.id))
-        out.push({ role: "tool", toolCallId: c.id, toolName: c.name, content: [{ type: "text", text: NOT_RUN }], isError: true, timestamp: m.timestamp });
+        out.push({ role: "tool", toolCallId: c.id, toolName: c.name, content: [{ type: "text", text: NO_RESULT }], isError: true, timestamp: m.timestamp });
     i = j - 1;
   }
   return out;
 }
 
-export function listSessions(dir: string): SessionInfo[] {
-  let files: string[];
-  try {
-    files = readdirSync(dir).filter((f) => f.endsWith(".jsonl"));
-  } catch {
-    return [];
+/**
+ * Sessions in `dir`, newest first. With `cwd`, only that directory's sessions, including ones
+ * saved under the pre-0.8 folder name (which other directories may share).
+ */
+export function listSessions(dir: string, cwd?: string): SessionInfo[] {
+  const dirs = cwd ? [dir, join(dirname(dir), legacyName(normalizeCwd(cwd))), join(dirname(dir), legacyName(cwd))] : [dir];
+  const paths = new Set<string>();
+  for (const d of dirs) {
+    try {
+      for (const f of readdirSync(d)) if (f.endsWith(".jsonl")) paths.add(join(d, f));
+    } catch {}
   }
   const out: SessionInfo[] = [];
-  for (const f of files) {
-    const path = join(dir, f);
+  for (const path of paths) {
     try {
       const entries = readEntries(path);
       const head = entries[0];
       if (head?.type !== "session") continue;
+      if (cwd && normalizeCwd(head.cwd) !== normalizeCwd(cwd)) continue;
       const firstUser = entries.find((e) => e.type === "message" && e.message.role === "user");
       const firstPrompt =
         firstUser?.type === "message" && firstUser.message.role === "user"

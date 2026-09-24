@@ -45,3 +45,26 @@ test("a file change in between resets the count; different arguments are not a l
   expect(results.join()).not.toContain("[harness]");
   expect(results.join()).not.toContain("loop-guard");
 });
+
+test("the same call twice in one response runs once", async () => {
+  const same = (id: string) => ({ type: "tool_call" as const, id, name: "check", input: { x: 1 } });
+  const results = await run([reply([same("1"), same("2"), same("3")]), reply([{ type: "text", text: "done" }])]);
+  expect(results[0]).toContain("same output");
+  expect(results[1]).toContain("appears earlier in this response");
+  expect(results[2]).toContain("appears earlier in this response");
+});
+
+test("a short cycle (A, B, A, B, …) is noted and then blocked", async () => {
+  const script = Array.from({ length: 10 }, (_, i) => call(String(i), "check", { x: i === 9 ? 0 : i % 2 }));
+  const results = await run([...script, reply([{ type: "text", text: "done" }])]);
+  expect(results[5]).toContain("The same 2 tool calls have now repeated 3 times");
+  expect(results[8]).toContain("loop-guard: the same 2 calls have repeated 4 times");
+  // A refusal does not reset the count: asking for the refused call again is refused again.
+  expect(results[9]).toContain("loop-guard");
+});
+
+test("a call rejected before running (invalid arguments) counts as a repeated error", async () => {
+  const results = await run([...Array.from({ length: 3 }, (_, i) => call(String(i), "check", { x: "nope" })), reply([{ type: "text", text: "done" }])]);
+  expect(results[0]).toContain("Invalid arguments");
+  expect(results[2]).toContain("[harness] This is call 3 of check");
+});

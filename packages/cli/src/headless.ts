@@ -40,11 +40,16 @@ export async function runHeadless(h: Harness, prompt: string, output: "text" | "
   await agent.waitForIdle();
   process.off("SIGINT", onSigint);
   await h.shutdown();
-  if (output === "text" && cause !== "done") status(`[stopped: ${cause}]`);
+  if (output === "text" && cause !== "done") status(`[stopped: ${cause}${STOP_HINT[cause] ? ` — ${STOP_HINT[cause]}` : ""}]`);
   // One-shot runs are how sasacode is driven without tmux: say how to continue this conversation.
   if (output === "text" && session && existsSync(session.path)) status(`session ${session.id} · continue: sasacode -r ${session.id} -p "…"`);
   return cause === "done" ? 0 : 1;
 }
+
+const STOP_HINT: Partial<Record<StopCause, string>> = {
+  max_turns: "turn limit reached (--max-turns or maxTurns in config; 0 = no limit)",
+  no_progress: "several turns in a row where no tool call could run",
+};
 
 /** message_update carries the whole partial message; the delta is enough for a log. */
 function toJson(e: AgentEvent): unknown {

@@ -87,21 +87,50 @@ interface Job {
   note?: string;
 }
 
+/**
+ * Runs the calls of one response. Results are passed to `onResult` in call order, each as soon as
+ * it and those before it are final, so they are saved before the next call starts (a crash then
+ * loses at most the calls in flight). Returns how many calls actually ran.
+ */
 export async function executeTools(
   ctx: ToolRunContext,
   calls: ToolCall[],
-  opts: { truncated: boolean; signal: AbortSignal; repairs: Map<string, Repair> },
-): Promise<ToolResultMessage[]> {
+  opts: { truncated: boolean; signal: AbortSignal; repairs: Map<string, Repair>; onResult: (m: ToolResultMessage) => void },
+): Promise<number> {
+  let ran = 0;
   const jobs: Job[] = [];
+  let flushed = 0;
+  const messages = new Map<Job, ToolResultMessage>();
+  const finish = async (job: Job, result: ToolResult, didRun: boolean) => {
+    await ctx.hooks.run("tool_result", { call: job.call, result, ran: didRun }, (r, ev) => {
+      if (r.result) result = ev.result = r.result;
+    });
+    if (didRun) ctx.events.emit({ type: "tool_end", call: job.call, result });
+    job.result = result;
+    messages.set(job, {
+      role: "tool",
+      toolCallId: job.call.id,
+      toolName: job.name,
+      // Tell the model briefly what was fixed, so it can produce the right form next time.
+      content: job.note ? [{ type: "text", text: `[harness repaired this call: ${job.note}]` }, ...result.content] : result.content,
+      isError: !!result.isError,
+      timestamp: Date.now(),
+    });
+    while (flushed < jobs.length && messages.has(jobs[flushed]!)) opts.onResult(messages.get(jobs[flushed++]!)!);
+  };
+
   // Validation and permission prompts run one at a time, in order.
   for (const call of calls) {
     const fixed = opts.repairs.get(call.id);
     const job: Job = { call, name: fixed?.name ?? call.name, note: fixed?.note };
     jobs.push(job);
-    job.result = preflight(ctx, job, fixed?.input ?? call.input, fixed ? fixed.rawInput : call.rawInput, opts);
-    if (job.result) continue;
+    const rejected = preflight(ctx, job, fixed?.input ?? call.input, fixed ? fixed.rawInput : call.rawInput, opts);
+    if (rejected) {
+      await finish(job, rejected, false);
+      continue;
+    }
     const { args, denied } = await authorize(ctx, job.tool!, call, fixed?.input ?? call.input);
-    if (denied) job.result = denied;
+    if (denied) await finish(job, denied, false);
     else job.args = args;
   }
 
@@ -114,22 +143,15 @@ export async function executeTools(
     } else batch.push(jobs[i++]!);
     await Promise.all(
       batch.map(async (j) => {
+        if (j.result) return;
         // Approvals happen up front; a call must not start once the user has interrupted.
-        if (!j.result && opts.signal.aborted) j.result = err("Interrupted by the user before this tool ran.");
-        if (!j.result) j.result = await runTool(ctx, j.tool!, j.call, j.args!, opts.signal);
+        if (opts.signal.aborted) return finish(j, err("Interrupted by the user before this tool ran."), false);
+        ran++;
+        await finish(j, await runTool(ctx, j.tool!, j.call, j.args!, opts.signal), true);
       }),
     );
   }
-
-  return jobs.map(({ call, name, result, note }) => ({
-    role: "tool",
-    toolCallId: call.id,
-    toolName: name,
-    // Tell the model briefly what was fixed, so it can produce the right form next time.
-    content: note ? [{ type: "text", text: `[harness repaired this call: ${note}]` }, ...result!.content] : result!.content,
-    isError: !!result!.isError,
-    timestamp: Date.now(),
-  }));
+  return ran;
 }
 
 /** Checks that need no user: returns an error result when the call cannot run. */
@@ -201,15 +223,9 @@ async function runTool(ctx: ToolRunContext, tool: ToolDefinition<any>, call: Too
     summary = tool.summary?.(args) ?? "";
   } catch {}
   ctx.events.emit({ type: "tool_start", call, summary });
-  let result: ToolResult;
   try {
-    result = await tool.execute(args, { cwd: ctx.cwd, signal, onUpdate: (text) => ctx.events.emit({ type: "tool_update", call, text }) });
+    return await tool.execute(args, { cwd: ctx.cwd, signal, onUpdate: (text) => ctx.events.emit({ type: "tool_update", call, text }) });
   } catch (e) {
-    result = err(`Tool failed: ${e instanceof Error ? e.message : String(e)}`);
+    return err(`Tool failed: ${e instanceof Error ? e.message : String(e)}`);
   }
-  await ctx.hooks.run("tool_result", { call, result }, (r, ev) => {
-    if (r.result) result = ev.result = r.result;
-  });
-  ctx.events.emit({ type: "tool_end", call, result });
-  return result;
 }

@@ -1,6 +1,6 @@
 {
   "name": "@sasacode/bundled",
-  "version": "0.7.1",
+  "version": "0.8.0-rc.1",
   "type": "module",
   "main": "src/index.ts",
   "dependencies": {

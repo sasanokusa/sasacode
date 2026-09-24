@@ -193,10 +193,10 @@ test("sessions persist every message, redact secrets, and resume to the last com
   session.append({ type: "message", message: reply([call("9", "bash", { command: "x" })]) });
   writeFileSync(session.path, `${readFileSync(session.path, "utf8")}{"type":"mess`); // torn line
   const again = restore(SessionFile.open(session.path).entries);
-  // The dangling call gets a result saying it never ran, so the history stays valid for every API.
+  // The dangling call gets a result saying its outcome is unknown (it may have run), so the history stays valid for every API.
   expect(again.repaired).toBe(true);
   expect(again.messages).toHaveLength(6);
-  expect(again.messages.at(-1)).toMatchObject({ role: "tool", toolCallId: "9", isError: true, content: [{ text: expect.stringContaining("not run") }] });
+  expect(again.messages.at(-1)).toMatchObject({ role: "tool", toolCallId: "9", isError: true, content: [{ text: expect.stringContaining("Result unknown") }] });
 });
 
 test("built-in tools register through the plugin API", async () => {

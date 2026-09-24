@@ -31,7 +31,7 @@ export default plugin;
 {
   "name": "my-plugin",
   "version": "1.0.0",
-  "apiVersion": "^1.3.0",
+  "apiVersion": "^1.4.0",
   "extensions": ["src/index.ts"],
   "skills": "skills",
   "mcpServers": {
@@ -40,7 +40,7 @@ export default plugin;
 }
 ```
 
-- `apiVersion` がホストの API（現在 1.3.0）と互換でなければ、警告を出して読み込まない。
+- `apiVersion` がホストの API（現在 1.4.0）と互換でなければ、警告を出して読み込まない。
 - `skills` は `SKILL.md` を含むフォルダが並ぶディレクトリ。
 - `mcpServers` は設定ファイルの `mcpServers` と同じ形式。`${VAR}` は環境変数から展開される。
 
@@ -56,7 +56,7 @@ sasacode plugin remove <name>
 
 ## API リファレンス
 
-公開 API は `@sasacode/plugin-api` の `PluginAPI` で、現在の版は 1.3.0。変更の履歴は[最後の表](#api-の版)にある。
+公開 API は `@sasacode/plugin-api` の `PluginAPI` で、現在の版は 1.4.0。変更の履歴は[最後の表](#api-の版)にある。
 
 ### PluginAPI
 
@@ -117,7 +117,7 @@ sasacode plugin remove <name>
 
 ```
 before_request → stream_delta（生成中、差分ごと） → assistant_message
-  → ツール呼び出しごとに: tool_call_raw → 検索・検証 → tool_call → 権限判定 → 実行 → tool_result
+  → ツール呼び出しごとに: tool_call_raw → 検索・検証 → tool_call → 権限判定 → 実行 → tool_result（途中で止まった呼び出しも、tool_result は呼ばれる）
   → turn_end
 ```
 
@@ -132,9 +132,9 @@ before_request → stream_delta（生成中、差分ごと） → assistant_mess
 | `assistant_message` | 応答が確定し、保存する前 | `{message, stopped?}`（`stopped` は途中で止めたプラグインと理由） | `{message}` で書き換える。`{retry: true}` で捨てて取り直す（1回の応答につき最大2回）。`{inject}` でユーザーメッセージを足して続ける（1.2.0〜） |
 | `tool_call_raw` | ツールの検索と引数の検証の前 | `{call, name, input, rawInput?, tools, stopReason}`（`rawInput` は JSON として壊れていたときの生の文字列） | `{name, input, note}` で修復する。`note` は tool_result の先頭でモデルに伝わる。履歴には修復後の呼び出しを残し、元の出力はセッションに `tool_repair` として残る（署名付きの thinking を含む応答は、履歴を書き換えずに実行時だけ直す）。`max_tokens` で途切れた呼び出しでは呼ばれない（1.2.0〜） |
 | `tool_call` | 検証の後、権限判定の前 | `{call, tool, args}` | `{args}` で引数を書き換える。`{decision: "allow" \| "ask" \| "deny", reason}` で判定する（複数あれば deny > ask > allow の強いほう）。プラグインの判定が置き換えるのは権限モードの既定の判定だけで、ユーザーの deny / ask ルールは常に効く |
-| `tool_result` | ツールの実行後 | `{call, result}` | `{result}` で結果を書き換える・追記する |
+| `tool_result` | 呼び出しごとの結果が決まったとき | `{call, result, ran}`。`ran: false` は実行されなかった呼び出し（未知のツール、引数の不備、拒否、中断）。1.4.0 より前は、実行された呼び出しでしか呼ばれなかった | `{result}` で結果を書き換える・追記する |
 | `turn_end` | 1ターン（応答とツールの実行）の後 | `{turn, message}` | `{inject}` でユーザーメッセージを足してループを続ける |
-| `agent_end` | ループが止まったとき | `{cause}`（`done` / `aborted` / `error` / `refusal` / `context_limit` / `max_turns`） | `{inject}` で次の実行を始める |
+| `agent_end` | ループが止まったとき | `{cause}`（`done` / `aborted` / `error` / `refusal` / `context_limit` / `max_turns` / `no_progress`） | `{inject}` で次の実行を始める |
 | `context_limit` | コンテキストが上限に達したとき | `{tokens, contextWindow}` | `session.replaceMessages` で空けてから `{retry: true}` で続ける（連続2回まで） |
 
 サブエージェント（`agent.run`）は、`system_prompt` / `before_request` / `stream_delta` / `assistant_message` / `tool_call_raw` / `tool_call` / `tool_result` のハンドラを共有する。セッション系のフック（`session_*`、`user_prompt`、`turn_end`、`agent_end`、`context_limit`）は、サブエージェントでは呼ばれない。
@@ -147,8 +147,9 @@ before_request → stream_delta（生成中、差分ごと） → assistant_mess
 | 1.1.0 | `ready(promise)` |
 | 1.2.0 | `stream_delta`、`assistant_message`、`tool_call_raw` の各フック。`before_request` の `sampling` |
 | 1.3.0 | コマンドの `complete(prefix)`（引数の補完） |
+| 1.4.0 | `tool_result` が実行されなかった呼び出しでも呼ばれる（`ran` で区別）。停止理由 `no_progress` |
 
-どれも既存のプラグインを壊さない追加。`apiVersion` に `^1.0.0` と書いたプラグインは、そのまま動く。
+どれも既存のプラグインを壊さない追加。ただし 1.4.0 から、`tool_result` を「実行された」合図として数えているプラグインは `ran` を見る必要がある。`apiVersion` に `^1.0.0` と書いたプラグインは、そのまま動く。
 
 ## 信頼と安全
 

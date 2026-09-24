@@ -1,11 +1,11 @@
-// Regressions from the v0.6.3 review: symlink escapes, work after an interrupt, repeated restores.
+// Regressions from the v0.6.3 and v0.7.0 reviews: symlink escapes, work after an interrupt, restores, runaway loops.
 import { afterAll, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type AssistantMessage, emptyUsage, type Message, registerApi, replayProvider } from "@sasacode/ai";
 import { editTool, readTool, writeTool } from "@sasacode/tools";
-import { Agent, PermissionPolicy, restore, SessionFile } from "../src/index.ts";
+import { Agent, listSessions, PermissionPolicy, restore, SessionFile, sessionDir } from "../src/index.ts";
 
 const root = mkdtempSync(join(tmpdir(), "sasacode-bounds-"));
 afterAll(() => rmSync(root, { recursive: true, force: true }));
@@ -112,4 +112,66 @@ test("restoring twice gives the same valid history once the repair is recorded",
   const log = [user("a"), asst([{ type: "tool_call", id: "x", name: "bash", input: {} }]), user("b")];
   const settled = restore(log.map((message) => ({ type: "message" as const, message }))).messages;
   expect(settled.map((m) => m.role)).toEqual(["user", "assistant", "tool", "user"]);
+});
+
+const turn = (content: AssistantMessage["content"]): AssistantMessage => ({
+  role: "assistant", content, api: "replay", provider: "t", model: "m", usage: emptyUsage(),
+  stopReason: content.some((c) => c.type === "tool_call") ? "tool_use" : "stop", timestamp: 0,
+});
+const model = { id: "m", provider: "t", api: "replay", contextWindow: 1e5, maxOutput: 1e3 };
+
+test("each result is saved before the next call starts", async () => {
+  const session = SessionFile.create(join(root, "sessions-each"), proj);
+  const saved: string[] = [];
+  const probe = {
+    name: "probe", description: "", parameters: { type: "object", properties: {} }, kind: "read" as const,
+    execute: async () => {
+      saved.push(readFileSync(session.path, "utf8"));
+      return { content: [{ type: "text" as const, text: "probe ran" }] };
+    },
+  };
+  registerApi("replay", replayProvider([turn([
+    { type: "tool_call", id: "1", name: "probe", input: {} },
+    { type: "tool_call", id: "2", name: "probe", input: {} },
+  ]), turn([{ type: "text", text: "done" }])]));
+  const agent = new Agent({ model, cwd: proj, systemPrompt: "", session, permissions: new PermissionPolicy("auto"), tools: [probe] });
+  await agent.prompt("go");
+  expect(saved[0]).not.toContain("probe ran");
+  expect(saved[1]).toContain("probe ran"); // the first call's result was on disk when the second started
+});
+
+test("a run whose calls keep being refused stops after 5 such turns", async () => {
+  const bad = (i: number) => turn([{ type: "tool_call", id: String(i), name: "no_such_tool", input: {} }]);
+  const provider = replayProvider(Array.from({ length: 20 }, (_, i) => bad(i)));
+  registerApi("replay", provider);
+  const agent = new Agent({ model, cwd: proj, systemPrompt: "", permissions: new PermissionPolicy("auto"), tools: [readTool] });
+  expect(await agent.prompt("go")).toBe("no_progress");
+  expect(provider.requests).toHaveLength(5);
+});
+
+test("a torn last line is set aside before the session is appended to", () => {
+  const s = SessionFile.create(join(root, "sessions-torn"), proj);
+  s.append({ type: "message", message: { role: "user", content: [{ type: "text", text: "one" }], timestamp: 0 } });
+  appendFileSync(s.path, '{"type":"message","mess');
+  const { file } = SessionFile.open(s.path);
+  file.append({ type: "message", message: { role: "user", content: [{ type: "text", text: "two" }], timestamp: 0 } });
+  const texts = SessionFile.open(s.path).entries.flatMap((e) => (e.type === "message" ? [JSON.stringify(e.message.content)] : []));
+  expect(texts.join()).toContain("one");
+  expect(texts.join()).toContain("two");
+  expect(readFileSync(`${s.path}.torn`, "utf8")).toContain('"mess');
+  // A complete entry that only lacks its newline is kept.
+  appendFileSync(s.path, JSON.stringify({ type: "model", model: "t/m" }));
+  SessionFile.open(s.path).file.append({ type: "permission_mode", mode: "ask" });
+  expect(SessionFile.open(s.path).entries.map((e) => e.type)).toEqual(["session", "message", "message", "model", "permission_mode"]);
+});
+
+test("directories whose names flatten the same get separate session folders", () => {
+  const home = join(root, "home-dirs");
+  expect(sessionDir(home, "/work/a-b/c")).not.toBe(sessionDir(home, "/work/a/b-c"));
+  // Sessions in the shared pre-0.8 folder are told apart by the directory they record.
+  const legacy = join(home, "sessions", "work-a-b-c");
+  const mine = SessionFile.create(legacy, "/work/a-b/c");
+  const theirs = SessionFile.create(legacy, "/work/a/b-c");
+  for (const f of [mine, theirs]) f.append({ type: "model", model: "t/m" });
+  expect(listSessions(sessionDir(home, "/work/a-b/c"), "/work/a-b/c").map((x) => x.id)).toEqual([mine.id]);
 });
