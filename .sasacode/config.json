@@ -1,0 +1,26 @@
+{
+  "model": "commandcode/deepseek/deepseek-v4-flash",
+  "models": [
+    "commandcode/deepseek/deepseek-v4-flash",
+    "commandcode/deepseek/deepseek-v4-pro",
+    "commandcode/moonshotai/Kimi-K3",
+    "commandcode/zai-org/GLM-5.3",
+    "commandcode/MiniMaxAI/MiniMax-M3",
+    "commandcode/google/gemini-3.8-flash",
+    "commandcode-responses/deepseek/deepseek-v4-flash",
+    "ollama/gemma4:e4b"
+  ],
+  "modelOverrides": {
+    "commandcode/deepseek/deepseek-v4-flash": { "contextWindow": 1000000, "reasoning": true },
+    "commandcode/deepseek/deepseek-v4-pro": { "contextWindow": 1000000, "reasoning": true },
+    "commandcode/moonshotai/Kimi-K3": { "contextWindow": 1000000, "reasoning": true },
+    "commandcode/zai-org/GLM-5.3": { "contextWindow": 1000000, "reasoning": true },
+    "commandcode/MiniMaxAI/MiniMax-M3": { "contextWindow": 1000000, "reasoning": true },
+    "commandcode/google/gemini-3.8-flash": { "contextWindow": 1000000, "reasoning": true },
+    "commandcode-responses/deepseek/deepseek-v4-flash": { "contextWindow": 1000000, "reasoning": true },
+    "ollama/gemma4:e4b": { "contextWindow": 32768, "reasoning": true }
+  },
+  "permissions": {
+    "deny": ["read(.env)", "edit(.env)", "write(.env)", "bash(*.env*)"]
+  }
+}

@@ -1,0 +1,3 @@
+{ "name": "@sasacode/cli", "version": "0.1.0", "type": "module", "main": "src/main.ts",
+  "bin": { "sasacode": "src/main.ts" },
+  "dependencies": { "@sasacode/agent": "workspace:*", "@sasacode/ai": "workspace:*", "@sasacode/plugin-api": "workspace:*", "@sasacode/tools": "workspace:*", "@sasacode/tui": "workspace:*" } }

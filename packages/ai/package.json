@@ -1,0 +1,2 @@
+{ "name": "@sasacode/ai", "version": "0.1.0", "type": "module", "main": "src/index.ts",
+  "dependencies": { "@anthropic-ai/sdk": "^0.128.0", "openai": "^7.23.0" } }

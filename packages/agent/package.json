@@ -1,0 +1,13 @@
+{
+  "name": "@sasacode/agent",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "src/index.ts",
+  "dependencies": {
+    "@sasacode/ai": "workspace:*",
+    "@sasacode/plugin-api": "workspace:*"
+  },
+  "devDependencies": {
+    "@sasacode/tools": "workspace:*"
+  }
+}

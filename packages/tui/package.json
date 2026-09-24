@@ -1,0 +1,2 @@
+{ "name": "@sasacode/tui", "version": "0.1.0", "type": "module", "main": "src/index.ts",
+  "dependencies": { "@sasacode/agent": "workspace:*", "@sasacode/ai": "workspace:*", "@sasacode/plugin-api": "workspace:*", "@earendil-works/pi-tui": "^0.87.1" } }
