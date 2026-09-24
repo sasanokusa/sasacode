@@ -70,6 +70,8 @@ sasacode -r <id> -p "続き"            # セッション ID を指定して続�
 | shift+tab | 権限モードを順に切り替え |
 | `/exit`・ctrl+c ×2・ctrl+d | 終了（終了時に `再開: sasacode -r <id>` を表示） |
 
+起動時に、①のような幅の曖昧な文字（East Asian Ambiguous）を端末が何マスで表示するかを問い合わせて、表示の計算を合わせる。端末が答えない場合は1マスとして扱う。`SASACODE_AMBIGUOUS_WIDTH=1` か `2` で明示できる。
+
 | コマンド | 内容 |
 | --- | --- |
 | `/model` | プロバイダーから取得したモデル一覧から選ぶ。文字を打つと絞り込める。`/model <provider/model>` で直接指定、`/model --refresh` で取り直す |

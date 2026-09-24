@@ -1,0 +1,72 @@
+diff --git a/dist/index.d.ts b/dist/index.d.ts
+index 4a0657e57cc77703b2c271616302b7e80cb4ef2c..43408c62a8b2b4262820d0fd4e7a6b5bb26e57f0 100644
+--- a/dist/index.d.ts
++++ b/dist/index.d.ts
+@@ -29,5 +29,5 @@ export { allocateImageId, type CellDimensions, calculateImageRows, deleteAllKitt
+ export { type Component, Container, CURSOR_MARKER, compositeTuiLine, type Focusable, isFocusable, isViewportTUI, type OverlayAnchor, type OverlayBounds, type OverlayHandle, type OverlayMargin, type OverlayOptions, type OverlayUnfocusOptions, type SizeValue, type TUI, type TuiInputListener, type TuiInputListenerResult, type TuiMode, type TuiMouseButton, type TuiMouseEvent, type TuiMouseEventResult, type TuiMouseEventType, type TuiStopOptions, type ViewportTUI, } from "./tui.ts";
+ export { TuiAltScreen, type TuiAltScreenOptions } from "./tui-alt-screen.ts";
+ export { TuiMainScreen, type TuiMainScreenRenderState } from "./tui-main-screen.ts";
+-export { getOsc8LinkAtColumn, sliceByColumn, stripTerminalSequences, truncateToWidth, visibleWidth, wrapTextWithAnsi, } from "./utils.ts";
++export { getOsc8LinkAtColumn, setAmbiguousWidth, sliceByColumn, stripTerminalSequences, truncateToWidth, visibleWidth, wrapTextWithAnsi, } from "./utils.ts";
+ //# sourceMappingURL=index.d.ts.map
+\ No newline at end of file
+diff --git a/dist/index.js b/dist/index.js
+index d3c851910daada428705eb52f0b0f55080d4d7e7..b570b07aa3a3469846904c5cbb133a9de902d6d2 100644
+--- a/dist/index.js
++++ b/dist/index.js
+@@ -41,5 +41,5 @@ export { Container, CURSOR_MARKER, compositeTuiLine, isFocusable, isViewportTUI,
+ export { TuiAltScreen } from "./tui-alt-screen.js";
+ export { TuiMainScreen } from "./tui-main-screen.js";
+ // Utilities
+-export { getOsc8LinkAtColumn, sliceByColumn, stripTerminalSequences, truncateToWidth, visibleWidth, wrapTextWithAnsi, } from "./utils.js";
++export { getOsc8LinkAtColumn, setAmbiguousWidth, sliceByColumn, stripTerminalSequences, truncateToWidth, visibleWidth, wrapTextWithAnsi, } from "./utils.js";
+ //# sourceMappingURL=index.js.map
+\ No newline at end of file
+diff --git a/dist/utils.d.ts b/dist/utils.d.ts
+index ac87c271ab30a641ebd527bd8bd8bc0eaaf01af8..68a3a200571a9515f7d43fce4d0f8dbb4539a32d 100644
+--- a/dist/utils.d.ts
++++ b/dist/utils.d.ts
+@@ -13,6 +13,8 @@ export declare const autocompleteBoundaryRegex: RegExp;
+ /**
+  * Calculate the visible width of a string in terminal columns.
+  */
++/** sasacode patch: how many cells East Asian Ambiguous characters take in this terminal (default 1). */
++export declare function setAmbiguousWidth(width: 1 | 2): void;
+ export declare function visibleWidth(str: string): number;
+ /** Remove ANSI, OSC, and APC control sequences while preserving visible text. */
+ export declare function stripTerminalSequences(str: string): string;
+diff --git a/dist/utils.js b/dist/utils.js
+index 31bb2e1105476b28d087c0def4f94862d723edff..605ca0fac396487d042c9da78998e0ae18c378c0 100644
+--- a/dist/utils.js
++++ b/dist/utils.js
+@@ -42,6 +42,12 @@ const rgiEmojiRegex = /^\p{RGI_Emoji}$/v;
+ // Cache for non-ASCII strings
+ const WIDTH_CACHE_SIZE = 512;
+ const widthCache = new Map();
++// sasacode patch: East Asian Ambiguous characters (①, ○, …) take 1 or 2 cells depending on the terminal.
++let ambiguousAsWide = false;
++export function setAmbiguousWidth(width) {
++    ambiguousAsWide = width === 2;
++    widthCache.clear();
++}
+ export const cjkBreakRegex = /[\p{Script_Extensions=Han}\p{Script_Extensions=Hiragana}\p{Script_Extensions=Katakana}\p{Script_Extensions=Hangul}\p{Script_Extensions=Bopomofo}]/u;
+ // CJK letters remain part of words and paths; only punctuation can separate prose from completions.
+ export const cjkPunctuationRegex = new RegExp(`(?:(?=\\p{Punctuation})${cjkBreakRegex.source}|[，．：；！？（）［］｛｝“”‘’…—])`, "u");
+@@ -173,7 +179,7 @@ function graphemeWidth(segment) {
+     if (cp >= 0x1f1e6 && cp <= 0x1f1ff) {
+         return 2;
+     }
+-    let width = eastAsianWidth(cp);
++    let width = eastAsianWidth(cp, { ambiguousAsWide });
+     // Intl.Segmenter can group multiple terminal-spacing code points into one
+     // grapheme. Count trailing visible code points that terminals may allocate
+     // cells for: Indic consonants after marks, halfwidth/fullwidth forms, and
+@@ -192,7 +198,7 @@ function graphemeWidth(segment) {
+             const c = char.codePointAt(0);
+             if (followsMark || (c >= 0xff00 && c <= 0xffef)) {
+                 // halfwidth + fullwidth forms
+-                width += eastAsianWidth(c);
++                width += eastAsianWidth(c, { ambiguousAsWide });
+             }
+             else if (c === 0x0e33 || c === 0x0eb3) {
+                 width += 1;

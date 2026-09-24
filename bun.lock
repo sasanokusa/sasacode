@@ -11,7 +11,7 @@
     },
     "packages/agent": {
       "name": "@sasacode/agent",
-      "version": "0.4.0",
+      "version": "0.8.0",
       "dependencies": {
         "@sasacode/ai": "workspace:*",
         "@sasacode/plugin-api": "workspace:*",
@@ -22,7 +22,7 @@
     },
     "packages/ai": {
       "name": "@sasacode/ai",
-      "version": "0.4.0",
+      "version": "0.8.0",
       "dependencies": {
         "@anthropic-ai/sdk": "^0.128.0",
         "openai": "^7.23.0",
@@ -30,7 +30,7 @@
     },
     "packages/bundled": {
       "name": "@sasacode/bundled",
-      "version": "0.4.0",
+      "version": "0.8.0",
       "dependencies": {
         "@sasacode/mcp": "workspace:*",
         "@sasacode/plugin-api": "workspace:*",
@@ -44,7 +44,7 @@
     },
     "packages/cli": {
       "name": "@sasacode/cli",
-      "version": "0.4.0",
+      "version": "0.8.0",
       "bin": {
         "sasacode": "src/main.ts",
       },
@@ -61,7 +61,7 @@
     },
     "packages/mcp": {
       "name": "@sasacode/mcp",
-      "version": "0.4.0",
+      "version": "0.8.0",
       "dependencies": {
         "@modelcontextprotocol/sdk": "^1.30.1",
         "@sasacode/plugin-api": "workspace:*",
@@ -73,14 +73,14 @@
     },
     "packages/plugin-api": {
       "name": "@sasacode/plugin-api",
-      "version": "0.4.0",
+      "version": "0.8.0",
       "dependencies": {
         "@sasacode/ai": "workspace:*",
       },
     },
     "packages/skills": {
       "name": "@sasacode/skills",
-      "version": "0.4.0",
+      "version": "0.8.0",
       "dependencies": {
         "@sasacode/plugin-api": "workspace:*",
       },
@@ -92,14 +92,14 @@
     },
     "packages/tools": {
       "name": "@sasacode/tools",
-      "version": "0.4.0",
+      "version": "0.8.0",
       "dependencies": {
         "@sasacode/plugin-api": "workspace:*",
       },
     },
     "packages/tui": {
       "name": "@sasacode/tui",
-      "version": "0.4.0",
+      "version": "0.8.0",
       "dependencies": {
         "@earendil-works/pi-tui": "^0.87.1",
         "@sasacode/agent": "workspace:*",
@@ -107,6 +107,9 @@
         "@sasacode/plugin-api": "workspace:*",
       },
     },
+  },
+  "patchedDependencies": {
+    "@earendil-works/pi-tui@0.87.1": "patches/@earendil-works%2Fpi-tui@0.87.1.patch",
   },
   "packages": {
     "@anthropic-ai/sdk": ["@anthropic-ai/sdk@0.128.0", "", { "dependencies": { "json-schema-to-ts": "^3.1.1", "standardwebhooks": "^1.0.0" }, "peerDependencies": { "zod": "^3.25.0 || ^4.0.0" }, "optionalPeers": ["zod"], "bin": { "anthropic-ai-sdk": "bin/cli" } }, "sha512-tl5cBFZC1jVFrTuQyvQObA4WmuNgcYVeXfriqOumgtLAHUm4gPUj18YnszBW60v0PrjDB8nBDOC6wd9CmHQFlA=="],

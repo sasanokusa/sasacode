@@ -26,6 +26,7 @@ import {
 } from "@sasacode/agent";
 import { type ModelInfo, textOf, type ToolCall } from "@sasacode/ai";
 import type { CommandDefinition, SelectOption } from "@sasacode/plugin-api";
+import { matchAmbiguousWidth } from "./ambiguous.ts";
 import { ApprovalDialog, Picker } from "./dialogs.ts";
 import { c, editorTheme } from "./theme.ts";
 import { AssistantView, display, Notice, ToolView, UserView } from "./views.ts";
@@ -104,6 +105,7 @@ class App {
       for (const cmd of this.coreCommands()) api.registerCommand(cmd);
     });
     this.refreshCommands();
+    await matchAmbiguousWidth();
     this.tui.start();
     // Plugins and MCP servers load in the background so input is never blocked (NFR).
     this.ready = this.host.loadPlugins(this.bridge()).catch((e) => this.notify(`plugin loading failed: ${e.message}`, c.red));
