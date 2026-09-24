@@ -24,12 +24,22 @@ import {
   type PluginHost,
   type UIBridge,
 } from "@sasacode/agent";
-import { type ModelInfo, textOf, type ToolCall } from "@sasacode/ai";
+import { type ModelInfo, textOf, type ThinkingLevel, type ToolCall } from "@sasacode/ai";
 import type { CommandDefinition, SelectOption } from "@sasacode/plugin-api";
 import { matchAmbiguousWidth } from "./ambiguous.ts";
 import { ApprovalDialog, Picker } from "./dialogs.ts";
 import { c, editorTheme } from "./theme.ts";
 import { AssistantView, display, Notice, ToolView, UserView } from "./views.ts";
+
+const EFFORTS: ThinkingLevel[] = ["off", "low", "medium", "high", "xhigh", "max"];
+const EFFORT_LABELS: Record<ThinkingLevel, string> = {
+  off: "推論しない",
+  low: "浅く・速く",
+  medium: "標準",
+  high: "深く（既定）",
+  xhigh: "さらに深く",
+  max: "最大（対応していないモデルでは xhigh 相当）",
+};
 
 /** What the TUI needs from the CLI. */
 export interface TuiHost {
@@ -382,6 +392,13 @@ class App {
             .filter((o) => o.value.toLowerCase().includes(prefix.toLowerCase()))
             .slice(0, 50),
       },
+      {
+        name: "effort",
+        description: "推論の深さ（thinking）を切り替える",
+        argumentHint: EFFORTS.join("|"),
+        run: ({ args }) => this.effortCommand(args),
+        complete: async (prefix) => EFFORTS.filter((e) => e.startsWith(prefix)).map((e) => ({ value: e, label: e, description: EFFORT_LABELS[e] })),
+      },
       { name: "resume", description: "過去のセッションを再開", run: () => this.resumeCommand() },
       { name: "clear", description: "新しいセッションを始める", run: () => this.clearCommand() },
       { name: "permission", description: "権限モードを切り替える", argumentHint: PERMISSION_MODES.join("|"), run: ({ args }) => this.permissionCommand(args) },
@@ -541,6 +558,23 @@ class App {
     this.setMode(mode);
   }
 
+  private async effortCommand(args: string): Promise<void> {
+    const agent = this.host.agent;
+    let level = args.trim() as ThinkingLevel;
+    if (!level) {
+      const picked = await this.pick(
+        agent.model.reasoning ? "推論の深さ" : `推論の深さ（${agent.model.id} は推論に対応していないため、変えても効果はありません）`,
+        EFFORTS.map((e) => ({ value: e, label: `${e}  ${EFFORT_LABELS[e]}`, description: e === agent.thinking ? "現在" : undefined })),
+      );
+      if (!picked) return;
+      level = picked as ThinkingLevel;
+    }
+    if (!EFFORTS.includes(level)) throw new Error(`推論の深さは ${EFFORTS.join(", ")} のいずれかです`);
+    agent.thinking = level;
+    this.updateFooter();
+    this.tui.requestRender();
+  }
+
   private setMode(mode: PermissionMode): void {
     const agent = this.host.agent;
     agent.permissions.mode = mode;
@@ -631,6 +665,7 @@ class App {
     const pct = a.model.contextWindow ? Math.round((this.contextTokens / a.model.contextWindow) * 100) : 0;
     const parts = [
       `${a.model.provider}/${a.model.id}`,
+      `推論: ${a.model.reasoning ? a.thinking : "なし"}`,
       `権限: ${PERMISSION_MODE_LABELS[a.permissions.mode]}`,
       `ctx ${fmtTokens(this.contextTokens)} (${pct}%)`,
     ];

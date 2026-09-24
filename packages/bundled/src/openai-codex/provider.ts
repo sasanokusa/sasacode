@@ -11,7 +11,7 @@ import { codexTokens, type CodexTokens } from "./auth.ts";
 export const CODEX_CLIENT_VERSION = "0.156.1";
 
 /** Shown when signed in but the backend's model list cannot be fetched. */
-export const FALLBACK_MODELS = ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5", "gpt-5.4", "gpt-5.4-mini"];
+export const FALLBACK_MODELS = ["gpt-6-astra", "gpt-6-sol", "gpt-6-luna", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5"];
 
 /** Fields the public Responses API takes but this backend refuses (Codex never sends them). */
 const UNSUPPORTED = ["max_output_tokens", "temperature", "top_p", "metadata", "user"];

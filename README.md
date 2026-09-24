@@ -77,6 +77,7 @@ sasacode -r <id> -p "続き"            # セッション ID を指定して続�
 | --- | --- |
 | `/model` | プロバイダーから取得したモデル一覧から選ぶ。文字を打つと絞り込める。`/model <provider/model>` で直接指定、`/model --refresh` で取り直す |
 | `/resume` `/clear` `/fork` `/session` | 過去のセッション / 新しいセッション / 過去のメッセージから分岐 / ID と保存先 |
+| `/effort` | 推論の深さ（`off` / `low` / `medium` / `high` / `xhigh` / `max`）を切り替える。引数なしなら一覧から選ぶ。現在の値はフッターに出る |
 | `/permission` `/help` `/exit`（`/quit`） | 権限モード / ヘルプ / 終了 |
 | `/compact` `/mcp` `/skills` `/skill:<name>` `/presets` `/browsr` | 同梱プラグインのコマンド |
 
