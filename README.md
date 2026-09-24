@@ -215,6 +215,7 @@ export default ((api) => {
 bun test            # LLM なしの E2E を含む全テスト（応答の再生と、テスト用の MCP サーバーを使う）
 bun run typecheck
 bun run build       # dist/sasacode（このマシン向け）。--all で全ターゲット
+bun bench/run.ts --model <provider/model> …   # 実際の作業でトークン・キャッシュ・速度を測る（docs/benchmarks.md）
 ```
 
 **リリースの手順**：`v*` のタグを push すると、GitHub Actions がバイナリをビルドして GitHub Release を作る。macOS 版は macOS のランナーでビルドし、起動を確認する。sasanokusa.com からのインストールも、それだけで新しい版になる。案内ページを変えたときだけ `scripts/publish-site.sh` を実行する。
