@@ -40,7 +40,7 @@ export default plugin;
 }
 ```
 
-- `apiVersion` がホストの API（現在 1.2.0）と互換でなければ、警告を出して読み込まない。
+- `apiVersion` がホストの API（現在 1.3.0）と互換でなければ、警告を出して読み込まない。
 - `skills` は `SKILL.md` を含むフォルダが並ぶディレクトリ。
 - `mcpServers` は設定ファイルの `mcpServers` と同じ形式。`${VAR}` は環境変数から展開される。
 
@@ -59,7 +59,7 @@ sasacode plugin remove <name>
 | API | できること |
 | --- | --- |
 | `registerTool(def)` | ツールを追加する。同名を登録すると置き換わる（組み込みの `read` なども上書きできる） |
-| `registerCommand(def)` | スラッシュコマンドを追加する |
+| `registerCommand(def)` | スラッシュコマンドを追加する。`complete(prefix)` を書くと、引数を tab で補完できる（1.3.0〜） |
 | `registerProvider(name, config, impl?)` | プロバイダーを追加する。`impl` を渡すと新しい API 形式も足せる |
 | `on(hook, handler)` | ライフサイクルフック（下表） |
 | `permissions.addRules({allow, ask, deny})` | 権限ルールを足す |

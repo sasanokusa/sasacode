@@ -1,30 +1,48 @@
-import { type Component, type Focusable, Input, type SelectItem, SelectList, Text, truncateToWidth } from "@earendil-works/pi-tui";
+import { type Component, type Focusable, Input, matchesKey, type SelectItem, SelectList, Text, truncateToWidth } from "@earendil-works/pi-tui";
 import { type ApprovalAnswer, type ApprovalRequest, PermissionPolicy } from "@sasacode/agent";
 import { c, selectTheme } from "./theme.ts";
 
-/** A titled SelectList that resolves once. */
+/** A titled SelectList that resolves once. Typing narrows the list (substring match). */
 export class Picker implements Component, Focusable {
   focused = false;
-  private list: SelectList;
-  private title: string;
+  private list!: SelectList;
+  private filter = "";
 
-  constructor(title: string, items: SelectItem[], done: (item: SelectItem | undefined) => void, maxVisible = 10) {
-    this.title = title;
-    this.list = new SelectList(items, maxVisible, selectTheme);
-    this.list.onSelect = (i) => done(i);
-    this.list.onCancel = () => done(undefined);
+  constructor(
+    private title: string,
+    private items: SelectItem[],
+    private done: (item: SelectItem | undefined) => void,
+    private maxVisible = 10,
+  ) {
+    this.rebuild();
+  }
+
+  private rebuild(): void {
+    const f = this.filter.toLowerCase();
+    const shown = f ? this.items.filter((i) => `${i.value} ${i.label} ${i.description ?? ""}`.toLowerCase().includes(f)) : this.items;
+    // Long values (model specs) need room; descriptions get what is left.
+    this.list = new SelectList(shown, this.maxVisible, selectTheme, { minPrimaryColumnWidth: 24, maxPrimaryColumnWidth: 64 });
+    this.list.onSelect = (i) => this.done(i);
+    this.list.onCancel = () => this.done(undefined);
   }
 
   handleInput(data: string): void {
-    this.list.handleInput?.(data);
+    if (matchesKey(data, "backspace")) {
+      this.filter = this.filter.slice(0, -1);
+      this.rebuild();
+    } else if (!data.startsWith("\x1b") && [...data].every((ch) => ch >= " " && ch !== "\x7f")) {
+      this.filter += data;
+      this.rebuild();
+    } else this.list.handleInput?.(data);
   }
 
   render(width: number): string[] {
+    const hint = this.filter ? `絞り込み: ${this.filter}` : "入力で絞り込み · ↑↓ で選択 · enter で決定 · esc でキャンセル";
     return [
       truncateToWidth(c.gray("─".repeat(width)), width),
       ...this.title.split("\n").map((l, i) => truncateToWidth(i === 0 ? c.bold(l) : c.gray(l), width)),
       ...this.list.render(width),
-      truncateToWidth(c.gray("↑↓ で選択 · enter で決定 · esc でキャンセル"), width),
+      truncateToWidth(c.gray(hint), width),
     ];
   }
 

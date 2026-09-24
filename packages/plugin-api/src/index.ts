@@ -26,7 +26,7 @@ export type {
   UserContent,
 } from "@sasacode/ai";
 
-export const PLUGIN_API_VERSION = "1.2.0";
+export const PLUGIN_API_VERSION = "1.3.0";
 
 // ── tools ────────────────────────────────────────────────────────────
 
@@ -79,6 +79,8 @@ export interface CommandDefinition {
   description: string;
   argumentHint?: string;
   run(ctx: CommandContext): Promise<void> | void;
+  /** Candidates for the argument typed so far, offered by tab completion. (since 1.3.0) */
+  complete?(prefix: string): Promise<SelectOption[]> | SelectOption[];
 }
 
 // ── hooks (requirements 5.3) ─────────────────────────────────────────

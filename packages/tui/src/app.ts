@@ -39,6 +39,7 @@ export interface TuiHost {
   resolve(spec: string): ModelInfo;
   sessionsDir: string;
   historyPath?: string;
+  listModels(refresh?: boolean): Promise<{ spec: string; contextWindow?: number }[]>;
   loadPlugins(ui: UIBridge): Promise<void>;
   loadSession(path: string): Promise<void>;
   newSession(): Promise<void>;
@@ -106,6 +107,9 @@ class App {
     this.tui.start();
     // Plugins and MCP servers load in the background so input is never blocked (NFR).
     this.ready = this.host.loadPlugins(this.bridge()).catch((e) => this.notify(`plugin loading failed: ${e.message}`, c.red));
+    // Ask the providers for their models in the background: /model is instant, and the current
+    // model learns its real context window.
+    void this.host.listModels().then(() => this.updateFooter(), () => {});
     if (initialPrompt.trim()) this.submit(initialPrompt);
     return new Promise((resolve) => {
       this.exit = (code) => {
@@ -123,7 +127,14 @@ class App {
   private refreshCommands(): void {
     this.editor.setAutocompleteProvider(
       new CombinedAutocompleteProvider(
-        this.host.host.commands.map((cmd) => ({ name: cmd.name, description: cmd.description, argumentHint: cmd.argumentHint })),
+        this.host.host.commands.map((cmd) => ({
+          name: cmd.name,
+          description: cmd.description,
+          argumentHint: cmd.argumentHint,
+          getArgumentCompletions: cmd.complete
+            ? async (prefix: string) => (await cmd.complete!(prefix)).map((o) => ({ value: o.value, label: o.label, description: o.description }))
+            : undefined,
+        })),
         this.host.agent.cwd,
       ),
     );
@@ -347,7 +358,16 @@ class App {
   private coreCommands(): CommandDefinition[] {
     return [
       { name: "help", description: "コマンドとキー操作を表示", run: () => this.help() },
-      { name: "model", description: "モデルを切り替える", argumentHint: "<provider/model>", run: ({ args }) => this.modelCommand(args) },
+      {
+        name: "model",
+        description: "モデルを切り替える（プロバイダーから取得した一覧）",
+        argumentHint: "<provider/model> | --refresh",
+        run: ({ args }) => this.modelCommand(args),
+        complete: async (prefix) =>
+          (await this.modelChoices())
+            .filter((o) => o.value.toLowerCase().includes(prefix.toLowerCase()))
+            .slice(0, 50),
+      },
       { name: "resume", description: "過去のセッションを再開", run: () => this.resumeCommand() },
       { name: "clear", description: "新しいセッションを始める", run: () => this.clearCommand() },
       { name: "permission", description: "権限モードを切り替える", argumentHint: PERMISSION_MODES.join("|"), run: ({ args }) => this.permissionCommand(args) },
@@ -387,16 +407,31 @@ class App {
     );
   }
 
+  /** Current model, the ones in config, then everything the providers list. */
+  private async modelChoices(refresh = false): Promise<SelectOption[]> {
+    const agent = this.host.agent;
+    const current = `${agent.model.provider}/${agent.model.id}`;
+    const pending = this.host.listModels(refresh).catch((e: Error) => {
+      this.notify(`モデル一覧を取得できませんでした: ${e.message}`, c.yellow);
+      return [];
+    });
+    const quick = await Promise.race([pending, Bun.sleep(300).then(() => undefined)]);
+    if (!quick) this.notify("プロバイダーからモデル一覧を取得しています…");
+    const listed = quick ?? (await pending);
+    const ctx = new Map(listed.map((m) => [m.spec, m.contextWindow]));
+    const specs = [...new Set([current, ...(this.host.config.models ?? []), ...listed.map((m) => m.spec)])];
+    return specs.map((s) => ({
+      value: s,
+      label: s,
+      description: [s === current ? "現在" : "", ctx.get(s) ? `${fmtTokens(ctx.get(s)!)} ctx` : ""].filter(Boolean).join(" · ") || undefined,
+    }));
+  }
+
   private async modelCommand(args: string): Promise<void> {
     const agent = this.host.agent;
-    let spec = args;
+    let spec = args === "--refresh" ? "" : args;
     if (!spec) {
-      const currentSpec = `${agent.model.provider}/${agent.model.id}`;
-      const choices = [...new Set([currentSpec, ...(this.host.config.models ?? [])])];
-      const picked = await this.pick(
-        "モデルを選択（任意のモデルは /model <provider/model>）",
-        choices.map((m) => ({ value: m, label: m, description: m === currentSpec ? "現在" : undefined })),
-      );
+      const picked = await this.pick("モデルを選択（一覧にないモデルは /model <provider/model>）", await this.modelChoices(args === "--refresh"), 12);
       if (!picked) return;
       spec = picked;
     }
@@ -500,13 +535,18 @@ class App {
 
   // ── view helpers ───────────────────────────────────────────────────
 
-  private pick(title: string, items: SelectOption[]): Promise<string | undefined> {
+  private pick(title: string, items: SelectOption[], maxVisible = 10): Promise<string | undefined> {
     return new Promise((resolve) => {
       this.showInput(
-        new Picker(title, items, (item) => {
-          this.showEditor();
-          resolve(item?.value);
-        }),
+        new Picker(
+          title,
+          items,
+          (item) => {
+            this.showEditor();
+            resolve(item?.value);
+          },
+          maxVisible,
+        ),
       );
     });
   }
@@ -606,7 +646,8 @@ class App {
 }
 
 function fmtTokens(n: number): string {
-  return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
+  if (n >= 1_000_000) return `${+(n / 1_000_000).toFixed(1)}M`;
+  return n >= 1000 ? `${+(n / 1000).toFixed(1)}k` : String(n);
 }
 
 /** A single truncated line whose text can change. */

@@ -21,6 +21,7 @@ import { createSkillsPlugin } from "@sasacode/skills";
 import builtinTools from "@sasacode/tools";
 import { type Config, loadConfig, sasacodeHome } from "./config.ts";
 import { discoverPlugins, type FoundPlugin, importExtensions, isTrusted, projectFingerprint, saveTrust } from "./loader.ts";
+import { type ModelChoice, ModelCatalog } from "./catalog.ts";
 import { resolveApiKey } from "./keys.ts";
 
 export interface SetupOptions {
@@ -45,6 +46,8 @@ export interface Harness {
   resolve(spec: string): ModelInfo;
   sessionsDir: string;
   historyPath: string;
+  /** Models offered by the providers you have keys for (fetched once, then cached). */
+  listModels(refresh?: boolean): Promise<ModelChoice[]>;
   /** Load bundled, MCP, Skills and third-party plugins, then start the session. Safe to call once. */
   loadPlugins(ui?: UIBridge): Promise<void>;
   /** Replace the agent's conversation with a stored session. */
@@ -60,7 +63,14 @@ export async function setup(opts: SetupOptions): Promise<Harness> {
   const providers: Record<string, ProviderConfig> = { ...BUILTIN_PROVIDERS };
   for (const [name, p] of Object.entries(config.providers ?? {}))
     providers[name] = { ...providers[name], ...p } as ProviderConfig;
-  const resolve = (spec: string) => resolveModel(spec, providers, config.modelOverrides);
+  // What the Models API reported fills in context windows; explicit modelOverrides in config win.
+  let catalog: ModelCatalog;
+  const overrides = () => {
+    const merged: Record<string, Partial<ModelInfo>> = Object.fromEntries(catalog?.discovered ?? []);
+    for (const [k, v] of Object.entries(config.modelOverrides ?? {})) merged[k] = { ...merged[k], ...v };
+    return merged;
+  };
+  const resolve = (spec: string) => resolveModel(spec, providers, overrides());
 
   const mode = (opts.permission ?? config.permissions?.mode ?? "edits") as PermissionMode;
   if (!PERMISSION_MODES.includes(mode)) throw new Error(`unknown permission mode "${mode}" (${PERMISSION_MODES.join(", ")})`);
@@ -80,6 +90,12 @@ export async function setup(opts: SetupOptions): Promise<Harness> {
     maxRetries: config.maxRetries,
     toolSearch: config.toolSearch,
   });
+
+  catalog = new ModelCatalog(
+    providers,
+    (p) => resolveApiKey(p, providers[p]),
+    () => agent.model.provider,
+  );
 
   const disabled = new Set(config.plugins?.disabled ?? []);
   const host = new PluginHost({
@@ -180,6 +196,13 @@ export async function setup(opts: SetupOptions): Promise<Harness> {
     resolve,
     sessionsDir,
     historyPath: join(home, "history.jsonl"),
+    async listModels(refresh) {
+      const models = await catalog.list(refresh);
+      // The current model may just have learned its real context window.
+      const current = `${agent.model.provider}/${agent.model.id}`;
+      if (catalog.discovered.has(current)) agent.model = resolve(current);
+      return models;
+    },
     loadPlugins,
     async loadSession(path) {
       await endSession();
