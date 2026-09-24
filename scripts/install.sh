@@ -56,10 +56,12 @@ if [ "$os" = linux ]; then
 fi
 
 # ── download ────────────────────────────────────────────────────────
-# Pin the release once, so the archive and its checksum always come from the same one.
-# (…/releases/latest redirects to …/releases/tag/<version>.)
+# Pin the release once, so the archive and its checksum always come from the same one. The version
+# is read from the redirect of …/latest/download/ itself (…/download/<version>/…): the
+# …/releases/latest page can lag behind it for a while after a release.
 if [ -z "$VERSION" ] && command -v curl >/dev/null 2>&1; then
-  VERSION="$(curl -fsSLI -o /dev/null -w '%{url_effective}' "$BASE/latest" 2>/dev/null | sed -n 's|.*/tag/||p')" || VERSION=""
+  VERSION="$(curl -fsSI "$BASE/latest/download/SHA256SUMS" 2>/dev/null | tr -d '\r' |
+    sed -n 's|^[Ll]ocation: .*/download/\([^/]*\)/SHA256SUMS.*|\1|p' | head -n 1)" || VERSION=""
 fi
 if [ -n "$VERSION" ]; then url="$BASE/download/$VERSION"; else url="$BASE/latest/download"; fi
 
