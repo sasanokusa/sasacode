@@ -87,7 +87,7 @@ export class ToolView implements Component {
 
   render(width: number): string[] {
     const dot = { pending: c.gray("○"), running: c.yellow("●"), done: c.green("●"), error: c.red("●") }[this.status];
-    const summary = this.summary || argPreview(this.call.input);
+    const summary = oneLine(this.summary || argPreview(this.call.input));
     const lines = [truncateToWidth(`${dot} ${c.bold(this.call.name)}${c.gray(`(${summary})`)}`, width)];
     if (this.repairNote) lines.push(truncateToWidth(c.gray(`  ↻ 修復: ${this.repairNote}`), width));
     const body = this.status === "running" ? this.live : this.output;
@@ -111,6 +111,11 @@ export class ToolView implements Component {
   }
 
   invalidate() {}
+}
+
+/** A tool's summary on its one header line: a multi-line command (a heredoc) would otherwise break the screen apart. */
+function oneLine(s: string): string {
+  return s.replace(/\s*\n\s*/g, " ↵ ").replace(/[\x00-\x08\x0b-\x1f\x7f]/g, "").replace(/\t/g, " ");
 }
 
 function argPreview(input: Record<string, unknown>): string {
@@ -138,6 +143,17 @@ export class Notice extends Text {
   }
 }
 
+/**
+ * A rendered line must stay on its row: a stray newline, carriage return or other control character
+ * from model or tool text would move the cursor and leave text over the input and footer. Escape
+ * sequences (ESC … and the BEL ending an OSC) are kept; a tab becomes the spaces its width was counted as.
+ */
+const CONTROL = /[\x00-\x06\x08-\x1a\x1c-\x1f\x7f]/;
+const CONTROL_ALL = new RegExp(CONTROL.source, "g");
+function safeLine(l: string): string {
+  return CONTROL.test(l) ? l.replace(/\t/g, "   ").replace(CONTROL_ALL, "") : l;
+}
+
 const PROMPT_MARK = /^\x1b\]133;A(?:\x07|\x1b\\)/;
 
 /** Margins around a component, so text does not run into the terminal's edges or the scrollbar. */
@@ -155,6 +171,7 @@ export class Padded implements Component {
     const pad = " ".repeat(Math.max(0, Math.min(this.left, width - inner)));
     // A prompt mark (OSC 133) must stay at the start of the line to be found.
     const lines = this.child.render(inner).map((l) => {
+      l = safeLine(l);
       const mark = PROMPT_MARK.exec(l)?.[0];
       return mark ? mark + pad + l.slice(mark.length) : pad + l;
     });

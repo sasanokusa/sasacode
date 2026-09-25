@@ -42,17 +42,26 @@ export async function compact(api: PluginAPI, instructions = "", manual = false)
   const split = manual ? messages.length : splitPoint(messages, keep);
   const head = messages.slice(0, split);
   if (head.length < 2) return false;
-  const summary = await api.agent.complete({
-    system: SYSTEM,
-    maxTokens: 8192,
-    messages: [
-      {
-        role: "user",
-        timestamp: Date.now(),
-        content: [{ type: "text", text: `${transcript(head)}\n\n---\nSummarize the session above.${instructions ? ` ${instructions}` : ""}` }],
-      },
-    ],
-  });
+  // One long model call with nothing streaming to the screen: say that it is under way.
+  api.ui.setStatus("compaction", `履歴を要約中（${head.length} 件）…`);
+  let summary: string;
+  try {
+    summary = await api.agent.complete({
+      system: SYSTEM,
+      maxTokens: 8192,
+      messages: [
+        {
+          role: "user",
+          timestamp: Date.now(),
+          content: [{ type: "text", text: `${transcript(head)}\n\n---\nSummarize the session above.${instructions ? ` ${instructions}` : ""}` }],
+        },
+      ],
+    });
+  } finally {
+    api.ui.setStatus("compaction", undefined);
+  }
+  // An empty answer (the output spent on reasoning, a cut-off stream) must not replace the history.
+  if (!summary.trim()) throw new Error("the model returned an empty summary; the history was left as it was");
   api.session.replaceMessages([
     { role: "user", timestamp: Date.now(), content: [{ type: "text", text: `[Summary of the earlier conversation, compacted to save context]\n\n${summary}` }] },
     ...messages.slice(split),

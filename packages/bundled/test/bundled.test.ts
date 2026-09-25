@@ -98,6 +98,19 @@ test("compaction: on context_limit it compacts and the turn is retried", async (
   expect(provider.requests[2]!.messages.at(-1)).toMatchObject({ role: "tool" });
 });
 
+test("compaction: /compact shows that it is summarizing, and an empty summary leaves the history as it was", async () => {
+  const { agent, host } = await setup([reply([{ type: "thinking", thinking: "all the output went here" }])], ["compaction"]);
+  const history = longHistory();
+  agent.messages = [...history];
+  const seen: string[][] = [];
+  host.onChange = () => seen.push([...host.status.values()]);
+  const compact = host.commands.find((c) => c.name === "compact")!;
+  await expect(Promise.resolve(compact.run({ args: "" }))).rejects.toThrow(/empty summary/);
+  expect(agent.messages).toEqual(history);
+  expect(seen[0]?.[0]).toContain("要約中");
+  expect(host.status.size).toBe(0);
+});
+
 test("splitPoint keeps the tail from a user message", () => {
   const u = (t: string): Message => ({ role: "user", content: [{ type: "text", text: t }], timestamp: 0 });
   const msgs: Message[] = [u("a".repeat(400)), reply([say("b")]), u("c"), reply([say("d")])];
