@@ -32,6 +32,7 @@ import { type ModelInfo, textOf, type ThinkingLevel, type ToolCall } from "@sasa
 import type { CommandDefinition, SelectOption } from "@sasacode/plugin-api";
 import { matchAmbiguousWidth } from "./ambiguous.ts";
 import { ApprovalDialog, Picker } from "./dialogs.ts";
+import { copyToClipboard } from "./clipboard.ts";
 import { exitSummary, fmtDuration, UsageTally, usageLines } from "./summary.ts";
 import { c, editorTheme } from "./theme.ts";
 import { AssistantView, display, Notice, Padded, ToolView, UserView } from "./views.ts";
@@ -103,6 +104,8 @@ class App {
       ? new TuiAltScreen(new ProcessTerminal(), false, undefined, {
           mouse: true,
           wheelScrollLines: 3,
+          // Drag-selected text is copied on release; OSC 52 alone does nothing in many terminals.
+          copySelection: async (text) => (await copyToClipboard(text), true),
           scrollToEndIndicator: () => c.inverse(" ↓ 最新へ (ctrl+end) "),
         })
       : new TuiMainScreen(new ProcessTerminal());
@@ -621,18 +624,8 @@ class App {
     const last = [...this.host.agent.messages].reverse().find((m) => m.role === "assistant" && textOf(m.content).trim());
     const text = last ? textOf(last.content).trim() : "";
     if (!text) return this.notify("コピーする応答がありません", c.yellow);
-    const tools = process.platform === "darwin" ? [["pbcopy"]] : [["wl-copy"], ["xclip", "-selection", "clipboard"], ["xsel", "--clipboard", "--input"]];
-    for (const cmd of tools) {
-      try {
-        const p = Bun.spawn(cmd, { stdin: "pipe", stdout: "ignore", stderr: "ignore" });
-        p.stdin.write(text);
-        await p.stdin.end();
-        if ((await p.exited) === 0) return this.notify(`直前の応答をコピーしました（${text.length} 文字）`);
-      } catch {}
-    }
-    // No clipboard tool (e.g. over SSH): ask the terminal to do it.
-    process.stdout.write(`\x1b]52;c;${Buffer.from(text).toString("base64")}\x07`);
-    this.notify(`直前の応答をコピーしました（端末経由・${text.length} 文字）`);
+    const how = await copyToClipboard(text);
+    this.notify(`直前の応答をコピーしました（${how === "terminal" ? "端末経由・" : ""}${text.length} 文字）`);
   }
 
   private async effortCommand(args: string): Promise<void> {
