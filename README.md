@@ -165,12 +165,31 @@ sasacode -m llama/<モデル名>
 | `auto` | すべて許可する（deny ルールだけは効く） |
 
 - ルールは `ツール名` か `ツール名(パターン)`。bash はコマンド文字列を `*` のワイルドカードで、read / write / edit はパスを glob で照合する。
-- 判定の順番は deny → ask → allow → モード。allow ルールで通るのは、`&&` `;` `|` でつないだコマンドの**すべて**が許可されている場合だけ。`$(…)`、バッククォート、`>` を含むコマンドは、allow ルールでは通らない。
-- 同梱の `permission-presets` が、既定で `guard`（sudo、`rm -rf ~`、force push、`| sh` などを常に拒否）を有効にしている。
+- 判定の順番は deny → softDeny → ask → allow → モード → `permission` フック（プラグイン）。`softDeny` は deny と同じく拒否するが、`jev-guard` などのプラグインが「ユーザーに確認」まで下げられる（確認なしに実行されることはない）。広すぎて正当な操作も巻き込むパターン向け。allow ルールで通るのは、`&&` `;` `|` でつないだコマンドの**すべて**が許可されている場合だけ。`$(…)`、バッククォート、`>` を含むコマンドは、allow ルールでは通らない。
+- 同梱の `permission-presets` が、既定で `guard`（sudo、`rm -rf /`、ディスク操作、`| sh` などを常に拒否。ホーム配下の `rm -rf ~…` と force push は softDeny）を有効にしている。
 - ヘッドレスでは確認できる人がいないので、確認が必要な呼び出しは実行せず、その理由をモデルに返す。
 - パスは、シンボリックリンクをたどった先（実パス）で判定する。作業ディレクトリ内のリンクが外を指していれば、リンク先がまだ存在しなくても外への操作として扱う。プロジェクト内のリンクで、ルールの対象をすり替えることもできない。リンクの循環などで行き先が決まらないパスは、モードによらず確認する。
 - 権限は、ツールを呼ぶ前の判定であって隔離（サンドボックス）ではない。判定から実行までの間にリンクを差し替えるような操作や、許可した bash コマンドの中身までは防げない。信頼できないコードを扱うときは、コンテナなど OS 側で隔離すること。
 - 中断（esc）した後は、承認済みでもまだ始まっていないツールは実行しない。
+
+### Jev による実行前判断（`jev-guard`）
+
+ルールと権限モードの判定の後に、Jev の判定を重ねる。Jev は文章を返さず、型付きの質問に確率で答えるモデルで、1回あたり数百ミリ秒で済む。
+
+```json
+{ "plugins": { "settings": { "jev-guard": { "enabled": true } } } }
+```
+
+- Command Code の Provider API を使う。`CMD_API_KEY`（またはキーチェーンの `commandcode`）と、Provider API が使えるプラン（GOAT 以上）が必要。有効にすると、ツール呼び出しの内容（コマンド、対象パスとその git の状態、ユーザーの直近の依頼）が Command Code に送られる。API キーやトークンらしき文字列は、送る前に伏せる（ベストエフォート）。
+- 判定を変えるのは次の場合だけ。
+  - 確認なしで実行されるはずだった呼び出し（allow ルール、`auto` モード）: 危険なら拒否、要確認なら確認に回す。
+  - `agent` モードで確認に回るはずだった呼び出し: 安全なら確認なしで実行する（モデルによる判定の代わり）。Jev が判断を保留したときは、従来どおりモデルが判定する。
+  - softDeny の呼び出し: 安全なら、拒否せずユーザーに確認する。
+- ユーザーに確認するはずの呼び出しを、Jev が拒否に変えることはない（確認ダイアログに Jev の判定を添える）。deny ルールの呼び出しは Jev に送らない。
+- Jev に渡すのは、ハーネスが集めた事実とユーザー自身の依頼だけで、ツールの出力やファイルの中身は渡さない（Jev は状態に紛れ込んだ誘導文に影響されうるため）。
+- 読み取りと、作業ディレクトリ内の編集は判定しない。Jev に届かないとき（キーがない、通信エラー、タイムアウト 5 秒）は、Jev なしの判定のまま続ける。
+- 閾値は `thresholds`（`allow` 0.8、ヘッドレスでの `headlessAllow` 0.9、`deny` 0.85、`confidence` 0.6、`flag` 0.7、`clear` 0.3）で変えられる。ほかの設定は `model`（既定 `typesafe/jev`）、`timeoutMs`、`skip`（判定しないツール。既定 `todo_write`、`task`）。
+- `/jev` で状態と直近の判定を見られる。判定はセッションにも記録する。
 
 ### プロジェクトの信頼
 
@@ -197,6 +216,7 @@ sasacode -m llama/<モデル名>
 | `web-fetch` | `web_fetch` ツール。URL を取ってきてテキストにする |
 | `browsr` | [browsr-4-agent](https://github.com/sasanokusa/browsr-4-agent) による Web 検索（`search`）と本文の閲覧（`open`）。`browsr-agent` が PATH にあれば自動で起動する |
 | `permission-presets` | 権限ルールのプリセット（`guard`、`read-only-shell`、`tests`） |
+| `jev-guard` | 実行前に、判断専用モデル [Jev](https://commandcode.ai/models/jev)（TypeSafe）で呼び出しの安全性を判定する。**既定は無効**（下記） |
 | `openai-codex` | ChatGPT プランのモデル（`openai-codex/…`）。`sasacode login` の認証情報を使う |
 | `skills` / `mcp` | Agent Skills と MCP のアダプタ |
 
@@ -241,7 +261,7 @@ export default ((api) => {
 }) satisfies Plugin;
 ```
 
-公開 API（現在 1.6.0。1.4.0 で締め切り、1.x の間は追加だけ。[互換性の約束](docs/plugins.md#互換性の約束140-で確定)）でできることは次のとおり。
+公開 API（現在 1.7.0。1.4.0 で締め切り、1.x の間は追加だけ。[互換性の約束](docs/plugins.md#互換性の約束140-で確定)）でできることは次のとおり。
 
 - **登録**：ツール、スラッシュコマンド（引数の補完つき）、プロバイダー、権限ルール
 - **フック**：`session_start/end`、`user_prompt`、`system_prompt`、`before_request`、`stream_delta`、`assistant_message`、`tool_call_raw`、`tool_call`、`tool_result`、`turn_end`、`agent_end`、`context_limit`

@@ -21,7 +21,7 @@ export interface Config {
   /** Projects trusted without asking (global config only). */
   trustedProjects?: string[];
   plugins?: {
-    /** Plugin names not to load (bundled ones included: tool-repair, repetition-guard, agents-md, compaction, subagent, todo, web-fetch, permission-presets, browsr, openai-codex, skills, mcp). */
+    /** Plugin names not to load (bundled ones included: tool-repair, repetition-guard, agents-md, compaction, subagent, todo, web-fetch, permission-presets, jev-guard, browsr, openai-codex, skills, mcp). */
     disabled?: string[];
     /** Per-plugin settings, handed to the plugin as api.settings. */
     settings?: Record<string, Record<string, unknown>>;
@@ -73,7 +73,7 @@ const CHECKS: Record<keyof Config, (v: unknown) => boolean> = {
   modelOverrides: isObjectOfObjects,
   permissions: (v) =>
     isObject(v) &&
-    ["allow", "ask", "deny"].every((k) => v[k] === undefined || isStrings(v[k])) &&
+    ["allow", "ask", "deny", "softDeny"].every((k) => v[k] === undefined || isStrings(v[k])) &&
     (v.mode === undefined || PERMISSION_MODES.includes(v.mode as PermissionMode)),
   instructions: isString,
   maxTurns: isCount(100_000),
@@ -102,7 +102,7 @@ export function sanitizeConfig(raw: unknown, source: string, warnings: string[])
 }
 
 /** Lists that both levels add to. Anything else named "disabled" (mcpServers.<name>.disabled) is a plain value. */
-const ACCUMULATE = ["permissions.allow", "permissions.ask", "permissions.deny", "tools.disabled", "plugins.disabled"];
+const ACCUMULATE = ["permissions.allow", "permissions.ask", "permissions.deny", "permissions.softDeny", "tools.disabled", "plugins.disabled"];
 
 /**
  * Later values win; objects merge recursively. Permission rules and disabled lists accumulate
@@ -157,8 +157,8 @@ export function splitProjectConfig(project: Config, global: Config): { safe: Con
     if (rest.length) elevated.models = rest;
   }
   if (project.permissions) {
-    const { allow, ask, deny, mode } = project.permissions;
-    safe.permissions = { ...(ask ? { ask } : {}), ...(deny ? { deny } : {}) };
+    const { allow, ask, deny, softDeny, mode } = project.permissions;
+    safe.permissions = { ...(ask ? { ask } : {}), ...(deny ? { deny } : {}), ...(softDeny ? { softDeny } : {}) };
     if (allow?.length) elevated.permissions = { allow };
     if (mode) {
       const floor = global.permissions?.mode ?? "edits";

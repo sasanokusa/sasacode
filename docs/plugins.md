@@ -46,7 +46,7 @@ npm のパッケージは `bun run pack:plugin-api` で `dist/plugin-api` に作
 }
 ```
 
-- `apiVersion` がホストの API（現在 1.6.0）と互換でなければ、警告を出して読み込まない。
+- `apiVersion` がホストの API（現在 1.7.0）と互換でなければ、警告を出して読み込まない。
 - `skills` は `SKILL.md` を含むフォルダが並ぶディレクトリ。
 - `mcpServers` は設定ファイルの `mcpServers` と同じ形式。`${VAR}` は環境変数から展開される。
 
@@ -62,7 +62,7 @@ sasacode plugin remove <name>
 
 ## API リファレンス
 
-公開 API は `@sasacode/plugin-api` の `PluginAPI` で、現在の版は 1.6.0。変更の履歴は[最後の表](#api-の版)にある。
+公開 API は `@sasacode/plugin-api` の `PluginAPI` で、現在の版は 1.7.0。変更の履歴は[最後の表](#api-の版)にある。
 
 ### PluginAPI
 
@@ -75,7 +75,7 @@ sasacode plugin remove <name>
 | `registerProvider(name, config, impl?)` | プロバイダーを追加する。`impl` を渡すと、新しい API 形式も足せる |
 | `on(hook, handler)` | フックを登録する（[フック](#フック)） |
 | `ready(promise)` | 起動時の非同期処理（サーバーへの接続など）をホストに知らせる。ヘッドレス実行はこれを待ってから最初のリクエストを送り、TUI は待たない（1.1.0〜） |
-| `permissions.addRules({allow, ask, deny})` | 権限ルールを足す |
+| `permissions.addRules({allow, ask, deny, softDeny})` | 権限ルールを足す。`softDeny` は deny と同じく拒否するが、`permission` フックが「ユーザーに確認」まで下げられる（1.7.0〜） |
 | `ui.interactive` | TUI なら true。ヘッドレスでは false で、`confirm` は false、`select` は undefined を返す |
 | `ui.notify(msg, level?)` / `ui.confirm(title, msg?)` / `ui.select(title, options)` | 通知 / 確認 / 選択 |
 | `ui.setStatus(key, text)` | フッターのステータス行に出す（`undefined` で消す） |
@@ -124,7 +124,7 @@ sasacode plugin remove <name>
 
 ```
 before_request → stream_delta（生成中、差分ごと） → assistant_message
-  → ツール呼び出しごとに: tool_call_raw → 検索・検証 → tool_call → 権限判定 → 実行 → tool_result（途中で止まった呼び出しも、tool_result は呼ばれる）
+  → ツール呼び出しごとに: tool_call_raw → 検索・検証 → tool_call → ルールとモードの判定 → permission → （agent モードのモデル判定） → 実行 → tool_result（途中で止まった呼び出しも、tool_result は呼ばれる）
   → turn_end
 ```
 
@@ -139,12 +139,13 @@ before_request → stream_delta（生成中、差分ごと） → assistant_mess
 | `assistant_message` | 応答が確定し、保存する前 | `{message, stopped?}`（`stopped` は途中で止めたプラグインと理由） | `{message}` で書き換える。`{retry: true}` で捨てて取り直す（1回の応答につき最大2回）。`{inject}` でユーザーメッセージを足して続ける（1.2.0〜） |
 | `tool_call_raw` | ツールの検索と引数の検証の前 | `{call, name, input, rawInput?, tools, stopReason}`（`rawInput` は JSON として壊れていたときの生の文字列） | `{name, input, note}` で修復する。`note` は tool_result の先頭でモデルに伝わる。履歴には修復後の呼び出しを残し、元の出力はセッションに `tool_repair` として残る（署名付きの thinking を含む応答は、履歴を書き換えずに実行時だけ直す）。`max_tokens` で途切れた呼び出しでは呼ばれない（1.2.0〜） |
 | `tool_call` | 検証の後、権限判定の前 | `{call, tool, args}` | `{args}` で引数を書き換える。`{decision: "allow" \| "ask" \| "deny", reason}` で判定する（複数あれば deny > ask > allow の強いほう）。プラグインの判定が置き換えるのは権限モードの既定の判定だけで、ユーザーの deny / ask ルールは常に効く |
+| `permission` | ルール・権限モード・`tool_call` の判定の後、ユーザーに確認する前 | `{call, tool, args, cwd, mode, verdict: {decision, reason, source}, lowest}`。`source` は `rule`（ユーザーやプラグインの allow / ask / deny ルール）、`soft`（softDeny ルール）、`mode`（権限モードの既定）、`plugin`（`tool_call` の判定）。`lowest` は変えられる下限 | `{decision, reason}` で判定を変える。厳しくするのはいつでもできるが、緩められるのは `lowest` まで（モードの既定は allow まで、softDeny は ask まで、ルールと `tool_call` の判定は緩められない）。`reason` は確認ダイアログとモデルへの拒否理由に出る。agent モードでどのハンドラも判定しなかった呼び出しは、この後モデルが判定する（1.7.0〜） |
 | `tool_result` | 呼び出しごとの結果が決まったとき | `{call, result, ran}`。`ran: false` は実行されなかった呼び出し（未知のツール、引数の不備、拒否、中断）。1.4.0 より前は、実行された呼び出しでしか呼ばれなかった | `{result}` で結果を書き換える・追記する |
 | `turn_end` | 1ターン（応答とツールの実行）の後 | `{turn, message}` | `{inject}` でユーザーメッセージを足してループを続ける。`{stop: 理由}` で実行を終える（1.4.0〜）。コアは権限・中断・コンテキスト上限でしか止まらないので、それ以外の理由で止めるのはプラグインの役割 |
 | `agent_end` | ループが止まったとき | `{cause}`（`done` / `aborted` / `error` / `refusal` / `context_limit` / `max_turns` / `stopped`）。`stopped` のときは `stopped: {plugin, reason}` も付く | `{inject}` で次の実行を始める |
 | `context_limit` | コンテキストが上限に達したとき | `{tokens, contextWindow}` | `session.replaceMessages` で空けてから `{retry: true}` で続ける（連続2回まで） |
 
-サブエージェント（`agent.run`）は、`system_prompt` / `before_request` / `stream_delta` / `assistant_message` / `tool_call_raw` / `tool_call` / `tool_result` のハンドラを共有する。セッション系のフック（`session_*`、`user_prompt`、`turn_end`、`agent_end`、`context_limit`）は、サブエージェントでは呼ばれない。
+サブエージェント（`agent.run`）は、`system_prompt` / `before_request` / `stream_delta` / `assistant_message` / `tool_call_raw` / `tool_call` / `permission` / `tool_result` のハンドラを共有する。セッション系のフック（`session_*`、`user_prompt`、`turn_end`、`agent_end`、`context_limit`）は、サブエージェントでは呼ばれない。
 
 ### API の版
 
@@ -157,6 +158,7 @@ before_request → stream_delta（生成中、差分ごと） → assistant_mess
 | 1.4.0 | `tool_result` が実行されなかった呼び出しでも呼ばれる（`ran` で区別）。`turn_end` の `stop` で実行を終えられる（停止理由 `stopped`） |
 | 1.5.0 | `Provider.listModels`（プロバイダーが自分のモデル一覧を返す）と `Request.fetch`（通信の差し替え）。別のプロバイダーを包むプロバイダーを書ける |
 | 1.6.0 | ツールの `permissionsAs`（別のツール名の権限ルールも当てる） |
+| 1.7.0 | `permission` フック（ルールとモードの判定の後に、決められた範囲で判定を変える）、`PermissionRules.softDeny`、型 `PermissionMode` と `VerdictSource` |
 
 どれも既存のプラグインを壊さない追加。ただし 1.4.0 から、`tool_result` を「実行された」合図として数えているプラグインは `ran` を見る必要がある。
 
@@ -182,6 +184,6 @@ before_request → stream_delta（生成中、差分ごと） → assistant_mess
 }
 ```
 
-同梱プラグインの名前は `tool-repair`、`repetition-guard`、`loop-guard`、`agents-md`、`compaction`、`subagent`、`todo`、`web-fetch`、`permission-presets`、`browsr`、`openai-codex`、`skills`、`mcp`。
+同梱プラグインの名前は `tool-repair`、`repetition-guard`、`loop-guard`、`agents-md`、`compaction`、`subagent`、`todo`、`web-fetch`、`permission-presets`、`jev-guard`、`browsr`、`openai-codex`、`skills`、`mcp`。
 
 プラグインを作るときは、組み込みの Skill を使うのが早い。TUI で `/skill:tool-authoring <作りたいもの>` と打つと、このリファレンスを読んだうえでモデルがプラグインを書く。

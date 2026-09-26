@@ -5,7 +5,7 @@ import type { ToolDefinition, ToolResult } from "@sasacode/plugin-api";
 import type { ApprovalAnswer, ApprovalRequest } from "./agent.ts";
 import type { AgentEvent, EventBus } from "./events.ts";
 import type { HookRunner } from "./hooks.ts";
-import { type Decision, type Judge, type PermissionCheck, PermissionPolicy } from "./permission.ts";
+import { type Decision, type Judge, type PermissionCheck, PermissionPolicy, type Verdict } from "./permission.ts";
 import type { SessionFile } from "./session.ts";
 import { validate } from "./validate.ts";
 
@@ -171,15 +171,40 @@ function preflight(
   job.tool = tool;
 }
 
+type Current = Omit<Verdict, "source"> & { source: Verdict["source"] | "plugin" };
+
 /**
- * A plugin's decision replaces the permission mode's default, but never the user's explicit
- * deny/ask rules: the stricter of the two wins.
+ * A tool_call plugin's decision replaces the permission mode's default, but never the user's
+ * explicit deny/ask rules: the stricter of the two wins. Then permission hooks may change the
+ * verdict within limits (see lowestFor), and an agent-mode call nobody decided goes to the judge.
  */
-async function decide(ctx: ToolRunContext, check: PermissionCheck, forced?: { decision: Decision; reason: string }) {
-  const policy = await ctx.permissions.check(check, forced ? undefined : ctx.judge);
-  if (!forced) return policy;
-  if (policy.source === "rule" && RANK[policy.decision] > RANK[forced.decision]) return policy;
-  return forced;
+async function decide(ctx: ToolRunContext, check: PermissionCheck, call: ToolCall, forced?: { decision: Decision; reason: string }): Promise<Current> {
+  const policy = await ctx.permissions.check(check);
+  let v: Current = policy;
+  if (forced && !(policy.source !== "mode" && RANK[policy.decision] > RANK[forced.decision])) v = { ...forced, source: "plugin" };
+  if (ctx.hooks.has("permission")) {
+    const lowest = lowestFor(v);
+    const source = v.source;
+    const verdict = { decision: v.decision, reason: v.reason, source };
+    await ctx.hooks.run("permission", { call, tool: check.tool, args: check.args, cwd: check.cwd, mode: ctx.permissions.mode, verdict, lowest }, (r, ev) => {
+      if (!r.decision) return;
+      const decision = RANK[r.decision] < RANK[lowest] ? lowest : r.decision;
+      v = { decision, reason: r.reason ?? v.reason, source };
+      ev.verdict = { decision, reason: v.reason, source };
+    });
+  }
+  if (v.needsJudge) v = await ctx.permissions.judged(check, ctx.judge);
+  return v;
+}
+
+/**
+ * How far a permission hook may loosen a verdict: a mode default all the way; a softDeny rule
+ * only as far as asking the user; the user's rules and other plugins' decisions not at all.
+ */
+function lowestFor(v: Current): Decision {
+  if (v.source === "mode") return "allow";
+  if (v.source === "soft") return "ask";
+  return v.decision;
 }
 
 const RANK: Record<Decision, number> = { allow: 0, ask: 1, deny: 2 };
@@ -199,7 +224,7 @@ async function authorize(
     return forced?.decision !== "deny";
   });
   const check: PermissionCheck = { tool, args, cwd: ctx.cwd };
-  const verdict = await decide(ctx, check, forced);
+  const verdict = await decide(ctx, check, call, forced);
   if (verdict.decision === "allow") return { args };
   if (verdict.decision === "deny") return { args, denied: err(`Permission denied (${verdict.reason}).`) };
   if (!ctx.approve)

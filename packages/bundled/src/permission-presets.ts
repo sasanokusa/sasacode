@@ -3,16 +3,13 @@ import type { PermissionRules, Plugin } from "@sasacode/plugin-api";
 /** Named rule sets, enabled with plugins.settings["permission-presets"].presets (default: guard). */
 export const PRESETS: Record<string, { description: string; rules: PermissionRules }> = {
   guard: {
-    description: "取り返しのつかない操作を常に拒否（sudo、ホームやルートの rm -rf、force push、ディスク操作、パイプで sh に流す等）",
+    description:
+      "取り返しのつかない操作を常に拒否（sudo、ルートの rm -rf、ディスク操作、パイプで sh に流す等）。ホーム配下の rm -rf と force push は softDeny（jev-guard などが確認に回せる）",
     rules: {
       deny: [
         "bash(sudo *)",
         "bash(rm -rf /)",
         "bash(rm -rf /*)",
-        "bash(rm -rf ~*)",
-        "bash(rm -rf $HOME*)",
-        "bash(git push --force*)",
-        "bash(git push -f*)",
         "bash(mkfs*)",
         "bash(dd *of=/dev/*)",
         "bash(sh)",
@@ -20,6 +17,9 @@ export const PRESETS: Record<string, { description: string; rules: PermissionRul
         "bash(zsh)",
         "bash(chmod -R 777 /*)",
       ],
+      // Broad patterns that also catch legitimate calls (rm -rf ~/proj/build, a force push to
+      // one's own branch): still denied, unless a permission plugin hands them to the user.
+      softDeny: ["bash(rm -rf ~*)", "bash(rm -rf $HOME*)", "bash(git push --force*)", "bash(git push -f*)"],
     },
   },
   "read-only-shell": {

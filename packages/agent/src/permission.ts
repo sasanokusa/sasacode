@@ -24,6 +24,8 @@ export interface PermissionRules {
   allow?: string[];
   ask?: string[];
   deny?: string[];
+  /** Denied like `deny`, but a permission hook may hand the call to the user instead (never run it unasked). */
+  softDeny?: string[];
 }
 
 export interface PermissionCheck {
@@ -35,8 +37,13 @@ export interface PermissionCheck {
 export interface Verdict {
   decision: Decision;
   reason: string;
-  /** "rule": the user's (or a plugin's) explicit allow/ask/deny rule; "mode": the permission mode's default. */
-  source: "rule" | "mode";
+  /**
+   * "rule": the user's (or a plugin's) explicit allow/ask/deny rule; "soft": a softDeny rule;
+   * "mode": the permission mode's default.
+   */
+  source: "rule" | "soft" | "mode";
+  /** Agent mode, checked without a judge: the model still has to judge this call (see judged()). */
+  needsJudge?: boolean;
 }
 
 /** Asks the model whether a call is safe. Used by the "agent" mode. */
@@ -50,7 +57,7 @@ interface ParsedRule {
 
 export class PermissionPolicy {
   mode: PermissionMode;
-  private rules: Record<Decision, ParsedRule[]> = { allow: [], ask: [], deny: [] };
+  private rules: Record<Decision | "softDeny", ParsedRule[]> = { allow: [], ask: [], deny: [], softDeny: [] };
 
   constructor(mode: PermissionMode = "edits", rules: PermissionRules = {}) {
     this.mode = mode;
@@ -58,19 +65,27 @@ export class PermissionPolicy {
   }
 
   addRules(rules: PermissionRules): void {
-    for (const d of ["allow", "ask", "deny"] as const) for (const r of rules[d] ?? []) this.rules[d].push(parseRule(r));
+    for (const d of ["allow", "ask", "deny", "softDeny"] as const) for (const r of rules[d] ?? []) this.rules[d].push(parseRule(r));
   }
 
+  /** Without a judge, an agent-mode call comes back as "ask" with `needsJudge` set. */
   async check(c: PermissionCheck, judge?: Judge): Promise<Verdict> {
-    for (const d of ["deny", "ask"] as const) {
-      const hit = this.rules[d].find((r) => ruleMatches(r, c));
-      if (hit) return { decision: d, reason: `rule ${d}: ${hit.source}`, source: "rule" };
-    }
+    const denied = this.rules.deny.find((r) => ruleMatches(r, c));
+    if (denied) return { decision: "deny", reason: `rule deny: ${denied.source}`, source: "rule" };
+    const soft = this.rules.softDeny.find((r) => ruleMatches(r, c));
+    if (soft) return { decision: "deny", reason: `rule softDeny: ${soft.source}`, source: "soft" };
+    const asked = this.rules.ask.find((r) => ruleMatches(r, c));
+    if (asked) return { decision: "ask", reason: `rule ask: ${asked.source}`, source: "rule" };
     // Where a path really goes cannot be told (a link loop, no permission): let the user decide.
     const unclear = (c.tool.paths?.(c.args, c.cwd) ?? []).find((p) => tryRealPath(p) === undefined);
     if (unclear) return { decision: "ask", reason: `cannot resolve ${unclear}`, source: "rule" };
     if (allowedByRules(this.rules.allow, c)) return { decision: "allow", reason: "allow rule", source: "rule" };
     return { ...(await this.modeDecision(c, judge)), source: "mode" };
+  }
+
+  /** The agent-mode judgement that check() left open (`needsJudge`). */
+  async judged(c: PermissionCheck, judge: Judge): Promise<Verdict> {
+    return { ...(await askJudge(c, judge)), source: "mode" };
   }
 
   private async modeDecision(c: PermissionCheck, judge?: Judge): Promise<Omit<Verdict, "source">> {
@@ -88,13 +103,8 @@ export class PermissionPolicy {
         return { decision: "ask", reason: "mode edits" };
       case "agent": {
         if (c.tool.kind === "read" && hasPaths && insideCwd) return { decision: "allow", reason: "read inside working directory" };
-        if (!judge) return { decision: "ask", reason: "no judge available" };
-        try {
-          const j = await judge(c);
-          return { decision: j.safe ? "allow" : "ask", reason: `agent judged ${j.safe ? "safe" : "risky"}: ${j.reason}` };
-        } catch (e) {
-          return { decision: "ask", reason: `judge failed: ${(e as Error).message}` };
-        }
+        if (!judge) return { decision: "ask", reason: "mode agent: not judged yet", needsJudge: true };
+        return askJudge(c, judge);
       }
     }
   }
@@ -104,6 +114,15 @@ export class PermissionPolicy {
     const target = c.tool.matchTarget?.(c.args);
     if (target !== undefined) return `${c.tool.name}(${target})`;
     return c.tool.name;
+  }
+}
+
+async function askJudge(c: PermissionCheck, judge: Judge): Promise<Omit<Verdict, "source">> {
+  try {
+    const j = await judge(c);
+    return { decision: j.safe ? "allow" : "ask", reason: `agent judged ${j.safe ? "safe" : "risky"}: ${j.reason}` };
+  } catch (e) {
+    return { decision: "ask", reason: `judge failed: ${(e as Error).message}` };
   }
 }
 

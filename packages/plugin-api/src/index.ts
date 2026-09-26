@@ -26,7 +26,7 @@ export type {
   UserContent,
 } from "@sasacode/ai";
 
-export const PLUGIN_API_VERSION = "1.6.0";
+export const PLUGIN_API_VERSION = "1.7.0";
 
 // ── tools ────────────────────────────────────────────────────────────
 
@@ -93,6 +93,13 @@ export interface CommandDefinition {
 // ── hooks (requirements 5.3) ─────────────────────────────────────────
 
 export type Decision = "allow" | "ask" | "deny";
+/** auto: allow everything; agent: the model judges; ask: ask for every call; edits: reads and edits in the working directory run. (since 1.7.0) */
+export type PermissionMode = "auto" | "agent" | "ask" | "edits";
+/**
+ * Where a verdict came from: "rule" the user's (or a plugin's) allow/ask/deny rule, "soft" a
+ * softDeny rule, "mode" the permission mode's default, "plugin" a tool_call hook's decision. (since 1.7.0)
+ */
+export type VerdictSource = "rule" | "soft" | "mode" | "plugin";
 /** `stopped`: a plugin ended the run from turn_end (which one and why is in agent_end's `stopped`). (since 1.4.0) */
 export type StopCause = "done" | "aborted" | "error" | "refusal" | "context_limit" | "max_turns" | "stopped";
 
@@ -102,7 +109,7 @@ export type DeltaKind = "text" | "thinking" | "toolcall";
  * Each hook: the payload handlers receive and what they may return. Handlers run in registration order.
  * Order around one model response:
  *   before_request → [stream_delta …] → assistant_message → tool_call_raw (per call)
- *   → validation → tool_call → permission → execute → tool_result
+ *   → validation → tool_call → rules and mode → permission → execute → tool_result
  */
 export interface HookMap {
   session_start: { event: { sessionId?: string; resumed: boolean }; result: void };
@@ -154,6 +161,25 @@ export interface HookMap {
   tool_call: {
     event: { call: ToolCall; tool: ToolDefinition<any>; args: Record<string, unknown> };
     result: { args?: Record<string, unknown>; decision?: Decision; reason?: string };
+  };
+  /**
+   * The verdict of the rules, the permission mode and tool_call hooks, before the user is asked.
+   * Return a `decision` to change it: stricter is always accepted; looser only down to `lowest`
+   * (a mode default may go to "allow", a softDeny rule to "ask", the user's rules and tool_call
+   * decisions only stricter). In agent mode, a call no handler decided goes to the model judge.
+   * (since 1.7.0)
+   */
+  permission: {
+    event: {
+      call: ToolCall;
+      tool: ToolDefinition<any>;
+      args: Record<string, unknown>;
+      cwd: string;
+      mode: PermissionMode;
+      verdict: { decision: Decision; reason: string; source: VerdictSource };
+      lowest: Decision;
+    };
+    result: { decision?: Decision; reason?: string };
   };
   /**
    * Every call's result, including calls that never ran (`ran: false`: unknown tool, invalid
@@ -251,6 +277,11 @@ export interface PermissionRules {
   allow?: string[];
   ask?: string[];
   deny?: string[];
+  /**
+   * Denied like `deny`, unless a `permission` hook hands the call to the user (it never runs
+   * unasked). For broad patterns that also catch legitimate calls. (since 1.7.0)
+   */
+  softDeny?: string[];
 }
 
 export interface PluginAPI {

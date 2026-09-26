@@ -2,6 +2,7 @@ import type { Plugin } from "@sasacode/plugin-api";
 import agentsMd from "./agents-md.ts";
 import browsr from "./browsr.ts";
 import compaction from "./compaction.ts";
+import jevGuard from "./jev-guard.ts";
 import loopGuard from "./loop-guard.ts";
 import openaiCodex from "./openai-codex/index.ts";
 import permissionPresets from "./permission-presets.ts";
@@ -13,6 +14,7 @@ import webFetch from "./web-fetch.ts";
 
 export { agentsFiles } from "./agents-md.ts";
 export { compact, splitPoint, transcript } from "./compaction.ts";
+export { adjust as jevAdjust, buildState as jevState, interpret as jevInterpret, parseAnswers as jevParseAnswers, pathArgs, redact, shellWords } from "./jev-guard.ts";
 export { PRESETS } from "./permission-presets.ts";
 export { detectRepetition } from "./repetition-guard.ts";
 export { closestName, editDistance, fitToSchema, repairJson } from "./tool-repair.ts";
@@ -30,6 +32,7 @@ export const bundledPlugins: Record<string, Plugin> = {
   todo,
   "web-fetch": webFetch,
   "permission-presets": permissionPresets,
+  "jev-guard": jevGuard,
   browsr,
   "openai-codex": openaiCodex,
 };
