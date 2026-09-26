@@ -1,4 +1,11 @@
 {
   "version": 1,
-  "plugins": []
+  "plugins": [
+    {
+      "name": "agent-hygiene",
+      "source": "sasacode-plugin-agent-hygiene",
+      "description": "作業記録を散らかさない。STATE.md は「現在の作業」と「次の作業」だけにし、履歴は agent_log ツールで .agents/log.jsonl へ。/kickoff と /handoff の定型手順つき",
+      "author": "sasanokusa"
+    }
+  ]
 }
