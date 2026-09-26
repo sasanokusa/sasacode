@@ -103,7 +103,7 @@
   tr:last-child td { border-bottom: 0; }
   th { font-weight: 700; color: var(--ink-2); font-size: 12.5px; letter-spacing: .04em; background: color-mix(in srgb, var(--sheet) 70%, var(--paper)); white-space: nowrap; }
   td code { white-space: nowrap; }
-  td.wrap code, td .wrap { white-space: normal; }
+  td.brk code { white-space: normal; }
   .yes { color: var(--take); font-weight: 700; }
   .no-c { color: var(--shu); font-weight: 700; }
 
@@ -413,9 +413,9 @@ sasacode -m pgx/&lt;モデル名&gt;</code></pre>
       <p><code>plugins.settings["permission-presets"].presets</code> で選ぶ（既定 <code>["guard"]</code>）。<code>/presets</code> で一覧。</p>
       <div class="tbl"><table>
         <tr><th>プリセット</th><th>中身</th></tr>
-        <tr><td><code>guard</code></td><td class="wrap"><b>deny</b>：<code>sudo *</code>、<code>rm -rf /</code>・<code>/*</code>、<code>mkfs*</code>、<code>dd *of=/dev/*</code>、パイプ先の <code>sh</code>・<code>bash</code>・<code>zsh</code>、<code>chmod -R 777 /*</code><br><b>softDeny</b>：<code>rm -rf ~*</code>・<code>$HOME*</code>、<code>git push --force*</code>・<code>-f*</code><br><b>ask</b>（auto でも確認）：<code>ssh</code>、<code>scp</code>、<code>sftp</code>、リモートへの <code>rsync</code></td></tr>
-        <tr><td><code>read-only-shell</code></td><td class="wrap">読み取りだけのコマンドを許可：<code>ls</code>、<code>cat</code>、<code>head</code>、<code>tail</code>、<code>wc</code>、<code>rg</code>、<code>grep</code>、<code>tree</code>、<code>file</code>、<code>which</code>、<code>git status/diff/log/show/branch/rev-parse</code></td></tr>
-        <tr><td><code>tests</code></td><td class="wrap">テストと型チェックを許可：<code>bun/npm/pnpm/yarn test</code>、<code>cargo test</code>、<code>go test</code>、<code>pytest</code>、<code>tsc --noEmit</code>、<code>bun run typecheck</code></td></tr>
+        <tr><td><code>guard</code></td><td class="brk"><b>deny</b>：<code>sudo *</code>、<code>rm -rf /</code>・<code>/*</code>、<code>mkfs*</code>、<code>dd *of=/dev/*</code>、パイプ先の <code>sh</code>・<code>bash</code>・<code>zsh</code>、<code>chmod -R 777 /*</code><br><b>softDeny</b>：<code>rm -rf ~*</code>・<code>$HOME*</code>、<code>git push --force*</code>・<code>-f*</code><br><b>ask</b>（auto でも確認）：<code>ssh</code>、<code>scp</code>、<code>sftp</code>、リモートへの <code>rsync</code></td></tr>
+        <tr><td><code>read-only-shell</code></td><td class="brk">読み取りだけのコマンドを許可：<code>ls</code>、<code>cat</code>、<code>head</code>、<code>tail</code>、<code>wc</code>、<code>rg</code>、<code>grep</code>、<code>tree</code>、<code>file</code>、<code>which</code>、<code>git status/diff/log/show/branch/rev-parse</code></td></tr>
+        <tr><td><code>tests</code></td><td class="brk">テストと型チェックを許可：<code>bun/npm/pnpm/yarn test</code>、<code>cargo test</code>、<code>go test</code>、<code>pytest</code>、<code>tsc --noEmit</code>、<code>bun run typecheck</code></td></tr>
       </table></div>
 
       <h3 id="limits">できないこと</h3>
@@ -464,8 +464,8 @@ sasacode -m pgx/&lt;モデル名&gt;</code></pre>
         <tr><td><code>model</code></td><td>文字列</td><td>起動時のモデル（<code>provider/model</code>）</td></tr>
         <tr><td><code>models</code></td><td>文字列の配列</td><td><code>/model</code> の一覧の先頭に出すモデル</td></tr>
         <tr><td><code>thinking</code></td><td><code>high</code></td><td>推論の深さ</td></tr>
-        <tr><td><code>providers.&lt;name&gt;</code></td><td>オブジェクト</td><td class="wrap"><code>api</code>（<code>openai-chat</code> / <code>openai-responses</code> / <code>anthropic</code>、省略で判別）、<code>baseUrl</code>、<code>apiKeyEnv</code>、<code>headers</code>、<code>defaultModel</code></td></tr>
-        <tr><td><code>modelOverrides.&lt;provider/model&gt;</code></td><td>オブジェクト</td><td class="wrap"><code>contextWindow</code>、<code>maxOutput</code>、<code>price</code>（100 万トークンあたりの USD：<code>input</code>・<code>output</code>・<code>cacheRead</code>・<code>cacheWrite</code>）、<code>reasoning</code>、<code>images</code></td></tr>
+        <tr><td><code>providers.&lt;name&gt;</code></td><td>オブジェクト</td><td class="brk"><code>api</code>（<code>openai-chat</code> / <code>openai-responses</code> / <code>anthropic</code>、省略で判別）、<code>baseUrl</code>、<code>apiKeyEnv</code>、<code>headers</code>、<code>defaultModel</code></td></tr>
+        <tr><td><code>modelOverrides.&lt;provider/model&gt;</code></td><td>オブジェクト</td><td class="brk"><code>contextWindow</code>、<code>maxOutput</code>、<code>price</code>（100 万トークンあたりの USD：<code>input</code>・<code>output</code>・<code>cacheRead</code>・<code>cacheWrite</code>）、<code>reasoning</code>、<code>images</code></td></tr>
         <tr><td><code>permissions</code></td><td>オブジェクト</td><td><code>mode</code>、<code>allow</code>、<code>ask</code>、<code>deny</code>、<code>softDeny</code></td></tr>
         <tr><td><code>instructions</code></td><td>文字列</td><td>システムプロンプトに足す文</td></tr>
         <tr><td><code>maxTurns</code></td><td><code>200</code></td><td>1回の依頼でモデルに送るリクエストの上限（0 で無制限）</td></tr>
@@ -473,8 +473,8 @@ sasacode -m pgx/&lt;モデル名&gt;</code></pre>
         <tr><td><code>plugins.disabled</code></td><td>配列</td><td>読み込まないプラグイン（同梱も含む）</td></tr>
         <tr><td><code>plugins.settings.&lt;name&gt;</code></td><td>オブジェクト</td><td>プラグインに渡す設定（<a href="#bundled">同梱プラグインの設定</a>）</td></tr>
         <tr><td><code>tools.disabled</code></td><td>配列</td><td>使わないツール（組み込みも含む）</td></tr>
-        <tr><td><code>mcpServers.&lt;name&gt;</code></td><td>オブジェクト</td><td class="wrap">stdio：<code>command</code>、<code>args</code>、<code>env</code>、<code>cwd</code> ／ HTTP：<code>url</code>、<code>headers</code>。共通：<code>disabled</code>、<code>alwaysLoad</code>。<code>${VAR}</code> は環境変数から展開</td></tr>
-        <tr><td><code>toolSearch</code></td><td><code>{"mode":"auto","percent":10,"count":30}</code></td><td class="wrap">MCP とプラグインのツール定義が、コンテキストの <code>percent</code>% 以上か <code>count</code> 個以上で遅延ロードにする。<code>mode</code> は <code>auto</code> / <code>always</code> / <code>never</code></td></tr>
+        <tr><td><code>mcpServers.&lt;name&gt;</code></td><td>オブジェクト</td><td class="brk">stdio：<code>command</code>、<code>args</code>、<code>env</code>、<code>cwd</code> ／ HTTP：<code>url</code>、<code>headers</code>。共通：<code>disabled</code>、<code>alwaysLoad</code>。<code>${VAR}</code> は環境変数から展開</td></tr>
+        <tr><td><code>toolSearch</code></td><td><code>{"mode":"auto","percent":10,"count":30}</code></td><td class="brk">MCP とプラグインのツール定義が、コンテキストの <code>percent</code>% 以上か <code>count</code> 個以上で遅延ロードにする。<code>mode</code> は <code>auto</code> / <code>always</code> / <code>never</code></td></tr>
         <tr><td><code>tui.altScreen</code> / <code>tui.bell</code></td><td><code>true</code> / <code>true</code></td><td>全画面 / 長い実行の後のベル</td></tr>
         <tr><td><code>trustedProjects</code></td><td>配列（全体の設定のみ）</td><td>尋ねずに信頼するプロジェクト</td></tr>
       </table></div>
@@ -586,11 +586,11 @@ sasacode -m pgx/&lt;モデル名&gt;</code></pre>
       <div class="tbl"><table>
         <tr><th>設定</th><th>既定</th><th>内容</th></tr>
         <tr><td><code>enabled</code></td><td><code>false</code></td><td>有効にする</td></tr>
-        <tr><td><code>backend</code></td><td>キーのある方</td><td class="wrap"><code>commandcode</code>（<code>CMD_API_KEY</code>）、<code>typesafe</code>（<code>TYPESAFE_API_KEY</code>）、<code>openrouter</code>、<code>vercel</code>、<code>chat</code>（sasacode の任意のモデル）。OpenRouter と Vercel は名前を指定したときだけ使う</td></tr>
+        <tr><td><code>backend</code></td><td>キーのある方</td><td class="brk"><code>commandcode</code>（<code>CMD_API_KEY</code>）、<code>typesafe</code>（<code>TYPESAFE_API_KEY</code>）、<code>openrouter</code>、<code>vercel</code>、<code>chat</code>（sasacode の任意のモデル）。OpenRouter と Vercel は名前を指定したときだけ使う</td></tr>
         <tr><td><code>model</code> / <code>endpoint</code> / <code>apiKeyEnv</code></td><td>接続先ごと</td><td>モデル名 / URL / キーの変数を変える（プロキシなど）</td></tr>
         <tr><td><code>timeoutMs</code></td><td><code>5000</code>（<code>chat</code> は 60000）</td><td>これを超えたら Jev なしの判定で続ける</td></tr>
         <tr><td><code>skip</code></td><td><code>["todo_write","task"]</code></td><td>判定しないツール（読み取りと作業ディレクトリ内の編集は元から判定しない）</td></tr>
-        <tr><td><code>thresholds</code></td><td class="wrap"><code>allow</code> 0.8、<code>headlessAllow</code> 0.9、<code>deny</code> 0.85、<code>confidence</code> 0.6、<code>risk</code> 0.6、<code>flag</code> 0.7、<code>clear</code> 0.3</td><td>判定の閾値</td></tr>
+        <tr><td><code>thresholds</code></td><td class="brk"><code>allow</code> 0.8、<code>headlessAllow</code> 0.9、<code>deny</code> 0.85、<code>confidence</code> 0.6、<code>risk</code> 0.6、<code>flag</code> 0.7、<code>clear</code> 0.3</td><td>判定の閾値</td></tr>
       </table></div>
     </section>
 
