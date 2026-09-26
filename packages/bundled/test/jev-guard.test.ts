@@ -110,16 +110,19 @@ function repo(): string {
 
 test("state: targets resolved, placed and described by git; the user's request included", () => {
   const dir = repo();
-  const state = jevState({ tool: bashTool, args: { command: "rm -rf build && rm src/a.ts notes.txt ~/.ssh" }, cwd: dir, userRequest: "clean the build" });
-  expect(state.call).toEqual({ tool: "bash", command: "rm -rf build && rm src/a.ts notes.txt ~/.ssh" });
+  // Outside the workspace and any git repository, and there on every machine (CI has no ~/.ssh).
+  const outside = mkdtempSync(join(root, "outside-"));
+  const command = `rm -rf build && rm src/a.ts notes.txt ${outside}`;
+  const state = jevState({ tool: bashTool, args: { command }, cwd: dir, userRequest: "clean the build" });
+  expect(state.call).toEqual({ tool: "bash", command });
   expect(state.steps).toBeUndefined(); // the command is already there; repeating it only distracts
   expect(state.user_request).toBe("clean the build");
   const targets = state.targets as { path: string; location: string; git: string }[];
-  expect(targets.map((t) => t.path)).toEqual(["build", "src/a.ts", "notes.txt", "~/.ssh"]);
+  expect(targets.map((t) => t.path)).toEqual(["build", "src/a.ts", "notes.txt", outside]);
   expect(targets[0]).toMatchObject({ location: "inside the workspace", git: "ignored by git (build output, caches, dependencies)" });
   expect(targets[1]).toMatchObject({ location: "inside the workspace", git: "tracked by git, with uncommitted changes" });
   expect(targets[2]).toMatchObject({ git: "untracked (not in git, cannot be restored from it)" });
-  expect(targets[3]).toMatchObject({ location: "outside the workspace", git: "not in a git repository" });
+  expect(targets[3]).toMatchObject({ location: "a temporary directory", git: "not in a git repository" });
 
   const ignored = jevState({ tool: bashTool, args: { command: "rm -rf ./build" }, cwd: dir });
   expect((ignored.targets as { git: string }[])[0]!.git).toBe("ignored by git (build output, caches, dependencies)");
