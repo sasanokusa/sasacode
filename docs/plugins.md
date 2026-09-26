@@ -50,15 +50,47 @@ npm のパッケージは `bun run pack:plugin-api` で `dist/plugin-api` に作
 - `skills` は `SKILL.md` を含むフォルダが並ぶディレクトリ。
 - `mcpServers` は設定ファイルの `mcpServers` と同じ形式。`${VAR}` は環境変数から展開される。
 
-インストール：
+## 探す・入れる
 
 ```bash
-sasacode plugin install my-sasacode-plugin            # npm
+sasacode plugin search [語]                         # sasanokusa.com のおすすめ一覧と npm から探す
+sasacode plugin install sasacode-plugin-foo         # npm
 sasacode plugin install https://github.com/you/plugin  # git
-sasacode plugin install <spec> --project              # .sasacode/plugins へ
+sasacode plugin install ./my-plugin                 # 手元のパッケージ（公開前の確認に）
+sasacode plugin install <spec> --project            # .sasacode/plugins へ
+sasacode plugin update [名前]                        # npm は最新版へ、git は差分を見せてから更新
 sasacode plugin list
-sasacode plugin remove <name>
+sasacode plugin remove <名前>
 ```
+
+- `search` は、sasanokusa.com に置いた小さな一覧（`plugins.json`、数 KB）と、npm のキーワード `sasacode-plugin` の検索を合わせて出す。一覧に載っているものには ★ が付く。どちらかに届かなくても、もう一方の結果は出る。本体は npm や GitHub から直接取るので、sasanokusa.com を通るのは一覧だけ。
+- `install` は、入れる前に中身を見せて確認を取る。npm なら版、公開者、公開日、ファイル数と大きさ、依存パッケージ、install スクリプトの有無（実行はしない）、`sasacode` フィールドの有無。git なら URL を見せ、入れた後にコミットを出す。端末がないとき（スクリプトなど）は `--yes` が要る。
+- パッケージの取得には sasacode に内蔵の Bun を使うので、Bun や npm を入れていなくても動く。
+- `update` は、git のプラグインなら新しいコミットの一覧と変更の規模（`git diff --stat`）を見せてから更新する。
+
+## 公開する
+
+1ファイルのプラグインは、そのまま npm に出せる。
+
+```bash
+sasacode plugin publish my-tool.ts --license MIT --dry-run   # 中身の確認
+sasacode plugin publish my-tool.ts --license MIT             # npm publish（npm へのログインが必要）
+```
+
+- `~/.sasacode/publish/<パッケージ名>/` に npm のパッケージを組み立てて、`npm publish --access public` を実行する。パッケージ名は既定で `sasacode-plugin-<ファイル名>`（`--name @you/my-tool` で変えられる）。
+- `package.json` には、`sasacode` フィールド（マニフェスト）、検索用のキーワード `sasacode-plugin`、ピア依存の `@sasacode/plugin-api` を入れる。README はファイル先頭のコメントから作る。
+- 版は、npm に出ている最新版の次のパッチ（初回は 0.1.0）。`--version` で指定できる。
+- `apiVersion` は、使っている機能から決める（`permission` フックや `softDeny` なら ^1.7.0、`permissionsAs` なら ^1.6.0、など）。`--api` で指定できる。
+- 同じフォルダのほかのファイルを import していると、それは含まれない（注意を出す）。そういうプラグインは、`package.json` に `sasacode` フィールドを書いたディレクトリごと `sasacode plugin publish <ディレクトリ>` で出す（キーワードがなければ足す）。
+- ライセンスを付けないと、ほかの人は再利用できない。`--license MIT` のように付ける。
+
+sasanokusa.com のおすすめ一覧に載せたいときは、[リポジトリ](https://github.com/sasanokusa/sasacode)の `site/plugins.json` に1件足す pull request を送る。
+
+```json
+{ "name": "my-tool", "source": "sasacode-plugin-my-tool", "description": "何をするか", "author": "you" }
+```
+
+`source` は `sasacode plugin install` に渡すもの（npm のパッケージ名か git の URL）。
 
 ## API リファレンス
 
@@ -173,7 +205,7 @@ before_request → stream_delta（生成中、差分ごと） → assistant_mess
 
 ## 信頼と安全
 
-インプロセスプラグインは sasacode と同じ権限で動く。`~/.sasacode/plugins` のものはユーザーが自分で入れたものとして、そのまま読み込む。プロジェクトの `.sasacode/plugins` は、プロジェクト設定の信頼が必要な部分（エンドポイント、MCP サーバー、プラグインの設定など）とまとめて、起動時に1回だけ信頼の確認を出す。構成が変わると、また確認を出す。ヘッドレスでは、`--trust-project` を付けたときだけ読み込む。確認の結果は `~/.sasacode/trust.json` に保存する。
+インプロセスプラグインは sasacode と同じ権限で動く。`sasacode plugin install` は入れる前に中身を見せて確認を取る。`~/.sasacode/plugins` のものはユーザーが自分で入れたものとして、そのまま読み込む。プロジェクトの `.sasacode/plugins` は、プロジェクト設定の信頼が必要な部分（エンドポイント、MCP サーバー、プラグインの設定など）とまとめて、起動時に1回だけ信頼の確認を出す。構成が変わると、また確認を出す。ヘッドレスでは、`--trust-project` を付けたときだけ読み込む。確認の結果は `~/.sasacode/trust.json` に保存する。
 
 ## 無効化・上書き
 

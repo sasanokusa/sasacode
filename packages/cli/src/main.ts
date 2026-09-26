@@ -34,9 +34,10 @@ Options:
                                  permission settings without asking
 
 Subcommands:
-  sasacode plugin install <npm-spec|git-url> [--project]
-  sasacode plugin remove <name> [--project]
-  sasacode plugin list
+  sasacode plugin search [words]              find plugins (sasanokusa.com's list and npm)
+  sasacode plugin install <npm-spec|git-url> [--project] [--yes]
+  sasacode plugin update [name] | remove <name> | list
+  sasacode plugin publish <file.ts|dir> [--name <pkg>] [--license <id>] [--dry-run]
   sasacode endpoint add <name> <url> [--key-env VAR] [--project]   add a server (format detected)
   sasacode endpoint remove <name> [--project]
   sasacode endpoint list

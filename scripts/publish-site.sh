@@ -7,5 +7,5 @@ HOST="${1:-sasa@100.65.215.48}"
 ROOT=/var/www/html/sasacode
 cd "$(dirname "$0")/.."
 ssh "$HOST" "mkdir -p $ROOT"
-scp -q site/index.html site/.htaccess "$HOST:$ROOT/"
+scp -q site/index.html site/.htaccess site/plugins.json "$HOST:$ROOT/"
 echo "deployed https://sasanokusa.com/sasacode/"

@@ -4,4 +4,6 @@ RewriteEngine On
 RewriteRule ^install\.sh$ https://github.com/sasanokusa/sasacode/releases/latest/download/install.sh [R=302,L]
 RewriteRule ^latest$ https://github.com/sasanokusa/sasacode/releases/latest [R=302,L]
 Header always set Cache-Control "no-cache, no-store, must-revalidate" "expr=%{REQUEST_URI} =~ m#/(install\.sh|latest)$#"
+# The plugin list (sasacode plugin search): a few KB, refreshed within minutes of a change.
+Header always set Cache-Control "max-age=300" "expr=%{REQUEST_URI} =~ m#/plugins\.json$#"
 Options -Indexes

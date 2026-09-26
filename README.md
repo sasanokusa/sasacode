@@ -54,7 +54,7 @@ sasacode -r <id> -p "続き"            # セッション ID を指定して続�
 | `--max-turns <n>` | 1回の実行のターン数の上限（既定 200、0 で無制限） |
 | `-c` / `-r <id>` / `--no-session` | 再開 / ID を指定して再開 / 保存しない |
 | `--trust-project` | プロジェクトを確認なしで信頼する（ヘッドレス向け。[プロジェクトの信頼](#プロジェクトの信頼)） |
-| `sasacode plugin install\|remove\|list` | プラグインの管理（npm か git URL） |
+| `sasacode plugin search\|install\|update\|remove\|list\|publish` | プラグインを探す・入れる（npm か git URL）・更新する・npm に公開する（[共有](#プラグインを共有する)） |
 | `sasacode endpoint add\|remove\|list` | 自前のサーバーの追加（形式は自動判別） |
 | `sasacode login [status\|logout]` | ChatGPT プランでログイン（`openai-codex/…` のモデル用） |
 
@@ -289,6 +289,16 @@ export default ((api) => {
 - **エージェント**：サブエージェント、単発の呼び出し
 
 詳しくは [docs/plugins.md](docs/plugins.md)。
+
+### プラグインを共有する
+
+```bash
+sasacode plugin search 天気                          # おすすめ一覧（sasanokusa.com）と npm から探す
+sasacode plugin install sasacode-plugin-weather     # 入れる前に中身を見せて確認する
+sasacode plugin publish weather.ts --license MIT    # 1ファイルのプラグインを npm に公開する
+```
+
+公開すると、npm のキーワード `sasacode-plugin` で誰の `search` にも出る。sasanokusa.com の一覧（`site/plugins.json`）はおすすめを載せるだけの数 KB の JSON で、プラグインの本体は npm や GitHub から直接取る。詳しくは [docs/plugins.md](docs/plugins.md#公開する)。
 
 ## セッション
 
