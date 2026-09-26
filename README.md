@@ -1,10 +1,12 @@
 # sasacode
 
+[English](README.en.md) · 日本語 · [ドキュメント](https://sasanokusa.com/sasacode/docs/)
+
 プラグインで組み替えられる、ターミナル向けの小さなコーディングエージェント（TypeScript / Bun）。
 
 コアに入っているのは、エージェントループ、プロバイダー、4つの組み込みツール（read / write / edit / bash）、TUI、セッション、権限確認だけ。それ以外の振る舞いは、すべて公開のプラグイン API で足す。組み込みツールも同じ API で登録している。MCP サーバーと Agent Skills（`SKILL.md`）はそのまま使える。小型モデルでも実用になるよう、壊れたツール呼び出しの修復と、同じ文の繰り返しの抑止も同梱している。
 
-要件は [docs/requirements.md](docs/requirements.md)。マイルストーン M0〜M4 はすべて完了した（検証の記録は [docs/milestones.md](docs/milestones.md)）。
+図や設定の一覧を含む詳しい説明は [sasanokusa.com/sasacode/docs](https://sasanokusa.com/sasacode/docs/) にある。要件は [docs/requirements.md](docs/requirements.md)。マイルストーン M0〜M4 はすべて完了した（検証の記録は [docs/milestones.md](docs/milestones.md)）。
 
 ## クイックスタート
 
@@ -161,7 +163,7 @@ sasacode -m llama/<モデル名>
 | `edits`（既定） | 作業ディレクトリ内の read / write / edit は自動で許可し、bash やディレクトリ外への操作は確認する |
 | `ask` | 読み取りを含む、すべてのツール実行を確認する |
 | `agent` | 作業ディレクトリ内の read は自動で許可し、それ以外は現在のモデルに危険度を判定させる。安全なら許可、そうでなければ確認する |
-| `auto` | すべて許可する（deny ルールだけは効く） |
+| `auto` | すべて許可する（deny と ask のルールは効く） |
 
 - ルールは `ツール名` か `ツール名(パターン)`。bash はコマンド文字列を `*` のワイルドカードで、read / write / edit はパスを glob で照合する。
 - 判定の順番は deny → softDeny → ask → allow → モード → `permission` フック（プラグイン）。`softDeny` は deny と同じく拒否するが、`jev-guard` などのプラグインが「ユーザーに確認」まで下げられる（確認なしに実行されることはない）。広すぎて正当な操作も巻き込むパターン向け。allow ルールで通るのは、`&&` `;` `|` でつないだコマンドの**すべて**が許可されている場合だけ。`$(…)`、バッククォート、`>` を含むコマンドは、allow ルールでは通らない。
@@ -298,7 +300,7 @@ sasacode plugin install sasacode-plugin-weather     # 入れる前に中身を�
 sasacode plugin publish weather.ts --license MIT    # 1ファイルのプラグインを npm に公開する
 ```
 
-公開すると、npm のキーワード `sasacode-plugin` で誰の `search` にも出る。sasanokusa.com の一覧（`site/plugins.json`）はおすすめを載せるだけの数 KB の JSON で、プラグインの本体は npm や GitHub から直接取る。詳しくは [docs/plugins.md](docs/plugins.md#公開する)。
+公開すると、npm のキーワード `sasacode-plugin` で誰の `search` にも出る（語なしの `search` で全部）。sasanokusa.com の一覧（`site/plugins.json`）はおすすめを載せるだけの数 KB の JSON で、プラグインの本体は npm や GitHub から直接取る。一覧に載せたいときは `site/plugins.json` に1件足す pull request を送る。入れるのも公開するのも sasacode に内蔵の Bun を使うので、Bun や npm を入れる必要はない（公開だけは npm が要る）。端末のないスクリプトから `plugin install` するときは `--yes` を付ける。詳しくは [docs/plugins.md](docs/plugins.md#公開する)。
 
 ## セッション
 

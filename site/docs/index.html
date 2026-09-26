@@ -1,0 +1,875 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>sasacode ドキュメント</title>
+<meta name="description" content="sasacode の使い方・設定・権限・プラグインの詳しい説明">
+<meta name="theme-color" content="#e9e8dc" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#161a16" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 3C9 9 7 17 16 29c9-12 7-20 0-26z' fill='%233aa86b'/%3E%3Cpath d='M16 7v20' stroke='%23e9f7ee' stroke-width='1.5'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=M+PLUS+1+Code:wght@400;500;700&family=Yuji+Syuku&family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap">
+<style>
+  :root {
+    --paper: #e9e8dc; --sheet: #f7f5ee; --ink: #1e241e; --ink-2: #566052; --line: #cfcdbd;
+    --take: #2d7549; --take-soft: #dde8d4; --shu: #c23b24; --shu-soft: #f3ddd4; --gold: #9a6b12; --gold-soft: #f1e6c8;
+    --term: #1b211c; --term-ink: #dde5d4; --term-dim: #8a9685; --code-bg: #efece1;
+    --f-brush: "Yuji Syuku", "Hiragino Mincho ProN", "Yu Mincho", serif;
+    --f-body: "Zen Kaku Gothic New", "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Noto Sans JP", system-ui, sans-serif;
+    --f-mono: "M PLUS 1 Code", ui-monospace, SFMono-Regular, Menlo, monospace;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #161a16; --sheet: #1d221d; --ink: #e4e8dc; --ink-2: #a3ad9c; --line: #343b33;
+      --take: #6cc28b; --take-soft: #22362a; --shu: #ec7a62; --shu-soft: #3a2420; --gold: #e0b35a; --gold-soft: #3a3020;
+      --term: #0f130f; --term-ink: #dde5d4; --term-dim: #7f8b79; --code-bg: #232923; color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #161a16; --sheet: #1d221d; --ink: #e4e8dc; --ink-2: #a3ad9c; --line: #343b33;
+    --take: #6cc28b; --take-soft: #22362a; --shu: #ec7a62; --shu-soft: #3a2420; --gold: #e0b35a; --gold-soft: #3a3020;
+    --term: #0f130f; --term-ink: #dde5d4; --term-dim: #7f8b79; --code-bg: #232923; color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  html { background: var(--paper); scroll-padding-top: 76px; }
+  body { margin: 0; background: var(--paper); color: var(--ink); font: 15.5px/1.95 var(--f-body); -webkit-font-smoothing: antialiased; font-feature-settings: "palt" 1; }
+  a { color: var(--take); text-underline-offset: 3px; }
+  code, kbd, pre { font-family: var(--f-mono); font-size: .9em; }
+  :not(pre) > code { background: var(--code-bg); padding: .08em .38em; border-radius: 4px; overflow-wrap: anywhere; }
+  kbd { border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 5px; padding: .02em .4em; background: var(--sheet); white-space: nowrap; }
+
+  /* ── top bar ───────────────────────────────── */
+  .bar { position: sticky; top: 0; z-index: 10; display: flex; align-items: center; gap: 16px; padding: 12px max(16px, env(safe-area-inset-left)); background: color-mix(in srgb, var(--paper) 88%, transparent); backdrop-filter: blur(8px); border-bottom: 1px solid var(--line); }
+  .bar .home { display: flex; align-items: center; gap: 10px; color: var(--ink); text-decoration: none; }
+  .bar .home b { font: 400 22px/1 var(--f-brush); letter-spacing: .04em; }
+  .bar .home span { color: var(--ink-2); font-size: 13px; }
+  .bar nav { margin-left: auto; display: flex; gap: 14px; align-items: center; font-size: 13.5px; }
+  .bar nav a { color: var(--ink-2); text-decoration: none; }
+  .bar nav a:hover { color: var(--take); }
+  .theme { border: 1px solid var(--line); background: var(--sheet); color: var(--ink-2); border-radius: 999px; font: inherit; font-size: 12.5px; padding: 3px 11px; cursor: pointer; }
+  @media (max-width: 560px) { .bar nav .wide { display: none; } }
+
+  /* ── layout ────────────────────────────────── */
+  .wrap { display: grid; grid-template-columns: 250px minmax(0, 1fr); gap: 48px; max-width: 1180px; margin: 0 auto; padding: 32px 24px 96px; }
+  .toc { position: sticky; top: 76px; align-self: start; max-height: calc(100vh - 96px); overflow: auto; font-size: 13.5px; line-height: 1.7; padding-right: 8px; }
+  .toc p { margin: 0 0 6px; color: var(--ink-2); font-size: 12px; letter-spacing: .1em; }
+  .toc ol { list-style: none; margin: 0; padding: 0; }
+  .toc > ol > li { margin: 2px 0; }
+  .toc a { display: block; color: var(--ink-2); text-decoration: none; padding: 3px 10px; border-left: 2px solid transparent; }
+  .toc a:hover { color: var(--ink); }
+  .toc a.on { color: var(--take); border-left-color: var(--take); background: var(--take-soft); border-radius: 0 6px 6px 0; }
+  .toc ol ol a { padding-left: 22px; font-size: 12.5px; }
+  .toc-m { display: none; }
+  @media (max-width: 980px) {
+    .wrap { grid-template-columns: minmax(0, 1fr); padding: 20px 16px 80px; gap: 0; }
+    .toc { display: none; }
+    .toc-m { display: block; margin: 0 0 24px; background: var(--sheet); border: 1px solid var(--line); border-radius: 10px; padding: 8px 14px; font-size: 14px; }
+    .toc-m summary { cursor: pointer; color: var(--ink-2); }
+    .toc-m ol { margin: 8px 0 4px; padding-left: 1.4em; line-height: 1.9; }
+  }
+
+  /* ── content ───────────────────────────────── */
+  main { min-width: 0; }
+  .hero { margin: 0 0 40px; }
+  .hero h1 { font: 400 clamp(30px, 5vw, 42px)/1.3 var(--f-brush); margin: 0 0 8px; letter-spacing: .03em; }
+  .hero p { margin: 0; color: var(--ink-2); max-width: 44em; }
+  section { margin: 0 0 64px; }
+  h2 { font: 400 27px/1.4 var(--f-brush); margin: 0 0 18px; padding-bottom: 8px; border-bottom: 1px solid var(--line); letter-spacing: .03em; display: flex; align-items: baseline; gap: 12px; }
+  h2 .no { font: 700 13px/1 var(--f-mono); color: var(--shu); border: 1.5px solid var(--shu); border-radius: 4px; padding: 3px 5px; transform: translateY(-3px); }
+  h3 { font-size: 18px; margin: 36px 0 10px; }
+  h4 { font-size: 15.5px; margin: 24px 0 6px; }
+  p, ul, ol { max-width: 46em; }
+  li { margin: 3px 0; }
+  .lead { color: var(--ink-2); }
+  .note, .warn, .tip { border-radius: 10px; padding: 12px 16px; margin: 18px 0; max-width: 46em; font-size: 14.5px; }
+  .note { background: var(--take-soft); }
+  .warn { background: var(--shu-soft); }
+  .tip { background: var(--gold-soft); }
+  .note b:first-child, .warn b:first-child, .tip b:first-child { margin-right: .4em; }
+
+  pre { position: relative; background: var(--term); color: var(--term-ink); border-radius: 10px; padding: 14px 16px; overflow-x: auto; line-height: 1.7; margin: 14px 0 18px; font-size: 13.5px; }
+  pre .c { color: var(--term-dim); }
+  pre .k { color: #8fd3a6; }
+  .copy { position: absolute; top: 8px; right: 8px; font: 12px var(--f-body); color: var(--term-dim); background: transparent; border: 1px solid #3a443a; border-radius: 6px; padding: 2px 8px; cursor: pointer; opacity: 0; transition: opacity .15s; }
+  pre:hover .copy, .copy:focus { opacity: 1; }
+  @media (hover: none) { .copy { opacity: 1; } pre { padding-top: 38px; } }
+
+  .tbl { overflow-x: auto; margin: 14px 0 20px; border: 1px solid var(--line); border-radius: 10px; background: var(--sheet); }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; line-height: 1.7; }
+  th, td { text-align: left; vertical-align: top; padding: 9px 12px; border-bottom: 1px solid var(--line); }
+  tr:last-child td { border-bottom: 0; }
+  th { font-weight: 700; color: var(--ink-2); font-size: 12.5px; letter-spacing: .04em; background: color-mix(in srgb, var(--sheet) 70%, var(--paper)); white-space: nowrap; }
+  td code { white-space: nowrap; }
+  td.wrap code, td .wrap { white-space: normal; }
+  .yes { color: var(--take); font-weight: 700; }
+  .no-c { color: var(--shu); font-weight: 700; }
+
+  /* ── diagrams ──────────────────────────────── */
+  figure { margin: 22px 0 26px; }
+  figcaption { color: var(--ink-2); font-size: 13px; margin-top: 8px; }
+
+  /* the TUI mock */
+  .tui { background: var(--term); color: var(--term-ink); border-radius: 12px; font: 13px/1.75 var(--f-mono); padding: 14px 0 10px; max-width: 720px; box-shadow: 0 10px 30px -18px #000a; overflow: hidden; }
+  .tui .row { padding: 0 18px; white-space: pre; overflow: hidden; text-overflow: ellipsis; }
+  .tui .dim { color: var(--term-dim); }
+  .tui .me { background: #2a3a2e; }
+  .tui .ok { color: #7fd197; }
+  .tui .rule { border-top: 1px solid #56625a; margin: 6px 18px; }
+  .tui .zone { position: relative; }
+  .tui .tag { position: absolute; right: 12px; top: 2px; font: 11px/1.5 var(--f-body); color: #1b211c; background: #e6c46b; border-radius: 4px; padding: 0 6px; }
+
+  /* vertical flow (permission decision, hook order) */
+  .flow { display: grid; gap: 0; max-width: 680px; counter-reset: step; }
+  .flow .st { display: grid; grid-template-columns: 34px 1fr; gap: 12px; align-items: start; position: relative; padding-bottom: 14px; }
+  .flow .st::before { counter-increment: step; content: counter(step); font: 700 13px/30px var(--f-mono); text-align: center; width: 30px; height: 30px; border-radius: 50%; background: var(--sheet); border: 1.5px solid var(--take); color: var(--take); position: relative; z-index: 1; }
+  .flow .st::after { content: ""; position: absolute; left: 15px; top: 30px; bottom: 0; width: 1.5px; background: var(--line); }
+  .flow .st:last-child::after { display: none; }
+  .flow .st > div { background: var(--sheet); border: 1px solid var(--line); border-radius: 10px; padding: 8px 14px; font-size: 14px; }
+  .flow .st b { display: block; font-size: 14.5px; }
+  .flow .out { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+  .pill { font-size: 12px; border-radius: 999px; padding: 1px 9px; border: 1px solid; white-space: nowrap; }
+  .pill.deny { color: var(--shu); border-color: var(--shu); }
+  .pill.ask { color: var(--gold); border-color: var(--gold); }
+  .pill.allow { color: var(--take); border-color: var(--take); }
+  .pill.next { color: var(--ink-2); border-color: var(--line); }
+  .flow .st.hook::before { border-style: dashed; }
+
+  /* horizontal pipeline (sharing) */
+  .pipe { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; max-width: 900px; }
+  .pipe .col { background: var(--sheet); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; font-size: 13.5px; }
+  .pipe .col h5 { margin: 0 0 6px; font-size: 14px; }
+  .pipe .col ul { margin: 0; padding-left: 1.1em; }
+  .pipe .arrow { text-align: center; color: var(--ink-2); font-size: 12.5px; }
+  @media (max-width: 720px) { .pipe { grid-template-columns: 1fr; } }
+
+  /* file tree */
+  .tree { background: var(--sheet); border: 1px solid var(--line); border-radius: 10px; padding: 12px 16px; font: 13.5px/1.9 var(--f-mono); overflow-x: auto; white-space: pre; max-width: 760px; }
+  .tree .d { color: var(--ink-2); }
+
+  details.qa { border: 1px solid var(--line); border-radius: 10px; background: var(--sheet); margin: 10px 0; max-width: 46em; }
+  details.qa summary { cursor: pointer; padding: 10px 16px; font-weight: 700; font-size: 14.5px; }
+  details.qa > div { padding: 0 16px 12px; font-size: 14.5px; }
+  details.qa[open] summary { border-bottom: 1px solid var(--line); margin-bottom: 8px; }
+
+  footer { border-top: 1px solid var(--line); padding: 24px 16px 40px; text-align: center; color: var(--ink-2); font-size: 13px; }
+  @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
+  html { scroll-behavior: smooth; }
+</style>
+</head>
+<body>
+
+<header class="bar">
+  <a class="home" href="../"><b>sasacode</b><span>ドキュメント</span></a>
+  <nav aria-label="サイト">
+    <a href="../">トップ</a>
+    <a class="wide" href="https://github.com/sasanokusa/sasacode">GitHub</a>
+    <a class="wide" href="https://github.com/sasanokusa/sasacode/blob/main/README.en.md">English</a>
+    <button class="theme" type="button" id="theme" aria-label="表示の明暗を切り替える">明暗</button>
+  </nav>
+</header>
+
+<div class="wrap">
+  <aside class="toc" aria-label="目次">
+    <p>目次</p>
+    <ol id="toc"></ol>
+  </aside>
+
+  <main>
+    <div class="hero">
+      <h1>sasacode ドキュメント</h1>
+      <p>README では書ききれない、画面の見方、権限の判定の流れ、設定と同梱プラグインの全項目、プラグインの共有、ヘッドレス実行、困ったときの対処をまとめた。v0.9.4 時点の内容。</p>
+    </div>
+
+    <details class="toc-m"><summary>目次</summary><ol id="toc-m"></ol></details>
+
+    <!-- ─────────────────────────────────────────────── -->
+    <section id="start">
+      <h2><span class="no">01</span>はじめに</h2>
+
+      <h3 id="install">インストール</h3>
+      <pre><code>curl -fsSL https://sasanokusa.com/sasacode/install.sh | sh</code></pre>
+      <p>macOS（Apple Silicon / Intel）と Linux（x64 / arm64、glibc / musl、AVX2 のない CPU 向けの baseline 版）の単一バイナリが <code>~/.local/bin/sasacode</code> に入る。Bun も Node.js も要らない。Windows は WSL から使う。</p>
+      <ul>
+        <li>インストーラーとバイナリは GitHub Releases の最新版から取り、SHA256 を確かめてから置く。</li>
+        <li>版を固定する：<code>SASACODE_VERSION=v0.9.4</code>。置き場所を変える：<code>SASACODE_INSTALL_DIR=/usr/local/bin</code>。</li>
+        <li><b>更新</b>は同じコマンドをもう一度実行するだけ。<b>削除</b>は <code>~/.local/bin/sasacode</code> と <code>~/.sasacode</code>（設定・セッション・プラグイン）を消す。</li>
+      </ul>
+
+      <h3 id="first-run">最初の設定</h3>
+      <pre><code>sasacode --version          <span class="c"># 初回起動で ~/.sasacode/.env ができる</span>
+$EDITOR ~/.sasacode/.env    <span class="c"># 使うプロバイダーのキーだけ埋める</span>
+sasacode                    <span class="c"># 対話モードで始める</span></code></pre>
+      <p><code>.env</code> には対応するプロバイダーのキーが空欄で並んでいる。空欄は「未設定」として扱うので、使うものだけ埋めればよい。キーの代わりに OS のキーチェーンに入れることもできる（<a href="#keys">キーの探し方</a>）。</p>
+
+      <h4>どのモデルで始まるか</h4>
+      <div class="flow">
+        <div class="st"><div><b><code>-m provider/model</code> を付けた</b>それを使う。</div></div>
+        <div class="st"><div><b>設定の <code>model</code></b><code>~/.sasacode/config.json</code>（信頼したプロジェクトならプロジェクトの設定も）。</div></div>
+        <div class="st"><div><b>キーのある最初のプロバイダーの既定モデル</b><code>.env</code> の上から順に見る。</div></div>
+        <div class="st"><div><b>キーがなく ChatGPT にログインしている</b><code>openai-codex/gpt-5.5</code>。</div></div>
+      </div>
+      <p>起動してからは <code>/model</code> で一覧から選び直せる。</p>
+    </section>
+
+    <!-- ─────────────────────────────────────────────── -->
+    <section id="tui">
+      <h2><span class="no">02</span>TUI（対話モード）</h2>
+
+      <h3 id="screen">画面の構成</h3>
+      <figure>
+        <div class="tui" role="img" aria-label="TUI の画面構成の例">
+          <div class="zone"><span class="tag">会話（スクロールする）</span>
+            <div class="row dim">sasacode ~/app</div>
+            <div class="row dim">/help でコマンド一覧 · esc で中断 · ctrl+o で詳細表示</div>
+            <div class="row"> </div>
+            <div class="row me">&gt; テストが落ちてる。直して</div>
+            <div class="row"> </div>
+            <div class="row dim">∴ まず失敗しているテストを見る…</div>
+            <div class="row"><span class="ok">●</span> bash<span class="dim">(bun test)</span></div>
+            <div class="row dim">  ⎿ 11 pass · 1 fail</div>
+            <div class="row"><span class="ok">●</span> edit<span class="dim">(src/stats.ts)</span></div>
+            <div class="row">平均の計算で要素数から 1 を引いていたのを直しました。</div>
+          </div>
+          <div class="zone"><span class="tag">状態（実行中・予約）</span>
+            <div class="row dim">⠋ 考え中… (esc で中断)</div>
+          </div>
+          <div class="zone"><span class="tag">入力欄</span>
+            <div class="rule"></div>
+            <div class="row">▌</div>
+            <div class="rule"></div>
+          </div>
+          <div class="zone"><span class="tag">フッター</span>
+            <div class="row dim">pgx/qwen3.8 · 推論: high · 権限: 編集のみ許可 · ctx 12.4k/256k (5%) · session 1a2b3c4d</div>
+            <div class="row" style="color:#7fc9d6">TODO 2/5: テストを直す · 🎯 ログイン画面を完成させる</div>
+          </div>
+        </div>
+        <figcaption>全画面で動く。会話は上でスクロールし、状態・入力欄・フッターは下に固定される。</figcaption>
+      </figure>
+
+      <ul>
+        <li><b>会話</b>：あなたの入力（背景色つき）、推論（<code>∴</code>、既定では最後の2行だけ）、ツール呼び出し（<code>●</code> の色：灰=待ち、黄=実行中、緑=完了、赤=エラー）、応答。<kbd>ctrl+o</kbd> で推論とツール出力の全文を開く。</li>
+        <li><b>状態</b>：実行中の表示と、実行中に送った（次のターンに届く）メッセージ。</li>
+        <li><b>フッター</b>：左から、モデル、推論の深さ、権限モード、コンテキストの使用量（使用量/上限と割合）、セッション ID、料金（分かるときだけ）。2行目はプラグインの状態（TODO、ゴール、MCP の接続数、バックグラウンドジョブ、要約中など）。</li>
+      </ul>
+
+      <h3 id="keys-tui">キー操作</h3>
+      <div class="tbl"><table>
+        <tr><th>キー</th><th>動作</th></tr>
+        <tr><td><kbd>enter</kbd> / <kbd>shift+enter</kbd>・<kbd>alt+enter</kbd></td><td>送信 / 改行</td></tr>
+        <tr><td><kbd>↑</kbd> <kbd>↓</kbd></td><td>入力履歴（<code>~/.sasacode/history.jsonl</code>、直近 200 件）</td></tr>
+        <tr><td><kbd>tab</kbd></td><td>補完：スラッシュコマンド、その引数（<code>/model</code> のモデル名など）、ファイルパス</td></tr>
+        <tr><td><kbd>esc</kbd></td><td>生成・ツール実行を中断。中断したことは次の入力でモデルに伝わる</td></tr>
+        <tr><td>実行中に <kbd>enter</kbd></td><td>メッセージを予約し、次のターンで届ける</td></tr>
+        <tr><td><kbd>ctrl+o</kbd></td><td>ツール出力と推論の折りたたみを切り替え</td></tr>
+        <tr><td><kbd>shift+tab</kbd></td><td>権限モードを順に切り替え</td></tr>
+        <tr><td><kbd>pageup</kbd> <kbd>pagedown</kbd>・ホイール</td><td>会話をスクロール。上に戻っている間は右端にスクロールバーと「最新へ」</td></tr>
+        <tr><td><kbd>ctrl+↑</kbd> / <kbd>ctrl+↓</kbd></td><td>前 / 次の自分の入力へ</td></tr>
+        <tr><td><kbd>ctrl+home</kbd> / <kbd>ctrl+end</kbd></td><td>会話の先頭 / 最新へ</td></tr>
+        <tr><td><kbd>ctrl+shift+f</kbd></td><td>会話の中を検索（<kbd>enter</kbd> で次、<kbd>shift+enter</kbd> で前、<kbd>esc</kbd> で閉じる）</td></tr>
+        <tr><td>ドラッグ</td><td>選択し、離すとクリップボードへコピー。ダブルクリックで単語、トリプルクリックで行</td></tr>
+        <tr><td><code>/exit</code>・<kbd>ctrl+c</kbd> 2回・<kbd>ctrl+d</kbd></td><td>終了。使用量と再開コマンドの要約が端末に残る</td></tr>
+      </table></div>
+
+      <div class="tip"><b>コピー</b>全画面ではマウスを sasacode が受け取るので、端末の標準の選択は <kbd>option</kbd>（macOS）/ <kbd>alt</kbd> を押しながらドラッグする。sasacode の選択は pbcopy / wl-copy / xclip で直接クリップボードに入れ、SSH の先では端末経由（OSC 52）で送る。<code>/copy</code> は直前の応答全体をコピーする。</div>
+
+      <h3 id="commands">コマンド</h3>
+      <div class="tbl"><table>
+        <tr><th>コマンド</th><th>内容</th><th>提供元</th></tr>
+        <tr><td><code>/model</code></td><td>プロバイダーから取った一覧から選ぶ。文字を打つと絞り込む。<code>/model &lt;provider/model&gt;</code> で直接、<code>/model --refresh</code> で取り直し</td><td>コア</td></tr>
+        <tr><td><code>/effort</code></td><td>推論の深さ（<a href="#effort">詳細</a>）</td><td>コア</td></tr>
+        <tr><td><code>/resume</code> <code>/clear</code> <code>/fork</code> <code>/session</code></td><td>過去のセッション / 新しいセッション / 過去のメッセージから分岐 / ID と保存先</td><td>コア</td></tr>
+        <tr><td><code>/copy</code> <code>/permission</code> <code>/help</code> <code>/exit</code></td><td>直前の応答をコピー / 権限モード / ヘルプ / 終了</td><td>コア</td></tr>
+        <tr><td><code>/usage</code></td><td>使用量、プランの残り、日別グラフ（<a href="#p-usage">詳細</a>）</td><td>usage</td></tr>
+        <tr><td><code>/goal</code></td><td>セッションのゴール</td><td>goal</td></tr>
+        <tr><td><code>/bg</code></td><td>バックグラウンドジョブの一覧・詳細・停止</td><td>background-sessions</td></tr>
+        <tr><td><code>/reconnect</code></td><td>接続の復旧を待って再開（<code>status</code> で確認だけ）</td><td>auto-reconnect</td></tr>
+        <tr><td><code>/compact</code></td><td>会話を要約してコンテキストを空ける</td><td>compaction</td></tr>
+        <tr><td><code>/presets</code> <code>/jev</code></td><td>権限プリセットの一覧 / Jev の状態と直近の判定</td><td>permission-presets / jev-guard</td></tr>
+        <tr><td><code>/mcp</code> <code>/skills</code> <code>/skill:&lt;name&gt;</code> <code>/browsr</code></td><td>MCP の接続状態 / Skills の一覧 / Skill を明示して使う / browsr の状態</td><td>mcp / skills / browsr</td></tr>
+      </table></div>
+
+      <h3 id="tui-options">TUI の設定</h3>
+      <div class="tbl"><table>
+        <tr><th>設定</th><th>既定</th><th>内容</th></tr>
+        <tr><td><code>tui.altScreen</code></td><td><code>true</code></td><td><code>false</code> で従来の表示（会話を端末のスクロールバックに残す）</td></tr>
+        <tr><td><code>tui.bell</code></td><td><code>true</code></td><td>30 秒以上かかった実行が終わったら端末のベルを鳴らす</td></tr>
+        <tr><td><code>SASACODE_AMBIGUOUS_WIDTH</code></td><td>自動</td><td>①のような幅の曖昧な文字を何マスで数えるか（<code>1</code> / <code>2</code>）。起動時に端末に問い合わせて合わせる</td></tr>
+      </table></div>
+    </section>
+
+    <!-- ─────────────────────────────────────────────── -->
+    <section id="models">
+      <h2><span class="no">03</span>モデルとプロバイダー</h2>
+      <div class="tbl"><table>
+        <tr><th>provider</th><th>API 形式</th><th>キー</th></tr>
+        <tr><td><code>anthropic</code></td><td>Anthropic Messages</td><td><code>ANTHROPIC_API_KEY</code>（空なら SDK の <code>ant auth login</code>）</td></tr>
+        <tr><td><code>openai</code> / <code>openai-chat</code></td><td>OpenAI Responses / Chat Completions</td><td><code>OPENAI_API_KEY</code></td></tr>
+        <tr><td><code>openrouter</code></td><td>Chat Completions</td><td><code>OPENROUTER_API_KEY</code></td></tr>
+        <tr><td><code>commandcode</code>（<code>-responses</code> / <code>-anthropic</code>）</td><td>Command Code の各形式</td><td><code>CMD_API_KEY</code></td></tr>
+        <tr><td><code>ollama</code></td><td>Chat Completions（localhost:11434）</td><td>不要</td></tr>
+        <tr><td><code>openai-codex</code></td><td>ChatGPT プランの Codex バックエンド</td><td>不要（<code>sasacode login</code>）</td></tr>
+      </table></div>
+
+      <h3 id="keys">キーの探し方</h3>
+      <div class="flow">
+        <div class="st"><div><b>シェルの環境変数</b><code>export ANTHROPIC_API_KEY=…</code></div></div>
+        <div class="st"><div><b><code>~/.sasacode/.env</code></b>空欄は無視。</div></div>
+        <div class="st"><div><b>OS のキーチェーン</b>macOS：<code>security add-generic-password -s sasacode -a &lt;provider&gt; -w</code><br>Linux：<code>secret-tool store --label sasacode service sasacode account &lt;provider&gt;</code></div></div>
+      </div>
+      <div class="note"><b>読まないもの</b>作業ディレクトリの <code>.env</code> と <code>bunfig.toml</code>。リポジトリが接続先（<code>ANTHROPIC_BASE_URL</code> など）を差し替えたり、起動時にコードを実行させたりできないようにするため。セッションのログには、使っているキーを <code>[REDACTED]</code> に置き換えてから書く。</div>
+
+      <h3 id="own-server">自前のサーバー</h3>
+      <pre><code>sasacode endpoint add pgx http://gpu-box:8000/v1          <span class="c"># 形式を判別して保存</span>
+sasacode endpoint add mygw https://llm.example.com/v1 --key-env MYGW_KEY
+sasacode endpoint list
+sasacode -m pgx/&lt;モデル名&gt;</code></pre>
+      <p><code>GET /v1/models</code> の応答から、OpenAI 形式か Anthropic 形式かを判別し、URL も SDK に合わせて整える。llama.cpp は <code>/props</code>、Ollama は <code>/api/show</code> から実際のコンテキスト長も取る。判別の結果は <code>~/.sasacode/endpoints.json</code> にキャッシュする。表にないモデルのコンテキスト長が違うときは <code>modelOverrides</code> で直す。</p>
+      <pre><code>{ "modelOverrides": { "pgx/qwen3.8-flash-next": { "contextWindow": 262144, "maxOutput": 32000 } } }</code></pre>
+
+      <h3 id="chatgpt">ChatGPT プラン</h3>
+      <p><code>sasacode login</code> でブラウザが開き、ChatGPT アカウントでログインすると <code>openai-codex/…</code> のモデルが API キーなしで使える。利用分はプランの Codex の枠から引かれ、残りは <code>/usage plan</code> で見られる。SSH の先などブラウザがこのマシンに戻れないときは、ログイン後にブラウザが表示した URL を貼り付ける。認証情報は <code>~/.sasacode/codex-auth.json</code>（本人だけが読める）に置き、期限が近づけば自動で更新する。</p>
+      <div class="warn"><b>非公式</b>OpenAI の Codex CLI と同じ仕組み（公開クライアントと PKCE）を使う。OpenAI の都合で使えなくなることがある。</div>
+
+      <h3 id="effort">推論の深さ（<code>/effort</code>・<code>--thinking</code>）</h3>
+      <p><code>off</code> / <code>low</code> / <code>medium</code> / <code>high</code> / <code>xhigh</code> / <code>max</code> の6段階。既定は <code>high</code>。送り方は API 形式ごとに違う。</p>
+      <div class="tbl"><table>
+        <tr><th>API 形式</th><th>送るもの</th></tr>
+        <tr><td>Anthropic Messages</td><td>adaptive thinking と <code>effort</code>。<code>off</code> なら thinking を付けない</td></tr>
+        <tr><td>OpenAI Chat Completions（OpenAI 互換の自前サーバーを含む）</td><td><code>reasoning_effort</code>。<code>off</code> も <code>none</code> として送る（vLLM などは送らないと推論する）</td></tr>
+        <tr><td>OpenAI Responses・ChatGPT プラン</td><td><code>reasoning.effort</code></td></tr>
+      </table></div>
+      <p>OpenAI 形式のサーバーは受け付ける値がまちまちなので、断られたら次の候補で送り直し、通った値を覚えて次からはそれを使う（サーバーとモデルごと）。</p>
+      <div class="tbl"><table>
+        <tr><th>段階</th><th>試す順番（→ は断られたら次）</th></tr>
+        <tr><td><code>off</code></td><td><code>none</code> → <code>minimal</code> → <code>low</code> → 送らない</td></tr>
+        <tr><td><code>low</code></td><td><code>low</code> → <code>minimal</code> → 送らない</td></tr>
+        <tr><td><code>medium</code></td><td><code>medium</code> → 送らない</td></tr>
+        <tr><td><code>high</code></td><td><code>high</code> → <code>xhigh</code> → <code>medium</code> → 送らない</td></tr>
+        <tr><td><code>xhigh</code></td><td><code>xhigh</code> → <code>high</code> → 送らない</td></tr>
+        <tr><td><code>max</code></td><td><code>max</code> → <code>xhigh</code> → <code>high</code> → 送らない</td></tr>
+      </table></div>
+      <div class="tbl"><table>
+        <tr><th>確かめたサーバー</th><th>結果</th></tr>
+        <tr><td>vLLM（Qwen 3.8）</td><td><code>off</code> で推論が止まる。<code>high</code> は受け付けず（ストリームの最初のイベントで断る）、<code>xhigh</code> になる</td></tr>
+        <tr><td>Command Code（DeepSeek V4.1）</td><td><code>none</code> を受け付けない。推論は止められないので、<code>off</code> は <code>low</code> になる</td></tr>
+        <tr><td>Ollama</td><td>推論に対応しないモデルは断るので、送らずにやり直す</td></tr>
+        <tr><td>ChatGPT プラン</td><td><code>off</code> で推論が止まる</td></tr>
+      </table></div>
+    </section>
+
+    <!-- ─────────────────────────────────────────────── -->
+    <section id="permissions">
+      <h2><span class="no">04</span>権限</h2>
+      <p class="lead">ツールを実行する前に、ルール・権限モード・プラグインの順に判定する。判定は実行前の確認であって、隔離（サンドボックス）ではない。</p>
+
+      <h3 id="flow">判定の流れ</h3>
+      <figure>
+        <div class="flow">
+          <div class="st hook"><div><b><code>tool_call</code> フック（プラグイン）</b>引数の書き換えや判定。ここで deny なら終わり。<div class="out"><span class="pill deny">deny</span><span class="pill next">次へ</span></div></div></div>
+          <div class="st"><div><b>deny ルール</b>当てはまれば拒否。プラグインでも緩められない。<div class="out"><span class="pill deny">拒否</span></div></div></div>
+          <div class="st"><div><b>softDeny ルール</b>拒否。ただし <code>permission</code> フックが「確認」まで下げられる。<div class="out"><span class="pill deny">拒否（下げられる）</span></div></div></div>
+          <div class="st"><div><b>ask ルール</b>ユーザーに確認。<div class="out"><span class="pill ask">確認</span></div></div></div>
+          <div class="st"><div><b>allow ルール</b><code>&amp;&amp;</code> <code>;</code> <code>|</code> でつないだ全部が許可されているときだけ通す。<code>$(…)</code>・バッククォート・<code>&gt;</code> を含むものは通さない。<div class="out"><span class="pill allow">許可</span></div></div></div>
+          <div class="st"><div><b>権限モードの既定</b>下の表。<div class="out"><span class="pill allow">許可</span><span class="pill ask">確認</span></div></div></div>
+          <div class="st hook"><div><b><code>permission</code> フック（プラグイン）</b>ここまでの判定を変える。厳しくするのは自由、緩めるのは下限まで（モードの既定は許可まで、softDeny は確認まで、ルールは緩められない）。<code>jev-guard</code> はここで働く。</div></div>
+          <div class="st"><div><b>agent モードの判定</b>どのプラグインも判定しなかった「確認」を、現在のモデルが安全か判定する。<div class="out"><span class="pill allow">許可</span><span class="pill ask">確認</span></div></div></div>
+          <div class="st"><div><b>ユーザーに確認</b>許可 / 常に許可（ルールに追加） / 拒否（理由を添えられる）。ヘッドレスでは確認できないので実行せず、理由をモデルに返す。</div></div>
+        </div>
+        <figcaption>実線はコア、点線の丸はプラグインが関われる段階。</figcaption>
+      </figure>
+
+      <h3 id="modes">権限モード</h3>
+      <div class="tbl"><table>
+        <tr><th>モード</th><th>作業ディレクトリ内の read</th><th>内の write / edit</th><th>bash・外への操作・その他</th></tr>
+        <tr><td><code>edits</code>（既定）</td><td class="yes">許可</td><td class="yes">許可</td><td>確認</td></tr>
+        <tr><td><code>ask</code></td><td>確認</td><td>確認</td><td>確認</td></tr>
+        <tr><td><code>agent</code></td><td class="yes">許可</td><td colspan="2">モデルが判定（安全なら許可、それ以外は確認）</td></tr>
+        <tr><td><code>auto</code></td><td class="yes">許可</td><td class="yes">許可</td><td class="yes">許可（deny ルールと ask ルールは効く）</td></tr>
+      </table></div>
+      <p>切り替えは <kbd>shift+tab</kbd>、<code>/permission &lt;mode&gt;</code>、<code>--permission</code>、設定の <code>permissions.mode</code>。</p>
+
+      <h3 id="rules">ルールの書き方</h3>
+      <div class="tbl"><table>
+        <tr><th>ルール</th><th>当てはまるもの</th></tr>
+        <tr><td><code>bash</code></td><td>bash の呼び出しすべて</td></tr>
+        <tr><td><code>bash(git status*)</code></td><td><code>git status</code> で始まるコマンド（<code>*</code> はワイルドカード）</td></tr>
+        <tr><td><code>edit(.env)</code> <code>write(src/**)</code></td><td>パスの glob（シンボリックリンクをたどった先で照合）</td></tr>
+        <tr><td><code>mcp__github__*</code></td><td>MCP サーバー github のツール全部</td></tr>
+        <tr><td><code>bg_start(make*)</code></td><td>プラグインのツールも同じ書き方。<code>bg_start</code> は <code>permissionsAs: "bash"</code> なので、bash のルールも当たる</td></tr>
+      </table></div>
+      <pre><code>{
+  "permissions": {
+    "allow": ["bash(bun test*)", "bash(git diff*)"],
+    "ask": ["bash(git push*)"],
+    "deny": ["edit(.env)", "bash(curl * | sh)"],
+    "softDeny": ["bash(git reset --hard*)"]
+  }
+}</code></pre>
+
+      <h3 id="presets">プリセット</h3>
+      <p><code>plugins.settings["permission-presets"].presets</code> で選ぶ（既定 <code>["guard"]</code>）。<code>/presets</code> で一覧。</p>
+      <div class="tbl"><table>
+        <tr><th>プリセット</th><th>中身</th></tr>
+        <tr><td><code>guard</code></td><td class="wrap"><b>deny</b>：<code>sudo *</code>、<code>rm -rf /</code>・<code>/*</code>、<code>mkfs*</code>、<code>dd *of=/dev/*</code>、パイプ先の <code>sh</code>・<code>bash</code>・<code>zsh</code>、<code>chmod -R 777 /*</code><br><b>softDeny</b>：<code>rm -rf ~*</code>・<code>$HOME*</code>、<code>git push --force*</code>・<code>-f*</code><br><b>ask</b>（auto でも確認）：<code>ssh</code>、<code>scp</code>、<code>sftp</code>、リモートへの <code>rsync</code></td></tr>
+        <tr><td><code>read-only-shell</code></td><td class="wrap">読み取りだけのコマンドを許可：<code>ls</code>、<code>cat</code>、<code>head</code>、<code>tail</code>、<code>wc</code>、<code>rg</code>、<code>grep</code>、<code>tree</code>、<code>file</code>、<code>which</code>、<code>git status/diff/log/show/branch/rev-parse</code></td></tr>
+        <tr><td><code>tests</code></td><td class="wrap">テストと型チェックを許可：<code>bun/npm/pnpm/yarn test</code>、<code>cargo test</code>、<code>go test</code>、<code>pytest</code>、<code>tsc --noEmit</code>、<code>bun run typecheck</code></td></tr>
+      </table></div>
+
+      <h3 id="limits">できないこと</h3>
+      <ul>
+        <li>許可した bash コマンドの中身（スクリプトが何をするか）までは見ない。</li>
+        <li>判定から実行までの間にリンクを差し替えるような競合は防げない。</li>
+        <li>信頼できないコードを扱うときは、コンテナなど OS の側で隔離する。</li>
+        <li>中断（<kbd>esc</kbd>）した後は、承認済みでもまだ始まっていないツールは実行しない。</li>
+      </ul>
+
+      <h3 id="jev">Jev による判定（<code>jev-guard</code>）</h3>
+      <p>判断専用モデル Jev に、呼び出しが安全かを確率で答えさせ、上の <code>permission</code> フックで判定を変える。既定は無効。</p>
+      <pre><code>{ "plugins": { "settings": { "jev-guard": { "enabled": true } } } }</code></pre>
+      <div class="tbl"><table>
+        <tr><th>元の判定</th><th>Jev が「安全」</th><th>Jev が「要確認」</th><th>Jev が「危険」</th></tr>
+        <tr><td>許可（allow ルール・auto モード）</td><td class="yes">許可</td><td>確認</td><td class="no-c">拒否</td></tr>
+        <tr><td>確認（agent モード）</td><td class="yes">許可</td><td>確認</td><td>確認</td></tr>
+        <tr><td>softDeny</td><td>確認</td><td class="no-c">拒否</td><td class="no-c">拒否</td></tr>
+        <tr><td>確認（それ以外）</td><td colspan="3">変えない（確認ダイアログに Jev の判定を添える）</td></tr>
+      </table></div>
+      <p>送るのは、ハーネスが集めた事実（コマンド、変更されうるパスとその git の状態、作業ディレクトリの内か外か）と、ユーザー自身の直近の依頼だけ。ツールの出力やファイルの中身は送らない。キーやトークンらしい文字列は伏せる。設定の全項目は <a href="#p-jev">同梱プラグインの設定</a>。</p>
+    </section>
+
+    <!-- ─────────────────────────────────────────────── -->
+    <section id="trust">
+      <h2><span class="no">05</span>プロジェクトの信頼</h2>
+      <p>クローンしたリポジトリの <code>.sasacode/</code> は、そのままでは「制限を強める」ことしかできない。コードを実行するか、データの送り先を変えうるものは、最初に一覧を出して信頼するかを尋ねる（ヘッドレスは <code>--trust-project</code>）。</p>
+      <div class="tbl"><table>
+        <tr><th>プロジェクトの設定</th><th>信頼なしで使う</th></tr>
+        <tr><td><code>model</code>（全体の設定にあるプロバイダー）、<code>models</code>、<code>thinking</code>、<code>instructions</code></td><td class="yes">使う</td></tr>
+        <tr><td>deny / ask ルールの追加、ツールの無効化、より厳しい権限モード、小さい <code>maxTurns</code>・<code>maxRetries</code>、<code>toolSearch</code>、<code>tui</code></td><td class="yes">使う</td></tr>
+        <tr><td><code>.sasacode/plugins</code> のプラグイン</td><td class="no-c">信頼が必要</td></tr>
+        <tr><td><code>providers</code>（エンドポイント）、<code>modelOverrides</code>、<code>mcpServers</code></td><td class="no-c">信頼が必要</td></tr>
+        <tr><td><code>plugins</code>（無効化と設定）、<code>allow</code> ルール、緩い権限モード、大きい上限、プロジェクトにしかないプロバイダーを指す <code>model</code></td><td class="no-c">信頼が必要</td></tr>
+        <tr><td><code>trustedProjects</code></td><td>全体の設定でしか読まない</td></tr>
+      </table></div>
+      <p>答えは <code>~/.sasacode/trust.json</code> に保存し、上の設定かプラグインのコードが変わったら、また尋ねる。全体の設定の <code>trustedProjects</code> に入れたプロジェクトは尋ねずに信頼する。</p>
+    </section>
+
+    <!-- ─────────────────────────────────────────────── -->
+    <section id="config">
+      <h2><span class="no">06</span>設定リファレンス</h2>
+      <p><code>~/.sasacode/config.json</code>（全体）と <code>&lt;project&gt;/.sasacode/config.json</code>（プロジェクト）を合わせ、プロジェクトが優先する。権限ルールと <code>disabled</code> の配列は両方を合わせるので、全体の deny や無効化をプロジェクトから消すことはできない。型の合わない値と未知のキーは、警告を出して無視する。</p>
+      <div class="tbl"><table>
+        <tr><th>キー</th><th>型・既定</th><th>内容</th></tr>
+        <tr><td><code>model</code></td><td>文字列</td><td>起動時のモデル（<code>provider/model</code>）</td></tr>
+        <tr><td><code>models</code></td><td>文字列の配列</td><td><code>/model</code> の一覧の先頭に出すモデル</td></tr>
+        <tr><td><code>thinking</code></td><td><code>high</code></td><td>推論の深さ</td></tr>
+        <tr><td><code>providers.&lt;name&gt;</code></td><td>オブジェクト</td><td class="wrap"><code>api</code>（<code>openai-chat</code> / <code>openai-responses</code> / <code>anthropic</code>、省略で判別）、<code>baseUrl</code>、<code>apiKeyEnv</code>、<code>headers</code>、<code>defaultModel</code></td></tr>
+        <tr><td><code>modelOverrides.&lt;provider/model&gt;</code></td><td>オブジェクト</td><td class="wrap"><code>contextWindow</code>、<code>maxOutput</code>、<code>price</code>（100 万トークンあたりの USD：<code>input</code>・<code>output</code>・<code>cacheRead</code>・<code>cacheWrite</code>）、<code>reasoning</code>、<code>images</code></td></tr>
+        <tr><td><code>permissions</code></td><td>オブジェクト</td><td><code>mode</code>、<code>allow</code>、<code>ask</code>、<code>deny</code>、<code>softDeny</code></td></tr>
+        <tr><td><code>instructions</code></td><td>文字列</td><td>システムプロンプトに足す文</td></tr>
+        <tr><td><code>maxTurns</code></td><td><code>200</code></td><td>1回の依頼でモデルに送るリクエストの上限（0 で無制限）</td></tr>
+        <tr><td><code>maxRetries</code></td><td><code>8</code></td><td>API エラー（429・5xx）の再試行の回数（最大 20）</td></tr>
+        <tr><td><code>plugins.disabled</code></td><td>配列</td><td>読み込まないプラグイン（同梱も含む）</td></tr>
+        <tr><td><code>plugins.settings.&lt;name&gt;</code></td><td>オブジェクト</td><td>プラグインに渡す設定（<a href="#bundled">同梱プラグインの設定</a>）</td></tr>
+        <tr><td><code>tools.disabled</code></td><td>配列</td><td>使わないツール（組み込みも含む）</td></tr>
+        <tr><td><code>mcpServers.&lt;name&gt;</code></td><td>オブジェクト</td><td class="wrap">stdio：<code>command</code>、<code>args</code>、<code>env</code>、<code>cwd</code> ／ HTTP：<code>url</code>、<code>headers</code>。共通：<code>disabled</code>、<code>alwaysLoad</code>。<code>${VAR}</code> は環境変数から展開</td></tr>
+        <tr><td><code>toolSearch</code></td><td><code>{"mode":"auto","percent":10,"count":30}</code></td><td class="wrap">MCP とプラグインのツール定義が、コンテキストの <code>percent</code>% 以上か <code>count</code> 個以上で遅延ロードにする。<code>mode</code> は <code>auto</code> / <code>always</code> / <code>never</code></td></tr>
+        <tr><td><code>tui.altScreen</code> / <code>tui.bell</code></td><td><code>true</code> / <code>true</code></td><td>全画面 / 長い実行の後のベル</td></tr>
+        <tr><td><code>trustedProjects</code></td><td>配列（全体の設定のみ）</td><td>尋ねずに信頼するプロジェクト</td></tr>
+      </table></div>
+
+      <h3 id="env">環境変数</h3>
+      <div class="tbl"><table>
+        <tr><th>変数</th><th>内容</th></tr>
+        <tr><td><code>SASACODE_HOME</code></td><td><code>~/.sasacode</code> の代わりに使う場所</td></tr>
+        <tr><td><code>SASACODE_VERSION</code> / <code>SASACODE_INSTALL_DIR</code></td><td>インストーラー：版の固定 / 置き場所</td></tr>
+        <tr><td><code>SASACODE_AMBIGUOUS_WIDTH</code></td><td>幅の曖昧な文字を 1 か 2 マスとして数える</td></tr>
+        <tr><td><code>SASACODE_PLUGIN_INDEX</code> / <code>SASACODE_NPM_REGISTRY</code></td><td><code>plugin search</code> のおすすめ一覧の URL / npm のレジストリ</td></tr>
+        <tr><td>各プロバイダーのキー</td><td><code>ANTHROPIC_API_KEY</code>、<code>OPENAI_API_KEY</code>、<code>OPENROUTER_API_KEY</code>、<code>CMD_API_KEY</code> など</td></tr>
+      </table></div>
+
+      <h3 id="files">ファイルの置き場所</h3>
+<div class="tree">~/.sasacode/
+├── .env                    <span class="d"># API キー（空欄は未設定）</span>
+├── config.json             <span class="d"># 全体の設定</span>
+├── AGENTS.md               <span class="d"># すべてのプロジェクトで読む指示（任意）</span>
+├── trust.json              <span class="d"># 信頼したプロジェクトの記録</span>
+├── endpoints.json          <span class="d"># 自前サーバーの判別結果のキャッシュ</span>
+├── codex-auth.json         <span class="d"># ChatGPT プランの認証情報（本人だけが読める）</span>
+├── history.jsonl           <span class="d"># 入力履歴</span>
+├── sessions/&lt;dir&gt;-&lt;hash&gt;/&lt;日時&gt;_&lt;id&gt;.jsonl   <span class="d"># セッション</span>
+├── plugins/                <span class="d"># プラグイン（.ts 1ファイル、フォルダ、npm で入れたもの）</span>
+├── skills/&lt;name&gt;/SKILL.md  <span class="d"># Skills</span>
+├── background-sessions/    <span class="d"># バックグラウンドジョブの出力と状態</span>
+└── publish/                <span class="d"># plugin publish が組み立てたパッケージ</span>
+
+&lt;project&gt;/.sasacode/
+├── config.json             <span class="d"># プロジェクトの設定</span>
+├── plugins/                <span class="d"># プロジェクトのプラグイン（信頼が必要）</span>
+└── skills/</div>
+    </section>
+
+    <!-- ─────────────────────────────────────────────── -->
+    <section id="bundled">
+      <h2><span class="no">07</span>同梱プラグインと設定</h2>
+      <p>設定は <code>plugins.settings.&lt;名前&gt;</code> に書く。どれも <code>plugins.disabled</code> で外せ、<code>~/.sasacode/plugins</code> やプロジェクトに同じ名前のプラグインがあれば、同梱版の代わりにそちらを読み込む。</p>
+      <pre><code>{ "plugins": { "settings": { "compaction": { "threshold": 0.7 }, "loop-guard": { "noProgressTurns": 0 } } } }</code></pre>
+
+      <h3 id="p-small">小型モデル向けの修復と抑止</h3>
+      <div class="tbl"><table>
+        <tr><th>プラグイン</th><th>設定</th><th>既定</th><th>内容</th></tr>
+        <tr><td rowspan="3"><code>tool-repair</code></td><td><code>json</code></td><td><code>true</code></td><td>壊れた JSON（末尾カンマ、閉じ括弧、クォートのないキー、<code>True</code>/<code>None</code>、コードフェンス、二重エンコード）を直す</td></tr>
+        <tr><td><code>schema</code></td><td><code>true</code></td><td>キー名（<code>file</code> → <code>path</code>）と型（<code>"20"</code> → <code>20</code>）を直す</td></tr>
+        <tr><td><code>names</code></td><td><code>true</code></td><td>ツール名の typo を直す（候補が1つのときだけ）</td></tr>
+        <tr><td rowspan="3"><code>loop-guard</code></td><td><code>noteAt</code></td><td><code>3</code></td><td>同じ呼び出し（か3手までの周期）が同じ結果で続いたら、この回で注意を添える</td></tr>
+        <tr><td><code>blockAt</code></td><td><code>5</code></td><td>この回から、その周期の呼び出しを止める（ファイルの変更か次の依頼で解除）</td></tr>
+        <tr><td><code>noProgressTurns</code></td><td><code>5</code></td><td>ツールが1件も実行されないターンがこの回数続いたら実行を止める（0 で無効）</td></tr>
+        <tr><td rowspan="4"><code>repetition-guard</code></td><td><code>minRepeats</code></td><td><code>4</code></td><td>同じ文がこの回数以上続いたら止める</td></tr>
+        <tr><td><code>minSpan</code> / <code>minUnit</code></td><td><code>200</code> / <code>10</code></td><td>繰り返し全体の最小の長さ / 1単位の最小の長さ（文字）</td></tr>
+        <tr><td><code>shortMinSpan</code></td><td><code>400</code></td><td>「なるほど。」のような短い単位を止めるのに要る長さ</td></tr>
+        <tr><td><code>maxStopsPerRun</code></td><td><code>2</code></td><td>1回の実行で止める回数の上限（ツール引数用に <code>toolcall…</code> の同名の設定もある）</td></tr>
+      </table></div>
+
+      <h3 id="p-context">文脈とエージェント</h3>
+      <div class="tbl"><table>
+        <tr><th>プラグイン</th><th>設定</th><th>既定</th><th>内容</th></tr>
+        <tr><td><code>compaction</code></td><td><code>threshold</code></td><td><code>0.8</code></td><td>コンテキストがこの割合に達したら古い履歴を要約する（上限に来たときも）。<code>/compact [指示]</code> で手動</td></tr>
+        <tr><td><code>agents-md</code></td><td>—</td><td></td><td><code>~/.sasacode/AGENTS.md</code> と、リポジトリのルートから作業ディレクトリまでの <code>AGENTS.md</code> を読む（CLAUDE.md は読まない）</td></tr>
+        <tr><td><code>subagent</code></td><td>—</td><td></td><td><code>task</code> ツール。別の履歴で作業させ、報告だけを受け取る</td></tr>
+        <tr><td><code>todo</code></td><td>—</td><td></td><td><code>todo_write</code> ツール。進捗をフッターに出す</td></tr>
+        <tr><td><code>goal</code></td><td>—</td><td></td><td><code>/goal &lt;目的&gt;</code>、<code>done</code> / <code>pause</code> / <code>resume</code> / <code>clear</code>。「これをゴールにして」と頼めばモデルが <code>set_goal</code> で設定する</td></tr>
+      </table></div>
+
+      <h3 id="p-bg">バックグラウンド実行（<code>background-sessions</code>）</h3>
+      <p>モデルが <code>bg_start</code> で長いコマンドを裏で動かし、終わったら終了コードと出力の末尾が会話に届く（待機中なら続きを自動で始める）。bash と同じ権限ルールで判定する。sasacode を終了してもジョブは続き、次の起動で結果を知らせる。<code>/bg</code> で一覧、<code>/bg &lt;id&gt;</code> で詳細、<code>/bg kill &lt;id&gt;</code> で停止。POSIX のみ。</p>
+      <div class="tbl"><table>
+        <tr><th>設定</th><th>既定</th><th>内容</th></tr>
+        <tr><td><code>dir</code></td><td><code>~/.sasacode/background-sessions</code></td><td>出力と状態の置き場所</td></tr>
+        <tr><td><code>pollMs</code></td><td><code>1500</code></td><td>終了を確かめる間隔</td></tr>
+        <tr><td><code>tailLines</code></td><td><code>30</code></td><td>終了通知に付ける出力の行数</td></tr>
+        <tr><td><code>keep</code></td><td><code>40</code></td><td>残す終了済みジョブの数</td></tr>
+        <tr><td><code>autoNotify</code></td><td><code>true</code></td><td><code>false</code> なら通知だけで、エージェントを起こさない</td></tr>
+        <tr><td><code>foreignGraceMs</code></td><td><code>10000</code></td><td>別のセッションで始めたジョブの通知を、元のセッションに譲る時間</td></tr>
+      </table></div>
+
+      <h3 id="p-reconnect">接続の復旧待ち（<code>auto-reconnect</code>）</h3>
+      <p>実行がエラーで終わり、使っているモデルの接続先に届かないとき、復旧を待ってから「中断した作業を再開して」と送る。オンラインで別の理由（キーの誤りなど）のエラーなら何もしない。</p>
+      <div class="tbl"><table>
+        <tr><th>設定</th><th>既定</th><th>内容</th></tr>
+        <tr><td><code>checkUrl</code></td><td>使用中モデルの接続先</td><td>疎通を確かめる URL（応答が返ればオンライン）</td></tr>
+        <tr><td><code>checkIntervalMs</code> / <code>checkTimeoutMs</code></td><td><code>5000</code> / <code>3000</code></td><td>確かめる間隔 / 1回のタイムアウト</td></tr>
+        <tr><td><code>maxWaitMs</code></td><td><code>600000</code>（10分）</td><td>待つ最大時間</td></tr>
+        <tr><td><code>retryMessage</code></td><td>（再開の指示）</td><td>復旧後に送る文</td></tr>
+        <tr><td><code>quiet</code></td><td><code>false</code></td><td>通知を出さない</td></tr>
+      </table></div>
+
+      <h3 id="p-usage">使用量（<code>usage</code>）</h3>
+      <div class="tbl"><table>
+        <tr><th>コマンド</th><th>内容</th></tr>
+        <tr><td><code>/usage</code></td><td>この起動の使用量、今日・7日・30日・全期間の合計、ChatGPT プランの残り</td></tr>
+        <tr><td><code>/usage graph</code></td><td>日ごとの使用量を GitHub の Contributions Graph のように（端末の幅に入るだけの週）</td></tr>
+        <tr><td><code>/usage history [日数]</code></td><td>日別の棒グラフと数値（既定 14 日）</td></tr>
+        <tr><td><code>/usage models</code></td><td>モデル別の合計、割合、最終使用日</td></tr>
+        <tr><td><code>/usage plan</code></td><td>ChatGPT プランの 5 時間・週の枠と、リセットまでの時間</td></tr>
+      </table></div>
+      <p>記録は <code>~/.sasacode/sessions</code> のセッションログから読む。<code>/compact</code> の要約とサブエージェントの分はログに残らないので含まない。プランの残りは ChatGPT にログインしているときだけ出る。</p>
+
+      <h3 id="p-web">Web</h3>
+      <div class="tbl"><table>
+        <tr><th>プラグイン</th><th>設定</th><th>内容</th></tr>
+        <tr><td><code>web-fetch</code></td><td>—</td><td><code>web_fetch</code> ツール。URL を取ってテキストにする</td></tr>
+        <tr><td><code>browsr</code></td><td><code>command</code>、<code>mode</code>、<code>config</code></td><td><a href="https://github.com/sasanokusa/browsr-4-agent">browsr-4-agent</a> で検索（<code>search</code>）と本文の閲覧（<code>open</code>）。<code>browsr-agent</code> が PATH にあれば自動で起動。別の場所なら <code>command</code> で指定</td></tr>
+      </table></div>
+
+      <h3 id="p-jev">Jev（<code>jev-guard</code>）の設定</h3>
+      <div class="tbl"><table>
+        <tr><th>設定</th><th>既定</th><th>内容</th></tr>
+        <tr><td><code>enabled</code></td><td><code>false</code></td><td>有効にする</td></tr>
+        <tr><td><code>backend</code></td><td>キーのある方</td><td class="wrap"><code>commandcode</code>（<code>CMD_API_KEY</code>）、<code>typesafe</code>（<code>TYPESAFE_API_KEY</code>）、<code>openrouter</code>、<code>vercel</code>、<code>chat</code>（sasacode の任意のモデル）。OpenRouter と Vercel は名前を指定したときだけ使う</td></tr>
+        <tr><td><code>model</code> / <code>endpoint</code> / <code>apiKeyEnv</code></td><td>接続先ごと</td><td>モデル名 / URL / キーの変数を変える（プロキシなど）</td></tr>
+        <tr><td><code>timeoutMs</code></td><td><code>5000</code>（<code>chat</code> は 60000）</td><td>これを超えたら Jev なしの判定で続ける</td></tr>
+        <tr><td><code>skip</code></td><td><code>["todo_write","task"]</code></td><td>判定しないツール（読み取りと作業ディレクトリ内の編集は元から判定しない）</td></tr>
+        <tr><td><code>thresholds</code></td><td class="wrap"><code>allow</code> 0.8、<code>headlessAllow</code> 0.9、<code>deny</code> 0.85、<code>confidence</code> 0.6、<code>risk</code> 0.6、<code>flag</code> 0.7、<code>clear</code> 0.3</td><td>判定の閾値</td></tr>
+      </table></div>
+    </section>
+
+    <!-- ─────────────────────────────────────────────── -->
+    <section id="plugins">
+      <h2><span class="no">08</span>プラグイン</h2>
+
+      <h3 id="share">探す・入れる・公開する</h3>
+      <figure>
+        <div class="pipe">
+          <div class="col"><h5>公開する人</h5><ul>
+            <li><code>sasacode plugin publish my-tool.ts --license MIT</code></li>
+            <li>package.json・README を組み立てて <code>npm publish</code></li>
+            <li>キーワード <code>sasacode-plugin</code> が付く</li>
+          </ul></div>
+          <div class="col"><h5>置き場所</h5><ul>
+            <li><b>npm</b>：プラグインの本体</li>
+            <li><b>GitHub</b>：git で配るもの</li>
+            <li><b>sasanokusa.com/sasacode/plugins.json</b>：おすすめの一覧だけ（数 KB）</li>
+          </ul></div>
+          <div class="col"><h5>使う人</h5><ul>
+            <li><code>sasacode plugin search 語</code>：一覧（★）と npm から</li>
+            <li><code>sasacode plugin install 名前</code>：中身を見て確認してから</li>
+            <li><code>sasacode plugin update</code>：最新へ</li>
+          </ul></div>
+        </div>
+        <figcaption>サーバーを通るのは一覧の JSON だけ。本体は npm や GitHub から直接取る。</figcaption>
+      </figure>
+
+      <pre><code>sasacode plugin search                      <span class="c"># 全部</span>
+sasacode plugin search 天気                  <span class="c"># 語で絞る</span>
+sasacode plugin install sasacode-plugin-foo  <span class="c"># npm</span>
+sasacode plugin install https://github.com/you/plugin   <span class="c"># git</span>
+sasacode plugin install ./my-plugin          <span class="c"># 手元のパッケージ（公開前の確認）</span>
+sasacode plugin install foo --project        <span class="c"># このプロジェクトの .sasacode/plugins へ</span>
+sasacode plugin update [名前]
+sasacode plugin list
+sasacode plugin remove &lt;名前&gt;</code></pre>
+
+      <h4>入れる前に見せるもの</h4>
+      <ul>
+        <li><b>npm</b>：版、説明、公開者と公開日、ファイル数と大きさ、依存パッケージ、install スクリプトの有無（実行はしない）、<code>sasacode</code> フィールドの有無、ソースのリポジトリ。</li>
+        <li><b>git</b>：URL。入れた後にコミットを出す。<code>update</code> では新しいコミットの一覧と変更の規模を見せてから更新する。</li>
+        <li>端末がない（スクリプトから実行する）ときは <code>--yes</code> が要る。</li>
+      </ul>
+      <div class="warn"><b>注意</b>プラグインは sasacode と同じ権限で動く。コードを読むか、信頼できる作者のものだけを入れる。</div>
+
+      <h4>公開する</h4>
+      <pre><code>sasacode plugin publish my-tool.ts --license MIT --dry-run   <span class="c"># 中身の確認</span>
+sasacode plugin publish my-tool.ts --license MIT             <span class="c"># 公開（npm へのログインが必要）</span></code></pre>
+      <div class="tbl"><table>
+        <tr><th>オプション</th><th>既定</th><th>内容</th></tr>
+        <tr><td><code>--name</code></td><td><code>sasacode-plugin-&lt;ファイル名&gt;</code></td><td>パッケージ名（<code>@you/my-tool</code> も可）</td></tr>
+        <tr><td><code>--version</code></td><td>npm の最新版の次のパッチ（初回 0.1.0）</td><td>版</td></tr>
+        <tr><td><code>--api</code></td><td>使っている機能から</td><td>対応するプラグイン API（<code>permission</code> フックなら ^1.7.0 など）</td></tr>
+        <tr><td><code>--description</code></td><td>ファイル先頭のコメント</td><td>説明文</td></tr>
+        <tr><td><code>--license</code></td><td>なし</td><td>付けないと、ほかの人は再利用できない</td></tr>
+        <tr><td><code>--otp</code></td><td>その場で聞かれる</td><td>npm の2段階認証のコード</td></tr>
+      </table></div>
+      <p>ほかのファイルを import しているプラグインは、<code>package.json</code> に <code>sasacode</code> フィールドを書いたフォルダごと <code>sasacode plugin publish &lt;フォルダ&gt;</code> で出す。おすすめ一覧に載せたいときは、<a href="https://github.com/sasanokusa/sasacode/blob/main/site/plugins.json">site/plugins.json</a> に1件足す pull request を送る。</p>
+      <pre><code>{ "name": "my-tool", "source": "sasacode-plugin-my-tool", "description": "何をするか", "author": "you" }</code></pre>
+
+      <h3 id="write">書く</h3>
+      <p><code>~/.sasacode/plugins/hello.ts</code> に置くだけで読み込む（ビルド不要）。<code>@sasacode/plugin-api</code> は入れなくても import できる（型補完が欲しければ <code>npm i -D @sasacode/plugin-api</code>）。</p>
+      <pre><code><span class="k">import</span> { text, type Plugin } <span class="k">from</span> "@sasacode/plugin-api";
+
+<span class="k">export default</span> ((api) =&gt; {
+  api.registerTool({
+    name: "hello",
+    description: "Greet someone by name.",
+    parameters: { type: "object", properties: { name: { type: "string" } }, required: ["name"] },
+    kind: "read",
+    execute: <span class="k">async</span> ({ name }) =&gt; ({ content: [text(`Hello, ${name}!`)] }),
+  });
+  api.registerCommand({ name: "hello", description: "挨拶する", run: ({ args }) =&gt; api.ui.notify(`こんにちは ${args}`) });
+}) satisfies Plugin;</code></pre>
+      <p>組み込みの Skill を使えば、モデルに書かせることもできる：<code>/skill:tool-authoring 天気を返すツールを作って</code>。</p>
+
+      <h4 id="hooks">フックの順序</h4>
+      <figure>
+        <div class="flow">
+          <div class="st hook"><div><b>user_prompt</b>入力の変換、または消費（モデルに渡さない）</div></div>
+          <div class="st hook"><div><b>system_prompt → before_request</b>システムプロンプトへの追記 / 送るメッセージとサンプリングの変更</div></div>
+          <div class="st hook"><div><b>stream_delta</b>生成中の差分ごと（同期のみ）。途中で止められる</div></div>
+          <div class="st hook"><div><b>assistant_message</b>確定した応答の書き換え・再生成・継続の指示</div></div>
+          <div class="st hook"><div><b>tool_call_raw → 検証 → tool_call</b>壊れた呼び出しの修復 / 引数の変更と判定</div></div>
+          <div class="st hook"><div><b>permission</b>ルールとモードの判定の後で判定を変える（<a href="#flow">判定の流れ</a>）</div></div>
+          <div class="st hook"><div><b>実行 → tool_result</b>結果の変更・追記（実行されなかった呼び出しでも呼ばれる）</div></div>
+          <div class="st hook"><div><b>turn_end → agent_end</b>継続の指示（<code>inject</code>）や停止（<code>stop</code>）</div></div>
+        </div>
+        <figcaption>ほかに session_start / session_end、context_limit。サブエージェントは system_prompt〜tool_result を共有し、セッション系のフックは呼ばれない。</figcaption>
+      </figure>
+
+      <h4>API の版</h4>
+      <div class="tbl"><table>
+        <tr><th>版</th><th>追加されたもの</th></tr>
+        <tr><td>1.0</td><td>ツール、コマンド、プロバイダー、基本のフック、ui / session / agent</td></tr>
+        <tr><td>1.1</td><td><code>ready(promise)</code></td></tr>
+        <tr><td>1.2</td><td><code>stream_delta</code>、<code>assistant_message</code>、<code>tool_call_raw</code>、サンプリングの変更</td></tr>
+        <tr><td>1.3</td><td>コマンドの引数の補完</td></tr>
+        <tr><td>1.4</td><td>実行されなかった呼び出しの <code>tool_result</code>、<code>turn_end</code> の <code>stop</code>。<b>ここで締め切り</b>、以後 1.x は追加だけ</td></tr>
+        <tr><td>1.5</td><td><code>Provider.listModels</code>、<code>Request.fetch</code></td></tr>
+        <tr><td>1.6</td><td>ツールの <code>permissionsAs</code></td></tr>
+        <tr><td>1.7</td><td><code>permission</code> フック、<code>softDeny</code></td></tr>
+      </table></div>
+      <p>マニフェスト、API の全項目、互換性の約束は <a href="https://github.com/sasanokusa/sasacode/blob/main/docs/plugins.md">docs/plugins.md</a>。</p>
+
+      <h3 id="mcp">MCP と Skills</h3>
+      <pre><code>{
+  "mcpServers": {
+    "github": { "command": "npx", "args": ["-y", "@modelcontextprotocol/server-github"], "env": { "GITHUB_TOKEN": "${GITHUB_TOKEN}" } },
+    "remote": { "url": "https://example.com/mcp", "headers": { "Authorization": "Bearer ${REMOTE_TOKEN}" } }
+  }
+}</code></pre>
+      <ul>
+        <li>stdio と Streamable HTTP に対応。ツール名は <code>mcp__&lt;server&gt;__&lt;tool&gt;</code>、prompts はスラッシュコマンドになる。接続はバックグラウンドで行うので、起動を待たせない。</li>
+        <li>Skills は <code>~/.sasacode/skills/&lt;name&gt;/SKILL.md</code>、<code>.sasacode/skills/</code>、プラグインの <code>skills</code> から読む。システムプロンプトには名前と説明だけを載せ、本文はモデルが必要なときに読む。</li>
+        <li>ツールが多いとき（定義がコンテキストの 10% 以上か 30 個以上）は、<code>tool_search</code> で必要なものだけ読み込ませる。</li>
+      </ul>
+    </section>
+
+    <!-- ─────────────────────────────────────────────── -->
+    <section id="sessions">
+      <h2><span class="no">09</span>セッション</h2>
+      <p>会話は <code>~/.sasacode/sessions/&lt;作業ディレクトリ&gt;-&lt;ハッシュ&gt;/&lt;日時&gt;_&lt;id&gt;.jsonl</code> に、1件ずつ追記して保存する。途中で強制終了しても、最後に保存したところから再開できる。</p>
+      <div class="tbl"><table>
+        <tr><th>やりたいこと</th><th>方法</th></tr>
+        <tr><td>このディレクトリの直近の会話を続ける</td><td><code>sasacode -c</code></td></tr>
+        <tr><td>ID を指定して続ける</td><td><code>sasacode -r &lt;id&gt;</code>、TUI なら <code>/resume</code></td></tr>
+        <tr><td>1回ずつ続ける（tmux なしで会話する）</td><td><code>sasacode -r &lt;id&gt; -p "続き"</code></td></tr>
+        <tr><td>過去の時点から分岐する</td><td><code>/fork</code></td></tr>
+        <tr><td>保存しない</td><td><code>--no-session</code></td></tr>
+        <tr><td>コンテキストを空ける</td><td><code>/compact</code>（自動でも 80% で要約する）</td></tr>
+      </table></div>
+      <ul>
+        <li>結果が保存される前に止まったツール呼び出しは、「実行されたか分からない」としてモデルに伝え、状態を確かめてからやり直させる。</li>
+        <li>書きかけの最終行は <code>&lt;ファイル&gt;.torn</code> に退避する。</li>
+        <li>セッション ID は、フッター、<code>/session</code>、終了時の要約、ヘッドレスの出力に出る。</li>
+      </ul>
+    </section>
+
+    <!-- ─────────────────────────────────────────────── -->
+    <section id="headless">
+      <h2><span class="no">10</span>ヘッドレスと自動化</h2>
+      <pre><code>sasacode -p "テストを直して"                         <span class="c"># 答えは stdout、進捗は stderr</span>
+sasacode -p "…" --output jsonl                      <span class="c"># 全イベントを1行ずつ JSON で</span>
+git diff | sasacode -p "このdiffをレビューして"          <span class="c"># パイプした入力は -p の後ろに付く</span>
+sasacode -p "…" --permission auto --trust-project   <span class="c"># CI など確認できない環境で</span></code></pre>
+      <ul>
+        <li><b>終了コード</b>：最後まで終われば 0、それ以外（中断、エラー、上限、プラグインによる停止）は 1。止まった理由は stderr に <code>[stopped: …]</code> で出る。</li>
+        <li><b>確認が必要な呼び出し</b>は実行せず、理由をモデルに返す。何を許すかはルールで決めておく（<code>--permission auto</code> でも deny と ask のルールは効く）。</li>
+        <li><b>MCP サーバー</b>などの起動処理は、最初のリクエストの前に待つ。</li>
+        <li>テキストモードでは最後に <code>session &lt;id&gt; · continue: sasacode -r &lt;id&gt; -p "…"</code> が stderr に出る。</li>
+      </ul>
+      <h3 id="jsonl">JSONL のイベント</h3>
+      <p>最初の行は <code>{"type":"session","id":…,"path":…}</code>。そのあとはイベントが1行ずつ出る。</p>
+      <div class="tbl"><table>
+        <tr><th>type</th><th>内容</th></tr>
+        <tr><td><code>agent_start</code> / <code>agent_end</code></td><td>実行の始まりと終わり（<code>cause</code>：<code>done</code>、<code>aborted</code>、<code>error</code>、<code>refusal</code>、<code>context_limit</code>、<code>max_turns</code>、<code>stopped</code>）</td></tr>
+        <tr><td><code>turn_start</code> / <code>turn_end</code></td><td>モデルへの1リクエストごと</td></tr>
+        <tr><td><code>message_start</code> / <code>message_update</code> / <code>message_end</code></td><td>応答の開始 / 差分（テキスト・推論・ツール引数） / 確定したメッセージ（使用量を含む）</td></tr>
+        <tr><td><code>tool_start</code> / <code>tool_update</code> / <code>tool_end</code></td><td>ツールの開始 / 途中の出力（bash の stdout など） / 結果</td></tr>
+        <tr><td><code>tool_repaired</code></td><td>壊れた呼び出しを直した（元の形と直した内容）</td></tr>
+        <tr><td><code>message_discarded</code></td><td>プラグインが再生成させた応答（捨ててよい）</td></tr>
+        <tr><td><code>messages_replaced</code></td><td>履歴が差し替えられた（要約など）</td></tr>
+        <tr><td><code>context_limit</code> / <code>error</code> / <code>plugin_error</code></td><td>コンテキストの上限 / エラー / プラグインのエラー</td></tr>
+      </table></div>
+    </section>
+
+    <!-- ─────────────────────────────────────────────── -->
+    <section id="trouble">
+      <h2><span class="no">11</span>困ったとき</h2>
+
+      <details class="qa"><summary>推論（thinking）を off にしても推論が返ってくる</summary><div>
+        <p>サーバーによっては推論を止められない。Command Code の DeepSeek は <code>none</code> を受け付けず、推論が必ず返るので、<code>off</code> は一番軽い <code>low</code> として送る。自前の vLLM などは <code>off</code> で止まる（0.9.3 以降）。<a href="#effort">推論の深さ</a>を参照。</p>
+      </div></details>
+
+      <details class="qa"><summary>文章がコピーできない・端末で選択できない</summary><div>
+        <p>全画面では sasacode がマウスを受け取る。ドラッグして離すと sasacode がコピーする（0.9.1 以降）。端末の標準の選択を使いたいときは <kbd>option</kbd> / <kbd>alt</kbd> を押しながらドラッグするか、<code>"tui": { "altScreen": false }</code> にする。直前の応答全体は <code>/copy</code>。</p>
+      </div></details>
+
+      <details class="qa"><summary>表示が崩れる・罫線に文字が重なる</summary><div>
+        <p>①や※のような幅の曖昧な文字の数え方が、端末とずれている可能性がある。<code>SASACODE_AMBIGUOUS_WIDTH=2</code>（CJK 向けの端末設定のとき）か <code>1</code> を付けて起動してみる。改行を含むコマンドで崩れる問題は 0.9.2 で直した。</p>
+      </div></details>
+
+      <details class="qa"><summary><code>/compact</code> が何も言わない</summary><div>
+        <p>要約はモデルへの1回の長い呼び出しで、画面には流れない。フッターに「履歴を要約中」と出ている間は待つ（0.9.2 以降）。ローカルのサーバーで履歴が長いと数分かかる。サーバーの同時処理数が埋まっていると、順番待ちになる。</p>
+      </div></details>
+
+      <details class="qa"><summary>自前サーバーのモデルでコンテキストの割合がおかしい</summary><div>
+        <p>コンテキスト長が取れないモデルは 128k として扱う。<code>modelOverrides</code> で <code>contextWindow</code> を指定する（<a href="#own-server">自前のサーバー</a>）。</p>
+      </div></details>
+
+      <details class="qa"><summary><code>plugin install</code> がスクリプトから動かない</summary><div>
+        <p>入れる前の確認に答える端末がないため。<code>--yes</code> を付ける。</p>
+      </div></details>
+
+      <details class="qa"><summary><code>plugin publish</code> が 404 や EOTP で失敗する</summary><div>
+        <p><b>404</b>：npm のログインが切れている。<code>npm whoami</code> で確かめ、<code>npm login</code> し直す（npm は権限のない相手に 404 を返す）。<br><b>EOTP</b>：2段階認証のコードが要る。その場で聞かれるので入力するか、<code>--otp &lt;コード&gt;</code> を付ける（0.9.4 以降）。</p>
+      </div></details>
+
+      <details class="qa"><summary>プロジェクトのプラグインや設定が効かない</summary><div>
+        <p>プロジェクトを信頼していない可能性がある。起動時の確認で信頼するか、ヘッドレスなら <code>--trust-project</code>、いつも使うなら全体の設定の <code>trustedProjects</code> に入れる（<a href="#trust">プロジェクトの信頼</a>）。</p>
+      </div></details>
+
+      <details class="qa"><summary>同梱プラグインを自分で改造したい</summary><div>
+        <p>同じ名前のプラグインを <code>~/.sasacode/plugins</code> に置くと、同梱版の代わりにそちらを読み込む。同梱版のソースは <a href="https://github.com/sasanokusa/sasacode/tree/main/packages/bundled/src">packages/bundled/src</a>。</p>
+      </div></details>
+
+      <details class="qa"><summary>ネットワークが切れて止まった</summary><div>
+        <p>同梱の <code>auto-reconnect</code> が、接続先の復旧を待って自動で再開する（最大 10 分）。待ちきれないときや手動で再開するときは <code>/reconnect</code>。</p>
+      </div></details>
+    </section>
+  </main>
+</div>
+
+<footer>sasacode v0.9.4 · <a href="../">トップ</a> · <a href="https://github.com/sasanokusa/sasacode">GitHub</a> · Apache-2.0</footer>
+
+<script>
+  // Table of contents from the section and h3 headings, highlighted while scrolling.
+  (function () {
+    var toc = document.getElementById("toc"), tocM = document.getElementById("toc-m");
+    var links = [];
+    document.querySelectorAll("main section").forEach(function (sec) {
+      var h2 = sec.querySelector("h2");
+      var title = h2.textContent.replace(/^\d+/, "").trim();
+      var li = document.createElement("li"), a = document.createElement("a");
+      a.href = "#" + sec.id; a.textContent = title; li.appendChild(a);
+      links.push([sec, a]); // before its subsections, so that a subsection wins once reached
+      var subs = sec.querySelectorAll("h3[id]");
+      if (subs.length) {
+        var ol = document.createElement("ol");
+        subs.forEach(function (h) {
+          var sli = document.createElement("li"), sa = document.createElement("a");
+          sa.href = "#" + h.id; sa.textContent = h.textContent; sli.appendChild(sa); ol.appendChild(sli);
+          links.push([h, sa]);
+        });
+        li.appendChild(ol);
+      }
+      toc.appendChild(li);
+      var mli = document.createElement("li"), ma = document.createElement("a");
+      ma.href = a.href; ma.textContent = title; mli.appendChild(ma); tocM.appendChild(mli);
+    });
+    tocM.addEventListener("click", function (e) { if (e.target.tagName === "A") tocM.parentElement.open = false; });
+    var current;
+    function update() {
+      var y = window.scrollY + 110, best;
+      links.forEach(function (p) { if (p[0].getBoundingClientRect().top + window.scrollY <= y) best = p; });
+      if (best && best !== current) {
+        if (current) current[1].classList.remove("on");
+        best[1].classList.add("on");
+        current = best;
+      }
+    }
+    window.addEventListener("scroll", update, { passive: true });
+    update();
+  })();
+
+  // Copy buttons on code blocks.
+  document.querySelectorAll("pre").forEach(function (pre) {
+    var b = document.createElement("button");
+    b.className = "copy"; b.type = "button"; b.textContent = "コピー";
+    b.addEventListener("click", function () {
+      var text = pre.querySelector("code").innerText.split("\n").map(function (l) { return l.replace(/\s+#\s.*$/, ""); }).join("\n").trim();
+      navigator.clipboard.writeText(text).then(function () { b.textContent = "コピーしました"; setTimeout(function () { b.textContent = "コピー"; }, 1500); });
+    });
+    pre.appendChild(b);
+  });
+
+  // Light / dark switch, remembered in this browser.
+  (function () {
+    var root = document.documentElement, btn = document.getElementById("theme");
+    try { var saved = localStorage.getItem("sasacode-docs-theme"); if (saved) root.dataset.theme = saved; } catch (e) {}
+    btn.addEventListener("click", function () {
+      var dark = root.dataset.theme ? root.dataset.theme === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
+      root.dataset.theme = dark ? "light" : "dark";
+      try { localStorage.setItem("sasacode-docs-theme", root.dataset.theme); } catch (e) {}
+    });
+  })();
+</script>
+</body>
+</html>

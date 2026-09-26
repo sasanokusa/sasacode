@@ -6,6 +6,7 @@ set -eu
 HOST="${1:-sasa@100.65.215.48}"
 ROOT=/var/www/html/sasacode
 cd "$(dirname "$0")/.."
-ssh "$HOST" "mkdir -p $ROOT"
+ssh "$HOST" "mkdir -p $ROOT/docs"
 scp -q site/index.html site/.htaccess site/plugins.json "$HOST:$ROOT/"
+scp -q site/docs/index.html "$HOST:$ROOT/docs/"
 echo "deployed https://sasanokusa.com/sasacode/"

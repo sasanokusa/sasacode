@@ -299,7 +299,7 @@
         <dt>edits</dt><dd>作業ディレクトリ内の編集は通し、bash は確認（既定）</dd>
         <dt>ask</dt><dd>読み取りも含めて、すべて確認</dd>
         <dt>agent</dt><dd>危険かどうかをモデルに判定させる</dd>
-        <dt>auto</dt><dd>すべて許可。deny だけは効く</dd>
+        <dt>auto</dt><dd>すべて許可。deny と ask のルールは効く</dd>
       </dl>
       <p class="more fine">判断専用モデル Jev の判定を重ねることもできる（既定は無効）。パスはシンボリックリンクをたどった先で見る。クローンしたリポジトリのプラグインや接続先は、信頼すると答えるまで使わない。</p>
     </article></div></div>
@@ -329,6 +329,7 @@
       </ol>
       <p class="more fine">バイナリは GitHub Releases の最新版から取得し、SHA256 を検証する。版を固定するには <code>SASACODE_VERSION=v0.9.4</code>、置き場所を変えるには <code>SASACODE_INSTALL_DIR=…</code> を付ける。</p>
       <nav class="links" aria-label="関連リンク">
+        <a href="docs/">ドキュメント</a>
         <a href="https://github.com/sasanokusa/sasacode">GitHub</a>
         <a href="latest">最新バージョン</a>
         <a href="https://github.com/sasanokusa/sasacode/blob/main/docs/plugins.md">プラグインを書く</a>
