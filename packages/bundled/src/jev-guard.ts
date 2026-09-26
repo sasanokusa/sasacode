@@ -1,7 +1,8 @@
 import { existsSync, realpathSync, statSync } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type { Decision, HookMap, Plugin, ToolDefinition } from "@sasacode/plugin-api";
+import { type Backend, type BackendName, type BackendSettings, detectService, makeBackend, parseNative, type Question, type RawAnswers } from "./jev-backends.ts";
 
 /**
  * A second opinion on tool calls from TypeSafe's Jev, a decision model that answers typed
@@ -15,14 +16,9 @@ import type { Decision, HookMap, Plugin, ToolDefinition } from "@sasacode/plugin
  * own request, never tool output, since content written to steer it can move its answers.
  */
 
-export const JEV_ENDPOINT = "https://api.commandcode.ai/provider/v1/systemone";
-
-export interface JevSettings {
-  /** Off unless set: calls are sent to Command Code, which needs a plan with Provider API access. */
+export interface JevSettings extends BackendSettings {
+  /** Off unless set: calls are sent to the backend (by default Command Code or TypeSafe, whichever has a key). */
   enabled?: boolean;
-  model?: string;
-  endpoint?: string;
-  apiKeyEnv?: string;
   timeoutMs?: number;
   /** Tools never sent to Jev (reads and in-workspace edits never are). */
   skip?: string[];
@@ -38,13 +34,15 @@ export interface Thresholds {
   deny: number;
   /** Least confidence of the verdict for "safe" or "dangerous". */
   confidence: number;
+  /** P(ask) + P(deny) at or above this makes the call risky. */
+  risk: number;
   /** A concern at or above this is a flag (and makes the call risky). */
   flag: number;
   /** Every concern must be below this for "safe". */
   clear: number;
 }
 
-export const DEFAULT_THRESHOLDS: Thresholds = { allow: 0.8, headlessAllow: 0.9, deny: 0.85, confidence: 0.6, flag: 0.7, clear: 0.3 };
+export const DEFAULT_THRESHOLDS: Thresholds = { allow: 0.8, headlessAllow: 0.9, deny: 0.85, confidence: 0.6, risk: 0.6, flag: 0.7, clear: 0.3 };
 
 const CONCERNS = {
   destroys_data: {
@@ -57,10 +55,10 @@ const CONCERNS = {
   },
   outside_workspace: {
     label: "作業ディレクトリ外",
-    instructions: "Does this call change anything outside the workspace directory?",
+    instructions: "Does this call change anything outside the workspace directory and temporary directories?",
     criteria: {
-      true: "Writes, deletes or moves files outside the workspace, changes the home directory or the system, pushes, publishes, deploys, or sends data to a server",
-      false: "Only reads, or only changes files inside the workspace",
+      true: "Writes, deletes or moves files elsewhere in the home directory or the system, pushes, publishes, deploys, or sends data to a server",
+      false: "Only reads, or only changes files inside the workspace or in a temporary directory",
     },
   },
   touches_secrets: {
@@ -75,7 +73,7 @@ const CONCERNS = {
 
 type Concern = keyof typeof CONCERNS;
 
-const QUESTIONS = {
+const QUESTIONS: Record<string, Question> = {
   verdict: {
     type: "choice",
     instructions: "A coding agent wants to make the tool call in `call`, working in `workspace`. How should the harness handle it?",
@@ -86,22 +84,12 @@ const QUESTIONS = {
       deny: "Clearly destructive or dangerous: wipes the home directory or system files, destroys data that cannot be restored, leaks credentials, or weakens security",
     },
   },
-  ...Object.fromEntries(Object.entries(CONCERNS).map(([k, c]) => [k, { type: "noul", instructions: c.instructions, criteria: c.criteria }])),
-};
-
-const FITS_REQUEST = {
-  type: "noul",
-  instructions: "Is this call a step toward what the user asked for in `user_request`?",
-  criteria: {
-    true: "Serves the request directly, or is a reasonable preparation for it",
-    false: "Unrelated to the request, or goes beyond what was asked",
-  },
+  ...Object.fromEntries(Object.entries(CONCERNS).map(([k, c]) => [k, { type: "noul" as const, instructions: c.instructions, criteria: c.criteria }])),
 };
 
 export interface JevAnswers {
   verdict: { choice: Decision; probabilities: Record<Decision, number>; confidence: number };
   concerns: Record<Concern, number>;
-  fitsRequest?: number;
 }
 
 export type Reading = "safe" | "risky" | "dangerous" | "unsure";
@@ -116,47 +104,37 @@ export interface Judgement {
 export function interpret(a: JevAnswers, t: Thresholds, interactive: boolean): Judgement {
   const p = a.verdict.probabilities;
   const flags = (Object.keys(CONCERNS) as Concern[]).filter((k) => a.concerns[k] >= t.flag);
-  const offRequest = a.fitsRequest !== undefined && a.fitsRequest <= 1 - t.flag;
   const confident = a.verdict.confidence >= t.confidence;
   let reading: Reading = "unsure";
   if (p.deny >= t.deny && confident) reading = "dangerous";
-  else if (p.deny >= 0.5 || p.ask + p.deny >= 0.6 || flags.length || offRequest) reading = "risky";
+  else if (p.deny >= 0.5 || p.ask + p.deny >= t.risk || flags.length) reading = "risky";
   else if (
     p.allow >= (interactive ? t.allow : t.headlessAllow) &&
     confident &&
-    Object.values(a.concerns).every((v) => v < t.clear) &&
-    (a.fitsRequest === undefined || a.fitsRequest >= 0.5)
+    Object.values(a.concerns).every((v) => v < t.clear)
   )
     reading = "safe";
   const label = { safe: "安全", risky: "要確認", dangerous: "危険", unsure: "判断保留" }[reading];
   const parts = [`allow ${fmt(p.allow)} · ask ${fmt(p.ask)} · deny ${fmt(p.deny)}`];
   for (const k of flags) parts.push(`${CONCERNS[k].label} ${fmt(a.concerns[k])}`);
-  if (offRequest) parts.push(`依頼との関連 ${fmt(a.fitsRequest!)}`);
   return { reading, summary: `Jev: ${label}（${parts.join(" · ")}）`, answers: a };
 }
 
 const fmt = (n: number) => n.toFixed(2);
 
-/** Parse the answers of a systemone response; throws when they are not what was asked. */
-export function parseAnswers(body: unknown): JevAnswers {
-  const answers = (body as { answers?: Record<string, any> })?.answers;
-  const v = answers?.verdict;
-  const probs = v?.probabilities;
-  if (!answers || !probs || typeof v.confidence !== "number") throw new Error("Jev gave no verdict");
-  const num = (x: unknown) => {
-    if (typeof x !== "number" || !Number.isFinite(x)) throw new Error("Jev gave a malformed answer");
-    return x;
-  };
-  const concerns = Object.fromEntries((Object.keys(CONCERNS) as Concern[]).map((k) => [k, num(answers[k]?.noul)])) as Record<Concern, number>;
+/** Answers from any backend, in the shape interpret() reads. */
+export function toAnswers(raw: RawAnswers): JevAnswers {
+  const v = raw.choice.verdict!;
+  const p = v.probabilities;
   return {
-    verdict: {
-      choice: v.choice,
-      probabilities: { allow: num(probs.allow ?? 0), ask: num(probs.ask ?? 0), deny: num(probs.deny ?? 0) },
-      confidence: v.confidence,
-    },
-    concerns,
-    fitsRequest: answers.fits_request ? num(answers.fits_request.noul) : undefined,
+    verdict: { choice: v.choice as Decision, probabilities: { allow: p.allow ?? 0, ask: p.ask ?? 0, deny: p.deny ?? 0 }, confidence: v.confidence },
+    concerns: Object.fromEntries((Object.keys(CONCERNS) as Concern[]).map((k) => [k, raw.noul[k]!])) as Record<Concern, number>,
   };
+}
+
+/** Parse a systemone response in TypeSafe's own dialect; throws when it is not what was asked. */
+export function parseAnswers(body: unknown): JevAnswers {
+  return toAnswers(parseNative(body, QUESTIONS));
 }
 
 // ── what Jev sees ────────────────────────────────────────────────────
@@ -191,20 +169,45 @@ export function shellWords(command: string): string[] {
 
 /** Commands whose plain arguments are files they change. */
 const FILE_COMMANDS = new Set(["rm", "rmdir", "unlink", "shred", "truncate", "mv", "cp", "ln", "chmod", "chown", "chgrp", "touch", "tee", "mkdir"]);
+/** Commands that change the files they are given only with an in-place flag. */
+const IN_PLACE = new Set(["sed", "perl"]);
 /** Words that run the command after them. */
 const PREFIXES = new Set(["sudo", "env", "command", "exec", "nice", "nohup", "time", "xargs"]);
 
-/** Arguments of a command that are, or look like, files it may touch. */
+/**
+ * Files a command may change: the arguments of commands that change files (rm, mv, cp, chmod,
+ * sed -i …) and redirection targets. Files it only reads are left out: listing them made reads
+ * look like changes outside the workspace.
+ */
 export function pathArgs(command: string): string[] {
   const out: string[] = [];
+  const add = (p: string) => {
+    if (p && !p.startsWith("-") && !p.includes("://") && !p.startsWith("/dev/") && !p.startsWith("&")) out.push(p);
+  };
   for (const segment of command.split(CHAIN)) {
     const words = shellWords(segment.trim());
     while (words.length && (/^[A-Za-z_][A-Za-z0-9_]*=/.test(words[0]!) || PREFIXES.has(words[0]!))) words.shift();
-    const changesFiles = FILE_COMMANDS.has(basename(words[0] ?? ""));
-    for (const w of words.slice(1)) {
-      const arg = w.replace(/^[0-9]*[<>]+/, "");
-      if (!arg || arg.startsWith("-") || arg.includes("://")) continue;
-      if (changesFiles || /^(~|\$HOME|\$\{HOME\}|\.{1,2}(\/|$)|\/)/.test(arg) || arg.includes("/")) out.push(arg);
+    const program = basename(words[0] ?? "");
+    const changesFiles = FILE_COMMANDS.has(program) || (IN_PLACE.has(program) && words.some((w) => /^-[a-zA-Z]*i/.test(w)));
+    // chmod 600 f, chown user f: the first plain argument is the mode or owner.
+    let skipFirst = ["chmod", "chown", "chgrp"].includes(program);
+    for (let i = 1; i < words.length; i++) {
+      const w = words[i]!;
+      const redirect = /^([0-9]*|&)>>?(.*)$/.exec(w);
+      if (redirect) {
+        add(redirect[2] || words[++i] || "");
+        continue;
+      }
+      if (w.startsWith("<")) {
+        if (w === "<" || w === "<<" || w === "<<<") i++;
+        continue;
+      }
+      // sed -i '' 's/a/b/' file: the empty suffix and the script are not files.
+      if (skipFirst && !w.startsWith("-")) {
+        skipFirst = false;
+        continue;
+      }
+      if (changesFiles && !(IN_PLACE.has(program) && (w === "" || /^s(.).*\1.*\1[gip0-9]*$/.test(w) || w.startsWith("-")))) add(w);
     }
   }
   return [...new Set(out)].slice(0, 12);
@@ -261,6 +264,9 @@ function gitState(path: string, root: string | undefined): string {
   return "tracked by git and committed";
 }
 
+/** Scratch space: changes there do not touch the user's files. */
+const TEMP_DIRS = () => [...new Set([tmpdir(), "/tmp", "/private/tmp", "/var/folders", "/private/var/folders"].map((d) => real(d)))];
+
 const tildify = (p: string) => (p === homedir() || p.startsWith(`${homedir()}/`) ? `~${p.slice(homedir().length)}` : p);
 
 /** Best-effort removal of secrets before anything leaves the machine. */
@@ -290,7 +296,6 @@ export function buildState(f: CallFacts): Record<string, unknown> {
   const call: Record<string, unknown> = { tool: f.tool.name };
   if (command !== undefined) call.command = clip(redact(command), 4000);
   else call.arguments = clip(redact(JSON.stringify(f.args)), 4000);
-  const steps = command?.split(CHAIN).map((s) => s.trim()).filter(Boolean) ?? [];
   const written = f.tool.paths?.(f.args, f.cwd) ?? (command !== undefined ? pathArgs(command) : []);
   const root = git(f.cwd, ["rev-parse", "--show-toplevel"])?.trim() || undefined;
   const workspace = real(f.cwd);
@@ -300,13 +305,19 @@ export function buildState(f: CallFacts): Record<string, unknown> {
     return {
       path: p,
       resolves_to: tildify(where),
-      location: where === homedir() ? "the home directory itself" : inside(where, workspace) ? "inside the workspace" : "outside the workspace",
+      location:
+        where === homedir()
+          ? "the home directory itself"
+          : inside(where, workspace)
+            ? "inside the workspace"
+            : TEMP_DIRS().some((t) => inside(where, t))
+              ? "a temporary directory"
+              : "outside the workspace",
       exists,
       git: exists === "does not exist" ? "n/a" : gitState(where, root),
     };
   });
   const state: Record<string, unknown> = { workspace: tildify(workspace), call };
-  if (steps.length > 1) state.steps = steps.map((s) => clip(redact(s), 400));
   if (targets.length) state.targets = targets;
   if (f.userRequest) state.user_request = clip(redact(f.userRequest), 1500);
   return state;
@@ -353,49 +364,36 @@ function lastUserRequest(messages: readonly { role: string; content: unknown }[]
   }
 }
 
-async function keychain(account: string): Promise<string | undefined> {
-  const cmd =
-    process.platform === "darwin"
-      ? ["security", "find-generic-password", "-s", "sasacode", "-a", account, "-w"]
-      : process.platform === "linux"
-        ? ["secret-tool", "lookup", "service", "sasacode", "account", account]
-        : undefined;
-  if (!cmd) return;
-  try {
-    const p = Bun.spawn(cmd, { stdout: "pipe", stderr: "ignore" });
-    const out = (await new Response(p.stdout).text()).trim();
-    return (await p.exited) === 0 && out ? out : undefined;
-  } catch {
-    return;
-  }
-}
-
 const jevGuard: Plugin = (api) => {
   const s = api.settings as JevSettings;
   const thresholds = { ...DEFAULT_THRESHOLDS, ...s.thresholds };
-  const model = s.model ?? "typesafe/jev";
-  const endpoint = s.endpoint ?? JEV_ENDPOINT;
-  const keyEnv = s.apiKeyEnv ?? "CMD_API_KEY";
   const skip = s.skip ?? ["todo_write", "task"];
   const cache = new Map<string, JevAnswers>();
   const stats = { calls: 0, failures: 0, changed: 0 };
   const recent: string[] = [];
-  let key: Promise<string | undefined> | undefined;
+  let backend: Promise<Backend> | undefined;
   let warned = "";
+  // Named, or the first of Command Code / TypeSafe with a key (Command Code when neither has one,
+  // so the warning names the key to set).
+  const pick = async () => makeBackend(api, s.backend ?? (await detectService()) ?? "commandcode", s);
 
   api.registerCommand({
     name: "jev",
     description: "Jev ガード（実行前の安全判断）の状態",
-    run: () =>
+    run: async () => {
+      if (!s.enabled)
+        return api.ui.notify(
+          'Jev ガード: 無効。config の plugins.settings["jev-guard"] に {"enabled": true} を書くと有効（Jev の API キーが必要：Command Code の CMD_API_KEY、TypeSafe の TYPESAFE_API_KEY など）',
+        );
+      const b = await (backend ??= pick()).catch((e: Error) => e);
       api.ui.notify(
-        s.enabled
-          ? [
-              `Jev ガード: 有効（${model}）`,
-              `問い合わせ ${stats.calls} 回 · 判定を変えた ${stats.changed} 回 · 失敗 ${stats.failures} 回`,
-              ...recent.slice(-5),
-            ].join("\n")
-          : 'Jev ガード: 無効。config の plugins.settings["jev-guard"] に {"enabled": true} を書くと有効（Command Code の Provider API キー CMD_API_KEY が必要）',
-      ),
+        [
+          `Jev ガード: 有効 · ${b instanceof Error ? `接続先の設定エラー: ${b.message}` : b.label}`,
+          `問い合わせ ${stats.calls} 回 · 判定を変えた ${stats.changed} 回 · 失敗 ${stats.failures} 回`,
+          ...recent.slice(-5),
+        ].join("\n"),
+      );
+    },
   });
   if (!s.enabled) return;
 
@@ -407,30 +405,24 @@ const jevGuard: Plugin = (api) => {
   };
 
   async function ask(state: Record<string, unknown>, signal?: AbortSignal): Promise<JevAnswers | undefined> {
-    // The keychain holds the Command Code key only under the provider's own variable.
-    key ??= process.env[keyEnv] ? Promise.resolve(process.env[keyEnv]) : keyEnv === "CMD_API_KEY" ? keychain("commandcode") : Promise.resolve(undefined);
-    const apiKey = await key;
-    if (!apiKey) return void warn(`API キーがありません（${keyEnv}）`);
-    const questions: Record<string, unknown> = { ...QUESTIONS };
-    if (state.user_request) questions.fits_request = FITS_REQUEST;
-    const body = JSON.stringify({ model, state, questions });
-    const hit = cache.get(body);
+    let b: Backend;
+    try {
+      b = await (backend ??= pick());
+    } catch (e) {
+      return void warn((e as Error).message);
+    }
+    const key = `${b.label}\0${JSON.stringify(state)}`;
+    const hit = cache.get(key);
     if (hit) return hit;
     stats.calls++;
     try {
-      const deadline = AbortSignal.any([AbortSignal.timeout(s.timeoutMs ?? 5000), ...(signal ? [signal] : [])]);
-      const post = () =>
-        fetch(endpoint, { method: "POST", headers: { authorization: `Bearer ${apiKey}`, "content-type": "application/json" }, body, signal: deadline });
-      let res = await post();
-      // Overloaded or rate limited: one more try within the same time limit.
-      if (res.status === 429 || res.status >= 500) res = await post();
-      if (!res.ok) return void warn(`HTTP ${res.status} ${clip((await res.text()).trim(), 200)}`);
-      const answers = parseAnswers(await res.json());
+      const deadline = AbortSignal.any([AbortSignal.timeout(s.timeoutMs ?? (b.name === "chat" ? 60_000 : 5000)), ...(signal ? [signal] : [])]);
+      const answers = toAnswers(await b.ask(state, QUESTIONS, deadline));
       if (cache.size >= 256) cache.delete(cache.keys().next().value!);
-      cache.set(body, answers);
+      cache.set(key, answers);
       return answers;
     } catch (e) {
-      return void warn((e as Error).message);
+      return void warn(`${b.label}: ${(e as Error).message}`);
     }
   }
 

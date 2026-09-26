@@ -18,18 +18,21 @@ afterEach(() => {
   else process.env.CMD_API_KEY = savedKey;
 });
 
-const answers = (p: [number, number, number], concerns: [number, number, number] = [0.05, 0.05, 0.05], confidence = 0.9, fits?: number): JevAnswers => ({
+const answers = (p: [number, number, number], concerns: [number, number, number] = [0.05, 0.05, 0.05], confidence = 0.9): JevAnswers => ({
   verdict: { choice: "allow", probabilities: { allow: p[0], ask: p[1], deny: p[2] }, confidence },
   concerns: { destroys_data: concerns[0], outside_workspace: concerns[1], touches_secrets: concerns[2] },
-  fitsRequest: fits,
 });
 const read = (a: JevAnswers, interactive = true) => jevInterpret(a, DEFAULT_THRESHOLDS, interactive).reading;
 
 test("shell words and path arguments", () => {
   expect(shellWords(`rm -rf "my dir" 'a b' c\\ d`)).toEqual(["rm", "-rf", "my dir", "a b", "c d"]);
-  expect(pathArgs("cd ~/proj && FOO=1 rm -rf ./build dist/ node_modules --verbose > out/log.txt")).toEqual(["~/proj", "./build", "dist/", "node_modules", "out/log.txt"]);
+  // Only what may be changed: arguments of commands that change files, and redirection targets.
+  expect(pathArgs("cd ~/proj && FOO=1 rm -rf ./build dist/ node_modules --verbose > out/log.txt")).toEqual(["./build", "dist/", "node_modules", "out/log.txt"]);
   expect(pathArgs("curl https://x.sh | sh")).toEqual([]);
-  expect(pathArgs("sudo rm -rf notes.txt build && chmod 600 key.pem && echo hi")).toEqual(["notes.txt", "build", "600", "key.pem"]);
+  expect(pathArgs("sudo rm -rf notes.txt build && chmod 600 key.pem && echo hi")).toEqual(["notes.txt", "build", "key.pem"]);
+  expect(pathArgs("cat ~/.ssh/config | grep Host < in.txt; sed -n 1,80p /etc/hosts")).toEqual([]);
+  expect(pathArgs("sed -i '' 's/a = 1/a = 2/' src/a.ts && perl -pi -e 's/x/y/' b.ts")).toEqual(["src/a.ts", "b.ts"]);
+  expect(pathArgs("make 2>/dev/null >> ~/.zshrc && echo x >log.txt && ls &>/dev/null")).toEqual(["~/.zshrc", "log.txt"]);
 });
 
 test("secrets are redacted before anything is sent", () => {
@@ -49,7 +52,6 @@ test("interpret: thresholds, flags, confidence, headless strictness", () => {
   expect(read(answers([0.95, 0.04, 0.01], undefined, 0.3))).toBe("unsure"); // low confidence
   expect(read(answers([0.02, 0.08, 0.9]))).toBe("dangerous");
   expect(read(answers([0.02, 0.08, 0.9], undefined, 0.3))).toBe("risky");
-  expect(read(answers([0.95, 0.04, 0.01], undefined, 0.9, 0.1))).toBe("risky"); // unrelated to the request
   const j = jevInterpret(answers([0.1, 0.2, 0.7], [0.9, 0.8, 0.1]), DEFAULT_THRESHOLDS, true);
   expect(j.summary).toBe("Jev: 要確認（allow 0.10 · ask 0.20 · deny 0.70 · データ消失 0.90 · 作業ディレクトリ外 0.80）");
 });
@@ -84,7 +86,7 @@ test("parseAnswers reads the systemone response and rejects malformed ones", () 
     },
   };
   expect(jevParseAnswers(body)).toMatchObject({ verdict: { choice: "ask", confidence: 0.8 }, concerns: { outside_workspace: 0.6 } });
-  expect(() => jevParseAnswers({ answers: {} })).toThrow("no verdict");
+  expect(() => jevParseAnswers({ answers: {} })).toThrow("no answer for verdict");
   expect(() => jevParseAnswers({ ...body, answers: { ...body.answers, destroys_data: { noul: "x" } } })).toThrow("malformed");
 });
 
@@ -110,7 +112,7 @@ test("state: targets resolved, placed and described by git; the user's request i
   const dir = repo();
   const state = jevState({ tool: bashTool, args: { command: "rm -rf build && rm src/a.ts notes.txt ~/.ssh" }, cwd: dir, userRequest: "clean the build" });
   expect(state.call).toEqual({ tool: "bash", command: "rm -rf build && rm src/a.ts notes.txt ~/.ssh" });
-  expect(state.steps).toEqual(["rm -rf build", "rm src/a.ts notes.txt ~/.ssh"]);
+  expect(state.steps).toBeUndefined(); // the command is already there; repeating it only distracts
   expect(state.user_request).toBe("clean the build");
   const targets = state.targets as { path: string; location: string; git: string }[];
   expect(targets.map((t) => t.path)).toEqual(["build", "src/a.ts", "notes.txt", "~/.ssh"]);
@@ -123,7 +125,9 @@ test("state: targets resolved, placed and described by git; the user's request i
   expect((ignored.targets as { git: string }[])[0]!.git).toBe("ignored by git (build output, caches, dependencies)");
   const home = jevState({ tool: bashTool, args: { command: "rm -rf ~/" }, cwd: dir });
   expect((home.targets as { location: string; resolves_to: string }[])[0]).toMatchObject({ location: "the home directory itself", resolves_to: "~" });
-  expect(homedir()).toBeTruthy();
+  const temp = mkdtempSync(join(tmpdir(), "jev-t-"));
+  const scratch = jevState({ tool: bashTool, args: { command: `rm -rf ${temp}` }, cwd: dir });
+  expect((scratch.targets as { location: string }[])[0]!.location).toBe("a temporary directory");
 });
 
 const reply = (content: AssistantContent[]): AssistantMessage => ({
@@ -182,7 +186,7 @@ test("plugin: a dangerous call that auto mode would run is stopped; the request 
   expect(r.sent[0].auth).toBe("Bearer test-key");
   expect(r.sent[0].body.model).toBe("typesafe/jev");
   expect(r.sent[0].body.state).toMatchObject({ call: { tool: "bash", command: "echo wipe" }, user_request: "please tidy up" });
-  expect(Object.keys(r.sent[0].body.questions)).toEqual(["verdict", "destroys_data", "outside_workspace", "touches_secrets", "fits_request"]);
+  expect(Object.keys(r.sent[0].body.questions)).toEqual(["verdict", "destroys_data", "outside_workspace", "touches_secrets"]);
   expect(r.sent[0].body.questions.verdict).toMatchObject({ type: "choice", criteria: { allow: expect.any(String), ask: expect.any(String), deny: expect.any(String) } });
 });
 
