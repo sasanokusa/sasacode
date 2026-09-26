@@ -4,7 +4,7 @@ import type { PermissionRules, Plugin } from "@sasacode/plugin-api";
 export const PRESETS: Record<string, { description: string; rules: PermissionRules }> = {
   guard: {
     description:
-      "取り返しのつかない操作を常に拒否（sudo、ルートの rm -rf、ディスク操作、パイプで sh に流す等）。ホーム配下の rm -rf と force push は softDeny（jev-guard などが確認に回せる）",
+      "取り返しのつかない操作を常に拒否（sudo、ルートの rm -rf、ディスク操作、パイプで sh に流す等）。ホーム配下の rm -rf と force push は softDeny（jev-guard などが確認に回せる）。ssh・scp・sftp・リモートへの rsync は常に確認",
     rules: {
       deny: [
         "bash(sudo *)",
@@ -20,6 +20,9 @@ export const PRESETS: Record<string, { description: string; rules: PermissionRul
       // Broad patterns that also catch legitimate calls (rm -rf ~/proj/build, a force push to
       // one's own branch): still denied, unless a permission plugin hands them to the user.
       softDeny: ["bash(rm -rf ~*)", "bash(rm -rf $HOME*)", "bash(git push --force*)", "bash(git push -f*)"],
+      // Other machines: even a read there is outside what the harness (or Jev, which sees only
+      // the command line) can check, so always ask, in auto mode too.
+      ask: ["bash(ssh *)", "bash(scp *)", "bash(sftp *)", "bash(rsync *:*)"],
     },
   },
   "read-only-shell": {
