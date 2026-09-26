@@ -43,7 +43,8 @@ export async function searchPlugins(query: string, doFetch: typeof fetch = fetch
           .filter((l) => matches(l, words)),
       )
       .catch((e) => (errors.push(`list: ${(e as Error).message}`), [] as Listing[])),
-    getJson(`${registry()}/-/v1/search?text=${encodeURIComponent(`keywords:${PLUGIN_KEYWORD} ${query}`.trim())}&size=25`, doFetch)
+    // No words: list everything (npm allows up to 250 a page).
+    getJson(`${registry()}/-/v1/search?text=${encodeURIComponent(`keywords:${PLUGIN_KEYWORD} ${query}`.trim())}&size=${words.length ? 25 : 250}`, doFetch)
       .then((j) =>
         ((j?.objects ?? []) as { package: any }[]).map(({ package: p }) => ({
           name: p.name,
@@ -116,13 +117,16 @@ export function apiRangeFor(source: string): string {
   return "^1.4.0";
 }
 
-/** The first sentence-like line of the file's leading comment. */
-export function describeSource(source: string): string | undefined {
-  const comment = /^\s*(\/\*\*?[\s\S]*?\*\/|(?:\s*\/\/.*\n?)+)/.exec(source)?.[1] ?? "";
+/**
+ * The first real line of the file's header comment (the first block comment, or leading // lines),
+ * skipping a line that only repeats the plugin's name.
+ */
+export function describeSource(source: string, name?: string): string | undefined {
+  const comment = /\/\*[\s\S]*?\*\//.exec(source)?.[0] ?? /^\s*((?:\s*\/\/.*\n?)+)/.exec(source)?.[1] ?? "";
   const line = comment
     .split("\n")
-    .map((l) => l.replace(/^\s*(\/\*\*?|\*\/|\*|\/\/)\s?/, "").trim())
-    .find((l) => l && !l.startsWith("@"));
+    .map((l) => l.replace(/^\s*(\/\*\*?|\*\/|\*|\/\/)\s?/, "").replace(/\*\/\s*$/, "").trim())
+    .find((l) => l && !l.startsWith("@") && l !== name && !/^[\w-]+:$/.test(l));
   return line?.replace(/^[\w-]+\s+[—–-]\s+/, "").slice(0, 200);
 }
 
@@ -133,6 +137,7 @@ export interface StageOptions {
   version?: string;
   api?: string;
   license?: string;
+  description?: string;
   /** Latest published version, to publish the next patch. */
   latest?: string;
 }
@@ -153,7 +158,7 @@ export function stagePackage(file: string, o: StageOptions = {}): { dir: string;
   const nextPatch = (v: string) => v.replace(/^(\d+)\.(\d+)\.(\d+).*$/, (_m, a, b, c) => `${a}.${b}.${Number(c) + 1}`);
   const version = o.version ?? (o.latest ? nextPatch(o.latest) : "0.1.0");
   const api = o.api ?? apiRangeFor(source);
-  const description = describeSource(source) ?? `${base} plugin for sasacode`;
+  const description = o.description ?? describeSource(source, base) ?? `${base} plugin for sasacode`;
   const entry = `index${ext}`;
   const pkg: Record<string, any> = {
     name,

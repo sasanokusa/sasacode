@@ -94,6 +94,8 @@ test("API ranges and descriptions", () => {
   expect(apiRangeFor(`api.registerTool({})`)).toBe("^1.4.0");
   expect(describeSource("// quick — does a quick thing\nexport default () => {}")).toBe("does a quick thing");
   expect(describeSource("export default () => {}")).toBeUndefined();
+  // Imports first, then a header whose first line is only the name.
+  expect(describeSource(`import fs from "node:fs";\n/**\n * tidy\n *\n * Keeps the notes tidy.\n */\nexport default () => {};`, "tidy")).toBe("Keeps the notes tidy.");
 });
 
 test("a package directory needs the manifest, and gets the search keyword", () => {

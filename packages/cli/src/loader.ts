@@ -141,12 +141,12 @@ const flag = (args: string[], name: string) => {
 };
 
 const USAGE = `usage: sasacode plugin <command> [--project]
-  search [words]                       find plugins (the list on sasanokusa.com and npm)
+  search [words]                       find plugins (the list on sasanokusa.com and npm); no words lists all
   install <npm-spec|git-url|dir> [--yes]  add one (shows what it is and asks first)
   update [name]                        update npm plugins, or pull a git one (shows the changes)
   remove <name>
   list
-  publish <file.ts|dir> [--name <pkg>] [--version <v>] [--api <range>] [--license <id>] [--dry-run]`;
+  publish <file.ts|dir> [--name <pkg>] [--version <v>] [--api <range>] [--license <id>] [--description <text>] [--dry-run]`;
 
 export async function pluginCommand(args: string[], cwd: string): Promise<number> {
   const [sub, spec] = args;
@@ -226,7 +226,7 @@ export async function pluginCommand(args: string[], cwd: string): Promise<number
       } else {
         const name = flag(args, "--name");
         const latest = flag(args, "--version") ? undefined : await latestVersion(name ?? `sasacode-plugin-${basename(spec).replace(/\.(ts|js|mjs)$/, "").toLowerCase()}`);
-        ({ dir: target, pkg, notes } = stagePackage(spec, { name, version: flag(args, "--version"), api: flag(args, "--api"), license: flag(args, "--license"), latest }));
+        ({ dir: target, pkg, notes } = stagePackage(spec, { name, version: flag(args, "--version"), api: flag(args, "--api"), license: flag(args, "--license"), description: flag(args, "--description"), latest }));
       }
       console.log(`${pkg.name}@${pkg.version}  (plugin API ${pkg.sasacode?.apiVersion ?? "?"})\n  ${target}`);
       for (const n of notes) console.log(`  note: ${n}`);

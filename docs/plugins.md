@@ -53,7 +53,7 @@ npm のパッケージは `bun run pack:plugin-api` で `dist/plugin-api` に作
 ## 探す・入れる
 
 ```bash
-sasacode plugin search [語]                         # sasanokusa.com のおすすめ一覧と npm から探す
+sasacode plugin search [語]                         # sasanokusa.com のおすすめ一覧と npm から探す（語なしで全部）
 sasacode plugin install sasacode-plugin-foo         # npm
 sasacode plugin install https://github.com/you/plugin  # git
 sasacode plugin install ./my-plugin                 # 手元のパッケージ（公開前の確認に）
@@ -80,6 +80,7 @@ sasacode plugin publish my-tool.ts --license MIT             # npm publish（npm
 - `~/.sasacode/publish/<パッケージ名>/` に npm のパッケージを組み立てて、`npm publish --access public` を実行する。パッケージ名は既定で `sasacode-plugin-<ファイル名>`（`--name @you/my-tool` で変えられる）。
 - `package.json` には、`sasacode` フィールド（マニフェスト）、検索用のキーワード `sasacode-plugin`、ピア依存の `@sasacode/plugin-api` を入れる。README はファイル先頭のコメントから作る。
 - 版は、npm に出ている最新版の次のパッチ（初回は 0.1.0）。`--version` で指定できる。
+- 説明文は、ファイルの最初のコメントから取る（`--description` で指定できる）。
 - `apiVersion` は、使っている機能から決める（`permission` フックや `softDeny` なら ^1.7.0、`permissionsAs` なら ^1.6.0、など）。`--api` で指定できる。
 - 同じフォルダのほかのファイルを import していると、それは含まれない（注意を出す）。そういうプラグインは、`package.json` に `sasacode` フィールドを書いたディレクトリごと `sasacode plugin publish <ディレクトリ>` で出す（キーワードがなければ足す）。
 - ライセンスを付けないと、ほかの人は再利用できない。`--license MIT` のように付ける。
