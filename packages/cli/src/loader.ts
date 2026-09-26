@@ -110,7 +110,8 @@ export async function importExtensions(p: FoundPlugin): Promise<Plugin[]> {
 // ── install / list / remove / search / publish / update ─────────────
 
 async function sh(cmd: string[], cwd: string, env?: Record<string, string>): Promise<void> {
-  const p = Bun.spawn(cmd, { cwd, stdout: "inherit", stderr: "inherit", env: env ? { ...process.env, ...env } : undefined });
+  // stdin too: npm asks for a one-time password or a browser login on the terminal.
+  const p = Bun.spawn(cmd, { cwd, stdin: "inherit", stdout: "inherit", stderr: "inherit", env: env ? { ...process.env, ...env } : undefined });
   if ((await p.exited) !== 0) throw new Error(`${cmd.join(" ")} failed`);
 }
 
@@ -146,7 +147,7 @@ const USAGE = `usage: sasacode plugin <command> [--project]
   update [name]                        update npm plugins, or pull a git one (shows the changes)
   remove <name>
   list
-  publish <file.ts|dir> [--name <pkg>] [--version <v>] [--api <range>] [--license <id>] [--description <text>] [--dry-run]`;
+  publish <file.ts|dir> [--name <pkg>] [--version <v>] [--api <range>] [--license <id>] [--description <text>] [--otp <code>] [--dry-run]`;
 
 export async function pluginCommand(args: string[], cwd: string): Promise<number> {
   const [sub, spec] = args;
@@ -230,7 +231,8 @@ export async function pluginCommand(args: string[], cwd: string): Promise<number
       }
       console.log(`${pkg.name}@${pkg.version}  (plugin API ${pkg.sasacode?.apiVersion ?? "?"})\n  ${target}`);
       for (const n of notes) console.log(`  note: ${n}`);
-      await sh(["npm", "publish", "--access", "public", ...(args.includes("--dry-run") ? ["--dry-run"] : [])], target);
+      const otp = flag(args, "--otp");
+      await sh(["npm", "publish", "--access", "public", ...(otp ? [`--otp=${otp}`] : []), ...(args.includes("--dry-run") ? ["--dry-run"] : [])], target);
       if (!args.includes("--dry-run")) console.log(`published: others can run  sasacode plugin install ${pkg.name}`);
       return 0;
     }

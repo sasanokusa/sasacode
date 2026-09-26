@@ -77,7 +77,7 @@ sasacode plugin publish my-tool.ts --license MIT --dry-run   # 中身の確認
 sasacode plugin publish my-tool.ts --license MIT             # npm publish（npm へのログインが必要）
 ```
 
-- `~/.sasacode/publish/<パッケージ名>/` に npm のパッケージを組み立てて、`npm publish --access public` を実行する。パッケージ名は既定で `sasacode-plugin-<ファイル名>`（`--name @you/my-tool` で変えられる）。
+- `~/.sasacode/publish/<パッケージ名>/` に npm のパッケージを組み立てて、`npm publish --access public` を実行する。npm の2段階認証は、その場でワンタイムパスワードを聞かれる（`--otp <コード>` で先に渡してもよい）。パッケージ名は既定で `sasacode-plugin-<ファイル名>`（`--name @you/my-tool` で変えられる）。
 - `package.json` には、`sasacode` フィールド（マニフェスト）、検索用のキーワード `sasacode-plugin`、ピア依存の `@sasacode/plugin-api` を入れる。README はファイル先頭のコメントから作る。
 - 版は、npm に出ている最新版の次のパッチ（初回は 0.1.0）。`--version` で指定できる。
 - 説明文は、ファイルの最初のコメントから取る（`--description` で指定できる）。
