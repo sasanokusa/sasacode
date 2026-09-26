@@ -1,6 +1,6 @@
 {
   "name": "@sasacode/tools",
-  "version": "0.10.0-rc.3",
+  "version": "0.9.4",
   "type": "module",
   "main": "src/index.ts",
   "dependencies": {
