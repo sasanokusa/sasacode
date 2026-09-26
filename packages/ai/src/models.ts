@@ -97,7 +97,8 @@ export function resolveModel(
     contextWindow: known?.contextWindow ?? 128_000,
     maxOutput: known?.maxOutput ?? 32_000,
     price: known?.price,
-    reasoning: known?.reasoning ?? p.api !== "openai-chat",
+    // Unknown models are assumed to reason: the effort is sent, and dropped if the server refuses it.
+    reasoning: known?.reasoning ?? true,
     images: known?.images ?? true,
     ...overrides[spec],
   };

@@ -33,7 +33,7 @@ import type { CommandDefinition, SelectOption } from "@sasacode/plugin-api";
 import { matchAmbiguousWidth } from "./ambiguous.ts";
 import { ApprovalDialog, Picker } from "./dialogs.ts";
 import { copyToClipboard } from "./clipboard.ts";
-import { exitSummary, fmtDuration, UsageTally, usageLines } from "./summary.ts";
+import { exitSummary, UsageTally } from "./summary.ts";
 import { c, editorTheme } from "./theme.ts";
 import { AssistantView, display, Notice, Padded, ToolView, UserView } from "./views.ts";
 
@@ -452,7 +452,6 @@ class App {
         run: ({ args }) => this.effortCommand(args),
         complete: async (prefix) => EFFORTS.filter((e) => e.startsWith(prefix)).map((e) => ({ value: e, label: e, description: EFFORT_LABELS[e] })),
       },
-      { name: "usage", description: "起動してから使ったトークン数・リクエスト数・料金", run: () => this.notify([c.bold(`使用量（起動から ${fmtDuration(Date.now() - this.usage.startedAt)}）`), ...usageLines(this.usage)].join("\n"), (s) => s) },
       { name: "copy", description: "直前の応答をクリップボードにコピー", run: () => this.copyCommand() },
       { name: "resume", description: "過去のセッションを再開", run: () => this.resumeCommand() },
       { name: "clear", description: "新しいセッションを始める", run: () => this.clearCommand() },
@@ -737,7 +736,7 @@ class App {
       `${a.model.provider}/${a.model.id}`,
       `推論: ${a.model.reasoning ? a.thinking : "なし"}`,
       `権限: ${PERMISSION_MODE_LABELS[a.permissions.mode]}`,
-      `ctx ${fmtTokens(this.contextTokens)} (${pct}%)`,
+      `ctx ${fmtTokens(this.contextTokens)}/${fmtTokens(a.model.contextWindow)} (${pct}%)`,
     ];
     if (a.session) parts.push(`session ${a.session.id}`);
     if (this.totalCost > 0) parts.push(`$${this.totalCost.toFixed(3)}`);
@@ -766,10 +765,10 @@ class App {
   }
 }
 
-/** 131072 → "128k" (context sizes are often powers of two), 1_050_000 → "1.05M", 1534 → "1.5k". */
+/** 131072 → "128k" (context sizes are often powers of two), 256000 → "256k", 1_050_000 → "1.05M", 1534 → "1.5k". */
 function fmtTokens(n: number): string {
   if (n >= 1_000_000) return `${+(n / 1_000_000).toFixed(2)}M`;
-  if (n >= 1024 && n % 1024 === 0) return `${n / 1024}k`;
+  if (n >= 1024 && n % 1000 !== 0 && n % 1024 === 0) return `${n / 1024}k`;
   return n >= 1000 ? `${+(n / 1000).toFixed(1)}k` : String(n);
 }
 

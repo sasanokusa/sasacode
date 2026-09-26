@@ -184,6 +184,6 @@ before_request → stream_delta（生成中、差分ごと） → assistant_mess
 }
 ```
 
-同梱プラグインの名前は `tool-repair`、`repetition-guard`、`loop-guard`、`agents-md`、`compaction`、`subagent`、`todo`、`web-fetch`、`permission-presets`、`jev-guard`、`browsr`、`openai-codex`、`skills`、`mcp`。
+同梱プラグインの名前は `tool-repair`、`repetition-guard`、`loop-guard`、`agents-md`、`compaction`、`subagent`、`todo`、`web-fetch`、`permission-presets`、`jev-guard`、`browsr`、`openai-codex`、`usage`、`goal`、`background-sessions`、`auto-reconnect`、`skills`、`mcp`。同じ名前のユーザー・プロジェクトのプラグインがあれば、同梱版は読み込まない。
 
 プラグインを作るときは、組み込みの Skill を使うのが早い。TUI で `/skill:tool-authoring <作りたいもの>` と打つと、このリファレンスを読んだうえでモデルがプラグインを書く。

@@ -1,5 +1,6 @@
 import OpenAI from "openai";
 import type { ResponseCreateParamsStreaming, ResponseInputItem } from "openai/resources/responses/responses";
+import { withEffort } from "./effort.ts";
 import { isContextOverflow, openaiClient } from "./openai-chat.ts";
 import {
   ContextOverflowError,
@@ -37,11 +38,6 @@ export const openaiResponsesProvider: Provider = {
         parameters: t.parameters,
         strict: false,
       }));
-    if (model.reasoning && req.thinking && req.thinking !== "off") {
-      params.reasoning = { effort: (req.thinking === "max" ? "xhigh" : req.thinking) as never, summary: "auto" };
-      // Stateless (store: false) reasoning continuity needs the encrypted reasoning items back.
-      params.include = ["reasoning.encrypted_content"];
-    }
     Object.assign(params, samplingFields(req.sampling, ["temperature", "top_p"]));
 
     const out = newAssistant(model);
@@ -52,7 +48,13 @@ export const openaiResponsesProvider: Provider = {
       return it ? { it, b: out.content[it.index] } : undefined;
     };
     try {
-      const stream = await client.responses.create(params, { signal: req.signal });
+      const stream = await withEffort(`${model.baseUrl} ${model.id}`, model.reasoning ? req.thinking : undefined, (effort) =>
+        client.responses.create(
+          // Stateless (store: false) reasoning continuity needs the encrypted reasoning items back.
+          effort ? { ...params, reasoning: { effort: effort as never, summary: "auto" }, include: ["reasoning.encrypted_content"] } : params,
+          { signal: req.signal },
+        ),
+      );
       for await (const ev of stream) {
         switch (ev.type) {
           case "response.output_item.added": {

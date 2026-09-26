@@ -203,7 +203,7 @@
     sasacode
   </a>
   <nav>
-    <span>v0.9.2</span>
+    <span>v0.9.3</span>
     <button class="play" type="button" data-play aria-pressed="false" aria-label="自動でスクロールして再生">
       <svg class="i-play" viewBox="0 0 12 12" aria-hidden="true"><path d="M2 1l9 5-9 5z"/></svg><svg class="i-pause" viewBox="0 0 12 12" aria-hidden="true"><path d="M2 1h3v10H2zM7 1h3v10H7z"/></svg>
       <span class="lbl" data-on="再生" data-off="一時停止">再生</span>
@@ -252,7 +252,7 @@
       <ul class="chips" aria-label="組み込みツール">
         <li data-stage="0">read</li><li data-stage="1">write</li><li data-stage="2">edit</li><li data-stage="3">bash</li>
       </ul>
-      <p class="more fine">コアは約 3,000 行で、4,000 行を超えないように保っている。組み込みの4ツールも、プラグインと同じ公開 API で登録している。</p>
+      <p class="more fine">コアは約 3,600 行で、4,000 行を超えないように保っている。組み込みの4ツールも、プラグインと同じ公開 API で登録している。</p>
     </article></div></div>
   </section>
 
@@ -261,7 +261,7 @@
       <p class="kicker"><span class="seal">二</span>プラグイン</p>
       <h2><span class="ph">吊るして、</span><span class="ph">組み替える</span></h2>
       <p>コアの外の振る舞いは、すべて公開のプラグイン API で足す。<code>~/.sasacode/plugins/</code> に TypeScript のファイルを置けば、ビルドなしで読み込む。</p>
-      <p class="more">MCP サーバーと Agent Skills（<code>SKILL.md</code>）はそのまま使える。同梱のプラグインは <code>plugins.disabled</code> で外せる。</p>
+      <p class="more">MCP サーバーと Agent Skills（<code>SKILL.md</code>）はそのまま使える。使用量のグラフ（<code>/usage</code>）、ゴール（<code>/goal</code>）、長いコマンドのバックグラウンド実行なども同梱のプラグインで、<code>plugins.disabled</code> で外せる。</p>
       <p class="fine">Plugin API 1.7.0 · <code>npm i -D @sasacode/plugin-api</code></p>
     </article></div></div>
   </section>
@@ -301,7 +301,7 @@
         <dt>agent</dt><dd>危険かどうかをモデルに判定させる</dd>
         <dt>auto</dt><dd>すべて許可。deny だけは効く</dd>
       </dl>
-      <p class="more fine">パスはシンボリックリンクをたどった先で見る。クローンしたリポジトリのプラグインや接続先は、信頼すると答えるまで使わない。</p>
+      <p class="more fine">判断専用モデル Jev の判定を重ねることもできる（既定は無効）。パスはシンボリックリンクをたどった先で見る。クローンしたリポジトリのプラグインや接続先は、信頼すると答えるまで使わない。</p>
     </article></div></div>
   </section>
 
@@ -327,13 +327,13 @@
         <li><span>使うプロバイダーのキーを書く</span></li>
         <li><span><code>sasacode</code> で始める</span></li>
       </ol>
-      <p class="more fine">バイナリは GitHub Releases の最新版から取得し、SHA256 を検証する。版を固定するには <code>SASACODE_VERSION=v0.9.2</code>、置き場所を変えるには <code>SASACODE_INSTALL_DIR=…</code> を付ける。</p>
+      <p class="more fine">バイナリは GitHub Releases の最新版から取得し、SHA256 を検証する。版を固定するには <code>SASACODE_VERSION=v0.9.3</code>、置き場所を変えるには <code>SASACODE_INSTALL_DIR=…</code> を付ける。</p>
       <nav class="links" aria-label="関連リンク">
         <a href="https://github.com/sasanokusa/sasacode">GitHub</a>
         <a href="latest">最新バージョン</a>
         <a href="https://github.com/sasanokusa/sasacode/blob/main/docs/plugins.md">プラグインを書く</a>
       </nav>
-      <p class="colophon">sasacode v0.9.2 · Apache-2.0</p>
+      <p class="colophon">sasacode v0.9.3 · Apache-2.0</p>
     </article></div></div>
   </section>
 </main>

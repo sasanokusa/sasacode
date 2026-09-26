@@ -25,7 +25,7 @@ curl -fsSL https://sasanokusa.com/sasacode/install.sh | sh
 
 - macOS（arm64 / x64）と Linux（x64 / arm64、glibc / musl、AVX2 のない CPU 向けの baseline 版）の単一バイナリ。Bun は不要。
 - インストーラーもバイナリも、[GitHub Releases](https://github.com/sasanokusa/sasacode/releases) の最新版から取得して SHA256 を検証する。sasanokusa.com の URL は、最新リリースの `install.sh` へのリダイレクト。
-- `SASACODE_VERSION=v0.9.2` で版を固定でき、`SASACODE_INSTALL_DIR` で置き場所を変えられる。Windows は WSL から使う。
+- `SASACODE_VERSION=v0.9.3` で版を固定でき、`SASACODE_INSTALL_DIR` で置き場所を変えられる。Windows は WSL から使う。
 
 ソースから使う場合（[Bun](https://bun.sh) 1.4 以上）：
 
@@ -84,13 +84,12 @@ sasacode -r <id> -p "続き"            # セッション ID を指定して続�
 | --- | --- |
 | `/model` | プロバイダーから取得したモデル一覧から選ぶ。文字を打つと絞り込める。`/model <provider/model>` で直接指定、`/model --refresh` で取り直す |
 | `/resume` `/clear` `/fork` `/session` | 過去のセッション / 新しいセッション / 過去のメッセージから分岐 / ID と保存先 |
-| `/effort` | 推論の深さ（`off` / `low` / `medium` / `high` / `xhigh` / `max`）を切り替える。引数なしなら一覧から選ぶ。現在の値はフッターに出る |
-| `/usage` | 起動してから使ったトークン数（入力・出力・キャッシュ）、リクエスト数、料金 |
+| `/effort` | 推論の深さ（`off` / `low` / `medium` / `high` / `xhigh` / `max`）を切り替える。引数なしなら一覧から選ぶ。現在の値はフッターに出る。OpenAI 形式のサーバーには `reasoning_effort` として送り、`off` は `none` として送る（vLLM などは送らないと推論する）。サーバーが受け付けない値なら近い値に替えて送り直し、以後はその値を使う（例：Command Code は `none` を受け付けないので `off` は `low` になる） |
 | `/copy` | 直前の応答をクリップボードにコピー（pbcopy / wl-copy / xclip、なければ端末経由） |
 | `/permission` `/help` `/exit`（`/quit`） | 権限モード / ヘルプ / 終了 |
-| `/compact` `/mcp` `/skills` `/skill:<name>` `/presets` `/browsr` | 同梱プラグインのコマンド |
+| `/usage` `/goal` `/bg` `/reconnect` `/compact` `/mcp` `/skills` `/skill:<name>` `/presets` `/browsr` | 同梱プラグインのコマンド |
 
-フッターには、モデル、推論の深さ、権限モード、コンテキストの使用量、セッション ID と、プラグインのステータス（MCP の接続数、TODO の進捗など）を出す。30 秒以上かかった実行が終わると、端末のベルを鳴らす（別の作業をしていても気づけるように。`"tui": { "bell": false }` で止める）。
+フッターには、モデル、推論の深さ、権限モード、コンテキストの使用量（`ctx 77.6k/256k (30%)`）、セッション ID と、プラグインのステータス（MCP の接続数、TODO の進捗など）を出す。30 秒以上かかった実行が終わると、端末のベルを鳴らす（別の作業をしていても気づけるように。`"tui": { "bell": false }` で止める）。
 
 ## プロバイダーとモデル
 
@@ -105,7 +104,7 @@ sasacode -r <id> -p "続き"            # セッション ID を指定して続�
 | `ollama` | Chat Completions（localhost:11434） | 不要 |
 | `openai-codex` | ChatGPT プランの Codex バックエンド（Responses） | 不要（`sasacode login` で ChatGPT アカウントにログイン） |
 
-**ChatGPT プランで使う**：`sasacode login` を実行するとブラウザが開き、ChatGPT アカウントでログインすると `openai-codex/…` のモデル（`/model` に一覧が出る）が API キーなしで使える。利用分はプランの Codex の枠から引かれる。認証情報は `~/.sasacode/codex-auth.json`（本人だけが読める権限）に保存し、期限が近づけば自動で更新する。SSH 先などでブラウザがこのマシンに戻れないときは、ログイン後にブラウザが表示した URL を貼り付ける。`sasacode login status` で状態を確認、`sasacode login logout` で削除。API キーが1つもなくログインだけしている場合は、`openai-codex/gpt-5.5` が既定のモデルになる。これは OpenAI の Codex CLI と同じ仕組み（公開クライアントと PKCE）を使う非公式の対応で、OpenAI の都合で使えなくなることがある。
+**ChatGPT プランで使う**：`sasacode login` を実行するとブラウザが開き、ChatGPT アカウントでログインすると `openai-codex/…` のモデル（`/model` に一覧が出る）が API キーなしで使える。利用分はプランの Codex の枠から引かれる。認証情報は `~/.sasacode/codex-auth.json`（本人だけが読める権限）に保存し、期限が近づけば自動で更新する。SSH 先などでブラウザがこのマシンに戻れないときは、ログイン後にブラウザが表示した URL を貼り付ける。`sasacode login status` で状態を確認、`sasacode login logout` で削除。プランの残り（5時間・週の枠）は `/usage plan` で見られる。API キーが1つもなくログインだけしている場合は、`openai-codex/gpt-5.5` が既定のモデルになる。これは OpenAI の Codex CLI と同じ仕組み（公開クライアントと PKCE）を使う非公式の対応で、OpenAI の都合で使えなくなることがある。
 
 ### 自前のサーバー（llama.cpp、vLLM、LM Studio、プロキシなど）
 
@@ -218,6 +217,8 @@ sasacode -m llama/<モデル名>
 
 ### 同梱プラグイン（`plugins.disabled` で外せる）
 
+`~/.sasacode/plugins` やプロジェクトに同じ名前のプラグインがあれば、同梱版の代わりにそちらを読み込む。
+
 | 名前 | 内容 |
 | --- | --- |
 | `tool-repair` | 検証の前に、壊れたツール呼び出しを直す。直す対象は、JSON の崩れ（末尾カンマ、閉じ括弧、クォートのないキー、`True`/`None`、コードフェンス、二重エンコード）、キー名（`file` → `path`）、型（`"20"` → `20`）、ツール名の typo。候補が1つに絞れるときだけ直す。直したことはモデルに短く伝え、履歴には直した後の形を残し、元の出力はセッションに記録する |
@@ -232,6 +233,10 @@ sasacode -m llama/<モデル名>
 | `permission-presets` | 権限ルールのプリセット（`guard`、`read-only-shell`、`tests`） |
 | `jev-guard` | 実行前に、判断専用モデル [Jev](https://commandcode.ai/models/jev)（TypeSafe）で呼び出しの安全性を判定する。**既定は無効**（下記） |
 | `openai-codex` | ChatGPT プランのモデル（`openai-codex/…`）。`sasacode login` の認証情報を使う |
+| `usage` | `/usage` コマンド。この起動の使用量、今日・直近7日・30日・全期間の合計、ChatGPT プランの残り（5時間・週の枠と、リセットまでの時間）を出す。`/usage graph` は日ごとの使用量を GitHub の Contributions Graph のように、`/usage history [日数]` は日別の記録を、`/usage models` はモデル別の合計を、`/usage plan` はプランの残りだけを出す。記録は `~/.sasacode/sessions` のセッションログから読む（圧縮とサブエージェントの分は含まない） |
+| `goal` | セッションのゴール（最終目的）。`/goal <目的>` で設定し、`done` / `pause` / `resume` / `clear` で状態を変える。「これをゴールにして」と頼めば、モデルが `set_goal` ツールで会話から要約して設定する。作業中のゴールはシステムプロンプトとフッターに出る |
+| `background-sessions` | `bg_start` ツール。ビルドやテストなど長いコマンドをバックグラウンドで動かし、終わったら終了コードと出力の末尾を会話に届ける（待機中なら自動で続きを始める）。bash と同じ権限ルールで判定する（`permissionsAs`）。sasacode を終了してもジョブは続き、次の起動で結果を知らせる。`/bg` で一覧・詳細・停止。POSIX のみ |
+| `auto-reconnect` | 実行がエラーで終わったとき、使用中のエンドポイントに届かなければ、復旧を待って作業を自動で再開する（既定は最大10分）。`/reconnect` で手動でも同じことをする |
 | `skills` / `mcp` | Agent Skills と MCP のアダプタ |
 
 ### MCP
@@ -277,8 +282,8 @@ export default ((api) => {
 
 公開 API（現在 1.7.0。1.4.0 で締め切り、1.x の間は追加だけ。[互換性の約束](docs/plugins.md#互換性の約束140-で確定)）でできることは次のとおり。
 
-- **登録**：ツール、スラッシュコマンド（引数の補完つき）、プロバイダー、権限ルール
-- **フック**：`session_start/end`、`user_prompt`、`system_prompt`、`before_request`、`stream_delta`、`assistant_message`、`tool_call_raw`、`tool_call`、`tool_result`、`turn_end`、`agent_end`、`context_limit`
+- **登録**：ツール（別のツールの権限ルールを当てる `permissionsAs` つき）、スラッシュコマンド（引数の補完つき）、プロバイダー（モデル一覧の取得、通信の差し替え）、権限ルール（`softDeny` を含む）
+- **フック**：`session_start/end`、`user_prompt`、`system_prompt`、`before_request`、`stream_delta`、`assistant_message`、`tool_call_raw`、`tool_call`、`permission`、`tool_result`、`turn_end`、`agent_end`、`context_limit`
 - **UI**：通知・確認・選択・ステータス行、ツール結果の描画
 - **セッション**：状態の保存、履歴の差し替え、メッセージの差し込み
 - **エージェント**：サブエージェント、単発の呼び出し
@@ -309,4 +314,4 @@ bun run build       # dist/sasacode（このマシン向け）。--all で全タ
 | `@sasacode/cli` | 引数、設定、キー、モデル一覧、プラグインの検出・読み込み・信頼確認、ヘッドレス実行 |
 | `@sasacode/mcp` / `@sasacode/skills` / `@sasacode/bundled` | MCP と Skills のアダプタ、同梱プラグイン |
 
-コア（ai・agent・plugin-api・tools）は約 3,000 行で、上限は 4,000 行。実行時に依存するパッケージとその理由は [docs/dependencies.md](docs/dependencies.md) にまとめている。
+コア（ai・agent・plugin-api・tools）は約 3,600 行で、上限は 4,000 行。実行時に依存するパッケージとその理由は [docs/dependencies.md](docs/dependencies.md) にまとめている。

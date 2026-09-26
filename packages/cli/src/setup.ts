@@ -170,13 +170,15 @@ export async function setup(opts: SetupOptions): Promise<Harness> {
   const loadPlugins = (ui: UIBridge = headlessUI) =>
     (loading ??= (async () => {
       host.setUI(ui);
-      for (const [name, plugin] of Object.entries(bundledPlugins)) if (!disabled.has(name) && name !== "openai-codex") await host.load(name, plugin);
-
       const found = discoverPlugins(opts.cwd).filter((p) => !disabled.has(p.manifest.name));
       const skipped = found.filter((p) => p.scope === "project" && !trusted);
       if (skipped.length)
         host.notify(`project plugins not loaded until you trust this project: ${skipped.map((p) => p.manifest.name).join(", ")}`, "warning");
       const usable = found.filter((p) => p.scope === "global" || trusted);
+      // A user or project plugin of the same name replaces the bundled one (both would hook twice).
+      const own = new Set(usable.map((p) => p.manifest.name));
+      for (const [name, plugin] of Object.entries(bundledPlugins))
+        if (!disabled.has(name) && name !== "openai-codex" && !own.has(name)) await host.load(name, plugin);
 
       if (!disabled.has("skills")) {
         const dirs = [join(home, "skills"), join(opts.cwd, ".sasacode", "skills"), ...usable.flatMap((p) => (p.manifest.skills ? [join(p.dir, p.manifest.skills)] : []))];

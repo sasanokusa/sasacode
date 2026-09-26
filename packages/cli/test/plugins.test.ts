@@ -126,3 +126,13 @@ test("a plugin can replace a built-in tool by name", async () => {
   await h.loadPlugins();
   expect(h.agent.getTools().find((t) => t.name === "read")?.description).toBe("custom read");
 });
+
+test("a user plugin named like a bundled one replaces it instead of running beside it", async () => {
+  write(join(home, "plugins", "todo.ts"), PLUGIN("my_todo"));
+  const h = await setup({ cwd: proj, noSession: true });
+  await h.loadPlugins();
+  const tools = h.agent.getTools().map((t) => t.name);
+  expect(tools).toContain("my_todo");
+  expect(tools).not.toContain("todo_write");
+  expect(h.host.plugins.filter((p) => p.name === "todo")).toHaveLength(1);
+});

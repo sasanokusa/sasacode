@@ -1,5 +1,6 @@
 import OpenAI from "openai";
 import type {
+  ChatCompletionChunk,
   ChatCompletionContentPart,
   ChatCompletionCreateParamsStreaming,
   ChatCompletionMessageParam,
@@ -17,6 +18,7 @@ import {
   type ThinkingContent,
   type ToolCall,
 } from "./types.ts";
+import { withEffort } from "./effort.ts";
 
 export function openaiClient(req: Request): OpenAI {
   return new OpenAI({
@@ -51,8 +53,6 @@ export const openaiChatProvider: Provider = {
         type: "function",
         function: { name: t.name, description: t.description, parameters: t.parameters },
       }));
-    if (model.reasoning && req.thinking && req.thinking !== "off")
-      params.reasoning_effort = (req.thinking === "max" || req.thinking === "xhigh" ? "high" : req.thinking) as never;
     Object.assign(params, samplingFields(req.sampling, ["temperature", "top_p", "frequency_penalty", "presence_penalty"]));
 
     const out = newAssistant(model);
@@ -61,8 +61,15 @@ export const openaiChatProvider: Provider = {
     let text: { type: "text"; text: string } | undefined;
     const calls = new Map<number, { block: ToolCall; json: string; index: number }>();
     try {
-      const stream = await client.chat.completions.create(params, { signal: req.signal });
-      for await (const chunk of stream) {
+      // "off" is sent too: servers such as vLLM think by default unless told "none".
+      const stream = await withEffort(`${model.baseUrl} ${model.id}`, model.reasoning ? req.thinking : undefined, async (effort) => {
+        const s = await client.chat.completions.create({ ...params, ...(effort ? { reasoning_effort: effort as never } : {}) }, { signal: req.signal });
+        const it = s[Symbol.asyncIterator]();
+        // A refused effort can arrive as the first event of an HTTP 200 stream (vLLM).
+        return { it, first: await it.next() };
+      });
+      for (let next: IteratorResult<ChatCompletionChunk> = stream.first; !next.done; next = await stream.it.next()) {
+        const chunk = next.value;
         if (chunk.usage) {
           const cached = chunk.usage.prompt_tokens_details?.cached_tokens ?? 0;
           out.usage.input = chunk.usage.prompt_tokens - cached;
