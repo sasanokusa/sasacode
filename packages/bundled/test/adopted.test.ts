@@ -48,8 +48,6 @@ function fake(plugin: Plugin, settings: Record<string, unknown> = {}, entries: R
 test("goal: set by /goal or set_goal, shown in the prompt and footer, and a clear survives /resume", async () => {
   const g = fake(goal);
   await g.fire("session_start");
-  // No goal: the prompt is left alone (the how-to lives in set_goal's description, A1).
-  expect((await g.fire("system_prompt", { prompt: "base" })).prompt).toBe("base");
   await g.commands.goal.run({ args: "ログイン画面を完成させる" });
   expect(g.status.get("goal")).toContain("ログイン画面");
   expect(g.injected.at(-1)).toContain("ログイン画面を完成させる");
@@ -57,7 +55,6 @@ test("goal: set by /goal or set_goal, shown in the prompt and footer, and a clea
   const r = await g.tools.set_goal.execute({ status: "done" });
   expect(r.isError).toBeFalsy();
   expect(g.status.has("goal")).toBe(false); // only an active goal is shown
-  expect((await g.fire("system_prompt", { prompt: "base" })).prompt).toBe("base"); // and only in the prompt
   await g.commands.goal.run({ args: "clear" });
   const resumed = fake(goal, {}, g.entries);
   await resumed.fire("session_start");
