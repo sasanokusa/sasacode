@@ -43,8 +43,8 @@ export function toolName(server: string, tool: string): string {
 }
 
 /**
- * Connect servers in the background and register their tools as they come up. Closes them on
- * session_end. Other plugins (e.g. browsr) reuse this to wrap a specific MCP server.
+ * Connect servers in the background and register their tools as they come up. Closes them when
+ * sasacode exits (session_end other than a session switch). Other plugins (e.g. browsr) reuse this to wrap a specific MCP server.
  */
 export function connectServers(
   api: PluginAPI,
@@ -60,7 +60,9 @@ export function connectServers(
     api.ready(connect(api, name, cfg, state, changed));
   }
   changed();
-  api.on("session_end", async () => {
+  // Servers outlive /clear, /resume and /fork: nothing would connect them again for the next session.
+  api.on("session_end", async ({ reason }) => {
+    if (reason === "switch") return;
     await Promise.all(
       [...states.values()].map((s) => {
         s.status = "closed"; // expected shutdown, not a crash
@@ -112,7 +114,8 @@ async function connect(api: PluginAPI, name: string, cfg: McpServerConfig, state
           })
         : new StreamableHTTPClientTransport(new URL(expand(cfg.url)), { requestInit: { headers: expandAll(cfg.headers) } });
     if (transport instanceof StdioClientTransport)
-      transport.stderr?.on("data", (d: Buffer) => (state.stderr = (state.stderr + d.toString()).slice(-2000)));
+      // Shown in notices: the server's escape sequences must not reach the terminal.
+      transport.stderr?.on("data", (d: Buffer) => (state.stderr = (state.stderr + d.toString().replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, "")).slice(-2000)));
     client.onclose = () => {
       if (state.status === "connected") {
         state.status = "closed";

@@ -414,7 +414,7 @@ sasacode -m pgx/&lt;モデル名&gt;</code></pre>
       <div class="tbl"><table>
         <tr><th>プリセット</th><th>中身</th></tr>
         <tr><td><code>guard</code></td><td class="brk"><b>deny</b>：<code>sudo *</code>、<code>rm -rf /</code>・<code>/*</code>、<code>mkfs*</code>、<code>dd *of=/dev/*</code>、パイプ先の <code>sh</code>・<code>bash</code>・<code>zsh</code>、<code>chmod -R 777 /*</code><br><b>softDeny</b>：<code>rm -rf ~*</code>・<code>$HOME*</code>、<code>git push --force*</code>・<code>-f*</code><br><b>ask</b>（auto でも確認）：<code>ssh</code>、<code>scp</code>、<code>sftp</code>、リモートへの <code>rsync</code></td></tr>
-        <tr><td><code>read-only-shell</code></td><td class="brk">読み取りだけのコマンドを許可：<code>ls</code>、<code>cat</code>、<code>head</code>、<code>tail</code>、<code>wc</code>、<code>rg</code>、<code>grep</code>、<code>tree</code>、<code>file</code>、<code>which</code>、<code>git status/diff/log/show/branch/rev-parse</code></td></tr>
+        <tr><td><code>read-only-shell</code></td><td class="brk">読み取りだけのコマンドを許可：<code>ls</code>、<code>cat</code>、<code>head</code>、<code>tail</code>、<code>wc</code>、<code>rg</code>、<code>grep</code>、<code>tree</code>、<code>file</code>、<code>which</code>、<code>git status/diff/log/show/branch/rev-parse</code>。ファイルを書き出すオプションやコマンドを実行させるオプション（<code>rg --pre</code>、<code>git diff --output</code>、<code>tree -o</code> など）を含むものは確認に回す</td></tr>
         <tr><td><code>tests</code></td><td class="brk">テストと型チェックを許可：<code>bun/npm/pnpm/yarn test</code>、<code>cargo test</code>、<code>go test</code>、<code>pytest</code>、<code>tsc --noEmit</code>、<code>bun run typecheck</code></td></tr>
       </table></div>
 

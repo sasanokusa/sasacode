@@ -7,11 +7,13 @@ import { loadConfig, sasacodeHome } from "./config.ts";
 
 const cacheFile = () => join(sasacodeHome(), "endpoints.json");
 
+/** A missing file is empty; one that cannot be parsed is an error, so it is never overwritten. */
 function readJson(path: string): Record<string, any> {
   try {
     return JSON.parse(readFileSync(path, "utf8"));
-  } catch {
-    return {};
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === "ENOENT") return {};
+    throw new Error(`failed to read ${path}: ${(e as Error).message}`);
   }
 }
 
@@ -30,7 +32,10 @@ export async function resolveEndpoints(
   getKey: (provider: string) => Promise<string | undefined>,
   warnings: string[],
 ): Promise<void> {
-  const cache = readJson(cacheFile()) as Record<string, DetectedEndpoint>;
+  let cache: Record<string, DetectedEndpoint> = {};
+  try {
+    cache = readJson(cacheFile());
+  } catch {} // only a cache: detect again
   let changed = false;
   await Promise.all(
     Object.entries(providers).map(async ([name, p]) => {
@@ -71,6 +76,7 @@ export async function endpointCommand(args: string[], cwd: string): Promise<numb
   if (sub === "add" && name && url) {
     if (!/^[\w.-]+$/.test(name)) throw new Error("name may contain letters, digits, _ . - only");
     if (BUILTIN_PROVIDERS[name]) throw new Error(`"${name}" is a built-in provider; choose another name`);
+    const config = readJson(path); // before detecting: a config that cannot be read stops here
     const key = keyEnv ? process.env[keyEnv] : undefined;
     if (keyEnv && !key) console.error(`warning: ${keyEnv} is not set; detecting without a key`);
     const found = await detectEndpoint(url, key, AbortSignal.timeout(10_000));
@@ -81,7 +87,6 @@ export async function endpointCommand(args: string[], cwd: string): Promise<numb
     for (const m of models.slice(0, 20))
       console.log(`  ${name}/${m.id}${m.contextWindow ? `  (${m.contextWindow} ctx)` : m.maxContext ? `  (max ${m.maxContext})` : ""}`);
     if (models.length > 20) console.log(`  … ${models.length - 20} more (see /model)`);
-    const config = readJson(path);
     config.providers = { ...config.providers, [name]: provider };
     writeJson(path, config);
     console.log(`saved to ${path}${models[0] ? ` — try: sasacode -m ${name}/${models[0].id}` : ""}`);

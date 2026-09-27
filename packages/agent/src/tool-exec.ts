@@ -233,7 +233,7 @@ async function authorize(
       denied: err(`This call needs user approval (${verdict.reason}), but no user is available to approve it (non-interactive run). It was not executed.`),
     };
   const answer = await ctx.approve({ ...check, call, reason: verdict.reason });
-  if (answer.decision === "always") ctx.permissions.addRules({ allow: [PermissionPolicy.ruleFor(check)] });
+  if (answer.decision === "always") ctx.permissions.addRules({ allow: PermissionPolicy.rulesFor(check) });
   if (answer.decision === "deny")
     return { args, denied: err(`The user denied this tool call.${answer.feedback ? ` User feedback: ${answer.feedback}` : ""}`) };
   return { args };

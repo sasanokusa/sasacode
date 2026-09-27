@@ -165,7 +165,8 @@ sasacode -m llama/<モデル名>
 | `agent` | 作業ディレクトリ内の read は自動で許可し、それ以外は現在のモデルに危険度を判定させる。安全なら許可、そうでなければ確認する |
 | `auto` | すべて許可する（deny と ask のルールは効く） |
 
-- ルールは `ツール名` か `ツール名(パターン)`。bash はコマンド文字列を `*` のワイルドカードで、read / write / edit はパスを glob で照合する。
+- ルールは `ツール名` か `ツール名(パターン)`。bash はコマンド文字列を `*` のワイルドカードで、read / write / edit はパスを glob で照合する。`*` そのものは `\*` と書く。
+- 確認の「常に許可」で足すルールは、見たものより広くならない。コマンドはそのまま（中の `*` はワイルドカードにしない）、ファイルを触るツールはそのパスだけを許可する。ルールは sasacode を終了するまで残る（`/clear` をまたぐ）。
 - 判定の順番は deny → softDeny → ask → allow → モード → `permission` フック（プラグイン）。`softDeny` は deny と同じく拒否するが、`jev-guard` などのプラグインが「ユーザーに確認」まで下げられる（確認なしに実行されることはない）。広すぎて正当な操作も巻き込むパターン向け。allow ルールで通るのは、`&&` `;` `|` でつないだコマンドの**すべて**が許可されている場合だけ。`$(…)`、バッククォート、`>` を含むコマンドは、allow ルールでは通らない。
 - 同梱の `permission-presets` が、既定で `guard`（sudo、`rm -rf /`、ディスク操作、`| sh` などを常に拒否。ホーム配下の `rm -rf ~…` と force push は softDeny。`ssh`、`scp`、`sftp`、リモートへの `rsync` は `auto` モードでも常に確認）を有効にしている。
 - ヘッドレスでは確認できる人がいないので、確認が必要な呼び出しは実行せず、その理由をモデルに返す。
@@ -282,7 +283,7 @@ export default ((api) => {
 }) satisfies Plugin;
 ```
 
-公開 API（現在 1.7.0。1.4.0 で締め切り、1.x の間は追加だけ。[互換性の約束](docs/plugins.md#互換性の約束140-で確定)）でできることは次のとおり。
+公開 API（現在 1.8.0。1.4.0 で締め切り、1.x の間は追加だけ。[互換性の約束](docs/plugins.md#互換性の約束140-で確定)）でできることは次のとおり。
 
 - **登録**：ツール（別のツールの権限ルールを当てる `permissionsAs` つき）、スラッシュコマンド（引数の補完つき）、プロバイダー（モデル一覧の取得、通信の差し替え）、権限ルール（`softDeny` を含む）
 - **フック**：`session_start/end`、`user_prompt`、`system_prompt`、`before_request`、`stream_delta`、`assistant_message`、`tool_call_raw`、`tool_call`、`permission`、`tool_result`、`turn_end`、`agent_end`、`context_limit`

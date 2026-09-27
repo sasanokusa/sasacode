@@ -12,7 +12,7 @@ import {
   replayProvider,
 } from "@sasacode/ai";
 import builtinTools, { bashTool, editTool, readTool, writeTool } from "@sasacode/tools";
-import { Agent, type AgentEvent, PermissionPolicy, PluginHost, restore, SessionFile } from "../src/index.ts";
+import { Agent, type AgentEvent, PermissionPolicy, PluginHost, responseRoom, restore, SessionFile } from "../src/index.ts";
 
 const dir = mkdtempSync(join(tmpdir(), "sasacode-agent-"));
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
@@ -150,6 +150,29 @@ test("context limit stops the loop with an event", async () => {
   const { agent, events } = setup([big, reply([say("never")])]);
   expect(await agent.prompt("go")).toBe("context_limit");
   expect(events.some((e) => e.type === "context_limit")).toBe(true);
+});
+
+test("a small window is not full at once: the room kept for the reply scales with it", async () => {
+  // 8K window with the 32K maxOutput unknown models get: 25% used must not count as full.
+  const small: ModelInfo = { ...model, contextWindow: 8192, maxOutput: 32_000 };
+  const used = reply([call("1", "read", { path: "add.js" })], { usage: { ...emptyUsage(), input: 2000, output: 50 } });
+  const { agent, events } = setup([used, reply([say("done")])], { model: small });
+  expect(await agent.prompt("go")).toBe("done");
+  expect(events.some((e) => e.type === "context_limit")).toBe(false);
+  expect(responseRoom(small)).toBe(1228);
+  expect(responseRoom({ ...model, contextWindow: 1_000_000, maxOutput: 128_000 })).toBe(16_384);
+});
+
+test("subagents' hooks carry their own ctx.agent; the main agent's is undefined", async () => {
+  const seen: (string | undefined)[] = [];
+  const { agent } = setup([reply([say("main")])]);
+  agent.hooks.on("assistant_message", (_e, ctx) => void seen.push(ctx.agent));
+  await agent.prompt("go");
+  registerApi("replay", replayProvider([reply([say("a")]), reply([say("b")])]));
+  await Promise.all([agent.runSubagent({ prompt: "x" }), agent.runSubagent({ prompt: "y" })]);
+  expect(seen[0]).toBeUndefined();
+  expect(seen.slice(1).every((a) => a?.startsWith("sub-"))).toBe(true);
+  expect(new Set(seen.slice(1)).size).toBe(2);
 });
 
 test("maxTurns is opt-in", async () => {

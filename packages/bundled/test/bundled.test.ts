@@ -215,3 +215,10 @@ test("browsr: an unsupported manifest version registers nothing; a missing binar
   expect(h3.commands.map((c) => c.name)).toEqual(["browsr"]);
   expect(notes.at(-1)).toContain("manifest を読めませんでした");
 });
+
+test("read-only-shell: options that write files or run programs go back to the user", async () => {
+  const { writesOrRuns } = await import("../src/permission-presets.ts");
+  for (const c of ["rg --pre ./x foo", "rg '--pre=x' foo", "git diff --output=/tmp/x", "git diff --outp=x", "git log --ext-diff", "tree -o out", "tree -aR -H .", "file -C -m m", "cat a | rg --hostname-bin=x"])
+    expect(writesOrRuns(c)).toBe(true);
+  for (const c of ["rg foo", "git log --oneline", "git show HEAD", "git diff", "tree -a", "file x", "ls -la"]) expect(writesOrRuns(c)).toBe(false);
+});

@@ -77,7 +77,7 @@ export class PermissionPolicy {
     const asked = this.rules.ask.find((r) => ruleMatches(r, c));
     if (asked) return { decision: "ask", reason: `rule ask: ${asked.source}`, source: "rule" };
     // Where a path really goes cannot be told (a link loop, no permission): let the user decide.
-    const unclear = (c.tool.paths?.(c.args, c.cwd) ?? []).find((p) => tryRealPath(p) === undefined);
+    const unclear = pathsOf(c).find((p) => tryRealPath(p) === undefined);
     if (unclear) return { decision: "ask", reason: `cannot resolve ${unclear}`, source: "rule" };
     if (allowedByRules(this.rules.allow, c)) return { decision: "allow", reason: "allow rule", source: "rule" };
     return { ...(await this.modeDecision(c, judge)), source: "mode" };
@@ -90,7 +90,7 @@ export class PermissionPolicy {
 
   private async modeDecision(c: PermissionCheck, judge?: Judge): Promise<Omit<Verdict, "source">> {
     // Through a symlink, a path inside the project can point anywhere: judge where it really goes.
-    const insideCwd = (c.tool.paths?.(c.args, c.cwd) ?? []).every((p) => isInside(tryRealPath(p) ?? p, tryRealPath(c.cwd) ?? c.cwd));
+    const insideCwd = pathsOf(c).every((p) => isInside(tryRealPath(p) ?? p, tryRealPath(c.cwd) ?? c.cwd));
     const hasPaths = !!c.tool.paths;
     switch (this.mode) {
       case "auto":
@@ -109,11 +109,22 @@ export class PermissionPolicy {
     }
   }
 
-  /** Rule that "always allow" in the approval dialog adds for this call. */
-  static ruleFor(c: PermissionCheck): string {
+  /**
+   * Rules that "always allow" in the approval dialog adds for this call: no wider than what was shown.
+   * A command is matched as written (its `*` escaped, so they are not wildcards); a file tool gets
+   * one rule per path it touches; only a tool with neither is allowed by name.
+   */
+  static rulesFor(c: PermissionCheck): string[] {
     const target = c.tool.matchTarget?.(c.args);
-    if (target !== undefined) return `${c.tool.name}(${target})`;
-    return c.tool.name;
+    if (target !== undefined) return [`${c.tool.name}(${target.replace(/\\/g, "\\\\").replace(/\*/g, "\\*")})`];
+    const paths = pathsOf(c);
+    if (paths.length) return [...new Set(paths)].map((p) => `${c.tool.name}(${p.replace(/[\\*?[\]{}!]/g, "\\$&")})`);
+    return [c.tool.name];
+  }
+
+  /** rulesFor, for display. */
+  static ruleFor(c: PermissionCheck): string {
+    return PermissionPolicy.rulesFor(c).join(", ");
   }
 }
 
@@ -137,8 +148,24 @@ function parseRule(source: string): ParsedRule {
   return { tool: wildcard(m[1]!), pattern: m[2], source };
 }
 
+/** `*` matches anything; `\\*` is a literal `*` and `\\\\` a literal backslash. */
 function wildcard(p: string): RegExp {
-  return new RegExp(`^${p.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*")}$`, "s");
+  let re = "";
+  for (let i = 0; i < p.length; i++) {
+    let ch = p[i]!;
+    if (ch === "\\" && (p[i + 1] === "*" || p[i + 1] === "\\")) ch = p[++i]!;
+    else if (ch === "*") {
+      re += ".*";
+      continue;
+    }
+    re += ch.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+  return new RegExp(`^${re}$`, "s");
+}
+
+/** The paths a call touches, absolute: a plugin returning relative ones must not slip past path rules. */
+function pathsOf(c: PermissionCheck): string[] {
+  return (c.tool.paths?.(c.args, c.cwd) ?? []).map((p) => resolve(c.cwd, p));
 }
 
 // Shell operators that chain commands; an allow rule must match every piece.
@@ -158,7 +185,7 @@ function ruleMatches(rule: ParsedRule, c: PermissionCheck, forAllow = false): bo
     const re = wildcard(rule.pattern);
     return re.test(target) || segments(target).some((s) => re.test(s));
   }
-  const paths = c.tool.paths?.(c.args, c.cwd) ?? [];
+  const paths = pathsOf(c);
   if (!paths.length) return false;
   // Compare like with like. A relative pattern is anchored at the working directory's real path,
   // but links inside the project are not followed (a repo could point `src` at ~/.ssh). An

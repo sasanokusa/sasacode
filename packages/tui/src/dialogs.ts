@@ -1,6 +1,7 @@
 import { type Component, type Focusable, Input, matchesKey, type SelectItem, SelectList, Text, truncateToWidth } from "@earendil-works/pi-tui";
 import { type ApprovalAnswer, type ApprovalRequest, PermissionPolicy } from "@sasacode/agent";
 import { c, selectTheme } from "./theme.ts";
+import { plain } from "./views.ts";
 
 /** A titled SelectList that resolves once. Typing narrows the list (substring match). */
 export class Picker implements Component, Focusable {
@@ -60,16 +61,21 @@ export class ApprovalDialog implements Component, Focusable {
 
   constructor(req: ApprovalRequest, summary: string, done: (a: ApprovalAnswer) => void) {
     const rule = PermissionPolicy.ruleFor(req);
-    const detail = req.tool.name === "bash" ? String(req.args.command) : summary || JSON.stringify(req.args);
+    const raw = req.tool.name === "bash" ? String(req.args.command) : summary || JSON.stringify(req.args);
+    // What is approved must be exactly what is shown: control characters are made visible, and called out.
+    const detail = plain(raw);
+    const warn = /[\x00-\x08\x0b-\x1f\x7f-\x9f]/.test(raw)
+      ? `\n${c.red("⚠ 制御文字（端末のエスケープシーケンスなど）を含んでいます。␛ などの表示を確かめてください。")}`
+      : "";
     this.header = new Text(
-      `${c.yellow("?")} ${c.bold(`${req.tool.name} を実行しますか？`)}\n${c.cyan(detail)}\n${c.gray(req.reason)}`,
+      `${c.yellow("?")} ${c.bold(`${req.tool.name} を実行しますか？`)}\n${c.cyan(detail)}${warn}\n${c.gray(plain(req.reason))}`,
       0,
       0,
     );
     this.list = new SelectList(
       [
         { value: "allow", label: "はい" },
-        { value: "always", label: "常に許可（このセッション中）", description: rule },
+        { value: "always", label: "常に許可（終了するまで）", description: plain(rule) },
         { value: "deny", label: "いいえ" },
         { value: "feedback", label: "いいえ、代わりの指示を伝える" },
       ],

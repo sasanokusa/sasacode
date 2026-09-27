@@ -132,7 +132,7 @@ export async function setup(opts: SetupOptions): Promise<Harness> {
     host.setSessionEntries(sessionEntries);
     await agent.hooks.run("session_start", { sessionId: agent.session?.id, resumed });
   };
-  const endSession = () => agent.hooks.run("session_end", { sessionId: agent.session?.id });
+  const endSession = (reason: "switch" | "exit") => agent.hooks.run("session_end", { sessionId: agent.session?.id, reason });
 
   const openSession = (path: string) => {
     const { file, entries } = SessionFile.open(path);
@@ -213,25 +213,25 @@ export async function setup(opts: SetupOptions): Promise<Harness> {
     },
     loadPlugins,
     async loadSession(path) {
-      await endSession();
+      await endSession("switch");
       openSession(path);
       await startSession(true);
     },
     async newSession() {
-      await endSession();
+      await endSession("switch");
       createSession();
       await startSession(false);
     },
     async fork(index) {
       const kept = agent.messages.slice(0, index);
-      await endSession();
+      await endSession("switch");
       createSession();
       for (const m of kept) agent.session?.append({ type: "message", message: m });
       agent.messages = kept;
       await startSession(false);
     },
     async shutdown() {
-      await endSession();
+      await endSession("exit");
     },
   };
 }

@@ -6,8 +6,10 @@ import type { Harness } from "./setup.ts";
 /** `sasacode -p`: run one prompt to completion. Text mode streams the answer to stdout; jsonl emits every event. */
 export async function runHeadless(h: Harness, prompt: string, output: "text" | "jsonl"): Promise<number> {
   const { agent } = h;
-  const write = (s: string) => process.stdout.write(s);
-  const status = (s: string) => process.stderr.write(`\x1b[2m${s}\x1b[0m\n`);
+  // Model and tool text reaching a terminal must not carry escape sequences it would act on.
+  const tty = process.stdout.isTTY;
+  const write = (s: string) => process.stdout.write(tty ? plain(s) : s);
+  const status = (s: string) => process.stderr.write(`\x1b[2m${plain(s)}\x1b[0m\n`);
   let atLineStart = true;
 
   agent.events.on((e: AgentEvent) => {
@@ -23,8 +25,7 @@ export async function runHeadless(h: Harness, prompt: string, output: "text" | "
       atLineStart = true;
     } else if (e.type === "tool_start") status(`● ${e.call.name}(${e.summary})`);
     else if (e.type === "tool_end" && e.result.isError) status(`  ⎿ ${textOf(e.result.content).split("\n").slice(-1)[0]}`);
-    else if (e.type === "error") process.stderr.write(`error: ${e.error}\n`);
-    else if (e.type === "context_limit") process.stderr.write("stopped: context window is full\n");
+    else if (e.type === "error") process.stderr.write(`error: ${plain(e.error)}\n`);
     else if (e.type === "tool_repaired") status(`  ↻ repaired ${e.call.name}: ${e.note}`);
     else if (e.type === "plugin_error") process.stderr.write(`plugin ${e.plugin} (${e.hook}): ${e.error}\n`);
   });
@@ -52,7 +53,13 @@ export async function runHeadless(h: Harness, prompt: string, output: "text" | "
 
 const STOP_HINT: Partial<Record<StopCause, string>> = {
   max_turns: "turn limit reached (--max-turns or maxTurns in config; 0 = no limit)",
+  context_limit: "context window is full",
 };
+
+/** ESC shows as ␛; other control characters but newline and tab are dropped. */
+function plain(s: string): string {
+  return s.replace(/\x1b/g, "␛").replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, "");
+}
 
 /** message_update carries the whole partial message; the delta is enough for a log. */
 function toJson(e: AgentEvent): unknown {

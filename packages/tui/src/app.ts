@@ -35,7 +35,7 @@ import { ApprovalDialog, Picker } from "./dialogs.ts";
 import { copyToClipboard } from "./clipboard.ts";
 import { exitSummary, UsageTally } from "./summary.ts";
 import { c, editorTheme } from "./theme.ts";
-import { AssistantView, display, Notice, Padded, ToolView, UserView } from "./views.ts";
+import { AssistantView, display, Notice, Padded, plain, ToolView, UserView } from "./views.ts";
 
 const EFFORTS: ThinkingLevel[] = ["off", "low", "medium", "high", "xhigh", "max"];
 const EFFORT_LABELS: Record<ThinkingLevel, string> = {
@@ -357,11 +357,8 @@ class App {
         this.loader?.setMessage("考え中… (esc で中断)");
         break;
       }
-      case "context_limit":
-        this.chat.addChild(new Notice("コンテキストの上限に達したため停止しました。/clear で新しいセッションを始めてください。", c.yellow));
-        break;
       case "error":
-        this.chat.addChild(new Notice(`エラー: ${e.error}`, c.red));
+        this.chat.addChild(new Notice(`エラー: ${plain(e.error)}`, c.red));
         break;
       case "plugin_error":
         this.chat.addChild(new Notice(`プラグイン ${e.plugin} の ${e.hook} ハンドラでエラー: ${e.error}`, c.red));
@@ -376,6 +373,9 @@ class App {
         if (this.host.config.tui?.bell !== false && e.cause !== "aborted" && Date.now() - this.runStarted >= BELL_AFTER_MS) process.stdout.write("\x07");
         if (e.cause === "aborted") this.chat.addChild(new Notice("中断しました", c.yellow));
         if (e.cause === "max_turns") void this.offerToContinue();
+        // Only when compaction (the context_limit hook) could not make room: the event itself comes before that.
+        if (e.cause === "context_limit")
+          this.chat.addChild(new Notice("コンテキストの上限に達したため停止しました。/compact で要約するか、/clear で新しいセッションを始めてください。", c.yellow));
         if (e.cause === "stopped" && e.stopped) this.chat.addChild(new Notice(`${e.stopped.plugin} が停止しました: ${e.stopped.reason}`, c.yellow));
         this.renderStatus();
         break;

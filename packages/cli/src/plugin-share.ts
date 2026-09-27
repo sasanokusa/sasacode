@@ -111,6 +111,7 @@ export async function describeNpm(spec: string, doFetch: typeof fetch = fetch): 
 
 /** The lowest plugin API a file needs, judged by the features it mentions. */
 export function apiRangeFor(source: string): string {
+  if (/ctx\.agent|["']switch["']|HookContext/.test(source)) return "^1.8.0";
   if (/on\(\s*["']permission["']|softDeny/.test(source)) return "^1.7.0";
   if (/permissionsAs/.test(source)) return "^1.6.0";
   if (/listModels|registerProvider[\s\S]*fetch/.test(source)) return "^1.5.0";

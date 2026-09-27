@@ -49,6 +49,16 @@ export interface AgentOptions {
 
 const INTERRUPTED_NOTE = "[The user interrupted the previous response.]";
 /** Hooks that belong to the user's session, not to subagents. */
+let subagentRuns = 0;
+
+/**
+ * Room left for the next response before the window counts as full. Proportional for small
+ * windows: a local model with an 8K window and a 32K maxOutput would otherwise be "full" at once.
+ */
+export function responseRoom(model: ModelInfo): number {
+  return Math.min(model.maxOutput, 16_384, Math.floor(model.contextWindow * 0.15));
+}
+
 const SESSION_HOOKS: HookName[] = ["session_start", "session_end", "user_prompt", "turn_end", "agent_end", "context_limit"];
 
 export class Agent {
@@ -263,7 +273,7 @@ export class Agent {
           break;
         }
         const used = msg.usage.input + msg.usage.cacheRead + msg.usage.cacheWrite + msg.usage.output;
-        if (gen === this.generation && used >= this.model.contextWindow - Math.min(this.model.maxOutput, 16_384)) {
+        if (gen === this.generation && used >= this.model.contextWindow - responseRoom(this.model)) {
           if (await this.contextLimit(used, limitRetries++)) continue;
           cause = "context_limit";
           break;
@@ -470,7 +480,7 @@ export class Agent {
       permissions: this.permissions,
       approve: this.approve,
       session: undefined,
-      hooks: this.hooks.without(SESSION_HOOKS),
+      hooks: this.hooks.without(SESSION_HOOKS, { agent: `sub-${++subagentRuns}` }),
       toolSearch: this.toolSearch,
     });
     child.isSubagent = true;

@@ -165,7 +165,8 @@ Endpoints in a project's `.sasacode/config.json` are not used until you trust th
 | `agent` | Reads inside the working directory run; everything else is judged by the current model: safe runs, anything else asks |
 | `auto` | Everything runs (deny and ask rules still apply) |
 
-- A rule is `tool` or `tool(pattern)`. bash matches the command string with `*` wildcards; read / write / edit match paths with globs.
+- A rule is `tool` or `tool(pattern)`. bash matches the command string with `*` wildcards; read / write / edit match paths with globs. Write `\*` for a literal `*`.
+- "Always allow" in the approval prompt adds a rule no wider than what was shown: the command as written (its `*` are not wildcards), or, for a file tool, just that path. The rule lasts until sasacode exits (across `/clear`).
 - The order is deny → softDeny → ask → allow → mode → the `permission` hook (plugins). `softDeny` refuses like deny, but a plugin such as `jev-guard` may lower it to "ask the user" (never to running without asking); it is meant for broad patterns that also catch legitimate calls. An allow rule only lets a command through when **every** part joined with `&&`, `;` or `|` is allowed. Commands with `$(…)`, backticks or `>` never pass by an allow rule.
 - The bundled `permission-presets` enables `guard` by default: sudo, `rm -rf /`, disk operations, `| sh` and the like are always denied; `rm -rf ~…` under home and force pushes are softDeny; `ssh`, `scp`, `sftp` and `rsync` to another machine always ask, in `auto` mode too.
 - Headless runs have nobody to ask, so a call that needs approval is not run, and the model is told why.
@@ -282,7 +283,7 @@ export default ((api) => {
 }) satisfies Plugin;
 ```
 
-What the public API (now 1.7.0; frozen at 1.4.0, so 1.x only adds; [compatibility promise](docs/plugins.md#互換性の約束140-で確定)) offers:
+What the public API (now 1.8.0; frozen at 1.4.0, so 1.x only adds; [compatibility promise](docs/plugins.md#互換性の約束140-で確定)) offers:
 
 - **Registration**: tools (with `permissionsAs` to apply another tool's permission rules), slash commands (with argument completion), providers (model lists, custom fetch), permission rules (including `softDeny`)
 - **Hooks**: `session_start/end`, `user_prompt`, `system_prompt`, `before_request`, `stream_delta`, `assistant_message`, `tool_call_raw`, `tool_call`, `permission`, `tool_result`, `turn_end`, `agent_end`, `context_limit`

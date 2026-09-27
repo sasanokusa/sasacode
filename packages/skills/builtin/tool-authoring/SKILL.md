@@ -110,7 +110,7 @@ before_request → stream_delta (while streaming) → assistant_message
 | Hook | When | Receives | May return |
 | --- | --- | --- | --- |
 | `session_start` | session started or resumed | `{ sessionId?, resumed }` | — (restore state from `api.session.entries`) |
-| `session_end` | before `/clear`, `/resume`, exit | `{ sessionId? }` | — (clean up) |
+| `session_end` | before `/clear`, `/resume`, `/fork`, exit | `{ sessionId?, reason? }` (`"switch"` when another session follows, `"exit"` on quit; since 1.8.0) | — (clean up; close long-lived connections only on `"exit"`) |
 | `user_prompt` | before user input goes to the model | `{ content }` | `{ content }` to rewrite; `{ handled: true }` to consume it |
 | `system_prompt` | every request | `{ prompt }` | `{ prompt }` (append context) |
 | `before_request` | right before the model call | `{ messages, model, sampling }` | `{ messages }` for this request only (history is unchanged); `{ sampling: { temperature?, topP?, frequencyPenalty?, presencePenalty?, extraBody? } }` (`extraBody` = provider-specific fields; Anthropic's newer models reject sampling fields) |
@@ -176,7 +176,7 @@ api.on("assistant_message", ({ stopped }) => {
    import plugin from "./weather.ts";
    const tools: any[] = [], commands: any[] = [], hooks: Record<string, Function[]> = {};
    const api: any = {
-     version: "1.7.0", name: "weather", cwd: process.cwd(), settings: {},
+     version: "1.8.0", name: "weather", cwd: process.cwd(), settings: {},
      registerTool: (t: any) => tools.push(t), registerCommand: (c: any) => commands.push(c), registerProvider() {},
      on: (h: string, fn: Function) => (hooks[h] ??= []).push(fn), ready() {}, log() {},
      permissions: { addRules() {} },

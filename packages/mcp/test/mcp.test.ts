@@ -66,6 +66,16 @@ test("streamable HTTP server with headers from the environment", async () => {
   await agent.hooks.run("session_end", {});
 });
 
+test("servers stay connected across a session switch (/clear, /resume, /fork) and close on exit", async () => {
+  const { agent, until } = await load({ fx: { command: "bun", args: [join(import.meta.dir, "fixture-server.ts")] } });
+  await until(() => agent.getTools().length === 3);
+  const add = () => agent.getTools().find((t) => t.name === "mcp__fx__add")!.execute({ a: 1, b: 2 }, { cwd: ".", signal: new AbortController().signal });
+  await agent.hooks.run("session_end", { reason: "switch" });
+  expect((await add()).content).toEqual([{ type: "text", text: "3" }]);
+  await agent.hooks.run("session_end", { reason: "exit" });
+  expect((await add()).isError).toBe(true);
+});
+
 test("a server that cannot start is reported without stopping anything", async () => {
   const { agent, notes, until, host } = await load({ broken: { command: "definitely-not-a-command-xyz" } });
   await until(() => notes.length > 0);

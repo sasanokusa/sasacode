@@ -26,7 +26,7 @@ export type {
   UserContent,
 } from "@sasacode/ai";
 
-export const PLUGIN_API_VERSION = "1.7.0";
+export const PLUGIN_API_VERSION = "1.8.0";
 
 // ── tools ────────────────────────────────────────────────────────────
 
@@ -113,7 +113,11 @@ export type DeltaKind = "text" | "thinking" | "toolcall";
  */
 export interface HookMap {
   session_start: { event: { sessionId?: string; resumed: boolean }; result: void };
-  session_end: { event: { sessionId?: string }; result: void };
+  /**
+   * `reason` (since 1.8.0): "switch" when another session follows (/clear, /resume, /fork), "exit" when
+   * sasacode quits. Undefined from older hosts; treat it as "exit".
+   */
+  session_end: { event: { sessionId?: string; reason?: "switch" | "exit" }; result: void };
   /** Transform input, or consume it (`handled`) so it never reaches the model. */
   user_prompt: { event: { content: UserContent[] }; result: { content?: UserContent[]; handled?: boolean } };
   /** Append to (or rewrite) the system prompt for this request. */
@@ -200,8 +204,19 @@ export interface HookMap {
 }
 
 export type HookName = keyof HookMap;
+
+/** Where a hook fired. (since 1.8.0) */
+export interface HookContext {
+  /**
+   * Undefined for the main agent. Each subagent run (agent.run, the task tool) has its own id,
+   * so a plugin keeping per-conversation state can keep parallel subagents apart.
+   */
+  agent?: string;
+}
+
 export type HookHandler<K extends HookName> = (
   event: HookMap[K]["event"],
+  ctx: HookContext,
 ) => HookMap[K]["result"] | void | Promise<HookMap[K]["result"] | void>;
 
 // ── ui, session, agent ───────────────────────────────────────────────

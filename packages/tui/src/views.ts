@@ -8,6 +8,15 @@ export const display = { expanded: false };
 
 const COLLAPSED_LINES = 6;
 
+/**
+ * Text from the model, tools, MCP servers or files, made safe to print: the terminal must not act on
+ * escape sequences in it (hidden text in an approval prompt, a rewritten clipboard, a fake link). ESC
+ * shows as ␛ so the attempt stays visible; other controls (C0 but newline and tab, DEL, C1) are dropped.
+ */
+export function plain(s: string): string {
+  return s.replace(/\x1b/g, "␛").replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, "");
+}
+
 export class UserView extends Text {
   constructor(content: UserContent[]) {
     const text = content
@@ -15,14 +24,14 @@ export class UserView extends Text {
       .filter((t) => !t.startsWith("[The user interrupted"))
       .join("\n");
     // OSC 133 "prompt start": terminals and the full-screen view (ctrl+up/down) jump between prompts.
-    super(`\x1b]133;A\x07${c.bgUser(`> ${text}`)}`, 0, 0);
+    super(`\x1b]133;A\x07${c.bgUser(`> ${plain(text)}`)}`, 0, 0);
   }
 }
 
 class ThinkingView implements Component {
   text = "";
   render(width: number): string[] {
-    const lines = this.text.trim().split("\n").filter((l) => l.trim());
+    const lines = plain(this.text).trim().split("\n").filter((l) => l.trim());
     if (!this.text.trim()) return [];
     const shown = display.expanded ? lines : lines.slice(-2);
     const out = new Text(c.dim(c.italic(`∴ ${shown.join("\n  ")}`)), 0, 0).render(width);
@@ -47,7 +56,7 @@ export class AssistantView extends Container {
       let view = this.blocks.get(i);
       if (b.type === "text") {
         if (!view) this.add(i, (view = new Markdown("", 0, 0, markdownTheme)));
-        (view as Markdown).setText(b.text);
+        (view as Markdown).setText(plain(b.text));
       } else if (b.type === "thinking") {
         if (!view) this.add(i, (view = new ThinkingView()));
         (view as ThinkingView).text = b.thinking;
@@ -87,17 +96,17 @@ export class ToolView implements Component {
 
   render(width: number): string[] {
     const dot = { pending: c.gray("○"), running: c.yellow("●"), done: c.green("●"), error: c.red("●") }[this.status];
-    const summary = oneLine(this.summary || argPreview(this.call.input));
+    const summary = oneLine(plain(this.summary || argPreview(this.call.input)));
     const lines = [truncateToWidth(`${dot} ${c.bold(this.call.name)}${c.gray(`(${summary})`)}`, width)];
-    if (this.repairNote) lines.push(truncateToWidth(c.gray(`  ↻ 修復: ${this.repairNote}`), width));
-    const body = this.status === "running" ? this.live : this.output;
+    if (this.repairNote) lines.push(truncateToWidth(c.gray(`  ↻ 修復: ${plain(this.repairNote)}`), width));
+    const body = plain(this.status === "running" ? this.live : this.output);
     let custom: string[] | undefined;
     if (this.renderer && this.status !== "running")
       try {
         custom = this.renderer(this.call, this.result, { expanded: display.expanded, width })?.map((l) => truncateToWidth(l, width));
       } catch {}
     if (custom) lines.push(...custom);
-    else if (this.diff && this.status === "done") lines.push(...renderDiff(this.diff, width));
+    else if (this.diff && this.status === "done") lines.push(...renderDiff(plain(this.diff), width));
     else if (body.trim()) {
       const all = body.trimEnd().split("\n");
       const shown = display.expanded ? all : this.status === "running" ? all.slice(-COLLAPSED_LINES) : all.slice(0, COLLAPSED_LINES);

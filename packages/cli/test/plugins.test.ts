@@ -1,9 +1,9 @@
 import { afterAll, beforeEach, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { emptyUsage, registerApi, replayProvider } from "@sasacode/ai";
-import { discoverPlugins } from "../src/loader.ts";
+import { discoverPlugins, pluginCommand } from "../src/loader.ts";
 import { assessProject, isTrusted, saveTrust } from "../src/trust.ts";
 import { setup } from "../src/setup.ts";
 
@@ -135,4 +135,16 @@ test("a user plugin named like a bundled one replaces it instead of running besi
   expect(tools).toContain("my_todo");
   expect(tools).not.toContain("todo_write");
   expect(h.host.plugins.filter((p) => p.name === "todo")).toHaveLength(1);
+});
+
+test("plugin remove takes a plugin's name, never a path out of the plugins folder", async () => {
+  const outside = join(home, "..", "keep-me");
+  mkdirSync(outside, { recursive: true });
+  expect(await pluginCommand(["remove", "../../keep-me"], proj)).toBe(1);
+  expect(await pluginCommand(["remove", ".."], proj)).toBe(1);
+  expect(existsSync(outside)).toBe(true);
+  expect(existsSync(join(home, "plugins"))).toBe(true);
+  mkdirSync(join(home, "plugins", "gone"));
+  expect(await pluginCommand(["remove", "gone"], proj)).toBe(0);
+  expect(existsSync(join(home, "plugins", "gone"))).toBe(false);
 });

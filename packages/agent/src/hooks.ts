@@ -1,16 +1,22 @@
-import type { HookHandler, HookMap, HookName } from "@sasacode/plugin-api";
+import type { HookContext, HookHandler, HookMap, HookName } from "@sasacode/plugin-api";
 
 type Step<K extends HookName> = (result: HookMap[K]["result"], event: HookMap[K]["event"], owner: string) => boolean | void;
 
 interface Entry {
   owner: string;
-  fn: (event: any) => any;
+  fn: (event: any, ctx: HookContext) => any;
 }
 
 /** Runs hook handlers in registration order. A failing handler is reported and skipped; the loop goes on. */
 export class HookRunner {
   private handlers = new Map<HookName, Entry[]>();
   onError?: (owner: string, hook: HookName, error: unknown) => void;
+  /** Passed to every handler: which agent the hook fired for. */
+  readonly ctx: Readonly<HookContext>;
+
+  constructor(ctx: HookContext = {}) {
+    this.ctx = Object.freeze({ ...ctx });
+  }
 
   on<K extends HookName>(name: K, fn: HookHandler<K>, owner = "core"): void {
     const list = this.handlers.get(name) ?? [];
@@ -18,9 +24,9 @@ export class HookRunner {
     this.handlers.set(name, list);
   }
 
-  /** A runner sharing these handlers except the named hooks (for subagents). */
-  without(names: HookName[]): HookRunner {
-    const r = new HookRunner();
+  /** A runner sharing these handlers except the named hooks (for subagents, with their own ctx). */
+  without(names: HookName[], ctx: HookContext = this.ctx): HookRunner {
+    const r = new HookRunner(ctx);
     for (const [k, v] of this.handlers) if (!names.includes(k)) r.handlers.set(k, v);
     r.onError = this.onError;
     return r;
@@ -38,7 +44,7 @@ export class HookRunner {
     for (const h of this.handlers.get(name) ?? []) {
       let result: HookMap[K]["result"] | void;
       try {
-        result = await h.fn(event);
+        result = await h.fn(event, this.ctx);
       } catch (e) {
         this.onError?.(h.owner, name, e);
         continue;
@@ -53,7 +59,7 @@ export class HookRunner {
     for (const h of this.handlers.get(name) ?? []) {
       let result: unknown;
       try {
-        result = h.fn(event);
+        result = h.fn(event, this.ctx);
       } catch (e) {
         this.onError?.(h.owner, name, e);
         continue;

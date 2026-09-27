@@ -237,8 +237,12 @@ export async function pluginCommand(args: string[], cwd: string): Promise<number
       return 0;
     }
     if (sub === "remove" && spec) {
+      // A folder directly in the plugins folder, or an npm package name: never a path elsewhere.
+      const folder = /^[^/\\]+$/.test(spec) && spec !== "." && spec !== ".." && spec !== "node_modules";
+      if (!folder && !/^(@[a-z0-9~-][a-z0-9._~-]*\/)?[a-z0-9~-][a-z0-9._~-]*$/.test(spec))
+        throw new Error(`${spec}: give the plugin's name as \`sasacode plugin list\` shows it, not a path`);
       const target = join(dir, spec);
-      if (existsSync(target) && statSync(target).isDirectory() && !existsSync(join(dir, "node_modules", spec))) rmSync(target, { recursive: true, force: true });
+      if (folder && existsSync(target) && statSync(target).isDirectory() && !existsSync(join(dir, "node_modules", spec))) rmSync(target, { recursive: true, force: true });
       else await bun(["remove", spec], dir);
       console.log(`removed ${spec}`);
       return 0;

@@ -97,3 +97,29 @@ test("a run in which no tool call can run for 5 turns is stopped by the plugin",
   expect(cause).toBe("stopped");
   expect(results).toHaveLength(5);
 });
+
+test("parallel subagents keep separate state: the same read in each is not a repeat", async () => {
+  const task = (i: number) => ({ type: "tool_call" as const, id: `t${i}`, name: "task", input: { description: `part ${i}`, prompt: `look ${i}` } });
+  const script = [
+    reply([1, 2, 3, 4, 5].map(task)),
+    ...[1, 2, 3, 4, 5].map((i) => call(`c${i}`, "check", { x: 1 })),
+    ...[1, 2, 3, 4, 5].map((i) => reply([{ type: "text", text: `report ${i}` }])),
+    reply([{ type: "text", text: "done" }]),
+  ];
+  registerApi("replay", replayProvider(script));
+  const refused: string[] = [];
+  const agent = new Agent({ model: { id: "m", provider: "t", api: "replay", contextWindow: 1e5, maxOutput: 1e3 }, cwd: import.meta.dir, systemPrompt: "", permissions: new PermissionPolicy("auto") });
+  const host = new PluginHost({ agent, cwd: agent.cwd });
+  await host.load("tools", (api) =>
+    api.registerTool({ name: "check", description: "", parameters: { type: "object", properties: { x: { type: "number" } } }, kind: "read", execute: async () => ({ content: [{ type: "text", text: "same output" }] }) }),
+  );
+  await host.load("subagent", bundledPlugins.subagent!);
+  await host.load("loop-guard", bundledPlugins["loop-guard"]!);
+  await host.load("log", (api) =>
+    api.on("tool_result", ({ call, ran }) => {
+      if (call.name === "check" && !ran) refused.push(call.id);
+    }),
+  );
+  await agent.prompt("go");
+  expect(refused).toEqual([]);
+});

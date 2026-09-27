@@ -46,7 +46,7 @@ npm のパッケージは `bun run pack:plugin-api` で `dist/plugin-api` に作
 }
 ```
 
-- `apiVersion` がホストの API（現在 1.7.0）と互換でなければ、警告を出して読み込まない。
+- `apiVersion` がホストの API（現在 1.8.0）と互換でなければ、警告を出して読み込まない。
 - `skills` は `SKILL.md` を含むフォルダが並ぶディレクトリ。
 - `mcpServers` は設定ファイルの `mcpServers` と同じ形式。`${VAR}` は環境変数から展開される。
 
@@ -81,7 +81,7 @@ sasacode plugin publish my-tool.ts --license MIT             # npm publish（npm
 - `package.json` には、`sasacode` フィールド（マニフェスト）、検索用のキーワード `sasacode-plugin`、ピア依存の `@sasacode/plugin-api` を入れる。README はファイル先頭のコメントから作る。
 - 版は、npm に出ている最新版の次のパッチ（初回は 0.1.0）。`--version` で指定できる。
 - 説明文は、ファイルの最初のコメントから取る（`--description` で指定できる）。
-- `apiVersion` は、使っている機能から決める（`permission` フックや `softDeny` なら ^1.7.0、`permissionsAs` なら ^1.6.0、など）。`--api` で指定できる。
+- `apiVersion` は、使っている機能から決める（フックの `ctx` や `session_end` の `reason` なら ^1.8.0、`permission` フックや `softDeny` なら ^1.7.0、`permissionsAs` なら ^1.6.0、など）。`--api` で指定できる。
 - 同じフォルダのほかのファイルを import していると、それは含まれない（注意を出す）。そういうプラグインは、`package.json` に `sasacode` フィールドを書いたディレクトリごと `sasacode plugin publish <ディレクトリ>` で出す（キーワードがなければ足す）。
 - ライセンスを付けないと、ほかの人は再利用できない。`--license MIT` のように付ける。
 
@@ -95,7 +95,7 @@ sasanokusa.com のおすすめ一覧に載せたいときは、[リポジトリ]
 
 ## API リファレンス
 
-公開 API は `@sasacode/plugin-api` の `PluginAPI` で、現在の版は 1.7.0。変更の履歴は[最後の表](#api-の版)にある。
+公開 API は `@sasacode/plugin-api` の `PluginAPI` で、現在の版は 1.8.0。変更の履歴は[最後の表](#api-の版)にある。
 
 ### PluginAPI
 
@@ -128,7 +128,7 @@ sasanokusa.com のおすすめ一覧に載せたいときは、[リポジトリ]
 | --- | --- |
 | `name` / `description` / `parameters` | 名前、説明、引数の JSON Schema。引数は実行前にスキーマで検証される |
 | `kind` | `read` / `edit` / `exec` / `other`。権限の判定に使う。既定のモード `edits` で自動で許可されるのは、作業ディレクトリ内の read / edit だけ |
-| `paths(args, cwd)` | 触るファイル。パスのルール（`edit(src/**)`）の照合と、作業ディレクトリの内側かどうかの判定に使う |
+| `paths(args, cwd)` | 触るファイル。パスのルール（`edit(src/**)`）の照合と、作業ディレクトリの内側かどうかの判定に使う。絶対パスで返すのが基本で、相対パスは作業ディレクトリから解決される |
 | `matchTarget(args)` | パターンのルール（`bash(git *)`）で照合する文字列 |
 | `permissionsAs` | 別のツール名のルールも当てる（1.6.0〜）。シェルのコマンドを別の方法で動かすツール（バックグラウンド実行、リモート実行など）に `"bash"` と書けば、利用者の `bash(sudo *)` などの deny / ask / allow ルールと `guard` プリセットが、このツールの `matchTarget` に対してそのまま効く。自分の名前のルールも引き続き効く |
 | `concurrent` | 同じターンの、ほかの concurrent なツールと並行して実行してよい |
@@ -164,7 +164,7 @@ before_request → stream_delta（生成中、差分ごと） → assistant_mess
 | フック | いつ | 受け取るもの | 返せるもの |
 | --- | --- | --- | --- |
 | `session_start` | セッションを始めた・再開したとき | `{sessionId?, resumed}` | なし（状態の復元に使う） |
-| `session_end` | `/clear`・`/resume`・終了の前 | `{sessionId?}` | なし（後片付けに使う） |
+| `session_end` | `/clear`・`/resume`・`/fork`・終了の前 | `{sessionId?, reason?}`。`reason` は、次のセッションが続く（`/clear` など）なら `"switch"`、sasacode が終わるなら `"exit"`（1.8.0〜。古いホストでは付かないので、ないときは `"exit"` とみなす） | なし（後片付けに使う。外部との接続のようにセッションをまたいで使うものは `"exit"` のときだけ閉じる） |
 | `user_prompt` | ユーザー入力をモデルに送る前 | `{content}` | `{content}` で書き換える。`{handled: true}` にするとモデルに渡さない |
 | `system_prompt` | リクエストごと | `{prompt}` | `{prompt}` で書き換える（普通は追記する） |
 | `before_request` | モデルを呼ぶ直前 | `{messages, model, sampling}` | `{messages}` でこのリクエストのメッセージを変える（保存される履歴は変わらない）。`{sampling}` で temperature・topP・frequencyPenalty・presencePenalty・`extraBody`（プロバイダー固有の値）を変える（1.2.0〜） |
@@ -178,7 +178,7 @@ before_request → stream_delta（生成中、差分ごと） → assistant_mess
 | `agent_end` | ループが止まったとき | `{cause}`（`done` / `aborted` / `error` / `refusal` / `context_limit` / `max_turns` / `stopped`）。`stopped` のときは `stopped: {plugin, reason}` も付く | `{inject}` で次の実行を始める |
 | `context_limit` | コンテキストが上限に達したとき | `{tokens, contextWindow}` | `session.replaceMessages` で空けてから `{retry: true}` で続ける（連続2回まで） |
 
-サブエージェント（`agent.run`）は、`system_prompt` / `before_request` / `stream_delta` / `assistant_message` / `tool_call_raw` / `tool_call` / `permission` / `tool_result` のハンドラを共有する。セッション系のフック（`session_*`、`user_prompt`、`turn_end`、`agent_end`、`context_limit`）は、サブエージェントでは呼ばれない。
+サブエージェント（`agent.run`）は、`system_prompt` / `before_request` / `stream_delta` / `assistant_message` / `tool_call_raw` / `tool_call` / `permission` / `tool_result` のハンドラを共有する。どのエージェントの呼び出しかは、ハンドラの第2引数 `ctx` の `ctx.agent` でわかる（メインのエージェントでは `undefined`、サブエージェントでは実行ごとに違う値。1.8.0〜）。並列に動くサブエージェントを区別して状態を持つプラグイン（loop-guard など）は、これで分ける。セッション系のフック（`session_*`、`user_prompt`、`turn_end`、`agent_end`、`context_limit`）は、サブエージェントでは呼ばれない。
 
 ### API の版
 
@@ -192,6 +192,7 @@ before_request → stream_delta（生成中、差分ごと） → assistant_mess
 | 1.5.0 | `Provider.listModels`（プロバイダーが自分のモデル一覧を返す）と `Request.fetch`（通信の差し替え）。別のプロバイダーを包むプロバイダーを書ける |
 | 1.6.0 | ツールの `permissionsAs`（別のツール名の権限ルールも当てる） |
 | 1.7.0 | `permission` フック（ルールとモードの判定の後に、決められた範囲で判定を変える）、`PermissionRules.softDeny`、型 `PermissionMode` と `VerdictSource` |
+| 1.8.0 | フックのハンドラの第2引数 `ctx`（型 `HookContext`。`ctx.agent` でサブエージェントを区別する）、`session_end` の `reason`（`"switch"` / `"exit"`） |
 
 どれも既存のプラグインを壊さない追加。ただし 1.4.0 から、`tool_result` を「実行された」合図として数えているプラグインは `ran` を見る必要がある。
 

@@ -100,3 +100,11 @@ test("endpoints in a project config need trust (even keyless ones would receive 
   expect(warnings.at(-1)).toContain("endpoint lan (http://192.168.1.20:8080)");
   expect(loadConfig(proj, true).config.providers?.lan).toEqual({ baseUrl: "http://192.168.1.20:8080" });
 });
+
+test("endpoint add stops on a config it cannot read instead of overwriting it", async () => {
+  const { endpointCommand } = await import("../src/endpoints.ts");
+  const broken = '{"model":"x/y","permissions":{"deny":["read(**/.env)"]},}\n';
+  writeFileSync(join(home, "config.json"), broken);
+  await expect(endpointCommand(["add", "local", `http://localhost:${llamacpp.port}`], proj)).rejects.toThrow("failed to read");
+  expect(readFileSync(join(home, "config.json"), "utf8")).toBe(broken);
+});

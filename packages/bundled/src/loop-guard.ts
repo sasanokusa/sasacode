@@ -69,11 +69,21 @@ const loopGuard: Plugin = (api) => {
   const noteAt = num("noteAt", 3);
   const blockAt = num("blockAt", 5);
   const noProgressTurns = num("noProgressTurns", 5);
-  let history: Step[] = [];
-  /** Calls in the current response since the last one that could change state. */
-  let thisTurn = new Set<string>();
-  /** The calls of a loop that was stopped: refused until something changes. */
-  let locked = new Set<string>();
+  /** Per agent (ctx.agent): parallel subagents share these hooks but not their conversations. */
+  interface State {
+    history: Step[];
+    /** Calls in the current response since the last one that could change state. */
+    thisTurn: Set<string>;
+    /** The calls of a loop that was stopped: refused until something changes. */
+    locked: Set<string>;
+  }
+  const fresh = (): State => ({ history: [], thisTurn: new Set(), locked: new Set() });
+  const states = new Map<string, State>();
+  const stateOf = (agent = "") => {
+    let st = states.get(agent);
+    if (!st) states.set(agent, (st = fresh()));
+    return st;
+  };
   /** Calls this plugin refused: their results say so and must not break a detected cycle. */
   const refused = new Set<string>();
   /** For the no-progress check: calls answered this turn, how many of them ran, turns without any. */
@@ -82,32 +92,32 @@ const loopGuard: Plugin = (api) => {
   let idle = 0;
 
   api.on("user_prompt", () => {
-    history = [];
-    thisTurn = new Set();
-    locked = new Set();
+    states.clear();
     idle = 0;
   });
   // Fires for every response (subagents' too, unlike turn_end), before its calls are checked.
-  api.on("assistant_message", () => {
-    thisTurn = new Set();
+  api.on("assistant_message", (_e, ctx) => {
+    stateOf(ctx.agent).thisTurn = new Set();
   });
 
-  api.on("tool_call", ({ call, tool, args }) => {
+  api.on("tool_call", ({ call, tool, args }, ctx) => {
+    const st = stateOf(ctx.agent);
+    const { history } = st;
     const sig = `${call.name}:${stable(args)}`;
     const deny = (reason: string) => {
       refused.add(call.id);
       return { decision: "deny" as const, reason: `loop-guard: ${reason}` };
     };
-    if (locked.has(sig)) return deny(`this ${call.name} call belongs to a loop that was stopped, and no file has changed since; change the approach`);
-    if (thisTurn.has(sig)) return deny(`the same ${call.name} call appears earlier in this response with nothing in between that could change its result; it is not run twice`);
+    if (st.locked.has(sig)) return deny(`this ${call.name} call belongs to a loop that was stopped, and no file has changed since; change the approach`);
+    if (st.thisTurn.has(sig)) return deny(`the same ${call.name} call appears earlier in this response with nothing in between that could change its result; it is not run twice`);
     // After a call that may change things, repeating an earlier check is legitimate (read → write → read).
-    if (tool.kind !== "read") thisTurn = new Set();
-    thisTurn.add(sig);
+    if (tool.kind !== "read") st.thisTurn = new Set();
+    st.thisTurn.add(sig);
     for (let p = 1; p <= Math.min(MAX_PERIOD, history.length); p++) {
       if (history[history.length - p]!.call !== sig) continue;
       const n = repeats(history, p);
       if (n + 1 < blockAt) continue;
-      locked = new Set(history.slice(-p).map((s) => s.call));
+      st.locked = new Set(history.slice(-p).map((s) => s.call));
       return deny(
         p === 1
           ? `the same ${call.name} call returned the same result ${n} times in a row; change the approach`
@@ -116,9 +126,13 @@ const loopGuard: Plugin = (api) => {
     }
   });
 
-  api.on("tool_result", ({ call, result, ran: didRun }) => {
-    calls++;
-    if (didRun) ran++;
+  api.on("tool_result", ({ call, result, ran: didRun }, ctx) => {
+    // turn_end (the no-progress check) is the main agent's only.
+    if (!ctx.agent) {
+      calls++;
+      if (didRun) ran++;
+    }
+    const st = stateOf(ctx.agent);
     if (refused.delete(call.id)) return;
     const tool = api.agent.tools().find((t) => t.name === call.name);
     const step: Step = {
@@ -127,10 +141,12 @@ const loopGuard: Plugin = (api) => {
       isError: !!result.isError,
       changes: tool?.kind === "edit" && !result.isError,
     };
-    if (step.changes) locked = new Set();
-    const sameError = step.isError ? errorStreak(history, step.result) + 1 : 0;
-    history.push(step);
-    if (history.length > 50) history = history.slice(-50);
+    // A file changed (by any agent): stopped loops may make progress again.
+    if (step.changes) for (const other of states.values()) other.locked = new Set();
+    const sameError = step.isError ? errorStreak(st.history, step.result) + 1 : 0;
+    st.history.push(step);
+    if (st.history.length > 50) st.history = st.history.slice(-50);
+    const { history } = st;
     let cycle = 0;
     let period = 1;
     for (let p = 1; p <= MAX_PERIOD && !cycle; p++) {

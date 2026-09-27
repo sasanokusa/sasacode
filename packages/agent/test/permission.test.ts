@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bashTool, editTool, readTool } from "@sasacode/tools";
+import { bashTool, editTool, readTool, writeTool } from "@sasacode/tools";
 import { PermissionPolicy } from "../src/permission.ts";
 
 const cwd = "/work/proj";
@@ -63,4 +63,33 @@ test("a tool with permissionsAs is judged by that tool's rules too, plus its own
   // Without permissionsAs, bash rules do not reach another tool.
   const { permissionsAs: _, ...plain } = runner;
   expect((await p.check({ tool: plain, args: { command: "sudo x" }, cwd })).decision).toBe("allow");
+});
+
+test("always allow adds a rule no wider than the call: a command's * is literal, a file tool gets its path", async () => {
+  const chmod = bash("chmod -R 755 *");
+  const rules = PermissionPolicy.rulesFor(chmod);
+  expect(rules).toEqual(["bash(chmod -R 755 \\*)"]);
+  const p = new PermissionPolicy("edits", { allow: rules });
+  expect((await p.check(chmod)).decision).toBe("allow");
+  expect((await p.check(bash("chmod -R 755 ~/.ssh /etc"))).decision).toBe("ask");
+
+  const outside = { tool: writeTool, args: { path: "/tmp/sasacode-x/out.txt", content: "" }, cwd };
+  const w = new PermissionPolicy("edits", { allow: PermissionPolicy.rulesFor(outside) });
+  expect(PermissionPolicy.rulesFor(outside)).toEqual(["write(/tmp/sasacode-x/out.txt)"]);
+  expect((await w.check(outside)).decision).toBe("allow");
+  expect((await w.check({ tool: writeTool, args: { path: "/tmp/sasacode-x/.zshrc", content: "" }, cwd })).decision).toBe("ask");
+});
+
+test("rules: \\* is a literal star; * still matches anything", async () => {
+  const p = new PermissionPolicy("ask", { allow: ["bash(echo \\*)", "bash(ls *)"] });
+  expect((await p.check(bash("echo *"))).decision).toBe("allow");
+  expect((await p.check(bash("echo hi"))).decision).toBe("ask");
+  expect((await p.check(bash("ls -la"))).decision).toBe("allow");
+});
+
+test("a plugin tool returning relative paths is still caught by path rules", async () => {
+  const relTool = { ...readTool, name: "mytool", paths: (a: Record<string, unknown>) => [String(a.path)] };
+  const p = new PermissionPolicy("auto", { deny: ["mytool(.env)"] });
+  expect((await p.check({ tool: relTool, args: { path: ".env" }, cwd })).decision).toBe("deny");
+  expect((await p.check({ tool: relTool, args: { path: "src/a.ts" }, cwd })).decision).toBe("allow");
 });
