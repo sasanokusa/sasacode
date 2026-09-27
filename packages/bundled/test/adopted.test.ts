@@ -48,6 +48,8 @@ function fake(plugin: Plugin, settings: Record<string, unknown> = {}, entries: R
 test("goal: set by /goal or set_goal, shown in the prompt and footer, and a clear survives /resume", async () => {
   const g = fake(goal);
   await g.fire("session_start");
+  // No goal: the prompt is left alone (the how-to lives in set_goal's description, A1).
+  expect((await g.fire("system_prompt", { prompt: "base" })).prompt).toBe("base");
   await g.commands.goal.run({ args: "ログイン画面を完成させる" });
   expect(g.status.get("goal")).toContain("ログイン画面");
   expect(g.injected.at(-1)).toContain("ログイン画面を完成させる");
@@ -55,6 +57,7 @@ test("goal: set by /goal or set_goal, shown in the prompt and footer, and a clea
   const r = await g.tools.set_goal.execute({ status: "done" });
   expect(r.isError).toBeFalsy();
   expect(g.status.has("goal")).toBe(false); // only an active goal is shown
+  expect((await g.fire("system_prompt", { prompt: "base" })).prompt).toBe("base"); // and only in the prompt
   await g.commands.goal.run({ args: "clear" });
   const resumed = fake(goal, {}, g.entries);
   await resumed.fire("session_start");
@@ -116,18 +119,18 @@ test("background-sessions: a job from an earlier run is judged by its exit file 
   const home = join(root, "home-reuse");
   process.env.SASACODE_HOME = home;
   const { mkdirSync, writeFileSync } = await import("node:fs");
-  // A process that is alive but is not the job: its start time does not match the record.
+  // A process that is alive but is not the job: it started long after the job did.
   const stranger = Bun.spawn(["sleep", "30"]);
   try {
     const job = (id: string, extra: object) => {
       const dir = join(home, "background-sessions", id);
       mkdirSync(dir, { recursive: true });
       writeFileSync(join(dir, "output.log"), "old output\n");
-      writeFileSync(join(dir, "meta.json"), JSON.stringify({ id, command: "make", cwd: root, runCwd: root, pid: stranger.pid, startedAt: Date.now() - 5000, status: "running", sessionId: "s1", ...extra }));
+      writeFileSync(join(dir, "meta.json"), JSON.stringify({ id, command: "make", cwd: root, runCwd: root, pid: stranger.pid, startedAt: Date.now() - 3_600_000, status: "running", sessionId: "s1", ...extra }));
       return dir;
     };
     writeFileSync(join(job("bg-1", {}), "exit-code"), "0\n"); // finished while sasacode was closed
-    job("bg-2", { procStart: "Mon Jan  1 00:00:00 2001" });
+    job("bg-2", {}); // started an hour ago, but its pid now belongs to a process started just now
     const b = fake(backgroundSessions, { pollMs: 50 });
     for (let i = 0; i < 100 && b.injected.length < 2; i++) await Bun.sleep(20);
     expect(b.injected.join("\n")).toContain("bg-1");

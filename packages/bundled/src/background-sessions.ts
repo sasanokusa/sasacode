@@ -56,8 +56,6 @@ interface Meta {
   notified?: boolean;
   killed?: boolean;
   spawnError?: string;
-  /** When the OS says the process started (`ps -o lstart`): tells a reused pid from the job's own. */
-  procStart?: string;
 }
 
 interface Job extends Meta {
@@ -107,21 +105,32 @@ function isAlive(pid: number): boolean {
   }
 }
 
-/** The start time `ps` reports for a pid, or undefined when there is no such process. */
-function procStart(pid: number): string | undefined {
-  if (!pid) return undefined;
-  const r = Bun.spawnSync(["ps", "-o", "lstart=", "-p", String(pid)], { stderr: "ignore" });
-  return r.exitCode === 0 ? r.stdout.toString().trim() || undefined : undefined;
+/** When a process started (ms since the epoch): /proc on Linux, ps elsewhere. Undefined if unknown. */
+function processStartMs(pid: number): number | undefined {
+  try {
+    if (process.platform === "linux") {
+      const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+      const ticks = Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[19]);
+      const boot = Number(/^btime (\d+)/m.exec(readFileSync("/proc/stat", "utf8"))?.[1]);
+      return Number.isFinite(ticks) && boot ? (boot + ticks / 100) * 1000 : undefined;
+    }
+    const r = Bun.spawnSync(["ps", "-o", "lstart=", "-p", String(pid)], { stderr: "ignore" });
+    const t = Date.parse(r.stdout.toString().trim());
+    return Number.isFinite(t) ? t : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /**
- * Whether the job's own process is still running. The exit-code file is written when it ends, so
- * it settles the question; otherwise the pid must be alive and, when its start time was recorded,
- * be the same process (a pid reused after a restart belongs to someone else).
+ * Whether a job from an earlier run of sasacode is still running. Its exit-code file is written
+ * when it ends, which settles it; otherwise the pid must be alive and have started when the job
+ * did (a pid reused while sasacode was closed belongs to another process).
  */
 function jobAlive(m: Meta, exitPath: string): boolean {
   if (existsSync(exitPath) || !isAlive(m.pid)) return false;
-  return !m.procStart || procStart(m.pid) === m.procStart;
+  const started = processStartMs(m.pid);
+  return started === undefined || Math.abs(started - m.startedAt) < 10_000;
 }
 
 function mtimeOf(path: string): number | undefined {
@@ -547,7 +556,6 @@ const plugin: Plugin = (api) => {
       closeSync(fd);
       job.child = child;
       job.pid = child.pid ?? 0;
-      job.procStart = procStart(job.pid);
       save(job);
       jobs.set(job.id, job);
       child.unref();
