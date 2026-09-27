@@ -43,7 +43,7 @@ ln -s "$PWD/packages/cli/src/main.ts" ~/.local/bin/sasacode
 sasacode                            # 対話モード（TUI）
 sasacode -p "テストを直して"           # ヘッドレス：答えを stdout に、進捗を stderr に
 sasacode -p "…" --output jsonl       # 全イベントを JSONL で
-echo "$LOG" | sasacode -p "原因は？"   # パイプした入力は -p の後ろに付く
+echo "$LOG" | sasacode -p "原因は？"   # パイプした入力は -p の後ろに付く（5 秒何も来なければ読まない。--stdin で終わりまで待つ）
 sasacode -c                         # このディレクトリの直近のセッションを再開
 sasacode -r <id> -p "続き"            # セッション ID を指定して続ける（tmux がなくても会話を続けられる）
 ```
@@ -123,7 +123,7 @@ sasacode -m llama/<モデル名>
 
 **モデル一覧の自動取得**：TUI の起動時に、キーのあるプロバイダー（と Ollama）の Models API（`GET /v1/models`）をバックグラウンドで呼び、`/model` に一覧とコンテキスト長を出す。取得したコンテキスト長は、フッターの使用率や圧縮のしきい値にも使う（設定の `modelOverrides` があればそちらが優先）。Ollama は独自の `/api/show` から読み、Modelfile の `num_ctx` があればそれを実際の長さとして使い、なければモデルの最大長を参考として表示する。OpenAI の Models API はコンテキスト長を返さないので、組み込みのモデル表の値で補う。Command Code のように1つのキーで複数の API 形式を提供するサービスでは、モデルごとに対応する形式のプロバイダーへ自動で振り分ける（例：Claude 系は `commandcode-anthropic/…`）。
 
-**API キー**は次の順で探す：シェルの環境変数 → `~/.sasacode/.env` → OS キーチェーン（macOS: `security add-generic-password -s sasacode -a <provider> -w`、Linux: `secret-tool store --label sasacode service sasacode account <provider>`）。どこでも空欄は無視する。作業ディレクトリの `.env` と `bunfig.toml` は読まない（リポジトリが `ANTHROPIC_BASE_URL` などで接続先を差し替えたり、起動時にスクリプトを実行させたりできないようにするため）。セッションのログには、使用中のキーを `[REDACTED]` に置き換えてから書く。
+**API キー**は次の順で探す：シェルの環境変数 → `~/.sasacode/.env` → OS キーチェーン（macOS: `security add-generic-password -s sasacode -a <provider> -w`、Linux: `secret-tool store --label sasacode service sasacode account <provider>`）。どこでも空欄は無視する。作業ディレクトリの `.env` と `bunfig.toml` は読まない（リポジトリが `ANTHROPIC_BASE_URL` などで接続先を差し替えたり、起動時にスクリプトを実行させたりできないようにするため）。セッションのログには、使用中のキーを `[REDACTED]` に置き換えてから書く。`~/.sasacode/.env` にだけ書いたキーは、エージェントが実行するコマンド（bash、バックグラウンドジョブ）には渡さない。`~/.sasacode`（セッションのログ、入力履歴、長い出力の保存先 `tmp/`）は本人しか読めない権限（0700）にする。
 
 ## 設定
 
@@ -135,7 +135,7 @@ sasacode -m llama/<モデル名>
   "models": ["commandcode/deepseek/deepseek-v4-pro", "ollama/gemma4:e4b"],
   "thinking": "high",
   "providers": { "myproxy": { "api": "openai-chat", "baseUrl": "https://…/v1", "apiKeyEnv": "MY_KEY" } },
-  "modelOverrides": { "myproxy/some-model": { "contextWindow": 200000 } },
+  "modelOverrides": { "myproxy/some-model": { "contextWindow": 200000, "images": false } },
   "permissions": {
     "mode": "edits",
     "allow": ["bash(git status*)", "bash(bun test*)"],
@@ -163,7 +163,7 @@ sasacode -m llama/<モデル名>
 | `edits`（既定） | 作業ディレクトリ内の read / write / edit は自動で許可し、bash やディレクトリ外への操作は確認する |
 | `ask` | 読み取りを含む、すべてのツール実行を確認する |
 | `agent` | 作業ディレクトリ内の read は自動で許可し、それ以外は現在のモデルに危険度を判定させる。安全なら許可、そうでなければ確認する |
-| `auto` | すべて許可する（deny と ask のルールは効く） |
+| `auto` | すべて許可する（deny と ask のルールは効く）。TUI のフッターでは赤字で表示する |
 
 - ルールは `ツール名` か `ツール名(パターン)`。bash はコマンド文字列を `*` のワイルドカードで、read / write / edit はパスを glob で照合する。`*` そのものは `\*` と書く。
 - 確認の「常に許可」で足すルールは、見たものより広くならない。コマンドはそのまま（中の `*` はワイルドカードにしない）、ファイルを触るツールはそのパスだけを許可する。ルールは sasacode を終了するまで残る（`/clear` をまたぐ）。
@@ -229,7 +229,7 @@ sasacode -m llama/<モデル名>
 | `loop-guard` | 同じツール呼び出し（または A→B→A→B のような3手までの周期）が同じ結果で続いたら、3回目に注意を添え、5回目からはその周期の呼び出しをすべて止める（ファイルを変更するか、次の依頼で解除）。同じ応答の中で、間に状態を変えうる呼び出しがない重複は1回だけ実行する。同じエラーの繰り返し（引数の不備などで実行されなかった呼び出しを含む）も知らせる。ツールが1件も実行されないターンが5回続いたら、実行を止める |
 | `agents-md` | `~/.sasacode/AGENTS.md` と、リポジトリのルートから作業ディレクトリまでの `AGENTS.md` を読む（CLAUDE.md は読まない） |
 | `compaction` | コンテキストが 80% に達するか上限に来たら、古い履歴を要約する。`/compact` で手動実行 |
-| `subagent` | `task` ツール。別の履歴を持つサブエージェントに作業を任せ、報告だけを受け取る（1ターンに複数あれば並行して動く） |
+| `subagent` | `task` ツール。別の履歴を持つサブエージェントに作業を任せ、報告だけを受け取る（1ターンに複数あれば並行して動く）。サブエージェントは `task`・`todo_write`・`set_goal` を使えない（呼び出し元の TODO とゴールを書き換えないため） |
 | `todo` | `todo_write` ツール。作業計画をセッションに残し、進捗をフッターに出す |
 | `web-fetch` | `web_fetch` ツール。URL を取ってきてテキストにする |
 | `browsr` | [browsr-4-agent](https://github.com/sasanokusa/browsr-4-agent) による Web 検索（`search`）と本文の閲覧（`open`）。`browsr-agent` が PATH にあれば自動で起動する |

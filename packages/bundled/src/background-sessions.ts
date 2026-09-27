@@ -23,10 +23,11 @@
 // POSIX only (bash, kill(-pid)). Tool descriptions are English (model-facing); notices are
 // Japanese (user-facing).
 
-import { errorResult, text, type Plugin, type ToolDefinition } from "@sasacode/plugin-api";
+import { childEnv, errorResult, sasacodeHome, text, type Plugin, type ToolDefinition } from "@sasacode/plugin-api";
 import { spawn } from "node:child_process";
 import {
   closeSync,
+  existsSync,
   mkdirSync,
   openSync,
   readFileSync,
@@ -36,7 +37,6 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 
 type Status = "running" | "done" | "killed";
@@ -56,6 +56,8 @@ interface Meta {
   notified?: boolean;
   killed?: boolean;
   spawnError?: string;
+  /** When the OS says the process started (`ps -o lstart`): tells a reused pid from the job's own. */
+  procStart?: string;
 }
 
 interface Job extends Meta {
@@ -105,6 +107,23 @@ function isAlive(pid: number): boolean {
   }
 }
 
+/** The start time `ps` reports for a pid, or undefined when there is no such process. */
+function procStart(pid: number): string | undefined {
+  if (!pid) return undefined;
+  const r = Bun.spawnSync(["ps", "-o", "lstart=", "-p", String(pid)], { stderr: "ignore" });
+  return r.exitCode === 0 ? r.stdout.toString().trim() || undefined : undefined;
+}
+
+/**
+ * Whether the job's own process is still running. The exit-code file is written when it ends, so
+ * it settles the question; otherwise the pid must be alive and, when its start time was recorded,
+ * be the same process (a pid reused after a restart belongs to someone else).
+ */
+function jobAlive(m: Meta, exitPath: string): boolean {
+  if (existsSync(exitPath) || !isAlive(m.pid)) return false;
+  return !m.procStart || procStart(m.pid) === m.procStart;
+}
+
 function mtimeOf(path: string): number | undefined {
   try {
     return statSync(path).mtimeMs;
@@ -115,7 +134,7 @@ function mtimeOf(path: string): number | undefined {
 
 const plugin: Plugin = (api) => {
   const s = api.settings as Settings;
-  const home = process.env.SASACODE_HOME ?? join(homedir(), ".sasacode");
+  const home = sasacodeHome();
   const root = typeof s.dir === "string" && s.dir ? s.dir : join(home, "background-sessions");
   const pollMs = num(s.pollMs, DEFAULT_POLL_MS, 50);
   const tailLines = num(s.tailLines, DEFAULT_TAIL_LINES);
@@ -302,7 +321,7 @@ const plugin: Plugin = (api) => {
     for (const job of jobs.values()) {
       if (job.status !== "running") continue;
       if (job.child && job.child.exitCode !== null) continue; // the exit handler finalizes
-      if (!isAlive(job.pid)) finalize(job);
+      if (job.child ? !isAlive(job.pid) : !jobAlive(job, job.exitPath)) finalize(job);
     }
   }
 
@@ -328,7 +347,7 @@ const plugin: Plugin = (api) => {
     }
     const job = toJob(meta, dir);
     jobs.set(job.id, job);
-    if (!isAlive(job.pid)) finalize(job);
+    if (!jobAlive(job, job.exitPath)) finalize(job);
   }
   updateStatus();
   prune();
@@ -389,6 +408,11 @@ const plugin: Plugin = (api) => {
           writeFileSync(metaPath(dir), JSON.stringify(fresh, null, 2));
         } catch {}
       }
+    }
+    // Never signal a process that is not the job's: it ended, and its pid may now be another's.
+    if (!job?.child && !jobAlive(m, exitPathOf(dir))) {
+      if (job) finalize(job);
+      return false;
     }
     const signal = (sig: NodeJS.Signals) => {
       try {
@@ -512,7 +536,7 @@ const plugin: Plugin = (api) => {
           cwd: runCwd,
           detached: true,
           stdio: ["ignore", fd, fd],
-          env: { ...process.env, PAGER: "cat", GIT_PAGER: "cat", SASACODE: "1" },
+          env: childEnv({ PAGER: "cat", GIT_PAGER: "cat", SASACODE: "1" }),
         });
       } catch (e) {
         closeSync(fd);
@@ -523,6 +547,7 @@ const plugin: Plugin = (api) => {
       closeSync(fd);
       job.child = child;
       job.pid = child.pid ?? 0;
+      job.procStart = procStart(job.pid);
       save(job);
       jobs.set(job.id, job);
       child.unref();

@@ -99,6 +99,9 @@ const plugin: Plugin = (api) => {
 
   // ------------------------------------------------------------ ツール
 
+  // They only touch this session's goal: no reason to ask (user deny / ask rules still apply).
+  api.permissions.addRules({ allow: ["set_goal", "goal_status"] });
+
   api.registerTool({
     name: "set_goal",
     description:

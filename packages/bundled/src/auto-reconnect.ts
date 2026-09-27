@@ -26,13 +26,23 @@ interface AutoReconnectSettings {
   quiet?: boolean;
 }
 
+const OFFICIAL_HOSTS: Record<string, string> = {
+  anthropic: "https://api.anthropic.com",
+  "openai-chat": "https://api.openai.com",
+  "openai-responses": "https://api.openai.com",
+  "openai-codex": "https://chatgpt.com",
+};
+
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 const plugin: Plugin = (api) => {
   const s = (api.settings ?? {}) as AutoReconnectSettings;
   // The endpoint that failed is the one worth waiting for (a local LLM server, a VPN host), and
-  // asking it leaks nothing to a third party.
-  const target = (): string => s.checkUrl ?? api.agent.model().baseUrl ?? "https://www.google.com/generate_204";
+  // asking it leaks nothing to a third party. Without a baseUrl, the provider's official API.
+  const target = (): string => {
+    const m = api.agent.model();
+    return s.checkUrl ?? m.baseUrl ?? OFFICIAL_HOSTS[m.api] ?? "https://api.openai.com";
+  };
   const checkIntervalMs = s.checkIntervalMs ?? 5_000;
   const checkTimeoutMs = s.checkTimeoutMs ?? 3_000;
   const maxWaitMs = s.maxWaitMs ?? 10 * 60_000;

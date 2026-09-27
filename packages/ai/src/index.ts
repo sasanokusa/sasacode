@@ -5,6 +5,7 @@ import type { Provider } from "./types.ts";
 
 export * from "./types.ts";
 export * from "./detect.ts";
+export * from "./format.ts";
 export * from "./list-models.ts";
 export * from "./models.ts";
 export * from "./replay.ts";

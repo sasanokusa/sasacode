@@ -1,26 +1,13 @@
 // Custom endpoints (a llama.cpp server, vLLM, LM Studio, a proxy …): configured with just a URL,
 // their API format is detected from the Models API and remembered.
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
+import { parseArgs } from "node:util";
 import { applyDetected, BUILTIN_PROVIDERS, type DetectedEndpoint, detectEndpoint, listModels, type ProviderConfig } from "@sasacode/ai";
 import { loadConfig, sasacodeHome } from "./config.ts";
+import { readJson, readJsonOr, writeJson } from "./json.ts";
 
 const cacheFile = () => join(sasacodeHome(), "endpoints.json");
 
-/** A missing file is empty; one that cannot be parsed is an error, so it is never overwritten. */
-function readJson(path: string): Record<string, any> {
-  try {
-    return JSON.parse(readFileSync(path, "utf8"));
-  } catch (e) {
-    if ((e as NodeJS.ErrnoException).code === "ENOENT") return {};
-    throw new Error(`failed to read ${path}: ${(e as Error).message}`);
-  }
-}
-
-function writeJson(path: string, value: unknown): void {
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`);
-}
 
 /**
  * Give every provider configured without `api` its detected format, using the cached result
@@ -32,10 +19,7 @@ export async function resolveEndpoints(
   getKey: (provider: string) => Promise<string | undefined>,
   warnings: string[],
 ): Promise<void> {
-  let cache: Record<string, DetectedEndpoint> = {};
-  try {
-    cache = readJson(cacheFile());
-  } catch {} // only a cache: detect again
+  const cache = readJsonOr<Record<string, DetectedEndpoint>>(cacheFile(), {}); // only a cache: detect again
   let changed = false;
   await Promise.all(
     Object.entries(providers).map(async ([name, p]) => {
@@ -67,10 +51,10 @@ const configPath = (cwd: string, project: boolean) => (project ? join(cwd, ".sas
 
 /** `sasacode endpoint add|list|remove` */
 export async function endpointCommand(args: string[], cwd: string): Promise<number> {
-  const project = args.includes("--project");
-  const keyAt = args.indexOf("--key-env");
-  const keyEnv = keyAt >= 0 ? args[keyAt + 1] : undefined;
-  const [sub, name, url] = args.filter((a, i) => !a.startsWith("--") && (keyAt < 0 || i !== keyAt + 1));
+  const { values, positionals } = parseArgs({ args, allowPositionals: true, options: { project: { type: "boolean" }, "key-env": { type: "string" } } });
+  const project = !!values.project;
+  const keyEnv = values["key-env"];
+  const [sub, name, url] = positionals;
   const path = configPath(cwd, project);
 
   if (sub === "add" && name && url) {

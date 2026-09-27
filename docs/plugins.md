@@ -122,6 +122,8 @@ sasanokusa.com のおすすめ一覧に載せたいときは、[リポジトリ]
 | `agent.complete({system, messages, model?, maxTokens?, signal?})` | ツールなしで1回だけモデルを呼び、本文を返す |
 | `log(...args)` | `SASACODE_DEBUG` が設定されているときだけ stderr に出す |
 
+`api` のほかに、`@sasacode/plugin-api` から関数として使えるもの（1.8.0〜）：`sasacodeHome()`（`$SASACODE_HOME` か `~/.sasacode`）、`childEnv(extra?)`（コマンドを実行するときの環境変数。`~/.sasacode/.env` から読んだキーを除く）、`saveOutput(prefix, text)`（長い出力を `~/.sasacode/tmp` に本人だけが読める権限で保存し、パスを返す。1週間より古いものは消す）。コマンドを実行するプラグインは `process.env` ではなく `childEnv()` を渡す。
+
 ### ツールの定義（`registerTool`）
 
 | フィールド | 意味 |
@@ -192,7 +194,7 @@ before_request → stream_delta（生成中、差分ごと） → assistant_mess
 | 1.5.0 | `Provider.listModels`（プロバイダーが自分のモデル一覧を返す）と `Request.fetch`（通信の差し替え）。別のプロバイダーを包むプロバイダーを書ける |
 | 1.6.0 | ツールの `permissionsAs`（別のツール名の権限ルールも当てる） |
 | 1.7.0 | `permission` フック（ルールとモードの判定の後に、決められた範囲で判定を変える）、`PermissionRules.softDeny`、型 `PermissionMode` と `VerdictSource` |
-| 1.8.0 | フックのハンドラの第2引数 `ctx`（型 `HookContext`。`ctx.agent` でサブエージェントを区別する）、`session_end` の `reason`（`"switch"` / `"exit"`） |
+| 1.8.0 | フックのハンドラの第2引数 `ctx`（型 `HookContext`。`ctx.agent` でサブエージェントを区別する）、`session_end` の `reason`（`"switch"` / `"exit"`）、関数 `sasacodeHome`・`childEnv`・`hideFromChildren`・`saveOutput` |
 
 どれも既存のプラグインを壊さない追加。ただし 1.4.0 から、`tool_result` を「実行された」合図として数えているプラグインは `ran` を見る必要がある。
 

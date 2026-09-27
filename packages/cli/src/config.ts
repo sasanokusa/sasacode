@@ -1,8 +1,8 @@
-import { readFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { PERMISSION_MODES, type PermissionMode, type PermissionRules, type ToolSearchConfig } from "@sasacode/agent";
 import { BUILTIN_PROVIDERS, type ModelInfo, type ProviderConfig, type ThinkingLevel } from "@sasacode/ai";
+import { sasacodeHome } from "@sasacode/plugin-api";
+import { readJson } from "./json.ts";
 
 export interface Config {
   model?: string;
@@ -41,18 +41,7 @@ export type McpServerConfig =
   | { command: string; args?: string[]; env?: Record<string, string>; cwd?: string; disabled?: boolean; alwaysLoad?: boolean }
   | { url: string; headers?: Record<string, string>; disabled?: boolean; alwaysLoad?: boolean };
 
-export function sasacodeHome(): string {
-  return process.env.SASACODE_HOME ?? join(homedir(), ".sasacode");
-}
-
-function readJson(path: string): unknown {
-  try {
-    return JSON.parse(readFileSync(path, "utf8"));
-  } catch (e) {
-    if ((e as NodeJS.ErrnoException).code === "ENOENT") return {};
-    throw new Error(`failed to read ${path}: ${(e as Error).message}`);
-  }
-}
+export { sasacodeHome };
 
 function isObject(v: unknown): v is Record<string, unknown> {
   return !!v && typeof v === "object" && !Array.isArray(v);
@@ -136,11 +125,16 @@ const MODE_STRENGTH: Record<PermissionMode, number> = { auto: 0, agent: 1, edits
  * disable plugins, start MCP servers, add allow rules, loosen the permission mode, or raise the
  * turn and retry limits.
  */
+const ROUTERS = ["openrouter"];
+
 export function splitProjectConfig(project: Config, global: Config): { safe: Config; elevated: Config } {
   const safe: Config = {};
   const elevated: Config = {};
+  // A provider the user set up, with one exception: a router (OpenRouter) reaches many companies
+  // with one key, so which model it is decides where the conversation and code go.
   const knownProvider = (spec: string) => {
     const name = spec.slice(0, spec.indexOf("/"));
+    if (ROUTERS.includes(name)) return false;
     return !!BUILTIN_PROVIDERS[name] || !!global.providers?.[name];
   };
   // tools.disabled only adds to the user's list (see mergeConfig).
@@ -196,7 +190,14 @@ export interface LoadedConfig {
   global: Config;
 }
 
-export function loadConfig(cwd: string, trusted = false): LoadedConfig {
+/** The two config files as read, before trust decides what of the project's applies. */
+export interface ConfigFiles {
+  global: Config;
+  project: Config;
+  warnings: string[];
+}
+
+export function readConfigFiles(cwd: string): ConfigFiles {
   const warnings: string[] = [];
   const globalPath = join(sasacodeHome(), "config.json");
   const global = sanitizeConfig(readJson(globalPath), globalPath, warnings);
@@ -205,8 +206,17 @@ export function loadConfig(cwd: string, trusted = false): LoadedConfig {
     warnings.push(".sasacode/config.json: trustedProjects is only read from the global config; ignored");
     delete project.trustedProjects;
   }
+  return { global, project, warnings };
+}
+
+/** `files`: already read (startup reads them once for the trust check and for setup). */
+export function loadConfig(cwd: string, trusted = false, files: ConfigFiles = readConfigFiles(cwd)): LoadedConfig {
+  const { global, project } = files;
+  const warnings = [...files.warnings];
   const { safe, elevated } = splitProjectConfig(project, global);
   const items = describeElevated(elevated);
+  // Allowed without trust, but the user should know the project, not they, picked the model.
+  if (!trusted && safe.model && safe.model !== global.model) warnings.push(`.sasacode/config.json: this project selects the model ${safe.model}`);
   if (!trusted && items.length)
     warnings.push(`.sasacode/config.json: not applied until you trust this project (${items.join("; ")})`);
   return { config: mergeConfig(global, trusted ? project : safe), warnings, elevated, global };

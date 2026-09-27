@@ -1,6 +1,23 @@
 import { errorResult, type Plugin } from "@sasacode/plugin-api";
 
 const DEFAULT_MAX = 50_000;
+/** Read at most this much of a response: a huge page must not fill memory. */
+const MAX_BYTES = 10_000_000;
+
+async function readCapped(res: Response, limit: number): Promise<{ text: string; cut: boolean }> {
+  if (!res.body) return { text: "", cut: false };
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  while (size < limit) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    size += value.length;
+  }
+  await reader.cancel().catch(() => {});
+  return { text: new TextDecoder().decode(Buffer.concat(chunks).subarray(0, limit)), cut: size >= limit };
+}
 
 const ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " " };
 
@@ -58,12 +75,12 @@ const webFetch: Plugin = (api) => {
       }
       const type = res.headers.get("content-type") ?? "";
       if (!/text|json|xml|javascript/.test(type) && type) return errorResult(`${res.status} ${type}: not a text document.`);
-      const raw = await res.text();
+      const { text: raw, cut } = await readCapped(res, MAX_BYTES);
       const body = /html/.test(type) ? htmlToText(raw) : raw;
       const start = args.offset ?? 0;
       const max = args.max_chars ?? DEFAULT_MAX;
       const slice = body.slice(start, start + max);
-      const notes = [`[${res.status} ${res.url}]`];
+      const notes = [`[${res.status} ${res.url}${cut ? ` — only the first ${MAX_BYTES / 1_000_000} MB was read` : ""}]`];
       if (start + max < body.length)
         notes.push(`[Showing characters ${start}-${start + slice.length} of ${body.length}. Use offset=${start + slice.length} to continue.]`);
       return { content: [{ type: "text", text: `${notes[0]}\n${slice}${notes[1] ? `\n${notes[1]}` : ""}` }], isError: !res.ok };

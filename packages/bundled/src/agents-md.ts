@@ -1,10 +1,9 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join, parse } from "node:path";
-import type { Plugin } from "@sasacode/plugin-api";
+import { type Plugin, sasacodeHome } from "@sasacode/plugin-api";
 
 /** AGENTS.md files that apply to cwd: the global one, then from the repository root down to cwd. */
-export function agentsFiles(cwd: string, home = process.env.SASACODE_HOME ?? join(homedir(), ".sasacode")): string[] {
+export function agentsFiles(cwd: string, home = sasacodeHome()): string[] {
   const chain: string[] = [];
   let dir = cwd;
   while (true) {

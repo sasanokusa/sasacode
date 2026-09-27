@@ -1,6 +1,7 @@
 import { existsSync, realpathSync, statSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
+import { CHAIN, isInside } from "@sasacode/agent";
 import type { Decision, HookMap, Plugin, ToolDefinition } from "@sasacode/plugin-api";
 import { type Backend, type BackendName, type BackendSettings, detectService, makeBackend, parseNative, type Question, type RawAnswers } from "./jev-backends.ts";
 
@@ -139,8 +140,6 @@ export function parseAnswers(body: unknown): JevAnswers {
 
 // ── what Jev sees ────────────────────────────────────────────────────
 
-const CHAIN = /&&|\|\||;|\||\n|&/;
-
 /** Words of one shell command, quotes removed. Good enough to find paths, not a shell. */
 export function shellWords(command: string): string[] {
   const words: string[] = [];
@@ -235,11 +234,6 @@ function real(p: string): string {
   return rest.length ? join(head, ...rest) : head;
 }
 
-function inside(path: string, dir: string): boolean {
-  const rel = relative(dir, path);
-  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
-}
-
 function git(cwd: string, args: string[]): string | undefined {
   try {
     const r = Bun.spawnSync(["git", "-C", cwd, ...args], { stdout: "pipe", stderr: "ignore", timeout: 2000 });
@@ -251,7 +245,7 @@ function git(cwd: string, args: string[]): string | undefined {
 
 /** What git knows about a path: can it be brought back if the call destroys it? */
 function gitState(path: string, root: string | undefined): string {
-  if (!root || !inside(path, root)) return "not in a git repository";
+  if (!root || !isInside(path, root)) return "not in a git repository";
   const status = (git(root, ["status", "--porcelain", "--ignored", "-z", "--", path]) ?? "").split("\0").filter(Boolean);
   const tracked = !!git(root, ["ls-files", "-z", "--", path]);
   const changed = status.some((l) => !l.startsWith("??") && !l.startsWith("!!"));
@@ -308,9 +302,9 @@ export function buildState(f: CallFacts): Record<string, unknown> {
       location:
         where === homedir()
           ? "the home directory itself"
-          : inside(where, workspace)
+          : isInside(where, workspace)
             ? "inside the workspace"
-            : TEMP_DIRS().some((t) => inside(where, t))
+            : TEMP_DIRS().some((t) => isInside(where, t))
               ? "a temporary directory"
               : "outside the workspace",
       exists,
@@ -350,19 +344,15 @@ function judgeable(tool: ToolDefinition<any>, args: Record<string, unknown>, cwd
   if (skip.includes(tool.name) || tool.kind === "read") return false;
   if (tool.kind === "edit") {
     const ws = real(cwd);
-    return (tool.paths?.(args, cwd) ?? []).some((p) => !inside(real(p), ws));
+    return (tool.paths?.(args, cwd) ?? []).some((p) => !isInside(real(p), ws));
   }
   return true;
 }
 
-function lastUserRequest(messages: readonly { role: string; content: unknown }[]): string | undefined {
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const m = messages[i]!;
-    if (m.role !== "user") continue;
-    const text = typeof m.content === "string" ? m.content : (m.content as { type: string; text?: string }[]).filter((c) => c.type === "text").map((c) => c.text).join("\n");
-    if (text.trim()) return text;
-  }
-}
+const textOf = (content: readonly { type: string; text?: string }[]) => content.filter((c) => c.type === "text").map((c) => c.text).join("\n");
+
+/** Session entry holding what the user last asked, so a resumed session still knows it. */
+const REQUEST_ENTRY = "jev-guard-request";
 
 const jevGuard: Plugin = (api) => {
   const s = api.settings as JevSettings;
@@ -396,6 +386,20 @@ const jevGuard: Plugin = (api) => {
     },
   });
   if (!s.enabled) return;
+
+  // The user's own words only: user_prompt fires for what the user typed, not for messages plugins
+  // inject (a background job's output, a harness note), which must not pass for the user's request.
+  let userRequest: string | undefined;
+  api.on("session_start", () => {
+    const last = api.session.entries(REQUEST_ENTRY).at(-1);
+    userRequest = typeof last === "string" ? last : undefined;
+  });
+  api.on("user_prompt", ({ content }) => {
+    const text = textOf(content);
+    if (!text.trim() || text === userRequest) return;
+    userRequest = text;
+    api.session.append(REQUEST_ENTRY, text);
+  });
 
   const warn = (message: string) => {
     stats.failures++;
@@ -431,7 +435,7 @@ const jevGuard: Plugin = (api) => {
     // A hard deny stays; nothing Jev says can change it.
     if (decision === "deny" && source !== "soft") return;
     if (!judgeable(ev.tool, ev.args, ev.cwd, skip)) return;
-    const state = buildState({ tool: ev.tool, args: ev.args, cwd: ev.cwd, userRequest: lastUserRequest(api.session.messages()) });
+    const state = buildState({ tool: ev.tool, args: ev.args, cwd: ev.cwd, userRequest });
     const answers = await ask(state);
     if (!answers) return;
     const j = interpret(answers, thresholds, api.ui.interactive);

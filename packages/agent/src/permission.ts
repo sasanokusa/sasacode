@@ -169,7 +169,7 @@ function pathsOf(c: PermissionCheck): string[] {
 }
 
 // Shell operators that chain commands; an allow rule must match every piece.
-const CHAIN = /&&|\|\||;|\||\n|&/;
+export const CHAIN = /&&|\|\||;|\||\n|&/;
 // Substitutions and output redirection can do anything, so allow rules never cover them.
 const SUBSTITUTION = /\$\(|`|<\(|>/;
 

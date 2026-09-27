@@ -17,7 +17,8 @@ export function ensureEnvFile(path: string, providers: Record<string, ProviderCo
   if (existsSync(path)) return false;
   const lines = [
     "# sasacode API keys. Fill in the providers you use; blank entries are ignored.",
-    "# Read on every start, from any directory. A project's ./.env is read as well.",
+    "# Read on every start, from any directory. A project's ./.env is not read.",
+    "# Commands the agent runs (bash, background jobs) do not see what is set here.",
     "",
   ];
   for (const k of keyVariables(providers)) lines.push(`# ${k.label}${k.example ? ` (e.g. -m ${k.example})` : ""}`, `${k.name}=`, "");
@@ -27,23 +28,31 @@ export function ensureEnvFile(path: string, providers: Record<string, ProviderCo
   return true;
 }
 
-/** KEY=value lines; blank values are skipped so an empty entry means "not configured". Existing vars win. */
-export function loadEnvFile(path: string): void {
+/**
+ * KEY=value lines; blank values are skipped so an empty entry means "not configured". Existing vars
+ * win. Returns the names it set, which are sasacode's own secrets (kept from child processes).
+ */
+export function loadEnvFile(path: string): string[] {
+  const set: string[] = [];
   let text: string;
   try {
     text = readFileSync(path, "utf8");
   } catch {
-    return;
+    return set;
   }
   for (const line of text.split("\n")) {
     const m = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$/.exec(line);
     if (!m) continue;
     const value = m[2]!.replace(/^(["'])(.*)\1$/, "$2");
-    if (value && !process.env[m[1]!]) process.env[m[1]!] = value;
+    if (value && !process.env[m[1]!]) {
+      process.env[m[1]!] = value;
+      set.push(m[1]!);
+    }
   }
+  return set;
 }
 
-/** Bun loads ./.env itself and keeps empty values; an empty key must not shadow a real one (or an SDK login). */
+/** An empty key variable (exported blank by a shell profile) must not shadow a real one (or an SDK login). */
 export function dropBlankKeys(providers: Record<string, ProviderConfig>): void {
   for (const k of keyVariables(providers)) if (process.env[k.name] !== undefined && !process.env[k.name]!.trim()) delete process.env[k.name];
 }

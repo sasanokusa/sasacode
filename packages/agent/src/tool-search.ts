@@ -83,6 +83,8 @@ export function makeToolSearchTool(deferred: () => ToolDefinition<any>[], onLoad
       additionalProperties: false,
     },
     kind: "read",
+    // Touches no files: runs without asking wherever reads in the working directory do.
+    paths: () => [],
     concurrent: true,
     alwaysLoad: true,
     summary: (a) => a.query,

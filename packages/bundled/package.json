@@ -5,11 +5,11 @@
   "main": "src/index.ts",
   "dependencies": {
     "@sasacode/plugin-api": "workspace:*",
-    "@sasacode/mcp": "workspace:*"
+    "@sasacode/mcp": "workspace:*",
+    "@sasacode/agent": "workspace:*",
+    "@sasacode/ai": "workspace:*"
   },
   "devDependencies": {
-    "@sasacode/agent": "workspace:*",
-    "@sasacode/ai": "workspace:*",
     "@sasacode/tools": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.30.1"
   },

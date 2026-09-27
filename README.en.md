@@ -43,7 +43,7 @@ ln -s "$PWD/packages/cli/src/main.ts" ~/.local/bin/sasacode
 sasacode                            # interactive (TUI)
 sasacode -p "fix the tests"          # headless: the answer on stdout, progress on stderr
 sasacode -p "…" --output jsonl       # every event as JSONL
-echo "$LOG" | sasacode -p "why?"     # piped input is appended to the -p prompt
+echo "$LOG" | sasacode -p "why?"     # piped input is appended to the -p prompt (skipped if nothing comes for 5 s; --stdin waits to the end)
 sasacode -c                         # resume the latest session in this directory
 sasacode -r <id> -p "go on"          # continue a session by id (a conversation without tmux)
 ```
@@ -123,7 +123,7 @@ Endpoints in a project's `.sasacode/config.json` are not used until you trust th
 
 **Model lists**: when the TUI starts, it calls the Models API (`GET /v1/models`) of every provider with a key (and Ollama) in the background, and shows the models and their context lengths in `/model`. The context length is also used for the footer and the compaction threshold (`modelOverrides` in the config wins). Ollama is read through `/api/show`: the Modelfile's `num_ctx` is used as the real length when set, otherwise the model's maximum is shown for reference. OpenAI's Models API gives no context length, so the built-in model table fills it in. Services that offer several API formats on one key, such as Command Code, have each model routed to the provider of the matching format (Claude models go to `commandcode-anthropic/…`, for example).
 
-**API keys** are looked up in this order: shell environment → `~/.sasacode/.env` → OS keychain (macOS: `security add-generic-password -s sasacode -a <provider> -w`, Linux: `secret-tool store --label sasacode service sasacode account <provider>`). Blank values are ignored everywhere. The working directory's `.env` and `bunfig.toml` are never read (so a repository cannot redirect keys with `ANTHROPIC_BASE_URL` or run code at start). Keys in use are replaced with `[REDACTED]` before a session log is written.
+**API keys** are looked up in this order: shell environment → `~/.sasacode/.env` → OS keychain (macOS: `security add-generic-password -s sasacode -a <provider> -w`, Linux: `secret-tool store --label sasacode service sasacode account <provider>`). Blank values are ignored everywhere. The working directory's `.env` and `bunfig.toml` are never read (so a repository cannot redirect keys with `ANTHROPIC_BASE_URL` or run code at start). Keys in use are replaced with `[REDACTED]` before a session log is written. Keys set only in `~/.sasacode/.env` are not passed to the commands the agent runs (bash, background jobs). `~/.sasacode` (session logs, input history, saved long outputs in `tmp/`) is kept private to the user (0700).
 
 ## Configuration
 
@@ -135,7 +135,7 @@ Endpoints in a project's `.sasacode/config.json` are not used until you trust th
   "models": ["commandcode/deepseek/deepseek-v4-pro", "ollama/gemma4:e4b"],
   "thinking": "high",
   "providers": { "myproxy": { "api": "openai-chat", "baseUrl": "https://…/v1", "apiKeyEnv": "MY_KEY" } },
-  "modelOverrides": { "myproxy/some-model": { "contextWindow": 200000 } },
+  "modelOverrides": { "myproxy/some-model": { "contextWindow": 200000, "images": false } },
   "permissions": {
     "mode": "edits",
     "allow": ["bash(git status*)", "bash(bun test*)"],
@@ -163,7 +163,7 @@ Endpoints in a project's `.sasacode/config.json` are not used until you trust th
 | `edits` (default) | read / write / edit inside the working directory run without asking; bash and anything outside ask |
 | `ask` | Every tool call asks, reads included |
 | `agent` | Reads inside the working directory run; everything else is judged by the current model: safe runs, anything else asks |
-| `auto` | Everything runs (deny and ask rules still apply) |
+| `auto` | Everything runs (deny and ask rules still apply). Shown in red in the TUI footer |
 
 - A rule is `tool` or `tool(pattern)`. bash matches the command string with `*` wildcards; read / write / edit match paths with globs. Write `\*` for a literal `*`.
 - "Always allow" in the approval prompt adds a rule no wider than what was shown: the command as written (its `*` are not wildcards), or, for a file tool, just that path. The rule lasts until sasacode exits (across `/clear`).
@@ -229,7 +229,7 @@ A plugin of the same name in `~/.sasacode/plugins` or the project is loaded inst
 | `loop-guard` | When the same tool call (or a cycle of up to three, A→B→A→B) keeps giving the same result, adds a note on the 3rd time and blocks every call of the cycle from the 5th (until a file changes or you send the next request). Duplicate calls in one response with nothing in between that could change state run once. Also points out the same error repeating (including calls rejected before running). Stops the run after five turns in which no tool ran |
 | `agents-md` | Reads `~/.sasacode/AGENTS.md` and every `AGENTS.md` from the repository root down to the working directory (not CLAUDE.md) |
 | `compaction` | Summarizes older history when context reaches 80% or the limit. `/compact` runs it by hand (the footer shows it while it works; an empty summary leaves the history alone) |
-| `subagent` | The `task` tool: hands work to a subagent with its own history and gets back only the report (several in one turn run in parallel) |
+| `subagent` | The `task` tool: hands work to a subagent with its own history and gets back only the report (several in one turn run in parallel). Subagents cannot use `task`, `todo_write` or `set_goal` (the caller's TODO list and goal stay its own) |
 | `todo` | The `todo_write` tool: keeps a work plan in the session and shows progress in the footer |
 | `web-fetch` | The `web_fetch` tool: fetches a URL as text |
 | `browsr` | Web search (`search`) and reading pages (`open`) through [browsr-4-agent](https://github.com/sasanokusa/browsr-4-agent); started automatically when `browsr-agent` is on PATH |

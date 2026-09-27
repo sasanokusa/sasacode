@@ -42,7 +42,8 @@ export async function listModels(p: ProviderConfig, apiKey: string | undefined, 
       out.push({
         id: m.id,
         maxContext: num(meta?.n_ctx_train),
-        contextWindow: num(x.context_length) ?? num(x.context_window) ?? num(x.max_input_tokens) ?? num(meta?.n_ctx),
+        // max_model_len: vLLM's window (input and output together).
+        contextWindow: num(x.context_length) ?? num(x.context_window) ?? num(x.max_input_tokens) ?? num(x.max_model_len) ?? num(meta?.n_ctx),
         maxOutput: num(top?.max_completion_tokens) ?? num(x.max_output_tokens),
         endpoints: Array.isArray(x.supported_endpoints) ? (x.supported_endpoints as string[]) : undefined,
       });

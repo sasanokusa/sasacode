@@ -3,11 +3,12 @@
 // servers, plugin settings, allow rules, looser modes). Asked once, and again when any of it
 // changes, the plugins' code included.
 import { createHash, type Hash } from "node:crypto";
-import { mkdirSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
-import { dirname, join, relative } from "node:path";
+import { readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { join, relative } from "node:path";
 import { createInterface } from "node:readline/promises";
-import { describeElevated, loadConfig, sasacodeHome } from "./config.ts";
-import { discoverPlugins } from "./loader.ts";
+import { type ConfigFiles, describeElevated, loadConfig, readConfigFiles, sasacodeHome } from "./config.ts";
+import { readJsonOr, writeJson } from "./json.ts";
+import { discoverPlugins, type FoundPlugin } from "./loader.ts";
 
 export interface ProjectTrust {
   /** What trusting would enable; empty when the project needs no trust. */
@@ -18,21 +19,23 @@ export interface ProjectTrust {
    * a remembered decision then cannot vouch for it, so the user is asked every time.
    */
   complete: boolean;
+  /** Read for this check and handed on to setup, so startup reads them once. */
+  files: ConfigFiles;
+  /** Every plugin found (global and project). */
+  plugins: FoundPlugin[];
+  warnings: string[];
 }
 
 const trustFile = () => join(sasacodeHome(), "trust.json");
 
-function readTrust(): Record<string, string> {
-  try {
-    return JSON.parse(readFileSync(trustFile(), "utf8"));
-  } catch {
-    return {};
-  }
-}
+const readTrust = () => readJsonOr<Record<string, string>>(trustFile(), {});
 
 export function assessProject(cwd: string): ProjectTrust {
-  const { elevated } = loadConfig(cwd, false);
-  const plugins = discoverPlugins(cwd).filter((p) => p.scope === "project");
+  const files = readConfigFiles(cwd);
+  const { elevated } = loadConfig(cwd, false, files);
+  const warnings: string[] = [];
+  const found = discoverPlugins(cwd, warnings);
+  const plugins = found.filter((p) => p.scope === "project");
   const items = [...plugins.map((p) => `plugin ${p.manifest.name}`), ...describeElevated(elevated)];
   const manifests = plugins.map((p) => p.manifest).sort((a, b) => a.name.localeCompare(b.name));
   const hash = createHash("sha256").update(JSON.stringify({ elevated, manifests }));
@@ -44,7 +47,7 @@ export function assessProject(cwd: string): ProjectTrust {
     complete = hashTree(walk, root);
     for (const p of plugins) if (relative(root, p.dir).startsWith("node_modules")) complete = hashTree(walk, p.dir) && complete;
   }
-  return { items, fingerprint: hash.digest("hex").slice(0, 16), complete };
+  return { items, fingerprint: hash.digest("hex").slice(0, 16), complete, files, plugins: found, warnings };
 }
 
 interface Walk {
@@ -90,15 +93,13 @@ function hashTree(w: Walk, dir: string): boolean {
 
 export function isTrusted(cwd: string, t: ProjectTrust): boolean {
   if (!t.items.length) return true;
-  const { global } = loadConfig(cwd, false);
-  return !!global.trustedProjects?.includes(cwd) || (t.complete && readTrust()[cwd] === t.fingerprint);
+  return !!t.files.global.trustedProjects?.includes(cwd) || (t.complete && readTrust()[cwd] === t.fingerprint);
 }
 
 export function saveTrust(cwd: string, t: ProjectTrust): void {
   const all = readTrust();
   all[cwd] = t.fingerprint;
-  mkdirSync(dirname(trustFile()), { recursive: true });
-  writeFileSync(trustFile(), `${JSON.stringify(all, null, 2)}\n`);
+  writeJson(trustFile(), all);
 }
 
 /** Ask on the terminal before anything from the project is used. */

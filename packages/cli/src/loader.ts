@@ -1,9 +1,12 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
+import { parseArgs } from "node:util";
+import { isInside } from "@sasacode/agent";
 import * as pluginApi from "@sasacode/plugin-api";
 import { isCompatible, type Plugin } from "@sasacode/plugin-api";
 import { type McpServerConfig, sasacodeHome } from "./config.ts";
+import { readJsonOr } from "./json.ts";
 import { checkPackageDir, describeLocal, describeNpm, formatListings, isDir, latestVersion, parseSpec, searchPlugins, stagePackage } from "./plugin-share.ts";
 
 export interface Manifest {
@@ -31,13 +34,7 @@ export function pluginDirs(cwd: string): { dir: string; scope: FoundPlugin["scop
   ];
 }
 
-function readJson(path: string): any {
-  try {
-    return JSON.parse(readFileSync(path, "utf8"));
-  } catch {
-    return undefined;
-  }
-}
+const readJson = (path: string): any => readJsonOr(path, undefined);
 
 /** plugin.json, or package.json with a "sasacode" field. */
 export function readManifest(dir: string): Manifest | undefined {
@@ -55,14 +52,22 @@ export function readManifest(dir: string): Manifest | undefined {
  * Plugins are directories with a manifest, single .ts/.js files, or packages installed with
  * `sasacode plugin install` (listed in the plugins directory's package.json).
  */
-export function discoverPlugins(cwd: string): FoundPlugin[] {
+export function discoverPlugins(cwd: string, warnings?: string[]): FoundPlugin[] {
   const found: FoundPlugin[] = [];
   for (const { dir, scope } of pluginDirs(cwd)) {
     if (!existsSync(dir)) continue;
     for (const entry of readdirSync(dir)) {
       if (entry.startsWith(".") || entry === "node_modules" || entry === "package.json" || entry === "bun.lock") continue;
       const path = join(dir, entry);
-      if (statSync(path).isDirectory()) {
+      let isDirectory: boolean;
+      try {
+        isDirectory = statSync(path).isDirectory();
+      } catch (e) {
+        // A broken link or an unreadable entry must not keep sasacode from starting.
+        warnings?.push(`plugin ${path} skipped: ${(e as Error).message}`);
+        continue;
+      }
+      if (isDirectory) {
         const manifest = readManifest(path);
         if (manifest) found.push({ manifest, dir: path, scope });
       } else if (/\.(ts|js|mjs)$/.test(entry)) {
@@ -99,7 +104,10 @@ export async function importExtensions(p: FoundPlugin): Promise<Plugin[]> {
   registerVirtualApi();
   const out: Plugin[] = [];
   for (const rel of p.manifest.extensions ?? []) {
-    const mod = await import(resolve(p.dir, rel));
+    const file = resolve(p.dir, rel);
+    // Only code inside the plugin's own folder: that is what trust and review covered.
+    if (!existsSync(file) || !isInside(realpathSync(file), realpathSync(p.dir))) throw new Error(`${rel} is not a file inside ${p.dir}`);
+    const mod = await import(file);
     const fn = mod.default ?? mod.plugin;
     if (typeof fn !== "function") throw new Error(`${rel} has no default export function`);
     out.push(fn);
@@ -136,27 +144,45 @@ async function confirm(question: string, yes: boolean): Promise<boolean> {
 
 const gitHead = (dir: string) => Bun.spawnSync(["git", "-C", dir, "rev-parse", "--short", "HEAD"]).stdout.toString().trim();
 const installedVersion = (dir: string, name: string) => readJson(join(dir, "node_modules", name, "package.json"))?.version as string | undefined;
-const flag = (args: string[], name: string) => {
-  const i = args.indexOf(name);
-  return i >= 0 ? args[i + 1] : undefined;
-};
 
 const USAGE = `usage: sasacode plugin <command> [--project]
   search [words]                       find plugins (the list on sasanokusa.com and npm); no words lists all
   install <npm-spec|git-url|dir> [--yes]  add one (shows what it is and asks first)
-  update [name]                        update npm plugins, or pull a git one (shows the changes)
-  remove <name>
+  update [name] [--yes]                update npm plugins, or pull a git one (shows the changes and asks)
+  remove <name> [--yes]
   list
   publish <file.ts|dir> [--name <pkg>] [--version <v>] [--api <range>] [--license <id>] [--description <text>] [--otp <code>] [--dry-run]`;
 
 export async function pluginCommand(args: string[], cwd: string): Promise<number> {
-  const [sub, spec] = args;
-  const project = args.includes("--project");
-  const yes = args.includes("--yes") || args.includes("-y");
+  let o;
+  try {
+    o = parseArgs({
+      args,
+      allowPositionals: true,
+      options: {
+        project: { type: "boolean" },
+        yes: { type: "boolean", short: "y" },
+        name: { type: "string" },
+        version: { type: "string" },
+        api: { type: "string" },
+        license: { type: "string" },
+        description: { type: "string" },
+        otp: { type: "string" },
+        "dry-run": { type: "boolean" },
+      },
+    });
+  } catch (e) {
+    console.error(`error: ${(e as Error).message}\n${USAGE}`);
+    return 1;
+  }
+  const { values: v, positionals } = o;
+  const [sub, spec] = positionals;
+  const project = !!v.project;
+  const yes = !!v.yes;
   const dir = pluginDirs(cwd)[project ? 1 : 0]!.dir;
   try {
     if (sub === "search") {
-      const words = args.slice(1).filter((a) => !a.startsWith("--")).join(" ");
+      const words = positionals.slice(1).join(" ");
       const { listings, errors } = await searchPlugins(words);
       console.log(formatListings(listings));
       for (const e of errors) console.error(`warning: could not search ${e}`);
@@ -172,7 +198,8 @@ export async function pluginCommand(args: string[], cwd: string): Promise<number
         console.log(`${url}\n  cloned into ${join(dir, name)}\n${warning}`);
         if (!(await confirm("Install it?", yes))) return 1;
         await sh(["git", "clone", "--depth", "1", url, name], dir);
-        if (existsSync(join(dir, name, "package.json"))) await bun(["install", "--production"], join(dir, name));
+        // Like npm installs: the plugin's own install scripts do not run.
+        if (existsSync(join(dir, name, "package.json"))) await bun(["install", "--production", "--ignore-scripts"], join(dir, name));
         if (!readManifest(join(dir, name))) console.error(`warning: ${name} has no plugin.json or "sasacode" field in package.json`);
         console.log(`installed ${name} at commit ${gitHead(join(dir, name))}`);
       } else {
@@ -180,7 +207,7 @@ export async function pluginCommand(args: string[], cwd: string): Promise<number
         console.log([...(local ? describeLocal(local) : await describeNpm(spec)), warning].join("\n"));
         if (!(await confirm("Install it?", yes))) return 1;
         if (!existsSync(join(dir, "package.json"))) writeFileSync(join(dir, "package.json"), '{ "private": true }\n');
-        await bun(["add", local ?? spec], dir);
+        await bun(["add", "--ignore-scripts", local ?? spec], dir);
         const name = local ? readJson(join(local, "package.json"))?.name : parseSpec(spec).name;
         console.log(`installed ${name}@${installedVersion(dir, name) ?? "?"} into ${dir}`);
       }
@@ -194,11 +221,19 @@ export async function pluginCommand(args: string[], cwd: string): Promise<number
       if (!npmTargets.length && !gitTargets.length) throw new Error(spec ? `${spec} is not an installed npm or git plugin here` : "no npm or git plugins to update");
       if (npmTargets.length) {
         const before = Object.fromEntries(npmTargets.map((n) => [n, installedVersion(dir, n)]));
-        await bun(["update", ...npmTargets, "--latest"], dir);
+        // Shown and asked like an install: a new version is new code.
+        const changed: string[] = [];
         for (const n of npmTargets) {
-          const after = installedVersion(dir, n);
-          console.log(`${n}: ${before[n] === after ? `${after} (already the newest)` : `${before[n]} → ${after}`}`);
+          const lines = await describeNpm(`${n}@latest`);
+          if (lines[0]?.startsWith(`${n}@${before[n]}`)) {
+            console.log(`${n}: ${before[n]} (already the newest)`);
+            continue;
+          }
+          console.log([`${n}: ${before[n] ?? "?"} →`, ...lines].join("\n"));
+          if (await confirm(`Update ${n}?`, yes)) changed.push(n);
         }
+        if (changed.length) await bun(["update", "--ignore-scripts", ...changed, "--latest"], dir);
+        for (const n of changed) console.log(`${n}: ${before[n]} → ${installedVersion(dir, n)}`);
       }
       for (const p of gitTargets) {
         await sh(["git", "-C", p.dir, "fetch", "-q", "--depth", "50"], p.dir);
@@ -211,7 +246,7 @@ export async function pluginCommand(args: string[], cwd: string): Promise<number
         console.log(`${p.manifest.name}: new commits\n${log}\n${stat}`);
         if (!(await confirm(`Update ${p.manifest.name}?`, yes))) continue;
         await sh(["git", "-C", p.dir, "reset", "-q", "--hard", "FETCH_HEAD"], p.dir);
-        if (existsSync(join(p.dir, "package.json"))) await bun(["install", "--production"], p.dir);
+        if (existsSync(join(p.dir, "package.json"))) await bun(["install", "--production", "--ignore-scripts"], p.dir);
         console.log(`${p.manifest.name}: now at ${gitHead(p.dir)}`);
       }
       return 0;
@@ -225,15 +260,15 @@ export async function pluginCommand(args: string[], cwd: string): Promise<number
         ({ pkg, notes } = checkPackageDir(spec));
         target = spec;
       } else {
-        const name = flag(args, "--name");
-        const latest = flag(args, "--version") ? undefined : await latestVersion(name ?? `sasacode-plugin-${basename(spec).replace(/\.(ts|js|mjs)$/, "").toLowerCase()}`);
-        ({ dir: target, pkg, notes } = stagePackage(spec, { name, version: flag(args, "--version"), api: flag(args, "--api"), license: flag(args, "--license"), description: flag(args, "--description"), latest }));
+        const name = v.name;
+        const latest = v.version ? undefined : await latestVersion(name ?? `sasacode-plugin-${basename(spec).replace(/\.(ts|js|mjs)$/, "").toLowerCase()}`);
+        ({ dir: target, pkg, notes } = stagePackage(spec, { name, version: v.version, api: v.api, license: v.license, description: v.description, latest }));
       }
       console.log(`${pkg.name}@${pkg.version}  (plugin API ${pkg.sasacode?.apiVersion ?? "?"})\n  ${target}`);
       for (const n of notes) console.log(`  note: ${n}`);
-      const otp = flag(args, "--otp");
-      await sh(["npm", "publish", "--access", "public", ...(otp ? [`--otp=${otp}`] : []), ...(args.includes("--dry-run") ? ["--dry-run"] : [])], target);
-      if (!args.includes("--dry-run")) console.log(`published: others can run  sasacode plugin install ${pkg.name}`);
+      const otp = v.otp;
+      await sh(["npm", "publish", "--access", "public", ...(otp ? [`--otp=${otp}`] : []), ...(v["dry-run"] ? ["--dry-run"] : [])], target);
+      if (!v["dry-run"]) console.log(`published: others can run  sasacode plugin install ${pkg.name}`);
       return 0;
     }
     if (sub === "remove" && spec) {
@@ -242,6 +277,7 @@ export async function pluginCommand(args: string[], cwd: string): Promise<number
       if (!folder && !/^(@[a-z0-9~-][a-z0-9._~-]*\/)?[a-z0-9~-][a-z0-9._~-]*$/.test(spec))
         throw new Error(`${spec}: give the plugin's name as \`sasacode plugin list\` shows it, not a path`);
       const target = join(dir, spec);
+      if (!(await confirm(`Remove ${spec} from ${dir}?`, yes))) return 1;
       if (folder && existsSync(target) && statSync(target).isDirectory() && !existsSync(join(dir, "node_modules", spec))) rmSync(target, { recursive: true, force: true });
       else await bun(["remove", spec], dir);
       console.log(`removed ${spec}`);

@@ -1,5 +1,7 @@
 import type { Plugin } from "@sasacode/plugin-api";
 
+export const SUBAGENT_EXCLUDED = ["task", "todo_write", "set_goal"];
+
 /** `task`: hand a self-contained job to a fresh agent loop and get its final report back. */
 const subagent: Plugin = (api) => {
   // The subagent's own tool calls go through permissions, so starting one needs no approval.
@@ -7,7 +9,7 @@ const subagent: Plugin = (api) => {
   api.registerTool({
     name: "task",
     description:
-      "Run a subagent with a fresh context on a self-contained task (research, a broad search, an independent change). It has the same tools except task, and returns only its final report. Several task calls in one turn run in parallel.",
+      "Run a subagent with a fresh context on a self-contained task (research, a broad search, an independent change). It has the same tools except task, todo_write and set_goal, and returns only its final report. Several task calls in one turn run in parallel.",
     parameters: {
       type: "object",
       properties: {
@@ -26,7 +28,8 @@ const subagent: Plugin = (api) => {
       const r = await api.agent.run({
         prompt: `${args.prompt}\n\nWhen done, reply with a concise report of what you found or did; it is all the caller will see.`,
         model: args.model,
-        excludeTools: ["task"],
+        // The TODO list and the goal are the caller's session's: a subagent must not overwrite them.
+        excludeTools: SUBAGENT_EXCLUDED,
         signal: ctx.signal,
         onProgress: (t) => ctx.onUpdate?.(`${t}\n`),
       });

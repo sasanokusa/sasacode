@@ -51,6 +51,38 @@ const INTERRUPTED_NOTE = "[The user interrupted the previous response.]";
 /** Hooks that belong to the user's session, not to subagents. */
 let subagentRuns = 0;
 
+/** Images in a history sent to a model that cannot take them, replaced by a note. */
+export function withoutImages(messages: Message[]): Message[] {
+  const strip = <T extends { type: string }>(content: T[]) =>
+    content.map((c) => (c.type === "image" ? ({ type: "text", text: "[image omitted: this model does not accept images]" } as unknown as T) : c));
+  return messages.map((m) => (m.role === "assistant" || !m.content.some((c) => c.type === "image") ? m : ({ ...m, content: strip(m.content) } as Message)));
+}
+
+/**
+ * max_tokens for the next reply: the model's maximum, unless less room is left in the window.
+ * Servers such as vLLM reject a request whose input plus max_tokens exceeds the window, and
+ * that error reads like a full context. The input is estimated from the last reported usage
+ * plus about 4 characters a token for what came after it; undefined leaves the adapter's default.
+ */
+export function replyBudget(model: ModelInfo, messages: readonly Message[], fixedChars: number): number | undefined {
+  let used = 0;
+  let from = 0;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i]!;
+    if (m.role === "assistant" && m.usage && m.usage.input + m.usage.output > 0) {
+      used = m.usage.input + m.usage.cacheRead + m.usage.cacheWrite + m.usage.output;
+      from = i + 1;
+      break;
+    }
+  }
+  // The system prompt and tool definitions are in the reported usage once there is one.
+  const chars = (from ? 0 : fixedChars) + messages.slice(from).reduce((n, m) => n + JSON.stringify(m.content).length, 0);
+  const estimate = Math.ceil((used + chars / 4) * 1.1);
+  const room = model.contextWindow - estimate;
+  if (room >= model.maxOutput) return undefined;
+  return Math.max(1024, room);
+}
+
 /**
  * Room left for the next response before the window counts as full. Proportional for small
  * windows: a local model with an 8K window and a 32K maxOutput would otherwise be "full" at once.
@@ -375,6 +407,11 @@ export class Agent {
       if (r.sampling) sampling = ev.sampling = { ...sampling, ...r.sampling };
     });
 
+    // A model that takes no images gets a note instead: one image would fail every request after it.
+    if (this.model.images === false) messages = withoutImages(messages);
+
+    const tools = this.requestTools().map((t) => ({ name: t.name, description: t.description, parameters: t.parameters }));
+
     // The request has its own controller so a plugin can stop it without it counting as a user abort.
     const request = new AbortController();
     const forward = () => request.abort();
@@ -389,9 +426,10 @@ export class Agent {
         apiKey,
         system,
         messages,
-        tools: this.requestTools().map((t) => ({ name: t.name, description: t.description, parameters: t.parameters })),
+        tools,
         thinking: this.thinking,
         maxRetries: this.opts.maxRetries,
+        maxTokens: replyBudget(this.model, messages, system.length + JSON.stringify(tools).length),
         sampling,
         signal: request.signal,
       })) {

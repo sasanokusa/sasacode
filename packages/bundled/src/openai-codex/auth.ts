@@ -1,8 +1,8 @@
 // ChatGPT-plan credentials for the openai-codex provider: where they are stored and how they are
 // kept fresh. The login itself (browser, callback server) is in login.ts.
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { sasacodeHome } from "@sasacode/plugin-api";
 
 /** The public OAuth client of OpenAI's Codex CLI. There is no secret; PKCE protects the flow. */
 export const CODEX_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
@@ -23,7 +23,7 @@ export interface CodexTokens {
 }
 
 /** Stored beside the user's config, never in a project: a repository must not supply a login. */
-export function codexAuthPath(home = process.env.SASACODE_HOME ?? join(homedir(), ".sasacode")): string {
+export function codexAuthPath(home = sasacodeHome()): string {
   return join(home, "codex-auth.json");
 }
 

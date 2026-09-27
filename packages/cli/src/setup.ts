@@ -1,9 +1,10 @@
-import { mkdirSync } from "node:fs";
-import { join } from "node:path";
+import { chmodSync, mkdirSync, statSync } from "node:fs";
+import { join, resolve as resolvePath } from "node:path";
 import {
   Agent,
   buildSystemPrompt,
   headlessUI,
+  isInside,
   listSessions,
   PERMISSION_MODES,
   type PermissionMode,
@@ -19,7 +20,7 @@ import { bundledPlugins, readCodexAuth } from "@sasacode/bundled";
 import { createMcpPlugin, type McpServerConfig } from "@sasacode/mcp";
 import { createSkillsPlugin } from "@sasacode/skills";
 import builtinTools from "@sasacode/tools";
-import { type Config, DEFAULT_MAX_TURNS, loadConfig, sasacodeHome } from "./config.ts";
+import { type Config, type ConfigFiles, DEFAULT_MAX_TURNS, loadConfig, sasacodeHome } from "./config.ts";
 import { discoverPlugins, type FoundPlugin, importExtensions } from "./loader.ts";
 import { type ModelChoice, ModelCatalog } from "./catalog.ts";
 import { resolveEndpoints } from "./endpoints.ts";
@@ -45,6 +46,8 @@ export interface SetupOptions {
   noSession?: boolean;
   /** The project is trusted: its plugins and the elevated part of its config are used. */
   trustProject?: boolean;
+  /** Config files and plugins already read for the trust check (see assessProject). */
+  preloaded?: { files: ConfigFiles; plugins: FoundPlugin[]; warnings: string[] };
 }
 
 export interface Harness {
@@ -71,7 +74,8 @@ export interface Harness {
 export async function setup(opts: SetupOptions): Promise<Harness> {
   // Decided before setup (asked on the terminal, --trust-project, or remembered).
   const trusted = !!opts.trustProject;
-  const { config, warnings } = loadConfig(opts.cwd, trusted);
+  const { config, warnings } = loadConfig(opts.cwd, trusted, opts.preloaded?.files);
+  warnings.push(...(opts.preloaded?.warnings ?? []));
   const providers: Record<string, ProviderConfig> = { ...BUILTIN_PROVIDERS };
   for (const [name, p] of Object.entries(config.providers ?? {}))
     providers[name] = { ...providers[name], ...p } as ProviderConfig;
@@ -90,7 +94,11 @@ export async function setup(opts: SetupOptions): Promise<Harness> {
   if (!PERMISSION_MODES.includes(mode)) throw new Error(`unknown permission mode "${mode}" (${PERMISSION_MODES.join(", ")})`);
   const home = sasacodeHome();
   const sessionsDir = sessionDir(home, opts.cwd);
-  mkdirSync(home, { recursive: true });
+  // Sessions, input history, saved outputs and keys live here: private to the user, whatever the umask.
+  mkdirSync(home, { recursive: true, mode: 0o700 });
+  try {
+    if (statSync(home).mode & 0o077) chmodSync(home, 0o700);
+  } catch {}
 
   const agent = new Agent({
     model: resolve(opts.model ?? config.model ?? defaultModel(providers, !config.plugins?.disabled?.includes("openai-codex"))),
@@ -134,7 +142,8 @@ export async function setup(opts: SetupOptions): Promise<Harness> {
   };
   const endSession = (reason: "switch" | "exit") => agent.hooks.run("session_end", { sessionId: agent.session?.id, reason });
 
-  const openSession = (path: string) => {
+  /** `keepModel`: -m was given on the command line, and beats the model the session ended with. */
+  const openSession = (path: string, keepModel = false) => {
     const { file, entries } = SessionFile.open(path);
     const state = restore(entries);
     agent.messages = state.messages;
@@ -142,7 +151,7 @@ export async function setup(opts: SetupOptions): Promise<Harness> {
     // Record the repair, so restoring again (after more turns are appended) gives the same history.
     if (state.repaired) file.append({ type: "replace", messages: state.messages });
     sessionEntries = entries;
-    if (state.model) {
+    if (state.model && !keepModel) {
       try {
         agent.model = resolve(state.model);
       } catch (e) {
@@ -163,14 +172,21 @@ export async function setup(opts: SetupOptions): Promise<Harness> {
         ? list[0]
         : list.find((s) => s.id === opts.resume || s.path === opts.resume || s.id.startsWith(opts.resume!));
     if (!target) throw new Error(opts.resume === "last" ? "no previous session in this directory" : `session not found: ${opts.resume}`);
-    openSession(target.path);
+    openSession(target.path, !!opts.model);
   } else createSession();
 
   let loading: Promise<void> | undefined;
   const loadPlugins = (ui: UIBridge = headlessUI) =>
     (loading ??= (async () => {
       host.setUI(ui);
-      const found = discoverPlugins(opts.cwd).filter((p) => !disabled.has(p.manifest.name));
+      const found: FoundPlugin[] = [];
+      if (opts.preloaded) found.push(...opts.preloaded.plugins);
+      else {
+        const problems: string[] = [];
+        found.push(...discoverPlugins(opts.cwd, problems));
+        for (const w of problems) host.notify(w, "warning");
+      }
+      for (let i = found.length - 1; i >= 0; i--) if (disabled.has(found[i]!.manifest.name)) found.splice(i, 1);
       const skipped = found.filter((p) => p.scope === "project" && !trusted);
       if (skipped.length)
         host.notify(`project plugins not loaded until you trust this project: ${skipped.map((p) => p.manifest.name).join(", ")}`, "warning");
@@ -181,7 +197,14 @@ export async function setup(opts: SetupOptions): Promise<Harness> {
         if (!disabled.has(name) && name !== "openai-codex" && !own.has(name)) await host.load(name, plugin);
 
       if (!disabled.has("skills")) {
-        const dirs = [join(home, "skills"), join(opts.cwd, ".sasacode", "skills"), ...usable.flatMap((p) => (p.manifest.skills ? [join(p.dir, p.manifest.skills)] : []))];
+        const dirs = [join(home, "skills"), join(opts.cwd, ".sasacode", "skills"), ...usable.flatMap((p) => {
+          if (!p.manifest.skills) return [];
+          const dir = resolvePath(p.dir, p.manifest.skills);
+          // A plugin's skills come from its own folder, like its code.
+          if (isInside(dir, p.dir)) return [dir];
+          host.notify(`plugin ${p.manifest.name}: skills folder ${p.manifest.skills} is outside the plugin; ignored`, "warning");
+          return [];
+        })];
         await host.load("skills", createSkillsPlugin(dirs, { builtinDir: join(home, "builtin-skills") }));
       }
       if (!disabled.has("mcp")) {

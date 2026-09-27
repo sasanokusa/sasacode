@@ -158,3 +158,33 @@ test("one-shot runs can be chained with -r <id> -p (no tmux needed)", async () =
   expect(provider.requests[1]!.messages.map((m) => m.role)).toEqual(["user", "assistant", "user"]);
   expect(JSON.stringify(provider.requests[1]!.messages[0])).toContain("remember 42");
 });
+
+test("-m beats the model a resumed session ended with", async () => {
+  writeConfigs({ providers: { test: { api: "replay" }, other: { api: "replay" } }, model: "test/m" }, {});
+  const reply = { role: "assistant" as const, content: [{ type: "text" as const, text: "ok" }], api: "replay", provider: "test", model: "m", usage: emptyUsage(), stopReason: "stop" as const, timestamp: 0 };
+  registerApi("replay", replayProvider([reply]));
+  const first = await setup({ cwd: proj });
+  await first.agent.prompt("hi");
+  const id = first.agent.session!.id;
+  expect((await setup({ cwd: proj, resume: id })).agent.model.provider).toBe("test");
+  const chosen = await setup({ cwd: proj, resume: id, model: "other/n" });
+  expect(`${chosen.agent.model.provider}/${chosen.agent.model.id}`).toBe("other/n");
+});
+
+test("a project picking a model is announced; a router's models need trust", () => {
+  writeConfigs({ model: "anthropic/claude-opus-5" }, { model: "anthropic/claude-sonnet-5" });
+  const plain = loadConfig(proj);
+  expect(plain.config.model).toBe("anthropic/claude-sonnet-5");
+  expect(plain.warnings.join()).toContain("this project selects the model anthropic/claude-sonnet-5");
+  writeConfigs({}, { model: "openrouter/some-lab/model" });
+  expect(loadConfig(proj).config.model).toBeUndefined();
+  expect(loadConfig(proj).elevated.model).toBe("openrouter/some-lab/model");
+});
+
+test("~/.sasacode is private to the user", async () => {
+  const { chmodSync, statSync } = await import("node:fs");
+  writeConfigs({ providers: { test: { api: "replay" } }, model: "test/m" }, {});
+  chmodSync(home, 0o755);
+  await setup({ cwd: proj, noSession: true });
+  expect(statSync(home).mode & 0o777).toBe(0o700);
+});

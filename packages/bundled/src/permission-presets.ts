@@ -1,3 +1,4 @@
+import { CHAIN } from "@sasacode/agent";
 import type { PermissionRules, Plugin } from "@sasacode/plugin-api";
 
 /** Named rule sets, enabled with plugins.settings["permission-presets"].presets (default: guard). */
@@ -81,7 +82,7 @@ const WRITES_OR_RUNS: [RegExp, RegExp][] = [
 ];
 
 export function writesOrRuns(command: string): boolean {
-  return command.split(/&&|\|\||;|\||\n|&/).some((piece) => {
+  return command.split(CHAIN).some((piece) => {
     const words = piece.trim().replace(/["'\\]/g, "").split(/\s+/);
     return WRITES_OR_RUNS.some(([cmd, opt]) => {
       const name = cmd.test(words.slice(0, 2).join(" ")) ? 2 : cmd.test(words[0] ?? "") ? 1 : 0;

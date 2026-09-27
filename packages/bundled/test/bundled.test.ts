@@ -2,7 +2,7 @@ import { afterAll, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Agent, PermissionPolicy, PluginHost, SessionFile } from "@sasacode/agent";
+import { Agent, makeToolSearchTool, PermissionPolicy, PluginHost, SessionFile } from "@sasacode/agent";
 import { type AssistantContent, type AssistantMessage, emptyUsage, type Message, registerApi, replayProvider } from "@sasacode/ai";
 import builtinTools, { bashTool } from "@sasacode/tools";
 import { agentsFiles, bundledPlugins, htmlToText, splitPoint } from "../src/index.ts";
@@ -221,4 +221,37 @@ test("read-only-shell: options that write files or run programs go back to the u
   for (const c of ["rg --pre ./x foo", "rg '--pre=x' foo", "git diff --output=/tmp/x", "git diff --outp=x", "git log --ext-diff", "tree -o out", "tree -aR -H .", "file -C -m m", "cat a | rg --hostname-bin=x"])
     expect(writesOrRuns(c)).toBe(true);
   for (const c of ["rg foo", "git log --oneline", "git show HEAD", "git diff", "tree -a", "file x", "ls -la"]) expect(writesOrRuns(c)).toBe(false);
+});
+
+test("subagents get neither todo_write nor set_goal: the caller's list and goal stay its own", async () => {
+  const { agent, provider } = await setup([reply([call("t", "task", { description: "look", prompt: "look around" })]), reply([say("report")]), reply([say("done")])], ["subagent", "todo", "goal"]);
+  await agent.prompt("go");
+  const subTools = provider.requests[1]!.tools.map((t) => t.name);
+  expect(subTools).not.toContain("todo_write");
+  expect(subTools).not.toContain("set_goal");
+  expect(subTools).not.toContain("task");
+  expect(subTools).toContain("read");
+});
+
+test("edits mode: goal tools and tool_search run without asking", async () => {
+  const { agent } = await setup([reply([call("1", "goal_status", {}), call("2", "set_goal", { text: "ship it" })]), reply([say("ok")])], ["goal"]);
+  await agent.prompt("go");
+  const results = agent.messages.filter((m) => m.role === "tool").map((m) => JSON.stringify(m.content));
+  expect(results.join()).not.toContain("needs user approval");
+  const policy = new PermissionPolicy("edits");
+  const search = makeToolSearchTool(() => [], () => {});
+  expect((await policy.check({ tool: search, args: { query: "x" }, cwd: root })).decision).toBe("allow");
+});
+
+test("web_fetch reads at most 10 MB of a response", async () => {
+  const server = Bun.serve({ port: 0, fetch: () => new Response("a".repeat(12_000_000), { headers: { "content-type": "text/plain" } }) });
+  try {
+    const { host, agent } = await setup([], ["web-fetch"]);
+    void host;
+    const tool = agent.getTools().find((t) => t.name === "web_fetch")!;
+    const r = await tool.execute({ url: `http://localhost:${server.port}/`, max_chars: 10 }, { cwd: root, signal: new AbortController().signal });
+    expect((r.content[0] as { text: string }).text).toContain("only the first 10 MB was read");
+  } finally {
+    server.stop(true);
+  }
 });

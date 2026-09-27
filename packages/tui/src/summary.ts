@@ -1,5 +1,5 @@
 import { visibleWidth } from "@earendil-works/pi-tui";
-import type { AssistantMessage } from "@sasacode/ai";
+import { type AssistantMessage, fmtTokens } from "@sasacode/ai";
 import { c } from "./theme.ts";
 
 /** Tokens and cost of everything sent since sasacode started, across /clear and /resume. */
@@ -28,12 +28,6 @@ export class UsageTally {
     const prompt = this.input + this.cacheRead + this.cacheWrite;
     return prompt ? this.cacheRead / prompt : 0;
   }
-}
-
-export function fmtTokens(n: number): string {
-  if (n < 1000) return String(n);
-  if (n < 1_000_000) return `${(n / 1000).toFixed(n < 10_000 ? 1 : 0)}k`;
-  return `${(n / 1_000_000).toFixed(2)}M`;
 }
 
 export function fmtDuration(ms: number): string {

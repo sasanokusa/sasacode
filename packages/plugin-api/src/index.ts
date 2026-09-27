@@ -1,5 +1,8 @@
 // The only surface plugins depend on. Built-in tools, commands, MCP and Skills use it too (P2).
 // Versioned with semver: breaking changes only in a new major (see PLUGIN_API_VERSION).
+import { mkdirSync, readdirSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import type {
   AssistantMessage,
   JSONSchema,
@@ -344,4 +347,52 @@ export function isCompatible(required: string, provided = PLUGIN_API_VERSION): b
     if ((have[i] ?? 0) < (req[i] ?? 0)) return false;
   }
   return true;
+}
+
+// ── host helpers (since 1.8.0) ───────────────────────────────────────
+
+/** Where sasacode keeps its files: $SASACODE_HOME, or ~/.sasacode. (since 1.8.0) */
+export function sasacodeHome(): string {
+  return process.env.SASACODE_HOME ?? join(homedir(), ".sasacode");
+}
+
+// On globalThis: a plugin bundling its own copy of this module shares the host's list.
+const hiddenEnv: Set<string> = ((globalThis as Record<symbol, unknown>)[Symbol.for("sasacode.hiddenEnv")] ??= new Set<string>()) as Set<string>;
+
+/** Keep these variables out of childEnv(): secrets sasacode loaded for itself (~/.sasacode/.env). (since 1.8.0) */
+export function hideFromChildren(names: Iterable<string>): void {
+  for (const n of names) hiddenEnv.add(n);
+}
+
+/**
+ * The environment for commands the agent runs (bash, background jobs): this process's, without the
+ * variables hidden with hideFromChildren, plus `extra`. (since 1.8.0)
+ */
+export function childEnv(extra: Record<string, string> = {}): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const [k, v] of Object.entries(process.env)) if (v !== undefined && !hiddenEnv.has(k)) env[k] = v;
+  return { ...env, ...extra };
+}
+
+const OUTPUT_DAYS = 7;
+let pruned = false;
+
+/**
+ * Save a long tool output the model is shown only part of, and return its path. Files go to
+ * ~/.sasacode/tmp (owner-only, not a shared /tmp); ones older than a week are removed. (since 1.8.0)
+ */
+export function saveOutput(prefix: string, content: string): string {
+  const dir = join(sasacodeHome(), "tmp");
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  if (!pruned) {
+    pruned = true;
+    const cutoff = Date.now() - OUTPUT_DAYS * 86_400_000;
+    for (const f of readdirSync(dir))
+      try {
+        if (statSync(join(dir, f)).mtimeMs < cutoff) unlinkSync(join(dir, f));
+      } catch {}
+  }
+  const file = join(dir, `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.log`);
+  writeFileSync(file, content, { mode: 0o600 });
+  return file;
 }

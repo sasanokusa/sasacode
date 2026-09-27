@@ -1,11 +1,8 @@
-import { writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { getDefaultEnvironment, StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { ToolListChangedNotificationSchema } from "@modelcontextprotocol/sdk/types.js";
-import { errorResult, type Plugin, type PluginAPI, type ToolResult, type UserContent } from "@sasacode/plugin-api";
+import { errorResult, type Plugin, saveOutput, type PluginAPI, type ToolResult, type UserContent } from "@sasacode/plugin-api";
 
 export type McpServerConfig = (
   | { command: string; args?: string[]; env?: Record<string, string>; cwd?: string }
@@ -231,8 +228,7 @@ export function convertResult(r: CallResult, server: string, tool: string): Tool
   const total = content.reduce((n, c) => n + (c.type === "text" ? c.text.length : 0), 0);
   if (total > MAX_OUTPUT) {
     const full = content.map((c) => (c.type === "text" ? c.text : "")).join("\n");
-    const file = join(tmpdir(), `sasacode-mcp-${server}-${tool}-${Date.now()}.txt`.replace(/[^\w./-]/g, "_"));
-    writeFileSync(file, full);
+    const file = saveOutput(`mcp-${server}-${tool}`.replace(/[^\w.-]/g, "_"), full);
     const images = content.filter((c) => c.type === "image");
     return {
       content: [{ type: "text", text: `${full.slice(0, MAX_OUTPUT)}\n[Output truncated at ${MAX_OUTPUT} of ${total} characters. Full output saved to ${file}]` }, ...images],

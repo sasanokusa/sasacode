@@ -145,6 +145,8 @@ test("plugin remove takes a plugin's name, never a path out of the plugins folde
   expect(existsSync(outside)).toBe(true);
   expect(existsSync(join(home, "plugins"))).toBe(true);
   mkdirSync(join(home, "plugins", "gone"));
-  expect(await pluginCommand(["remove", "gone"], proj)).toBe(0);
+  expect(await pluginCommand(["remove", "gone"], proj)).toBe(1); // no terminal to ask on
+  expect(existsSync(join(home, "plugins", "gone"))).toBe(true);
+  expect(await pluginCommand(["remove", "--yes", "gone"], proj)).toBe(0);
   expect(existsSync(join(home, "plugins", "gone"))).toBe(false);
 });

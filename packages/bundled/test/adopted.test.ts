@@ -29,7 +29,7 @@ function fake(plugin: Plugin, settings: Record<string, unknown> = {}, entries: R
       inject: (c: string) => injected.push(c),
     },
     ui: { interactive: true, notify: (m: string) => notices.push(m), setStatus: (k: string, t?: string) => (t ? status.set(k, t) : status.delete(k)) },
-    agent: { model: () => ({ baseUrl: undefined }) },
+    agent: { model: () => ({ baseUrl: undefined, api: "anthropic" }) },
     permissions: { addRules() {} },
     registerTool: (t: any) => (tools[t.name] = t),
     registerCommand: (c: any) => (commands[c.name] = c),
@@ -110,4 +110,48 @@ test("auto-reconnect: after an error while the endpoint is down, it waits and re
   } finally {
     up.stop(true);
   }
+});
+
+test("background-sessions: a job from an earlier run is judged by its exit file and start time, not a reused pid", async () => {
+  const home = join(root, "home-reuse");
+  process.env.SASACODE_HOME = home;
+  const { mkdirSync, writeFileSync } = await import("node:fs");
+  // A process that is alive but is not the job: its start time does not match the record.
+  const stranger = Bun.spawn(["sleep", "30"]);
+  try {
+    const job = (id: string, extra: object) => {
+      const dir = join(home, "background-sessions", id);
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, "output.log"), "old output\n");
+      writeFileSync(join(dir, "meta.json"), JSON.stringify({ id, command: "make", cwd: root, runCwd: root, pid: stranger.pid, startedAt: Date.now() - 5000, status: "running", sessionId: "s1", ...extra }));
+      return dir;
+    };
+    writeFileSync(join(job("bg-1", {}), "exit-code"), "0\n"); // finished while sasacode was closed
+    job("bg-2", { procStart: "Mon Jan  1 00:00:00 2001" });
+    const b = fake(backgroundSessions, { pollMs: 50 });
+    for (let i = 0; i < 100 && b.injected.length < 2; i++) await Bun.sleep(20);
+    expect(b.injected.join("\n")).toContain("bg-1");
+    expect(b.injected.join("\n")).toContain("bg-2");
+    await b.commands.bg.run({ args: "kill bg-2" });
+    await Bun.sleep(100);
+    expect(stranger.exitCode).toBeNull(); // never signalled
+  } finally {
+    stranger.kill();
+    delete process.env.SASACODE_HOME;
+  }
+});
+
+test("auto-reconnect: without a baseUrl it checks the provider's own API, not a third party", async () => {
+  const real = globalThis.fetch;
+  const urls: string[] = [];
+  globalThis.fetch = (async (url: string) => (urls.push(String(url)), new Response("ok"))) as unknown as typeof fetch;
+  try {
+    const f = fake(autoReconnect, { checkIntervalMs: 10, checkTimeoutMs: 100 });
+    await f.fire("session_start");
+    await f.fire("agent_end", { cause: "error" });
+    for (let i = 0; i < 50 && !urls.length; i++) await Bun.sleep(10);
+  } finally {
+    globalThis.fetch = real;
+  }
+  expect(urls[0]).toStartWith("https://api.anthropic.com");
 });

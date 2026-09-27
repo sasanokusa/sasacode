@@ -1,8 +1,6 @@
 import { spawn } from "node:child_process";
-import { writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { text, type ToolDefinition } from "@sasacode/plugin-api";
+import { appendFileSync } from "node:fs";
+import { childEnv, saveOutput, text, type ToolDefinition } from "@sasacode/plugin-api";
 
 const DEFAULT_TIMEOUT_S = 120;
 const MAX_OUTPUT = 30_000;
@@ -36,18 +34,23 @@ export const bashTool: ToolDefinition<Args> = {
         cwd: ctx.cwd,
         detached: true,
         stdio: ["ignore", "pipe", "pipe"],
-        env: { ...process.env, PAGER: "cat", GIT_PAGER: "cat", SASACODE: "1" },
+        // Without the keys sasacode read from ~/.sasacode/.env for itself.
+        env: childEnv({ PAGER: "cat", GIT_PAGER: "cat", SASACODE: "1" }),
       });
-      const chunks: string[] = [];
+      // Memory holds the tail only; past MAX_OUTPUT everything goes to a file as it comes.
+      let tail = "";
       let size = 0;
-      const onData = (d: Buffer) => {
-        const s = d.toString("utf8");
-        chunks.push(s);
+      let file: string | undefined;
+      const onData = (s: string) => {
         size += s.length;
+        if (file) appendFileSync(file, s);
+        else if (size > MAX_OUTPUT) file = saveOutput("bash", tail + s);
+        tail = (tail + s).slice(-MAX_OUTPUT);
         ctx.onUpdate?.(s);
       };
-      child.stdout!.on("data", onData);
-      child.stderr!.on("data", onData);
+      // Decoded per stream: a character split across two reads is not broken in two.
+      child.stdout!.setEncoding("utf8").on("data", onData);
+      child.stderr!.setEncoding("utf8").on("data", onData);
 
       let killedBy: "timeout" | "abort" | undefined;
       const kill = (why: "timeout" | "abort") => {
@@ -75,12 +78,9 @@ export const bashTool: ToolDefinition<Args> = {
         // Background jobs may keep the pipes open; stop listening once the shell itself is gone.
         child.stdout!.destroy();
         child.stderr!.destroy();
-        let output = chunks.join("");
+        const output = tail;
         const notes: string[] = [];
-        if (size > MAX_OUTPUT) {
-          const file = join(tmpdir(), `sasacode-bash-${Date.now()}-${child.pid}.log`);
-          writeFileSync(file, output);
-          output = output.slice(-MAX_OUTPUT);
+        if (file) {
           notes.push(`[Output truncated: showing the last ${MAX_OUTPUT} of ${size} characters. Full output saved to ${file}]`);
         }
         if (killedBy === "timeout") notes.push(`[Command timed out after ${timeoutS}s and was killed]`);
@@ -94,7 +94,7 @@ export const bashTool: ToolDefinition<Args> = {
       };
       child.on("exit", (code, sig) => setTimeout(() => finish(code, sig), 50));
       child.on("error", (e) => {
-        chunks.push(String(e));
+        tail += String(e);
         finish(null, null);
       });
     });

@@ -12,7 +12,7 @@ import {
   replayProvider,
 } from "@sasacode/ai";
 import builtinTools, { bashTool, editTool, readTool, writeTool } from "@sasacode/tools";
-import { Agent, type AgentEvent, PermissionPolicy, PluginHost, responseRoom, restore, SessionFile } from "../src/index.ts";
+import { Agent, type AgentEvent, PermissionPolicy, PluginHost, replyBudget, responseRoom, restore, SessionFile } from "../src/index.ts";
 
 const dir = mkdtempSync(join(tmpdir(), "sasacode-agent-"));
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
@@ -228,4 +228,20 @@ test("built-in tools register through the plugin API", async () => {
   await host.load("builtin-tools", builtinTools);
   expect(agent.getTools().map((t) => t.name)).toEqual(["read", "write", "edit", "bash"]);
   expect(host.toolOwners.get("bash")).toBe("builtin-tools");
+});
+
+test("a model without image support gets a note in place of each image", async () => {
+  const { agent, provider } = setup([reply([say("ok")])], { model: { ...model, images: false } });
+  await agent.prompt([{ type: "text", text: "see" }, { type: "image", mediaType: "image/png", data: "AAAA" }]);
+  expect(JSON.stringify(provider.requests[0]!.messages)).not.toContain("AAAA");
+  expect(JSON.stringify(provider.requests[0]!.messages)).toContain("[image omitted");
+  expect(JSON.stringify(agent.messages)).toContain("AAAA"); // the history keeps it for another model
+});
+
+test("max_tokens shrinks to the room left in a small window, and is left alone otherwise", () => {
+  const small: ModelInfo = { ...model, contextWindow: 8192, maxOutput: 32_000 };
+  const used = reply([say("x")], { usage: { ...emptyUsage(), input: 6000, output: 100 } });
+  expect(replyBudget(small, [used], 0)).toBe(8192 - Math.ceil(6100 * 1.1));
+  expect(replyBudget(small, [reply([say("x")], { usage: { ...emptyUsage(), input: 8000, output: 100 } })], 0)).toBe(1024);
+  expect(replyBudget(model, [used], 0)).toBeUndefined();
 });

@@ -10,6 +10,7 @@ import {
   ProcessTerminal,
   ScrollView,
   Spacer,
+  type Terminal,
   type TUI,
   truncateToWidth,
   TuiAltScreen,
@@ -28,7 +29,7 @@ import {
   type PluginHost,
   type UIBridge,
 } from "@sasacode/agent";
-import { type ModelInfo, textOf, type ThinkingLevel, type ToolCall } from "@sasacode/ai";
+import { fmtTokens, type ModelInfo, textOf, type ThinkingLevel, type ToolCall } from "@sasacode/ai";
 import type { CommandDefinition, SelectOption } from "@sasacode/plugin-api";
 import { matchAmbiguousWidth } from "./ambiguous.ts";
 import { ApprovalDialog, Picker } from "./dialogs.ts";
@@ -70,8 +71,9 @@ export interface TuiHost {
   shutdown(): Promise<void>;
 }
 
-export async function runTui(host: TuiHost, initialPrompt = ""): Promise<number> {
-  const app = new App(host);
+/** `terminal`: the real one, or a stand-in (tests drive the app through it). */
+export async function runTui(host: TuiHost, initialPrompt = "", terminal: Terminal = new ProcessTerminal()): Promise<number> {
+  const app = new App(host, terminal);
   return app.run(initialPrompt);
 }
 
@@ -96,19 +98,22 @@ class App {
   private ready?: Promise<void>;
   private approvals: Promise<unknown> = Promise.resolve();
 
-  constructor(private host: TuiHost) {
+  constructor(
+    private host: TuiHost,
+    terminal: Terminal,
+  ) {
     // Full screen by default: the transcript scrolls above a fixed input line, and on exit the
     // terminal comes back as it was, with a short summary instead of the whole conversation.
     const fullscreen = host.config.tui?.altScreen !== false;
     this.tui = fullscreen
-      ? new TuiAltScreen(new ProcessTerminal(), false, undefined, {
+      ? new TuiAltScreen(terminal, false, undefined, {
           mouse: true,
           wheelScrollLines: 3,
           // Drag-selected text is copied on release; OSC 52 alone does nothing in many terminals.
           copySelection: async (text) => (await copyToClipboard(text), true),
           scrollToEndIndicator: () => c.inverse(" ↓ 最新へ (ctrl+end) "),
         })
-      : new TuiMainScreen(new ProcessTerminal());
+      : new TuiMainScreen(terminal);
     // home/end stay with the input line; the transcript jumps with ctrl+home/end.
     if (fullscreen) getKeybindings().setUserBindings({ "tui.altScreen.top": "ctrl+home", "tui.altScreen.bottom": "ctrl+end" });
     this.editor = new Editor(this.tui, editorTheme, { paddingX: 1 });
@@ -648,6 +653,7 @@ class App {
     const agent = this.host.agent;
     agent.permissions.mode = mode;
     agent.session?.append({ type: "permission_mode", mode });
+    if (mode === "auto") this.notify("権限モード auto: すべてのツールを確認なしで実行します（deny・ask のルールは効きます）", c.red);
     this.updateFooter();
     this.tui.requestRender();
   }
@@ -732,16 +738,18 @@ class App {
   private updateFooter(): void {
     const a = this.host.agent;
     const pct = a.model.contextWindow ? Math.round((this.contextTokens / a.model.contextWindow) * 100) : 0;
+    // auto runs everything without asking: it stands out in red, so it is never on unnoticed.
+    const mode = `権限: ${PERMISSION_MODE_LABELS[a.permissions.mode]}`;
     const parts = [
-      `${a.model.provider}/${a.model.id}`,
-      `推論: ${a.model.reasoning ? a.thinking : "なし"}`,
-      `権限: ${PERMISSION_MODE_LABELS[a.permissions.mode]}`,
-      `ctx ${fmtTokens(this.contextTokens)}/${fmtTokens(a.model.contextWindow)} (${pct}%)`,
+      c.gray(`${a.model.provider}/${a.model.id}`),
+      c.gray(`推論: ${a.model.reasoning ? a.thinking : "なし"}`),
+      a.permissions.mode === "auto" ? c.red(c.bold(mode)) : c.gray(mode),
+      c.gray(`ctx ${fmtTokens(this.contextTokens)}/${fmtTokens(a.model.contextWindow)} (${pct}%)`),
     ];
-    if (a.session) parts.push(`session ${a.session.id}`);
-    if (this.totalCost > 0) parts.push(`$${this.totalCost.toFixed(3)}`);
+    if (a.session) parts.push(c.gray(`session ${a.session.id}`));
+    if (this.totalCost > 0) parts.push(c.gray(`$${this.totalCost.toFixed(3)}`));
     const plugins = [...this.host.host.status.values()];
-    this.footer.setText(c.gray(parts.join(" · ")) + (plugins.length ? `\n${c.cyan(plugins.join(" · "))}` : ""));
+    this.footer.setText(parts.join(c.gray(" · ")) + (plugins.length ? `\n${c.cyan(plugins.join(" · "))}` : ""));
   }
 
   private loadHistory(): string[] {
@@ -760,16 +768,9 @@ class App {
   private saveHistory(text: string): void {
     if (!this.host.historyPath) return;
     try {
-      appendFileSync(this.host.historyPath, `${JSON.stringify(text)}\n`);
+      appendFileSync(this.host.historyPath, `${JSON.stringify(text)}\n`, { mode: 0o600 });
     } catch {}
   }
-}
-
-/** 131072 → "128k" (context sizes are often powers of two), 256000 → "256k", 1_050_000 → "1.05M", 1534 → "1.5k". */
-function fmtTokens(n: number): string {
-  if (n >= 1_000_000) return `${+(n / 1_000_000).toFixed(2)}M`;
-  if (n >= 1024 && n % 1000 !== 0 && n % 1024 === 0) return `${n / 1024}k`;
-  return n >= 1000 ? `${+(n / 1000).toFixed(1)}k` : String(n);
 }
 
 /** A single truncated line whose text can change. */

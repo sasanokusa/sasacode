@@ -1,9 +1,9 @@
 // /usage: what this run used, what the ChatGPT plan has left, and a record of every session on
 // this machine (read back from the session logs), with a contributions graph by day.
 import { readdirSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
-import type { AssistantMessage, Plugin } from "@sasacode/plugin-api";
+import { fmtTokens } from "@sasacode/ai";
+import { type AssistantMessage, type Plugin, sasacodeHome } from "@sasacode/plugin-api";
 import { codexTokens, readCodexAuth } from "./openai-codex/auth.ts";
 
 export interface UsageRecord {
@@ -28,7 +28,7 @@ function record(m: AssistantMessage): UsageRecord {
  * Every model response recorded in the session logs under `home`. Summaries written by compaction
  * and subagent runs are not in the logs, so they are not counted.
  */
-export function readRecords(home = process.env.SASACODE_HOME ?? join(homedir(), ".sasacode")): UsageRecord[] {
+export function readRecords(home = sasacodeHome()): UsageRecord[] {
   const root = join(home, "sessions");
   const out: UsageRecord[] = [];
   let dirs: string[] = [];
@@ -113,21 +113,13 @@ const cell = (color: number) => `\x1b[48;5;${color}m  \x1b[0m`;
 const WEEK = 3;
 const LEVELS = [237, 22, 28, 34, 40];
 
-export function fmtCount(n: number): string {
-  if (n < 1000) return String(n);
-  if (n < 1_000_000) return `${+(n / 1000).toFixed(n < 10_000 ? 1 : 0)}k`;
-  if (n < 1_000_000_000) return `${+(n / 1_000_000).toFixed(n < 10_000_000 ? 2 : 1)}M`;
-  return `${+(n / 1_000_000_000).toFixed(2)}B`;
-}
+// One format for token counts everywhere (footer, exit summary, /usage).
+const fmtCount = fmtTokens;
 const fmtCost = (c: number) => (c > 0 ? ` · $${c.toFixed(c < 1 ? 3 : 2)}` : "");
 const sumLine = (s: Sum) => `${fmtCount(s.tokens)} トークン（出力 ${fmtCount(s.output)}）· ${s.requests} 回${fmtCost(s.cost)}`;
 
 /** Display width without escape sequences (Japanese is two columns a character). */
-function vis(s: string): number {
-  let w = 0;
-  for (const ch of s.replace(/\x1b\[[0-9;]*m/g, "")) w += /[\u3000-\u9fff\uff00-\uffef]/.test(ch) ? 2 : 1;
-  return w;
-}
+const vis = (s: string) => Bun.stringWidth(s);
 const pad = (s: string, width: number) => s + " ".repeat(Math.max(1, width - vis(s)));
 
 function bar(fraction: number, width: number, color = 34): string {

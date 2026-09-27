@@ -10,6 +10,7 @@ const out = (r: { content: { type: string; text?: string }[] }) => r.content.map
 
 beforeAll(() => {
   dir = mkdtempSync(join(tmpdir(), "sasacode-tools-"));
+  process.env.SASACODE_HOME = join(dir, ".home"); // where long outputs are saved
 });
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
@@ -64,4 +65,31 @@ test("bash abort kills the whole process group", async () => {
   const r = await p;
   expect(Date.now() - t0).toBeLessThan(3000);
   expect(out(r)).toContain("interrupted by the user");
+});
+
+test("bash: a character split across two writes stays whole", async () => {
+  // "あ" is e3 81 82: the first two bytes, a pause, then the last one.
+  const r = await bashTool.execute({ command: "printf '\\343\\201'; sleep 0.2; printf '\\202\\n'" }, ctx());
+  expect(out(r)).toStartWith("あ\n");
+});
+
+test("bash: a flood of output is kept to its tail in memory and saved whole, privately", async () => {
+  const r = await bashTool.execute({ command: "for i in $(seq 1 20000); do echo line-$i; done" }, ctx());
+  const text = out(r);
+  const file = /saved to (\S+)\]/.exec(text)![1]!;
+  expect(file).toContain(join(process.env.SASACODE_HOME ?? "", "tmp"));
+  expect(readFileSync(file, "utf8").split("\n")[0]).toBe("line-1");
+  expect(text).toContain("line-20000");
+  const { statSync } = await import("node:fs");
+  expect(statSync(file).mode & 0o777).toBe(0o600);
+});
+
+test("read: pipes and devices are refused, big images too, big files read only as far as shown", async () => {
+  Bun.spawnSync(["mkfifo", join(dir, "fifo")]);
+  expect(out(await readTool.execute({ path: "fifo" }, ctx()))).toContain("not a regular file");
+  writeFileSync(join(dir, "huge.png"), Buffer.alloc(5_000_001));
+  expect(out(await readTool.execute({ path: "huge.png" }, ctx()))).toContain("over the 5000000 bytes");
+  writeFileSync(join(dir, "big.log"), `${"x".repeat(99)}\n`.repeat(120_000)); // 12 MB
+  const r = out(await readTool.execute({ path: "big.log", limit: 3 }, ctx()));
+  expect(r).toContain("Showing lines 1-3 of a 12 MB file. Use offset=4");
 });

@@ -60,7 +60,8 @@ export class SessionFile {
   }
 
   static create(dir: string, cwd: string, secrets: string[] = []): SessionFile {
-    mkdirSync(dir, { recursive: true });
+    // Conversations hold file contents and pasted text: readable by the user only.
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
     const id = crypto.randomUUID().slice(0, 8);
     const createdAt = new Date().toISOString();
     const path = join(dir, `${createdAt.replace(/[:.]/g, "-")}_${id}.jsonl`);
@@ -90,7 +91,7 @@ export class SessionFile {
     let line = JSON.stringify(entry);
     // Never persist API keys, even if a tool echoed one.
     for (const s of this.secrets) line = line.replaceAll(s, "[REDACTED]");
-    appendFileSync(this.path, `${line}\n`);
+    appendFileSync(this.path, `${line}\n`, { mode: 0o600 });
   }
 }
 
@@ -130,10 +131,13 @@ function readEntries(path: string): SessionEntry[] {
  * get one saying so; `repaired` tells the caller to persist that (a replace entry), so the next
  * restore sees the same history.
  */
-export function restore(entries: SessionEntry[]): { messages: Message[]; model?: string; permissionMode?: string; repaired: boolean } {
+/**
+ * The conversation and the model to continue with. `permission_mode` entries are a record of what
+ * the user chose, not restored: resuming never starts in a looser mode than the one asked for now.
+ */
+export function restore(entries: SessionEntry[]): { messages: Message[]; model?: string; repaired: boolean } {
   const messages: Message[] = [];
   let model: string | undefined;
-  let permissionMode: string | undefined;
   for (const e of entries) {
     if (e.type === "message") {
       messages.push(e.message);
@@ -141,10 +145,9 @@ export function restore(entries: SessionEntry[]): { messages: Message[]; model?:
       if (e.message.role === "assistant") model = `${e.message.provider}/${e.message.model}`;
     } else if (e.type === "replace") messages.splice(0, messages.length, ...e.messages);
     else if (e.type === "model") model = e.model;
-    else if (e.type === "permission_mode") permissionMode = e.mode;
   }
   const settled = settleToolCalls(messages);
-  return { messages: settled, model, permissionMode, repaired: settled.length !== messages.length };
+  return { messages: settled, model, repaired: settled.length !== messages.length };
 }
 
 // No result was saved, which does not mean the call did nothing: it may have run just before a crash.

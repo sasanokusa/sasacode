@@ -61,6 +61,7 @@ export const anthropicProvider: Provider = {
       baseURL: model.baseUrl,
       maxRetries: req.maxRetries ?? 8,
       defaultHeaders: model.headers,
+      ...(req.fetch ? { fetch: req.fetch } : {}),
     });
     // Proxies may reject eager_input_streaming, so only send it to the official API.
     const official = !model.baseUrl || model.baseUrl.startsWith(OFFICIAL_BASE);
