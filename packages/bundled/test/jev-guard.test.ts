@@ -5,8 +5,8 @@ import { join } from "node:path";
 import { Agent, type ApprovalRequest, type PermissionMode, PermissionPolicy, PluginHost } from "@sasacode/agent";
 import { type AssistantContent, type AssistantMessage, emptyUsage, registerApi, replayProvider } from "@sasacode/ai";
 import builtinTools, { bashTool } from "@sasacode/tools";
-import { bundledPlugins, jevAdjust, jevInterpret, jevParseAnswers, jevState, pathArgs, redact, shellWords } from "../src/index.ts";
-import { DEFAULT_THRESHOLDS, type JevAnswers } from "../src/jev-guard.ts";
+import { bundledPlugins } from "../src/index.ts";
+import jevGuard, { adjust as jevAdjust, buildState as jevState, DEFAULT_THRESHOLDS, interpret as jevInterpret, type JevAnswers, parseAnswers as jevParseAnswers, pathArgs, redact, shellWords } from "../../../plugins/jev-guard/index.ts";
 
 const root = mkdtempSync(join(tmpdir(), "sasacode-jev-"));
 afterAll(() => rmSync(root, { recursive: true, force: true }));
@@ -181,7 +181,7 @@ async function withJev(command: string, jev: JevAnswers | Error, opts: { mode?: 
   host.setUI({ interactive: opts.approve !== undefined, notify: (m) => notices.push(m), confirm: async () => false, select: async () => undefined });
   await host.load("builtin-tools", builtinTools);
   await host.load("permission-presets", bundledPlugins["permission-presets"]!);
-  await host.load("jev-guard", bundledPlugins["jev-guard"]!);
+  await host.load("jev-guard", jevGuard);
   if (opts.jev !== undefined) await host.commands.find((c) => c.name === "jev")!.run({ args: opts.jev } as any);
   await agent.prompt("please tidy up");
   if (opts.injected) {

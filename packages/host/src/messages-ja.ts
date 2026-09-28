@@ -217,4 +217,7 @@ export const TO_JA: Record<string, string> = {
   // ── bundled plugins ───────────────────────────────────────────────
   "unknown permission preset \"{name}\" ({known})": "不明な権限プリセット \"{name}\"（{known}）",
   "browsr: unknown mode \"{mode}\" ({known})": "browsr: 不明なモード \"{mode}\"（{known}）",
+  "jev-guard is no longer bundled, so the Jev check your config turns on is not running: sasacode plugin install sasacode-plugin-jev-guard":
+    "jev-guard は同梱ではなくなったため、config で有効にしている Jev の判定は動いていない: sasacode plugin install sasacode-plugin-jev-guard",
+  "could not pack {dir}": "{dir} をまとめられなかった",
 };

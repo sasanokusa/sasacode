@@ -1,4 +1,5 @@
 import type { PluginAPI } from "@sasacode/plugin-api";
+import { L } from "./lang.ts";
 
 /**
  * Where jev-guard's questions go. Four services host Jev itself (same model, three wire
@@ -183,12 +184,12 @@ function serviceBackend(name: Exclude<BackendName, "chat">, s: BackendSettings):
     label: `${svc.label} (${model})`,
     async problem() {
       key ??= keyFor(svc, s.apiKeyEnv);
-      return (await key) ? undefined : `API キーがありません（${s.apiKeyEnv ?? svc.keyEnv}）`;
+      return (await key) ? undefined : L(`API キーがありません（${s.apiKeyEnv ?? svc.keyEnv}）`, `no API key (${s.apiKeyEnv ?? svc.keyEnv})`);
     },
     async ask(state, questions, signal) {
       key ??= keyFor(svc, s.apiKeyEnv);
       const k = await key;
-      if (!k) throw new BackendError(`API キーがありません（${s.apiKeyEnv ?? svc.keyEnv}）`);
+      if (!k) throw new BackendError(L(`API キーがありません（${s.apiKeyEnv ?? svc.keyEnv}）`, `no API key (${s.apiKeyEnv ?? svc.keyEnv})`));
       const auth = { authorization: `Bearer ${k}` };
       if (svc.dialect === "vercel") {
         const headers = { ...auth, "ai-gateway-protocol-version": "0.0.1", "ai-evaluation-model-specification-version": "4", "ai-model-id": model };
@@ -208,7 +209,7 @@ function chatBackend(api: PluginAPI, s: BackendSettings): Backend {
   const model = s.model;
   return {
     name: "chat",
-    label: `チャットモデル (${model ?? "現在のモデル"})`,
+    label: L(`チャットモデル (${model ?? "現在のモデル"})`, `chat model (${model ?? "the current model"})`),
     async ask(state, questions, signal) {
       const lines = Object.entries(questions).map(([id, q]) =>
         q.type === "noul"

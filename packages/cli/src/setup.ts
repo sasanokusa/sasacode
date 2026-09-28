@@ -189,6 +189,9 @@ export async function setup(opts: SetupOptions): Promise<Harness> {
       const own = new Set(usable.map((p) => p.manifest.name));
       for (const [name, plugin] of Object.entries(bundledPlugins))
         if (!disabled.has(name) && name !== "openai-codex" && !own.has(name)) await host.load(name, plugin);
+      // jev-guard left the bundle (0.9.6): a config that turns it on must not lose it without a word.
+      if ((config.plugins?.settings?.["jev-guard"] as { enabled?: boolean } | undefined)?.enabled && !own.has("jev-guard") && !disabled.has("jev-guard"))
+        host.notify(t("jev-guard is no longer bundled, so the Jev check your config turns on is not running: sasacode plugin install sasacode-plugin-jev-guard"), "warning");
 
       if (!disabled.has("skills")) {
         const dirs = [join(home, "skills"), join(opts.cwd, ".sasacode", "skills"), ...usable.flatMap((p) => {

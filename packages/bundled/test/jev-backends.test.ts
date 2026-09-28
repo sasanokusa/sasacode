@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import type { PluginAPI } from "@sasacode/plugin-api";
-import { detectService, makeBackend, parseVercel, type Question } from "../src/jev-backends.ts";
+import { detectService, makeBackend, parseVercel, type Question } from "../../../plugins/jev-guard/backends.ts";
 
 const realFetch = globalThis.fetch;
 const saved = { ...process.env };

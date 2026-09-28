@@ -1,0 +1,34 @@
+{
+  "name": "sasacode-plugin-jev-guard",
+  "version": "1.0.0",
+  "description": "A second opinion on tool calls from TypeSafe's Jev before they run: stops dangerous calls that would run unasked, hands safe softDeny calls to you",
+  "keywords": [
+    "sasacode-plugin",
+    "sasacode",
+    "jev",
+    "typesafe"
+  ],
+  "type": "module",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sasanokusa/sasacode.git",
+    "directory": "plugins/jev-guard"
+  },
+  "files": [
+    "index.ts",
+    "backends.ts",
+    "lang.ts",
+    "README.md"
+  ],
+  "peerDependencies": {
+    "@sasacode/plugin-api": "^1.8.0"
+  },
+  "sasacode": {
+    "name": "jev-guard",
+    "apiVersion": "^1.8.0",
+    "extensions": [
+      "index.ts"
+    ]
+  }
+}

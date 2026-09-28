@@ -183,40 +183,15 @@ sasacode -m llama/<モデル名>
 - 権限は、ツールを呼ぶ前の判定であって隔離（サンドボックス）ではない。判定から実行までの間にリンクを差し替えるような操作や、許可した bash コマンドの中身までは防げない。信頼できないコードを扱うときは、コンテナなど OS 側で隔離すること。
 - 中断（esc）した後は、承認済みでもまだ始まっていないツールは実行しない。
 
-### Jev による実行前判断（`jev-guard`）
+### Jev による実行前判断（配布プラグイン `jev-guard`）
 
-ルールと権限モードの判定の後に、Jev の判定を重ねる。Jev は文章を返さず、型付きの質問に確率で答えるモデルで、1回あたり数百ミリ秒で済む。
+ルールと権限モードの判定の後に、判断専用モデル [Jev](https://commandcode.ai/models/jev)（TypeSafe）の判定を重ねるプラグイン。0.9.5 までは同梱していたが、既定で無効でキーも要るので、配布プラグインに分けた。
 
-TUI で `/jev on` と打てば、そのセッションで有効になる（`/jev off` で無効。`/resume` した後も保たれる）。いつも使うなら設定に書く：
-
-```json
-{ "plugins": { "settings": { "jev-guard": { "enabled": true } } } }
+```bash
+sasacode plugin install sasacode-plugin-jev-guard
 ```
 
-- Jev への接続先は `backend` で選ぶ。指定がなければ、`CMD_API_KEY` か `TYPESAFE_API_KEY` のある方を使う（どちらもキーチェーンの `commandcode` / `typesafe` でもよい）。
-
-  | `backend` | 接続先 | キー | 既定の `model` |
-  | --- | --- | --- | --- |
-  | `commandcode` | Command Code の Provider API（GOAT 以上のプラン） | `CMD_API_KEY` | `typesafe/jev` |
-  | `typesafe` | TypeSafe の API | `TYPESAFE_API_KEY` | `jev-latest` |
-  | `openrouter` | OpenRouter の Decisions API（alpha） | `OPENROUTER_API_KEY` | `typesafe/jev-latest` |
-  | `vercel` | Vercel AI Gateway | `AI_GATEWAY_API_KEY` | `typesafe-ai/jev` |
-  | `chat` | sasacode の任意のモデル（`model` に `"<provider>/<model>"`、省略で現在のモデル） | そのプロバイダーのキー | — |
-
-  OpenRouter と Vercel は、チャット用にキーを持っているだけの人に判定を送らないよう、名前を指定したときだけ使う。`endpoint` と `apiKeyEnv` で接続先の URL とキーの変数を変えられる（プロキシなど）。動作を実際の API で確かめたのは `commandcode` と `chat` だけで、`typesafe` / `openrouter` / `vercel` は公開されている仕様どおりの形で送る（テストは模擬サーバー）。
-- `chat` は Jev の代わりにチャットモデルへ同じ質問をし、JSON で答えさせる。確率が較正されていない代用品で、遅い。実際のコマンドで比べると、DeepSeek V4.1 Flash は止めるべき呼び出しを Jev より多く通した（[docs/benchmarks.md](docs/benchmarks.md)）。ローカルモデルは1回に数十秒かかり実用的でない。Jev に接続できない環境で、判定の仕組みだけ使いたいとき向け。
-- 有効にすると、ツール呼び出しの内容（コマンド、変更されうるパスとその git の状態、ユーザーの直近の依頼）が接続先に送られる。API キーやトークンらしき文字列は、送る前に伏せる（ベストエフォート）。
-- 判定を変えるのは次の場合だけ。
-  - 確認なしで実行されるはずだった呼び出し（allow ルール、`auto` モード）: 危険なら拒否、要確認なら確認に回す。
-  - `agent` モードで確認に回るはずだった呼び出し: 安全なら確認なしで実行する（モデルによる判定の代わり）。Jev が判断を保留したときは、従来どおりモデルが判定する。
-  - softDeny の呼び出し: 安全なら、拒否せずユーザーに確認する。
-- ユーザーに確認するはずの呼び出しを、Jev が拒否に変えることはない（確認ダイアログに Jev の判定を添える）。deny ルールの呼び出しは Jev に送らない。
-- Jev に渡すのは、ハーネスが集めた事実とユーザー自身の依頼だけで、ツールの出力やファイルの中身は渡さない（Jev は状態に紛れ込んだ誘導文に影響されうるため）。
-- 読み取りと、作業ディレクトリ内の編集は判定しない。Jev に届かないとき（キーがない、通信エラー、タイムアウト 5 秒）は、Jev なしの判定のまま続ける。
-- 閾値は `thresholds`（`allow` 0.8、ヘッドレスでの `headlessAllow` 0.9、`deny` 0.85、`confidence` 0.6、`risk` 0.6、`flag` 0.7、`clear` 0.3）で変えられる。ほかの設定は `timeoutMs`（既定 5 秒、`chat` は 60 秒）、`skip`（判定しないツール。既定 `todo_write`、`task`）。
-- `/jev` で状態と直近の判定を見られる。`/jev on` / `/jev off` でこのセッションの有効・無効を切り替える（キーがなければ有効にせず理由を示す）。判定はセッションにも記録する。
-- Jev はコマンドの文字列から判断するので、`ssh host 'ps aux'` のような他のマシンでの読み取りは安全と見る。また `bun run clean` のようにスクリプトの中身が見えない呼び出しは、中身が危険でも気づけない。他のマシンへの操作は `guard` プリセットが常に確認に回す。スクリプト経由の呼び出しも必ず確認したいなら、ルールで決める（例: `"permissions": { "ask": ["bash(bun run *)", "bash(make *)"] }`）。
-- 実際のセッションログ 5,135 件での結果: 安全な呼び出しの 92% が auto で止められず、agent モードでは 71% が確認なしで通る。要確認のものが agent で確認なしに通ったのは 1%（ローカル）。詳細は [docs/benchmarks.md](docs/benchmarks.md)。
+入れた後は `/jev on` でそのセッションで有効になり、いつも使うなら設定に `{ "plugins": { "settings": { "jev-guard": { "enabled": true } } } }` と書く（0.9.5 までの設定はそのまま使える。設定があるのにプラグインが入っていなければ、起動時に入れ方を知らせる）。接続先、判定の変え方、閾値などは [plugins/jev-guard/README.md](plugins/jev-guard/README.md) にある。
 
 ### プロジェクトの信頼
 
@@ -245,7 +220,6 @@ TUI で `/jev on` と打てば、そのセッションで有効になる（`/jev
 | `web-fetch` | `web_fetch` ツール。URL を取ってきてテキストにする |
 | `browsr` | [browsr-4-agent](https://github.com/sasanokusa/browsr-4-agent) による Web 検索（`search`）と本文の閲覧（`open`）。`browsr-agent` が PATH にあれば自動で起動する |
 | `permission-presets` | 権限ルールのプリセット（`guard`、`read-only-shell`、`tests`） |
-| `jev-guard` | 実行前に、判断専用モデル [Jev](https://commandcode.ai/models/jev)（TypeSafe）で呼び出しの安全性を判定する。**既定は無効**（下記） |
 | `openai-codex` | ChatGPT プランのモデル（`openai-codex/…`）。`sasacode login` の認証情報を使う |
 | `usage` | `/usage` コマンド。この起動の使用量、今日・直近7日・30日・全期間の合計、ChatGPT プランの残り（5時間・週の枠と、リセットまでの時間）を出す。`/usage graph` は日ごとの使用量を GitHub の Contributions Graph のように、`/usage history [日数]` は日別の記録を、`/usage models` はモデル別の合計を、`/usage plan` はプランの残りだけを出す。記録は `~/.sasacode/sessions` のセッションログから読む（圧縮とサブエージェントの分は含まない） |
 | `goal` | セッションのゴール（最終目的）。`/goal <目的>` で設定し、`done` / `pause` / `resume` / `clear` で状態を変える。「これをゴールにして」と頼めば、モデルが `set_goal` ツールで会話から要約して設定する。作業中のゴールはシステムプロンプトとフッターに出る |

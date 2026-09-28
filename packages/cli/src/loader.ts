@@ -208,7 +208,21 @@ export async function pluginCommand(args: string[], cwd: string): Promise<number
         console.log([...(local ? describeLocal(local) : await describeNpm(spec)), t(warning)].join("\n"));
         if (!(await confirm(t("Install it?"), yes))) return 1;
         if (!existsSync(join(dir, "package.json"))) writeFileSync(join(dir, "package.json"), '{ "private": true }\n');
-        await bun(["add", "--ignore-scripts", local ?? spec], dir);
+        // A folder is packed first and the archive installed: bun links a folder's files one by one,
+        // and a plugin whose files point outside its own folder is refused at load time.
+        let source = spec;
+        if (local) {
+          const packs = join(dir, "local-packages");
+          mkdirSync(packs, { recursive: true });
+          const pkg = readJson(join(local, "package.json")) ?? {};
+          // The name `pm pack` gives the archive: "@scope/name" becomes "scope-name".
+          const archive = join(packs, `${String(pkg.name).replace(/^@/, "").replace("/", "-")}-${pkg.version}.tgz`);
+          rmSync(archive, { force: true });
+          await bun(["pm", "pack", "--destination", packs, "--quiet"], local);
+          if (!existsSync(archive)) throw new Error(t("could not pack {dir}", { dir: local }));
+          source = archive;
+        }
+        await bun(["add", "--ignore-scripts", source], dir);
         const name = local ? readJson(join(local, "package.json"))?.name : parseSpec(spec).name;
         console.log(t("installed {name}@{version} into {dir}", { name, version: installedVersion(dir, name) ?? "?", dir }));
       }

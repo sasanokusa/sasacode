@@ -2,6 +2,12 @@
   "version": 1,
   "plugins": [
     {
+      "name": "jev-guard",
+      "source": "sasacode-plugin-jev-guard",
+      "description": "実行前に、判断専用モデル Jev（TypeSafe）で呼び出しの安全性を判定する。確認なしで動くはずだった危険な呼び出しを止め、softDeny の安全な呼び出しは確認に回す。/jev on で有効（0.9.5 までは同梱）",
+      "author": "sasanokusa"
+    },
+    {
       "name": "agent-hygiene",
       "source": "sasacode-plugin-agent-hygiene",
       "description": "作業記録を散らかさない。STATE.md は「現在の作業」と「次の作業」だけにし、履歴は agent_log ツールで .agents/log.jsonl へ。/kickoff と /handoff の定型手順つき",

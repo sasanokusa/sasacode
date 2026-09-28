@@ -289,7 +289,7 @@ sasacode                    <span class="c"># 対話モードで始める</span>
         <tr><td><code>/compact</code></td><td>会話を要約してコンテキストを空ける</td><td>compaction</td></tr>
         <tr><td><code>/undo</code></td><td>write / edit によるファイルの変更を1件戻す（<code>list</code> で一覧）</td><td>checkpoints</td></tr>
         <tr><td><code>/task</code></td><td>サブエージェントの一覧・詳細、<code>send &lt;id&gt; &lt;内容&gt;</code> で指示、<code>stop &lt;id&gt;</code> で停止</td><td>subagent</td></tr>
-        <tr><td><code>/presets</code> <code>/jev</code></td><td>権限プリセットの一覧 / Jev の状態と直近の判定（<code>/jev on</code>・<code>/jev off</code> で切り替え）</td><td>permission-presets / jev-guard</td></tr>
+        <tr><td><code>/presets</code> <code>/jev</code></td><td>権限プリセットの一覧 / Jev の状態と直近の判定（<code>/jev on</code>・<code>/jev off</code> で切り替え。<a href="#jev">jev-guard を入れたとき</a>）</td><td>permission-presets / jev-guard</td></tr>
         <tr><td><code>/mcp</code> <code>/skills</code> <code>/skill:&lt;name&gt;</code> <code>/browsr</code></td><td>MCP の接続状態（<code>/mcp reconnect [name]</code> で再接続。落ちたときは数回まで自動で再接続する） / Skills の一覧 / Skill を明示して使う / browsr の状態</td><td>mcp / skills / browsr</td></tr>
       </table></div>
 
@@ -428,8 +428,9 @@ sasacode -m pgx/&lt;モデル名&gt;</code></pre>
         <li>中断（<kbd>esc</kbd>）した後は、承認済みでもまだ始まっていないツールは実行しない。</li>
       </ul>
 
-      <h3 id="jev">Jev による判定（<code>jev-guard</code>）</h3>
-      <p>判断専用モデル Jev に、呼び出しが安全かを確率で答えさせ、上の <code>permission</code> フックで判定を変える。既定は無効。TUI で <code>/jev on</code> と打てばそのセッションで有効になり（<code>/jev off</code> で無効。<code>/resume</code> 後も保たれる）、いつも使うなら設定に書く。</p>
+      <h3 id="jev">Jev による判定（配布プラグイン <code>jev-guard</code>）</h3>
+      <p>判断専用モデル Jev に、呼び出しが安全かを確率で答えさせ、上の <code>permission</code> フックで判定を変えるプラグイン。0.9.5 までは同梱していたが、既定で無効でキーも要るので、配布プラグインに分けた。入れた後は TUI で <code>/jev on</code> と打てばそのセッションで有効になり（<code>/jev off</code> で無効。<code>/resume</code> 後も保たれる）、いつも使うなら設定に書く。0.9.5 までの設定はそのまま使え、設定があるのにプラグインが入っていなければ起動時に入れ方を知らせる。</p>
+      <pre><code>sasacode plugin install sasacode-plugin-jev-guard</code></pre>
       <pre><code>{ "plugins": { "settings": { "jev-guard": { "enabled": true } } } }</code></pre>
       <div class="tbl"><table>
         <tr><th>元の判定</th><th>Jev が「安全」</th><th>Jev が「要確認」</th><th>Jev が「危険」</th></tr>
@@ -438,7 +439,7 @@ sasacode -m pgx/&lt;モデル名&gt;</code></pre>
         <tr><td>softDeny</td><td>確認</td><td class="no-c">拒否</td><td class="no-c">拒否</td></tr>
         <tr><td>確認（それ以外）</td><td colspan="3">変えない（確認ダイアログに Jev の判定を添える）</td></tr>
       </table></div>
-      <p>送るのは、ハーネスが集めた事実（コマンド、変更されうるパスとその git の状態、作業ディレクトリの内か外か）と、ユーザー自身の直近の依頼だけ。ツールの出力やファイルの中身は送らない。キーやトークンらしい文字列は伏せる。設定の全項目は <a href="#p-jev">同梱プラグインの設定</a>。</p>
+      <p>送るのは、ハーネスが集めた事実（コマンド、変更されうるパスとその git の状態、作業ディレクトリの内か外か）と、ユーザー自身の直近の依頼だけ。ツールの出力やファイルの中身は送らない。キーやトークンらしい文字列は伏せる。設定の全項目は <a href="#p-jev">下の表</a>。</p>
     </section>
 
     <!-- ─────────────────────────────────────────────── -->
@@ -587,7 +588,7 @@ sasacode -m pgx/&lt;モデル名&gt;</code></pre>
         <tr><td><code>browsr</code></td><td><code>command</code>、<code>mode</code>、<code>config</code></td><td><a href="https://github.com/sasanokusa/browsr-4-agent">browsr-4-agent</a> で検索（<code>search</code>）と本文の閲覧（<code>open</code>）。<code>browsr-agent</code> が PATH にあれば自動で起動。別の場所なら <code>command</code> で指定</td></tr>
       </table></div>
 
-      <h3 id="p-jev">Jev（<code>jev-guard</code>）の設定</h3>
+      <h3 id="p-jev">Jev（配布プラグイン <code>jev-guard</code>）の設定</h3>
       <div class="tbl"><table>
         <tr><th>設定</th><th>既定</th><th>内容</th></tr>
         <tr><td><code>enabled</code></td><td><code>false</code></td><td>有効にする</td></tr>

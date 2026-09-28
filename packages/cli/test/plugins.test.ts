@@ -140,6 +140,20 @@ test("a user plugin named like a bundled one replaces it instead of running besi
   expect(h.host.plugins.filter((p) => p.name === "todo")).toHaveLength(1);
 });
 
+test("a config that turns jev-guard on, now that it is not bundled, is told how to get it back", async () => {
+  write(join(home, "config.json"), JSON.stringify({ providers: { test: { api: "replay" } }, model: "test/m", plugins: { settings: { "jev-guard": { enabled: true } } } }));
+  const notices: string[] = [];
+  const h = await setup({ cwd: proj, noSession: true });
+  await h.loadPlugins({ interactive: false, notify: (m) => notices.push(m), confirm: async () => false, select: async () => undefined });
+  expect(notices.some((n) => n.includes("sasacode plugin install sasacode-plugin-jev-guard"))).toBe(true);
+
+  write(join(home, "plugins", "jev-guard.ts"), PLUGIN("jev_stub")); // installed: nothing to say
+  const quiet: string[] = [];
+  const h2 = await setup({ cwd: proj, noSession: true });
+  await h2.loadPlugins({ interactive: false, notify: (m) => quiet.push(m), confirm: async () => false, select: async () => undefined });
+  expect(quiet.some((n) => n.includes("sasacode-plugin-jev-guard"))).toBe(false);
+});
+
 test("plugin remove takes a plugin's name, never a path out of the plugins folder", async () => {
   const outside = join(home, "..", "keep-me");
   mkdirSync(outside, { recursive: true });

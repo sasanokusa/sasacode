@@ -1,10 +1,17 @@
 import { existsSync, realpathSync, statSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { basename, dirname, join, resolve } from "node:path";
-import { CHAIN, isInside } from "@sasacode/agent";
-import { t } from "@sasacode/host";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type { Decision, HookMap, Plugin, ToolDefinition } from "@sasacode/plugin-api";
-import { type Backend, type BackendName, type BackendSettings, detectService, makeBackend, parseNative, type Question, type RawAnswers } from "./jev-backends.ts";
+import { type Backend, type BackendName, type BackendSettings, detectService, makeBackend, parseNative, type Question, type RawAnswers } from "./backends.ts";
+import { L, setLang } from "./lang.ts";
+
+/** Where one shell command ends and the next begins (the core splits commands the same way). */
+const CHAIN = /&&|\|\||;|\||\n|&/;
+
+function isInside(path: string, dir: string): boolean {
+  const rel = relative(dir, path);
+  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+}
 
 /**
  * A second opinion on tool calls from TypeSafe's Jev, a decision model that answers typed
@@ -48,7 +55,9 @@ export const DEFAULT_THRESHOLDS: Thresholds = { allow: 0.8, headlessAllow: 0.9, 
 
 const CONCERNS = {
   destroys_data: {
-    label: "データ消失",
+    get label() {
+      return L("データ消失", "data loss");
+    },
     instructions: "Can this call permanently delete or overwrite data that neither git nor a rebuild can bring back?",
     criteria: {
       true: "Deletes or overwrites uncommitted work, files outside git, databases, or whole directories other than build output",
@@ -56,7 +65,9 @@ const CONCERNS = {
     },
   },
   outside_workspace: {
-    label: "作業ディレクトリ外",
+    get label() {
+      return L("作業ディレクトリ外", "outside the workspace");
+    },
     instructions: "Does this call change anything outside the workspace directory and temporary directories?",
     criteria: {
       true: "Writes, deletes or moves files elsewhere in the home directory or the system, pushes, publishes, deploys, or sends data to a server",
@@ -64,7 +75,9 @@ const CONCERNS = {
     },
   },
   touches_secrets: {
-    label: "認証情報・セキュリティ設定",
+    get label() {
+      return L("認証情報・セキュリティ設定", "credentials or security settings");
+    },
     instructions: "Does this call read, send, or change credentials or security settings?",
     criteria: {
       true: "SSH keys, API keys, tokens, passwords, .env files, keychains, sudo, firewall, or permissions of system files",
@@ -116,10 +129,10 @@ export function interpret(a: JevAnswers, t: Thresholds, interactive: boolean): J
     Object.values(a.concerns).every((v) => v < t.clear)
   )
     reading = "safe";
-  const label = { safe: "安全", risky: "要確認", dangerous: "危険", unsure: "判断保留" }[reading];
+  const label = { safe: L("安全", "safe"), risky: L("要確認", "risky"), dangerous: L("危険", "dangerous"), unsure: L("判断保留", "unsure") }[reading];
   const parts = [`allow ${fmt(p.allow)} · ask ${fmt(p.ask)} · deny ${fmt(p.deny)}`];
   for (const k of flags) parts.push(`${CONCERNS[k].label} ${fmt(a.concerns[k])}`);
-  return { reading, summary: `Jev: ${label}（${parts.join(" · ")}）`, answers: a };
+  return { reading, summary: L(`Jev: ${label}（${parts.join(" · ")}）`, `Jev: ${label} (${parts.join(" · ")})`), answers: a };
 }
 
 const fmt = (n: number) => n.toFixed(2);
@@ -327,7 +340,7 @@ type PermissionResult = HookMap["permission"]["result"];
 export function adjust(ev: Pick<PermissionEvent, "verdict" | "mode">, j: Judgement): PermissionResult | undefined {
   const { decision, source, reason } = ev.verdict;
   if (decision === "allow") {
-    if (j.reading === "dangerous") return { decision: "deny", reason: `${j.summary}。人の確認なしに実行されるはずだった呼び出しを止めました` };
+    if (j.reading === "dangerous") return { decision: "deny", reason: L(`${j.summary}。人の確認なしに実行されるはずだった呼び出しを止めました`, `${j.summary}. Stopped a call that would have run without asking anyone`) };
     if (j.reading === "risky") return { decision: "ask", reason: j.summary };
     return;
   }
@@ -337,7 +350,7 @@ export function adjust(ev: Pick<PermissionEvent, "verdict" | "mode">, j: Judgeme
     if (j.reading === "unsure" && source === "mode" && ev.mode === "agent") return;
     return { decision: "ask", reason: `${reason} / ${j.summary}` };
   }
-  if (source === "soft" && j.reading === "safe") return { decision: "ask", reason: `${reason} → ${j.summary}。確認に回しました` };
+  if (source === "soft" && j.reading === "safe") return { decision: "ask", reason: L(`${reason} → ${j.summary}。確認に回しました`, `${reason} → ${j.summary}. Handed to you to decide`) };
 }
 
 /** Calls worth a judgement: commands and outside actions; not reads, not edits inside the workspace. */
@@ -358,6 +371,7 @@ const REQUEST_ENTRY = "jev-guard-request";
 const ENABLED_ENTRY = "jev-guard-enabled";
 
 const jevGuard: Plugin = (api) => {
+  setLang(api.ui.lang);
   const s = api.settings as JevSettings;
   const thresholds = { ...DEFAULT_THRESHOLDS, ...s.thresholds };
   const skip = s.skip ?? ["todo_write", "task"];
@@ -373,12 +387,21 @@ const jevGuard: Plugin = (api) => {
   let enabled = s.enabled === true;
 
   const status = async () => {
-    if (!enabled) return api.ui.notify(t("Jev ガード: 無効。/jev on で有効（このセッション）。いつも使うなら config の plugins.settings[\"jev-guard\"] に {\"enabled\": true}"));
+    if (!enabled)
+      return api.ui.notify(
+        L(
+          'Jev ガード: 無効。/jev on で有効（このセッション）。いつも使うなら config の plugins.settings["jev-guard"] に {"enabled": true}',
+          'Jev guard: off. /jev on turns it on (for this session); to have it always, put {"enabled": true} in plugins.settings["jev-guard"] in the config',
+        ),
+      );
     const b = await (backend ??= pick()).catch((e: Error) => e);
     api.ui.notify(
       [
-        `${t("Jev ガード: 有効")} · ${b instanceof Error ? t("接続先の設定エラー: {error}", { error: b.message }) : b.label}`,
-        t("問い合わせ {calls} 回 · 判定を変えた {changed} 回 · 失敗 {failures} 回", { calls: stats.calls, changed: stats.changed, failures: stats.failures }),
+        `${L("Jev ガード: 有効", "Jev guard: on")} · ${b instanceof Error ? L(`接続先の設定エラー: ${b.message}`, `endpoint setting error: ${b.message}`) : b.label}`,
+        L(
+          `問い合わせ ${stats.calls} 回 · 判定を変えた ${stats.changed} 回 · 失敗 ${stats.failures} 回`,
+          `${stats.calls} checks · ${stats.changed} decisions changed · ${stats.failures} failures`,
+        ),
         ...recent.slice(-5),
       ].join("\n"),
     );
@@ -386,21 +409,21 @@ const jevGuard: Plugin = (api) => {
 
   api.registerCommand({
     name: "jev",
-    description: t("Jev ガード（実行前の安全判断）の状態と有効・無効"),
+    description: L("Jev ガード（実行前の安全判断）の状態と有効・無効", "Jev guard (a safety check before each call): status, on and off"),
     argumentHint: "[on | off]",
     complete: (prefix) =>
       [
-        { value: "on", label: "on", description: t("このセッションで有効にする") },
-        { value: "off", label: "off", description: t("このセッションで無効にする") },
+        { value: "on", label: "on", description: L("このセッションで有効にする", "turn it on for this session") },
+        { value: "off", label: "off", description: L("このセッションで無効にする", "turn it off for this session") },
       ].filter((o) => o.value.startsWith(prefix)),
     run: async ({ args }) => {
       const arg = args.trim().toLowerCase();
       if (!arg || arg === "status") return status();
-      if (arg !== "on" && arg !== "off") return api.ui.notify(t("使い方: /jev [on | off]"), "warning");
+      if (arg !== "on" && arg !== "off") return api.ui.notify(L("使い方: /jev [on | off]", "usage: /jev [on | off]"), "warning");
       if (arg === "off") {
         enabled = false;
         api.session.append(ENABLED_ENTRY, false);
-        return api.ui.notify(t("Jev ガードを無効にしました（このセッション）"));
+        return api.ui.notify(L("Jev ガードを無効にしました（このセッション）", "Jev guard is off (for this session)"));
       }
       // A backend without a key would only fail on every call: say so now, and stay off.
       backend = undefined;
@@ -409,11 +432,11 @@ const jevGuard: Plugin = (api) => {
       const problem = b instanceof Error ? b.message : await b.problem?.();
       if (problem) {
         backend = undefined;
-        return api.ui.notify(t("Jev ガードを有効にできません: {error}", { error: problem }), "warning");
+        return api.ui.notify(L(`Jev ガードを有効にできません: ${problem}`, `Cannot turn Jev guard on: ${problem}`), "warning");
       }
       enabled = true;
       api.session.append(ENABLED_ENTRY, true);
-      api.ui.notify(t("Jev ガードを有効にしました（このセッション · {backend}）", { backend: (b as Backend).label }));
+      api.ui.notify(L(`Jev ガードを有効にしました（このセッション · ${(b as Backend).label}）`, `Jev guard is on (for this session · ${(b as Backend).label})`));
     },
   });
 
@@ -438,7 +461,7 @@ const jevGuard: Plugin = (api) => {
     stats.failures++;
     if (message === warned) return;
     warned = message;
-    api.ui.notify(t("jev-guard: {message}（Jev なしで判定を続けます）", { message }), "warning");
+    api.ui.notify(L(`jev-guard: ${message}（Jev なしで判定を続けます）`, `jev-guard: ${message} (deciding without Jev from here)`), "warning");
   };
 
   async function ask(state: Record<string, unknown>, signal?: AbortSignal): Promise<JevAnswers | undefined> {

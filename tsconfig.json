@@ -11,11 +11,16 @@
     "verbatimModuleSyntax": true,
     "types": [
       "bun"
-    ]
+    ],
+    // Plugins under plugins/ are published on their own and depend on the plugin API alone.
+    "paths": {
+      "@sasacode/plugin-api": ["./packages/plugin-api/src/index.ts"]
+    }
   },
   "include": [
     "packages/*/src/**/*.ts",
     "packages/*/test/**/*.ts",
+    "plugins/*/*.ts",
     "bench/**/*.ts"
   ]
 }
