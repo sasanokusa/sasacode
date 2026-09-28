@@ -245,9 +245,11 @@ async function registerTools(api: PluginAPI, server: string, cfg: McpServerConfi
       concurrent: t.annotations?.readOnlyHint === true,
       alwaysLoad: cfg.alwaysLoad,
       async execute(args, ctx) {
-        if (state.status !== "connected") return errorResult(`MCP server ${server} is not connected (${state.error ?? state.status}).`);
+        // The client of the moment: after a reconnect, a tool taken before it was registered again still works.
+        const current = state.client;
+        if (state.status !== "connected" || !current) return errorResult(`MCP server ${server} is not connected (${state.error ?? state.status}).`);
         try {
-          const r = await client.callTool({ name: t.name, arguments: args }, undefined, {
+          const r = await current.callTool({ name: t.name, arguments: args }, undefined, {
             signal: ctx.signal,
             timeout: cfg.timeout ?? 600_000,
             resetTimeoutOnProgress: true,
