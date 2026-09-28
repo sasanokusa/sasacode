@@ -27,7 +27,7 @@ curl -fsSL https://sasanokusa.com/sasacode/install.sh | sh
 
 - Single binaries for macOS (arm64 / x64) and Linux (x64 / arm64, glibc / musl, and a baseline build for CPUs without AVX2). Bun is not needed.
 - The installer and the binary come from the latest [GitHub release](https://github.com/sasanokusa/sasacode/releases) and are checked against SHA256. The sasanokusa.com URL redirects to the latest release's `install.sh`.
-- `SASACODE_VERSION=v0.9.4` pins a version and `SASACODE_INSTALL_DIR` changes where it goes. On Windows, use WSL.
+- `SASACODE_VERSION=v0.9.5` pins a version and `SASACODE_INSTALL_DIR` changes where it goes. On Windows, use WSL.
 - `sasacode update` updates in place (the same checks as the installer; `--check` only reports). A newer version is mentioned quietly once at startup (`"updateCheck": false` turns it off). From a source checkout, use `git pull` and `bun install`.
 
 From source ([Bun](https://bun.sh) 1.4 or later):
