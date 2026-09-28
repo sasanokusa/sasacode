@@ -1,7 +1,7 @@
 // /usage: what this run used, what the ChatGPT plan has left, and a record of every session on
 // this machine (read back through the session index), with a contributions graph by day.
 import { join } from "node:path";
-import { loadSessionIndex } from "@sasacode/agent";
+import { currentLang, loadSessionIndex, t } from "@sasacode/host";
 import { fmtTokens } from "@sasacode/ai";
 import { type AssistantMessage, type Plugin, sasacodeHome } from "@sasacode/plugin-api";
 import { codexTokens, readCodexAuth } from "./openai-codex/auth.ts";
@@ -88,7 +88,10 @@ const LEVELS = [237, 22, 28, 34, 40];
 // One format for token counts everywhere (footer, exit summary, /usage).
 const fmtCount = fmtTokens;
 const fmtCost = (c: number) => (c > 0 ? ` · $${c.toFixed(c < 1 ? 3 : 2)}` : "");
-const sumLine = (s: Sum) => `${fmtCount(s.tokens)} トークン（出力 ${fmtCount(s.output)}）· ${s.requests} 回${fmtCost(s.cost)}`;
+const sumLine = (s: Sum) => t("{tokens} トークン（出力 {output}）· {n} 回", { tokens: fmtCount(s.tokens), output: fmtCount(s.output), n: s.requests }) + fmtCost(s.cost);
+const en = () => currentLang() === "en";
+const monthName = (d: Date) => (en() ? d.toLocaleString("en", { month: "short" }) : `${d.getMonth() + 1}月`);
+const weekdayName = (d: Date) => (en() ? d.toLocaleString("en", { weekday: "short" }) : "日月火水木金土"[d.getDay()]!);
 
 /** Display width without escape sequences (Japanese is two columns a character). */
 const vis = (s: string) => Bun.stringWidth(s);
@@ -101,10 +104,10 @@ function bar(fraction: number, width: number, color = 34): string {
 
 function fmtWait(ms: number): string {
   const m = Math.max(0, Math.round(ms / 60_000));
-  if (m < 60) return `${m}分`;
+  if (m < 60) return t("{m}分", { m });
   const h = Math.floor(m / 60);
-  if (h < 48) return `${h}時間${m % 60 ? `${m % 60}分` : ""}`;
-  return `${Math.floor(h / 24)}日${h % 24 ? `${h % 24}時間` : ""}`;
+  if (h < 48) return m % 60 ? t("{h}時間{m}分", { h, m: m % 60 }) : t("{h}時間", { h });
+  return h % 24 ? t("{d}日{h}時間", { d: Math.floor(h / 24), h: h % 24 }) : t("{d}日", { d: Math.floor(h / 24) });
 }
 
 // ── contributions graph ─────────────────────────────────────────────
@@ -137,22 +140,22 @@ export function graph(days: Map<string, Sum>, weeks: number, now = Date.now()): 
   let months = "";
   for (let w = 0; w < weeks; w++) {
     const first = grid[w]!.find((c) => c.date.getDate() === 1);
-    const label = w === 0 ? `${grid[0]![0]!.date.getMonth() + 1}月` : first ? `${first.date.getMonth() + 1}月` : "";
+    const label = w === 0 ? monthName(grid[0]![0]!.date) : first ? monthName(first.date) : "";
     const at = 3 + w * WEEK;
     const width = vis(months);
     if (label && at >= width + (width ? 1 : 0)) months += " ".repeat(at - width) + label;
   }
   const rows = [gray(months)];
-  const names = ["", "月", "", "水", "", "金", ""];
+  const names = en() ? ["", "M", "", "W", "", "F", ""] : ["", "月", "", "水", "", "金", ""];
   for (let d = 0; d < 7; d++) {
-    let row = gray(names[d] ? `${names[d]} ` : "   ");
+    let row = gray(names[d] ? pad(names[d]!, 3) : "   ");
     for (let w = 0; w < weeks; w++) {
       const c = grid[w]![d]!;
       row += c.future ? " ".repeat(WEEK) : `${cell(LEVELS[level(days.get(c.key)?.tokens ?? 0)]!)} `;
     }
     rows.push(row.trimEnd());
   }
-  rows.push(`${gray("   少 ")}${LEVELS.map((l) => `${cell(l)} `).join("")}${gray("多")}`);
+  rows.push(`${gray(`   ${t("少")} `)}${LEVELS.map((l) => `${cell(l)} `).join("")}${gray(t("多"))}`);
   return rows;
 }
 
@@ -204,7 +207,8 @@ export async function codexPlan(doFetch: typeof fetch = fetch): Promise<Plan | u
   return (await res.json()) as Plan;
 }
 
-const windowName = (s?: number) => (!s ? "枠" : s === 604_800 ? "週の枠" : s % 86_400 === 0 ? `${s / 86_400}日の枠` : `${Math.round(s / 3600)}時間の枠`);
+const windowName = (s?: number) =>
+  !s ? t("枠") : s === 604_800 ? t("週の枠") : s % 86_400 === 0 ? t("{n}日の枠", { n: s / 86_400 }) : t("{n}時間の枠", { n: Math.round(s / 3600) });
 
 export function planLines(plan: Plan, width = 80, now = Date.now()): string[] {
   const lines = [bold(`ChatGPT ${plan.plan_type ?? ""}`.trim())];
@@ -212,23 +216,23 @@ export function planLines(plan: Plan, width = 80, now = Date.now()): string[] {
   for (const w of windows) {
     const used = w.used_percent ?? 0;
     const color = used >= 90 ? 160 : used >= 70 ? 178 : 34;
-    const reset = w.reset_at ? `あと ${fmtWait(w.reset_at * 1000 - now)}でリセット` : "";
-    const head = `  ${pad(windowName(w.limit_window_seconds), 12)}${bar(used / 100, Math.max(8, Math.min(20, width - 50)), color)} ${used}% 使用`;
+    const reset = w.reset_at ? t("あと {time}でリセット", { time: fmtWait(w.reset_at * 1000 - now) }) : "";
+    const head = `  ${pad(windowName(w.limit_window_seconds), 12)}${bar(used / 100, Math.max(8, Math.min(20, width - 50)), color)} ${t("{n}% 使用", { n: used })}`;
     lines.push(!reset ? head : vis(head) + reset.length * 2 + 3 <= width ? `${head}${gray(` · ${reset}`)}` : `${head}\n${" ".repeat(14)}${gray(reset)}`);
   }
-  if (!windows.length) lines.push(gray("  上限の情報がありません"));
-  if (plan.rate_limit?.limit_reached) lines.push("  \x1b[31m上限に達しています\x1b[0m");
-  if (plan.credits?.has_credits) lines.push(`  ${pad("クレジット", 12)}${plan.credits.unlimited ? "無制限" : (plan.credits.balance ?? "?")}`);
+  if (!windows.length) lines.push(gray(`  ${t("上限の情報がありません")}`));
+  if (plan.rate_limit?.limit_reached) lines.push(`  \x1b[31m${t("上限に達しています")}\x1b[0m`);
+  if (plan.credits?.has_credits) lines.push(`  ${pad(t("クレジット"), 12)}${plan.credits.unlimited ? t("無制限") : (plan.credits.balance ?? "?")}`);
   return lines;
 }
 
 // ── plugin ──────────────────────────────────────────────────────────
 
-const SUBCOMMANDS = [
-  { value: "graph", label: "graph", description: "日ごとの使用量（Contributions Graph 風）" },
-  { value: "history", label: "history", description: "日別の記録（既定: 直近14日）" },
-  { value: "models", label: "models", description: "モデル別の合計" },
-  { value: "plan", label: "plan", description: "ChatGPT プランの残り" },
+const SUBCOMMANDS = () => [
+  { value: "graph", label: "graph", description: t("日ごとの使用量（Contributions Graph 風）") },
+  { value: "history", label: "history", description: t("日別の記録（既定: 直近14日）") },
+  { value: "models", label: "models", description: t("モデル別の合計") },
+  { value: "plan", label: "plan", description: t("ChatGPT プランの残り") },
 ];
 
 const usage: Plugin = (api) => {
@@ -243,14 +247,15 @@ const usage: Plugin = (api) => {
   async function overview(): Promise<void> {
     const records = readRecords();
     const today = startOfDay(Date.now());
-    const lines = [bold(`この起動（${fmtWait(Date.now() - run.started)}）`), `  ${sumLine(run.sum)}`];
+    const lines = [bold(t("この起動（{time}）", { time: fmtWait(Date.now() - run.started) })), `  ${sumLine(run.sum)}`];
     if (run.models.size) lines.push(gray(`  ${[...run.models].join(", ")}`));
-    lines.push("", bold("これまで"));
-    for (const [label, t] of [["今日", today], ["直近7日", today - 6 * 86_400_000], ["直近30日", today - 29 * 86_400_000], ["全期間", 0]] as const)
-      lines.push(`  ${pad(label, 10)}${sumLine(since(records, t))}`);
+    lines.push("", bold(t("これまで")));
+    const spans = [["今日", today], ["直近7日", today - 6 * 86_400_000], ["直近30日", today - 29 * 86_400_000], ["全期間", 0]] as const;
+    const labelWidth = Math.max(...spans.map(([label]) => vis(t(label)))) + 2;
+    for (const [label, from] of spans) lines.push(`  ${pad(t(label), labelWidth)}${sumLine(since(records, from))}`);
     const plan = await codexPlan().catch(() => undefined);
     if (plan) lines.push("", ...planLines(plan, width()));
-    lines.push("", gray("/usage graph · /usage history [日数] · /usage models · /usage plan"));
+    lines.push("", gray(t("/usage graph · /usage history [日数] · /usage models · /usage plan")));
     show(lines);
   }
 
@@ -263,11 +268,11 @@ const usage: Plugin = (api) => {
     const top = inRange.sort((a, b) => b[1].tokens - a[1].tokens)[0];
     const { current, longest } = streaks(days);
     show([
-      bold(`過去 ${weeks} 週の使用量`),
+      bold(t("過去 {n} 週の使用量", { n: weeks })),
       ...graph(days, weeks),
       "",
-      `  合計 ${fmtCount(total)} トークン · 使った日 ${inRange.length} 日${top ? ` · 最多 ${top[0]}（${fmtCount(top[1].tokens)}）` : ""}`,
-      gray(`  連続 ${current} 日（最長 ${longest} 日）`),
+      `  ${t("合計 {tokens} トークン · 使った日 {n} 日", { tokens: fmtCount(total), n: inRange.length })}${top ? ` · ${t("最多 {day}（{tokens}）", { day: top[0], tokens: fmtCount(top[1].tokens) })}` : ""}`,
+      gray(`  ${t("連続 {current} 日（最長 {longest} 日）", { current, longest })}`),
     ]);
   }
 
@@ -277,21 +282,20 @@ const usage: Plugin = (api) => {
     const today = startOfDay(Date.now());
     const rows: [string, Sum][] = [];
     for (let i = n - 1; i >= 0; i--) {
-      const t = today - i * 86_400_000;
-      rows.push([dayKey(t), days.get(dayKey(t)) ?? empty()]);
+      const day = today - i * 86_400_000;
+      rows.push([dayKey(day), days.get(dayKey(day)) ?? empty()]);
     }
     const max = Math.max(1, ...rows.map(([, s]) => s.tokens));
     const barWidth = Math.max(8, Math.min(30, width() - 60));
-    const wd = "日月火水木金土";
     show([
-      bold(`直近 ${n} 日`),
+      bold(t("直近 {n} 日", { n })),
       ...rows.map(([k, s]) => {
-        const day = `${k.slice(5)} ${wd[new Date(`${k}T00:00:00`).getDay()]}`;
+        const day = `${k.slice(5)} ${pad(weekdayName(new Date(`${k}T00:00:00`)), en() ? 3 : 2).trimEnd().padEnd(en() ? 3 : 1)}`;
         if (!s.requests) return gray(`  ${day}  ${" ".repeat(barWidth)} -`);
-        return `  ${day}  ${bar(s.tokens / max, barWidth)} ${fmtCount(s.tokens).padStart(6)} ${gray(`出力 ${fmtCount(s.output)} · ${s.requests} 回${fmtCost(s.cost)}`)}`;
+        return `  ${day}  ${bar(s.tokens / max, barWidth)} ${fmtCount(s.tokens).padStart(6)} ${gray(t("出力 {output} · {n} 回", { output: fmtCount(s.output), n: s.requests }) + fmtCost(s.cost))}`;
       }),
       "",
-      `  合計 ${sumLine(rows.reduce((a, [, s]) => ({ tokens: a.tokens + s.tokens, output: a.output + s.output, requests: a.requests + s.requests, cost: a.cost + s.cost }), empty()))}`,
+      `  ${t("合計")} ${sumLine(rows.reduce((a, [, s]) => ({ tokens: a.tokens + s.tokens, output: a.output + s.output, requests: a.requests + s.requests, cost: a.cost + s.cost }), empty()))}`,
     ]);
   }
 
@@ -308,24 +312,24 @@ const usage: Plugin = (api) => {
     const total = Math.max(1, list.reduce((s, [, v]) => s + v.tokens, 0));
     const nameWidth = Math.min(40, Math.max(10, ...list.map(([k]) => k.length)) + 2);
     const row = ([k, s]: [string, Sum & { last: number }]) => {
-      const figures = `${bar(s.tokens / total, 12)} ${fmtCount(s.tokens).padStart(6)} ${gray(`${Math.round((s.tokens / total) * 100)}% · ${s.requests} 回${fmtCost(s.cost)} · 最終 ${dayKey(s.last).slice(5)}`)}`;
+      const figures = `${bar(s.tokens / total, 12)} ${fmtCount(s.tokens).padStart(6)} ${gray(`${Math.round((s.tokens / total) * 100)}% · ${t("{n} 回", { n: s.requests })}${fmtCost(s.cost)} · ${t("最終 {day}", { day: dayKey(s.last).slice(5) })}`)}`;
       const one = `  ${k.padEnd(nameWidth)}${figures}`;
       // Narrow terminals: the name on its own line rather than wrapped through the bar.
       return vis(one) <= width() ? one : `  ${k}\n    ${figures}`;
     };
-    show([bold("モデル別（全期間）"), ...(list.length ? list.map(row) : [gray("  記録がありません")])]);
+    show([bold(t("モデル別（全期間）")), ...(list.length ? list.map(row) : [gray(`  ${t("記録がありません")}`)])]);
   }
 
   async function planView(): Promise<void> {
     const plan = await codexPlan();
-    show(plan ? planLines(plan, width()) : [gray("ChatGPT プランにログインしていません（sasacode login）。ほかのプロバイダーは残量を返す API がありません")]);
+    show(plan ? planLines(plan, width()) : [gray(t("ChatGPT プランにログインしていません（sasacode login）。ほかのプロバイダーは残量を返す API がありません"))]);
   }
 
   api.registerCommand({
     name: "usage",
-    description: "使用量：この起動・これまでの記録・プランの残り",
-    argumentHint: "[graph | history [日数] | models | plan]",
-    complete: (prefix) => SUBCOMMANDS.filter((s) => s.value.startsWith(prefix)),
+    description: t("使用量：この起動・これまでの記録・プランの残り"),
+    argumentHint: t("[graph | history [日数] | models | plan]"),
+    complete: (prefix) => SUBCOMMANDS().filter((s) => s.value.startsWith(prefix)),
     async run({ args }) {
       const [sub = "", arg = ""] = args.trim().split(/\s+/);
       if (!sub) return overview();
@@ -333,7 +337,7 @@ const usage: Plugin = (api) => {
       if (sub === "history") return historyView(arg);
       if (sub === "models") return modelsView();
       if (sub === "plan") return planView();
-      throw new Error(`サブコマンドは ${SUBCOMMANDS.map((s) => s.value).join(" / ")} のいずれかです`);
+      throw new Error(t("サブコマンドは {list} のいずれかです", { list: SUBCOMMANDS().map((s) => s.value).join(" / ") }));
     },
   });
 };

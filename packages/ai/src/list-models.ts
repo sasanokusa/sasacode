@@ -78,7 +78,10 @@ export async function listModels(p: ProviderConfig, apiKey: string | undefined, 
     }
   }
   const chat = out.filter((m) => !NOT_CHAT.test(m.id));
-  if (p.ollama) await Promise.all(chat.map((m) => ollamaDetails(p, m, signal)));
+  if (p.ollama) {
+    const loaded = await ollamaLoaded(p, signal);
+    await Promise.all(chat.map((m) => ollamaDetails(p, m, loaded, signal)));
+  }
   if (p.llamacpp) await llamacppContext(p, chat, signal);
   return chat;
 }
@@ -95,12 +98,31 @@ async function llamacppContext(p: ProviderConfig, models: ListedModel[], signal?
   } catch {}
 }
 
+const ollamaRoot = (p: ProviderConfig) => (p.baseUrl ?? "http://localhost:11434/v1").replace(/\/v1\/?$/, "");
+
+/** Models Ollama has in memory, with the context they were loaded with (OLLAMA_CONTEXT_LENGTH included). */
+async function ollamaLoaded(p: ProviderConfig, signal?: AbortSignal): Promise<Map<string, number>> {
+  try {
+    const res = await fetch(`${ollamaRoot(p)}/api/ps`, { signal });
+    const body = res.ok ? ((await res.json()) as { models?: { name?: string; model?: string; context_length?: number }[] }) : {};
+    return new Map((body.models ?? []).flatMap((m) => (m.context_length ? [[m.name ?? m.model ?? "", m.context_length] as [string, number]] : [])));
+  } catch {
+    return new Map();
+  }
+}
+
 /**
  * Ollama's /v1/models has no sizes; its native /api/show has the trained context length and,
- * when the Modelfile sets it, num_ctx (what requests actually get).
+ * when the Modelfile sets it, num_ctx (what requests actually get). A loaded model's size in
+ * /api/ps is what it really runs with, whatever set it.
  */
-async function ollamaDetails(p: ProviderConfig, m: ListedModel, signal?: AbortSignal): Promise<void> {
-  const root = (p.baseUrl ?? "http://localhost:11434/v1").replace(/\/v1\/?$/, "");
+async function ollamaDetails(p: ProviderConfig, m: ListedModel, loaded: Map<string, number>, signal?: AbortSignal): Promise<void> {
+  const running = loaded.get(m.id);
+  if (running) {
+    m.contextWindow = running;
+    return;
+  }
+  const root = ollamaRoot(p);
   try {
     const res = await fetch(`${root}/api/show`, { method: "POST", body: JSON.stringify({ model: m.id }), signal });
     if (!res.ok) return;

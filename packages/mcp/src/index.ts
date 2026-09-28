@@ -73,7 +73,12 @@ export function connectServers(
       // asks (`/mcp reconnect`), so a command that is gone cannot spin retries forever.
       if (exiting) return;
       if (state.attempts >= MAX_RECONNECTS) {
-        api.ui.notify(`MCP server ${state.name}: gave up reconnecting; \`/mcp reconnect ${state.name}\` tries again`, "warning");
+        api.ui.notify(
+          api.ui.lang === "en"
+            ? `MCP server ${state.name}: gave up reconnecting; \`/mcp reconnect ${state.name}\` tries again`
+            : `MCP サーバー ${state.name}: 再接続をあきらめました。\`/mcp reconnect ${state.name}\` でもう一度試せます`,
+          "warning",
+        );
         return;
       }
       // Never hold the process open: a pending reconnect is background work.
@@ -121,7 +126,7 @@ export function createMcpPlugin(servers: Record<string, McpServerConfig>): Plugi
 
     api.registerCommand({
       name: "mcp",
-      description: "MCP サーバーの接続状態と再接続",
+      description: api.ui.lang === "en" ? "MCP servers: status and reconnecting" : "MCP サーバーの接続状態と再接続",
       argumentHint: "[reconnect [name]]",
       complete: (prefix: string) => {
         const words = ["reconnect", ...states.keys()].filter((w) => w.startsWith(prefix ?? ""));
@@ -129,23 +134,25 @@ export function createMcpPlugin(servers: Record<string, McpServerConfig>): Plugi
       },
       run({ args }: { args?: string }) {
         if (!states.size) {
-          api.ui.notify("MCP サーバーは設定されていません（config.json の mcpServers）");
+          api.ui.notify(api.ui.lang === "en" ? "No MCP servers are configured (mcpServers in config.json)" : "MCP サーバーは設定されていません（config.json の mcpServers）");
           return;
         }
         const [sub, target] = (args ?? "").trim().split(/\s+/);
         if (sub === "reconnect") {
           const picked = target ? states.get(target) : undefined;
           if (target && !picked) {
-            api.ui.notify(`その名前の MCP サーバーはありません: ${target}（${[...states.keys()].join(", ")}）`, "warning");
+            const known = [...states.keys()].join(", ");
+            api.ui.notify(api.ui.lang === "en" ? `No MCP server named ${target} (${known})` : `その名前の MCP サーバーはありません: ${target}（${known}）`, "warning");
             return;
           }
           const now = picked ? [picked] : [...states.values()];
           for (const s of now) reconnects.get(s)?.();
-          api.ui.notify(`再接続します: ${now.map((s) => s.name).join(", ")}`);
+          const names = now.map((s) => s.name).join(", ");
+          api.ui.notify(api.ui.lang === "en" ? `Reconnecting: ${names}` : `再接続します: ${names}`);
           return;
         }
         if (sub) {
-          api.ui.notify("使い方: /mcp [reconnect [name]]", "warning");
+          api.ui.notify(api.ui.lang === "en" ? "usage: /mcp [reconnect [name]]" : "使い方: /mcp [reconnect [name]]", "warning");
           return;
         }
         const lines = [...states.values()].map(
@@ -181,7 +188,7 @@ async function connect(api: PluginAPI, name: string, cfg: McpServerConfig, state
       if (state.status !== "connected") return;
       state.status = "closed";
       state.error = "server exited";
-      api.ui.notify(`MCP server ${name} disconnected`, "warning");
+      api.ui.notify(api.ui.lang === "en" ? `MCP server ${name} disconnected` : `MCP サーバー ${name} の接続が切れました`, "warning");
       onChange();
       dropped();
     };
@@ -194,7 +201,12 @@ async function connect(api: PluginAPI, name: string, cfg: McpServerConfig, state
       client.setNotificationHandler(ToolListChangedNotificationSchema, () => {
         // The list changed in some way: sync it, so a tool the server dropped leaves the model's list.
         void registerTools(api, name, cfg, client, state).catch((e) =>
-          api.ui.notify(`MCP server ${name}: tool list update failed: ${e instanceof Error ? e.message : e}`, "warning"),
+          api.ui.notify(
+            api.ui.lang === "en"
+              ? `MCP server ${name}: tool list update failed: ${e instanceof Error ? e.message : e}`
+              : `MCP サーバー ${name}: ツール一覧を更新できませんでした: ${e instanceof Error ? e.message : e}`,
+            "warning",
+          ),
         );
       });
     if (client.getServerCapabilities()?.prompts) await registerPrompts(api, name, client);
@@ -202,7 +214,8 @@ async function connect(api: PluginAPI, name: string, cfg: McpServerConfig, state
     state.status = "failed";
     state.error = (e instanceof Error ? e.message : String(e)) + (state.stderr ? ` — ${state.stderr.trim().split("\n").slice(-1)[0]}` : "");
     // Repeats are the reconnect loop's own business; one notice is enough to explain a dead server.
-    if (!state.attempts) api.ui.notify(`MCP server ${name} failed to start: ${state.error}`, "warning");
+    if (!state.attempts)
+      api.ui.notify(api.ui.lang === "en" ? `MCP server ${name} failed to start: ${state.error}` : `MCP サーバー ${name} を起動できませんでした: ${state.error}`, "warning");
     dropped();
   }
   onChange();

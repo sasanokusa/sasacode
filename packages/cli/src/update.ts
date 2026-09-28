@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import { chmodSync, copyFileSync, existsSync, readFileSync, renameSync, rmSync, writeFileSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
+import { t } from "@sasacode/host";
 import { sasacodeHome } from "./config.ts";
 
 const VERSION = (await import("../package.json")).version;
@@ -34,7 +35,7 @@ export function compareVersions(a: string, b: string): number {
 export async function latestRelease(base = DOWNLOAD_BASE()): Promise<string> {
   const r = await fetch(`${base}/latest/download/SHA256SUMS`, { method: "HEAD", redirect: "manual" });
   const m = /\/download\/([^/]+)\/SHA256SUMS/.exec(r.headers.get("location") ?? "");
-  if (!m) throw new Error(`cannot tell the latest version (${r.status} from ${base})`);
+  if (!m) throw new Error(t("cannot tell the latest version ({status} from {base})", { status: r.status, base }));
   return m[1]!;
 }
 
@@ -58,16 +59,16 @@ export async function checkForUpdate(): Promise<string | undefined> {
 export async function notifyIfNewer(notify: (message: string, level?: "info" | "warning" | "error") => void): Promise<void> {
   try {
     const latest = await checkForUpdate();
-    if (latest) notify(`a newer version is available: ${latest} (this is ${VERSION}) — run \`sasacode update\``);
+    if (latest) notify(t("a newer version is available: {latest} (this is {version}) — run `sasacode update`", { latest, version: VERSION }));
   } catch {}
 }
 
 /** The archive name for this machine, with the platform choices scripts/install.sh makes. */
 export function releaseTarget(): string {
   const os = { darwin: "darwin", linux: "linux" }[process.platform as string];
-  if (!os) throw new Error(`unsupported OS: ${process.platform} (Windows is supported through WSL)`);
+  if (!os) throw new Error(t("unsupported OS: {platform} (Windows is supported through WSL)", { platform: process.platform }));
   let arch = { x64: "x64", arm64: "arm64" }[process.arch as string];
-  if (!arch) throw new Error(`unsupported CPU: ${process.arch}`);
+  if (!arch) throw new Error(t("unsupported CPU: {arch}", { arch: process.arch }));
   // An x64 shell under Rosetta on Apple Silicon should still get the native build.
   if (os === "darwin" && arch === "x64") {
     const translated = spawnSync("sysctl", ["-n", "sysctl.proc_translated"], { encoding: "utf8" }).stdout?.trim();
@@ -86,7 +87,7 @@ function installedBinary(): string {
   const exec = process.execPath;
   // From a source checkout the running "binary" is bun itself (or some interpreter): never that.
   if (existsSync(join(import.meta.dir, "main.ts")) || /^bun(\.exe)?$/.test(basename(exec)))
-    throw new Error("this sasacode runs from source: update the checkout (git pull && bun install) instead of `sasacode update`");
+    throw new Error(t("this sasacode runs from source: update the checkout (git pull && bun install) instead of `sasacode update`"));
   return exec;
 }
 
@@ -97,36 +98,36 @@ export async function updateCommand(args: string[]): Promise<number> {
   const base = DOWNLOAD_BASE();
   const wanted = tag ?? (await latestRelease(base));
   if (args.includes("--check")) {
-    console.log(compareVersions(wanted, VERSION) > 0 ? `newer version available: ${wanted} (this is ${VERSION})` : `sasacode is up to date (${VERSION})`);
+    console.log(compareVersions(wanted, VERSION) > 0 ? t("newer version available: {wanted} (this is {version})", { wanted, version: VERSION }) : t("sasacode is up to date ({version})", { version: VERSION }));
     return 0;
   }
   const target = installedBinary(); // before downloading anything: a source checkout stops here
   if (compareVersions(wanted, VERSION) <= 0) {
-    console.log(`sasacode is up to date (${VERSION})`);
+    console.log(t("sasacode is up to date ({version})", { version: VERSION }));
     return 0;
   }
   const name = `sasacode-${releaseTarget()}`;
   const url = `${base}/download/${wanted}`;
   const dir = mkdtempSync(join(tmpdir(), "sasacode-update-"));
   try {
-    console.log(`downloading ${url}/${name}.tar.gz …`);
+    console.log(t("downloading {url} …", { url: `${url}/${name}.tar.gz` }));
     const sums = await (await fetch(`${url}/SHA256SUMS`)).text();
     const body = Buffer.from(await (await fetch(`${url}/${name}.tar.gz`)).arrayBuffer());
     const expected = sums.split("\n").find((l) => l.endsWith(` ${name}.tar.gz`))?.split(/\s+/)[0];
-    if (!expected) throw new Error(`${name}.tar.gz is not listed in SHA256SUMS`);
+    if (!expected) throw new Error(t("{file} is not listed in SHA256SUMS", { file: `${name}.tar.gz` }));
     const actual = createHash("sha256").update(body).digest("hex");
-    if (actual !== expected) throw new Error(`checksum mismatch for ${name}.tar.gz`);
+    if (actual !== expected) throw new Error(t("checksum mismatch for {file}", { file: `${name}.tar.gz` }));
     writeFileSync(join(dir, `${name}.tar.gz`), body);
-    if (spawnSync("tar", ["-xzf", join(dir, `${name}.tar.gz`), "-C", dir]).status !== 0) throw new Error(`could not unpack ${name}.tar.gz`);
+    if (spawnSync("tar", ["-xzf", join(dir, `${name}.tar.gz`), "-C", dir]).status !== 0) throw new Error(t("could not unpack {file}", { file: `${name}.tar.gz` }));
     // The same check the installer does: a binary that does not run here must not become the binary.
     const fresh = join(dir, name);
     const version = spawnSync(fresh, ["--version"], { encoding: "utf8" }).stdout?.trim();
-    if (!version) throw new Error("the downloaded binary does not run on this system");
+    if (!version) throw new Error(t("the downloaded binary does not run on this system"));
     const staging = `${target}.new`;
     copyFileSync(fresh, staging);
     chmodSync(staging, 0o755);
     renameSync(staging, target); // the running process keeps its own file until it exits
-    console.log(`updated ${VERSION} → ${version}: ${target} (restart sasacode to use it)`);
+    console.log(t("updated {from} → {to}: {target} (restart sasacode to use it)", { from: VERSION, to: version, target }));
     return 0;
   } finally {
     rmSync(dir, { recursive: true, force: true });

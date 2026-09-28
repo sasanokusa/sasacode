@@ -1,11 +1,14 @@
-import { afterAll, beforeEach, expect, test } from "bun:test";
+import { afterAll, beforeAll, beforeEach, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { setLang } from "@sasacode/host";
 import { emptyUsage, registerApi, replayProvider } from "@sasacode/ai";
 import { discoverPlugins, pluginCommand } from "../src/loader.ts";
 import { assessProject, isTrusted, saveTrust } from "../src/trust.ts";
 import { setup } from "../src/setup.ts";
+
+beforeAll(() => setLang("en")); // these assertions quote the English strings
 
 // A fresh directory per test: Bun caches module resolution per path within a process.
 const base = mkdtempSync(join(tmpdir(), "sasacode-cli-plugins-"));

@@ -1,3 +1,4 @@
+import { t } from "@sasacode/host";
 import type { Plugin } from "@sasacode/plugin-api";
 
 // A subagent may not steer other subagents, nor touch the caller's TODO list or goal.
@@ -101,7 +102,7 @@ const subagent: Plugin = (api) => {
       // Not tied to this turn's signal, which ends with the turn: agent_end below stops it on Esc.
       const { run, done } = start(args, true);
       void done.then((r) => {
-        api.ui.notify(`task ${r.id}「${r.description}」が終了しました（${r.status}）`, r.status === "done" ? "info" : "warning");
+        api.ui.notify(t("task {id}「{description}」が終了しました（{status}）", { id: r.id, description: r.description, status: r.status }), r.status === "done" ? "info" : "warning");
         // After an interruption the user decides what comes next: the report goes with their next message.
         api.session.inject(`[task ${r.id} "${r.description}" ended: ${r.status}]\n\n${r.report}`, r.interrupted ? "next" : "now");
       });
@@ -167,22 +168,22 @@ const subagent: Plugin = (api) => {
 
   api.registerCommand({
     name: "task",
-    description: "サブエージェントの一覧・詳細・指示・停止",
+    description: t("サブエージェントの一覧・詳細・指示・停止"),
     argumentHint: "[id] | send <id> <message> | stop <id>",
     complete: (prefix) =>
       [...runs.keys(), "send", "stop"].filter((v) => v.startsWith(prefix)).map((v) => ({ value: v, label: v, description: runs.get(v)?.description ?? "" })),
     run({ args }) {
       const [sub, id, ...rest] = args.trim().split(/\s+/).filter(Boolean);
       try {
-        if (!sub) api.ui.notify(runs.size ? [...runs.values()].map(line).join("\n") : "サブエージェントはまだ動いていません");
+        if (!sub) api.ui.notify(runs.size ? [...runs.values()].map(line).join("\n") : t("サブエージェントはまだ動いていません"));
         else if (sub === "stop") {
           const r = find(id ?? "");
-          r.stop ? (r.stop(), api.ui.notify(`${r.id} を停止します`)) : api.ui.notify(`${r.id} は既に終了しています (${r.status})`);
+          r.stop ? (r.stop(), api.ui.notify(t("{id} を停止します", { id: r.id }))) : api.ui.notify(t("{id} は既に終了しています ({status})", { id: r.id, status: r.status }));
         } else if (sub === "send") {
           const r = find(id ?? "");
-          if (!r.send) api.ui.notify(`${r.id} は既に終了しています (${r.status})`, "warning");
-          else if (!rest.length) api.ui.notify("送る内容がありません: /task send <id> <message>", "warning");
-          else (r.send(`[message from the user]\n${rest.join(" ")}`), api.ui.notify(`${r.id} に送りました`));
+          if (!r.send) api.ui.notify(t("{id} は既に終了しています ({status})", { id: r.id, status: r.status }), "warning");
+          else if (!rest.length) api.ui.notify(t("送る内容がありません: /task send <id> <message>"), "warning");
+          else (r.send(`[message from the user]\n${rest.join(" ")}`), api.ui.notify(t("{id} に送りました", { id: r.id })));
         } else {
           const r = find(sub);
           api.ui.notify([line(r), ...r.trail.slice(-TRAIL).map((t) => `  ${t}`), r.report ? `\n${r.report}` : ""].filter(Boolean).join("\n"));

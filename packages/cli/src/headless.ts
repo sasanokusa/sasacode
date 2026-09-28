@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
-import type { AgentEvent, StopCause } from "@sasacode/agent";
+import { type AgentEvent, type StopCause } from "@sasacode/agent";
+import { t } from "@sasacode/host";
 import { textOf } from "@sasacode/ai";
 import type { Harness } from "./setup.ts";
 
@@ -27,9 +28,9 @@ export async function runHeadless(h: Harness, prompt: string, output: "text" | "
       atLineStart = true;
     } else if (e.type === "tool_start") status(`● ${e.call.name}(${e.summary})`);
     else if (e.type === "tool_end" && e.result.isError) status(`  ⎿ ${textOf(e.result.content).split("\n").slice(-1)[0]}`);
-    else if (e.type === "error") process.stderr.write(`error: ${plain(e.error)}\n`);
-    else if (e.type === "tool_repaired") status(`  ↻ repaired ${e.call.name}: ${e.note}`);
-    else if (e.type === "plugin_error") process.stderr.write(`plugin ${e.plugin} (${e.hook}): ${e.error}\n`);
+    else if (e.type === "error") process.stderr.write(`${t("error: {error}", { error: plain(e.error) })}\n`);
+    else if (e.type === "tool_repaired") status(`  ${t("↻ repaired {name}: {note}", { name: e.call.name, note: e.note })}`);
+    else if (e.type === "plugin_error") process.stderr.write(`${t("plugin {plugin} ({hook}): {error}", { plugin: e.plugin, hook: e.hook, error: e.error })}\n`);
   });
   const session = agent.session;
   if (output === "jsonl") write(`${JSON.stringify({ type: "session", id: session?.id ?? null, path: session?.path ?? null })}\n`);
@@ -47,9 +48,10 @@ export async function runHeadless(h: Harness, prompt: string, output: "text" | "
   await agent.waitForIdle();
   process.off("SIGINT", onSigint);
   await h.shutdown();
-  if (output === "text" && cause !== "done") status(`[stopped: ${cause}${stoppedBy ? ` — ${stoppedBy}` : STOP_HINT[cause] ? ` — ${STOP_HINT[cause]}` : ""}]`);
+  const hint = stoppedBy ? ` — ${stoppedBy}` : STOP_HINT[cause] ? ` — ${t(STOP_HINT[cause]!)}` : "";
+  if (output === "text" && cause !== "done") status(t("[stopped: {cause}{hint}]", { cause, hint }));
   // One-shot runs are how sasacode is driven without tmux: say how to continue this conversation.
-  if (output === "text" && session && existsSync(session.path)) status(`session ${session.id} · continue: sasacode -r ${session.id} -p "…"`);
+  if (output === "text" && session && existsSync(session.path)) status(t('session {id} · continue: sasacode -r {id} -p "…"', { id: session.id }));
   return cause === "done" ? 0 : 1;
 }
 

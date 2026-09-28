@@ -1,5 +1,6 @@
 import { type Component, type Focusable, Input, matchesKey, type SelectItem, SelectList, Text, truncateToWidth } from "@earendil-works/pi-tui";
 import { type ApprovalAnswer, type ApprovalRequest, PermissionPolicy } from "@sasacode/agent";
+import { t } from "@sasacode/host";
 import { c, selectTheme } from "./theme.ts";
 import { plain } from "./views.ts";
 
@@ -38,7 +39,7 @@ export class Picker implements Component, Focusable {
   }
 
   render(width: number): string[] {
-    const hint = this.filter ? `絞り込み: ${this.filter}` : "入力で絞り込み · ↑↓ で選択 · enter で決定 · esc でキャンセル";
+    const hint = this.filter ? t("絞り込み: {filter}", { filter: this.filter }) : t("入力で絞り込み · ↑↓ で選択 · enter で決定 · esc でキャンセル");
     return [
       truncateToWidth(c.gray("─".repeat(width)), width),
       ...this.title.split("\n").map((l, i) => truncateToWidth(i === 0 ? c.bold(l) : c.gray(l), width)),
@@ -65,19 +66,19 @@ export class ApprovalDialog implements Component, Focusable {
     // What is approved must be exactly what is shown: control characters are made visible, and called out.
     const detail = plain(raw);
     const warn = /[\x00-\x08\x0b-\x1f\x7f-\x9f]/.test(raw)
-      ? `\n${c.red("⚠ 制御文字（端末のエスケープシーケンスなど）を含んでいます。␛ などの表示を確かめてください。")}`
+      ? `\n${c.red(t("⚠ 制御文字（端末のエスケープシーケンスなど）を含んでいます。␛ などの表示を確かめてください。"))}`
       : "";
     this.header = new Text(
-      `${c.yellow("?")} ${c.bold(`${req.tool.name} を実行しますか？`)}\n${c.cyan(detail)}${warn}\n${c.gray(plain(req.reason))}`,
+      `${c.yellow("?")} ${c.bold(t("{tool} を実行しますか？", { tool: req.tool.name }))}\n${c.cyan(detail)}${warn}\n${c.gray(plain(req.reason))}`,
       0,
       0,
     );
     this.list = new SelectList(
       [
-        { value: "allow", label: "はい" },
-        { value: "always", label: "常に許可（終了するまで）", description: plain(rule) },
-        { value: "deny", label: "いいえ" },
-        { value: "feedback", label: "いいえ、代わりの指示を伝える" },
+        { value: "allow", label: t("はい") },
+        { value: "always", label: t("常に許可（終了するまで）"), description: plain(rule) },
+        { value: "deny", label: t("いいえ") },
+        { value: "feedback", label: t("いいえ、代わりの指示を伝える") },
       ],
       4,
       selectTheme,
@@ -109,8 +110,8 @@ export class ApprovalDialog implements Component, Focusable {
 
   render(width: number): string[] {
     const lines = [truncateToWidth(c.yellow("─".repeat(width)), width), ...this.header.render(width)];
-    if (this.input) lines.push(c.gray("モデルへの指示（enter で送信）:"), ...this.input.render(width));
-    else lines.push(...this.list.render(width), truncateToWidth(c.gray("esc で拒否"), width));
+    if (this.input) lines.push(c.gray(t("モデルへの指示（enter で送信）:")), ...this.input.render(width));
+    else lines.push(...this.list.render(width), truncateToWidth(c.gray(t("esc で拒否")), width));
     return lines;
   }
 

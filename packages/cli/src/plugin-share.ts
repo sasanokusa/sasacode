@@ -3,6 +3,7 @@
 // Packages themselves always come from npm or git; the site only serves the list, a few KB.
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, extname, join } from "node:path";
+import { t } from "@sasacode/host";
 import { PLUGIN_API_VERSION } from "@sasacode/plugin-api";
 import { sasacodeHome } from "./config.ts";
 
@@ -24,7 +25,7 @@ export interface Listing {
 
 async function getJson(url: string, doFetch: typeof fetch): Promise<any> {
   const res = await doFetch(url, { signal: AbortSignal.timeout(8000), headers: { accept: "application/json" } });
-  if (!res.ok) throw new Error(`${url} returned ${res.status}`);
+  if (!res.ok) throw new Error(t("{url} returned {status}", { url, status: res.status }));
   return res.json();
 }
 
@@ -42,7 +43,7 @@ export async function searchPlugins(query: string, doFetch: typeof fetch = fetch
           .map((p) => ({ name: p.name, source: p.source, description: p.description, author: p.author, recommended: true }))
           .filter((l) => matches(l, words)),
       )
-      .catch((e) => (errors.push(`list: ${(e as Error).message}`), [] as Listing[])),
+      .catch((e) => (errors.push(t("list: {error}", { error: (e as Error).message })), [] as Listing[])),
     // No words: list everything (npm allows up to 250 a page).
     getJson(`${registry()}/-/v1/search?text=${encodeURIComponent(`keywords:${PLUGIN_KEYWORD} ${query}`.trim())}&size=${words.length ? 25 : 250}`, doFetch)
       .then((j) =>
@@ -54,17 +55,17 @@ export async function searchPlugins(query: string, doFetch: typeof fetch = fetch
           author: p.publisher?.username ?? p.author?.name,
         })),
       )
-      .catch((e) => (errors.push(`npm: ${(e as Error).message}`), [] as Listing[])),
+      .catch((e) => (errors.push(t("npm: {error}", { error: (e as Error).message })), [] as Listing[])),
   ]);
   const seen = new Set(curated.map((l) => l.source));
   return { listings: [...curated, ...npm.filter((l) => !seen.has(l.source))], errors };
 }
 
 export function formatListings(listings: Listing[]): string {
-  if (!listings.length) return "no plugins found";
+  if (!listings.length) return t("no plugins found");
   return listings
     .map((l) => {
-      const head = `${l.recommended ? "★ " : "  "}${l.name}${l.version ? `@${l.version}` : ""}${l.author ? `  by ${l.author}` : ""}`;
+      const head = `${l.recommended ? "★ " : "  "}${l.name}${l.version ? `@${l.version}` : ""}${l.author ? `  ${t("by {author}", { author: l.author })}` : ""}`;
       return [head, l.description ? `    ${l.description}` : "", `    sasacode plugin install ${l.source}`].filter(Boolean).join("\n");
     })
     .join("\n\n");
@@ -81,9 +82,9 @@ export function parseSpec(spec: string): { name: string; range?: string } {
 /** A package in a local directory (to try one before publishing it). */
 export function describeLocal(dir: string): string[] {
   const pkg = JSON.parse(readFileSync(join(dir, "package.json"), "utf8"));
-  const lines = [`${pkg.name ?? "?"}@${pkg.version ?? "?"}  (local: ${dir})`];
+  const lines = [t("{name}@{version}  (local: {dir})", { name: pkg.name ?? "?", version: pkg.version ?? "?", dir })];
   if (pkg.description) lines.push(`  ${pkg.description}`);
-  if (!pkg.sasacode) lines.push('  warning: no "sasacode" field in package.json, so it may not be a sasacode plugin');
+  if (!pkg.sasacode) lines.push(`  ${t('warning: no "sasacode" field in package.json, so it may not be a sasacode plugin')}`);
   return lines;
 }
 
@@ -93,17 +94,22 @@ export async function describeNpm(spec: string, doFetch: typeof fetch = fetch): 
   const doc = await getJson(`${registry()}/${name.replace("/", "%2f")}`, doFetch);
   const version = range && doc.versions?.[range] ? range : range && doc["dist-tags"]?.[range] ? doc["dist-tags"][range] : doc["dist-tags"]?.latest;
   const v = doc.versions?.[version] ?? {};
-  const lines = [`${name}@${version ?? "?"}${range && !doc.versions?.[range] && !doc["dist-tags"]?.[range] ? ` (range ${range}: the newest match is installed)` : ""}`];
+  const head = `${name}@${version ?? "?"}${range && !doc.versions?.[range] && !doc["dist-tags"]?.[range] ? ` ${t("(range {range}: the newest match is installed)", { range })}` : ""}`;
+  const lines = [head];
   if (v.description) lines.push(`  ${v.description}`);
   const people = (v.maintainers ?? doc.maintainers ?? []).map((m: { name?: string }) => m.name).filter(Boolean);
-  if (people.length) lines.push(`  published by ${people.join(", ")}${doc.time?.[version] ? ` on ${String(doc.time[version]).slice(0, 10)}` : ""}`);
-  if (v.dist) lines.push(`  ${v.dist.fileCount ?? "?"} files, ${v.dist.unpackedSize ? `${Math.round(v.dist.unpackedSize / 1024)} KB` : "size unknown"}`);
+  if (people.length)
+    lines.push(`  ${t("published by {people}", { people: people.join(", ") })}${doc.time?.[version] ? ` ${t("on {date}", { date: String(doc.time[version]).slice(0, 10) })}` : ""}`);
+  if (v.dist) {
+    const size = v.dist.unpackedSize ? `${Math.round(v.dist.unpackedSize / 1024)} KB` : t("size unknown");
+    lines.push(`  ${t("{count} files, {size}", { count: v.dist.fileCount ?? "?", size })}`);
+  }
   const deps = Object.keys(v.dependencies ?? {});
-  if (deps.length) lines.push(`  depends on ${deps.join(", ")}`);
-  if (v.scripts?.preinstall || v.scripts?.install || v.scripts?.postinstall) lines.push("  has install scripts (not run: packages are added without them)");
-  if (!v.sasacode) lines.push('  warning: no "sasacode" field in package.json, so it may not be a sasacode plugin');
+  if (deps.length) lines.push(`  ${t("depends on {deps}", { deps: deps.join(", ") })}`);
+  if (v.scripts?.preinstall || v.scripts?.install || v.scripts?.postinstall) lines.push(`  ${t("has install scripts (not run: packages are added without them)")}`);
+  if (!v.sasacode) lines.push(`  ${t('warning: no "sasacode" field in package.json, so it may not be a sasacode plugin')}`);
   const repo = typeof v.repository === "string" ? v.repository : v.repository?.url;
-  if (repo) lines.push(`  source ${repo}`);
+  if (repo) lines.push(`  ${t("source {repo}", { repo })}`);
   return lines;
 }
 
@@ -150,12 +156,12 @@ export interface StageOptions {
 export function stagePackage(file: string, o: StageOptions = {}): { dir: string; pkg: Record<string, any>; notes: string[] } {
   const source = readFileSync(file, "utf8");
   const ext = extname(file);
-  if (![".ts", ".js", ".mjs"].includes(ext)) throw new Error(`${file}: a plugin file ends in .ts, .js or .mjs`);
+  if (![".ts", ".js", ".mjs"].includes(ext)) throw new Error(t("{file}: a plugin file ends in .ts, .js or .mjs", { file }));
   const base = basename(file, ext);
   const name = o.name ?? `sasacode-plugin-${base.toLowerCase().replace(/[^a-z0-9.-]+/g, "-")}`;
-  if (!NPM_NAME.test(name)) throw new Error(`"${name}" is not a valid npm package name; pass --name`);
+  if (!NPM_NAME.test(name)) throw new Error(t('"{name}" is not a valid npm package name; pass --name', { name }));
   const notes: string[] = [];
-  if (/from\s+["']\.\.?\//.test(source)) notes.push("it imports other local files, which are not included: publish its directory instead");
+  if (/from\s+["']\.\.?\//.test(source)) notes.push(t("it imports other local files, which are not included: publish its directory instead"));
   const nextPatch = (v: string) => v.replace(/^(\d+)\.(\d+)\.(\d+).*$/, (_m, a, b, c) => `${a}.${b}.${Number(c) + 1}`);
   const version = o.version ?? (o.latest ? nextPatch(o.latest) : "0.1.0");
   const api = o.api ?? apiRangeFor(source);
@@ -172,7 +178,7 @@ export function stagePackage(file: string, o: StageOptions = {}): { dir: string;
     sasacode: { apiVersion: api, extensions: [entry] },
   };
   if (o.license) pkg.license = o.license;
-  else notes.push("no license given: others may not reuse it (add one with --license MIT, for example)");
+  else notes.push(t("no license given: others may not reuse it (add one with --license MIT, for example)"));
 
   const dir = join(sasacodeHome(), "publish", name.replace("/", "__"));
   rmSync(dir, { recursive: true, force: true });
@@ -183,21 +189,21 @@ export function stagePackage(file: string, o: StageOptions = {}): { dir: string;
     join(dir, "README.md"),
     `# ${name}\n\n${description}\n\nA plugin for [sasacode](https://github.com/sasanokusa/sasacode) (plugin API ${api}).\n\n\`\`\`bash\nsasacode plugin install ${name}\n\`\`\`\n`,
   );
-  if (PLUGIN_API_VERSION.split(".")[0] !== api.replace(/^\D+/, "").split(".")[0]) notes.push(`plugin API ${api} does not match this sasacode (${PLUGIN_API_VERSION})`);
+  if (PLUGIN_API_VERSION.split(".")[0] !== api.replace(/^\D+/, "").split(".")[0]) notes.push(t("plugin API {api} does not match this sasacode ({version})", { api, version: PLUGIN_API_VERSION }));
   return { dir, pkg, notes };
 }
 
 /** A plugin directory that is already a package: checked, and given the search keyword if missing. */
 export function checkPackageDir(dir: string): { pkg: Record<string, any>; notes: string[] } {
   const path = join(dir, "package.json");
-  if (!existsSync(path)) throw new Error(`${dir} has no package.json; publish a single .ts file instead, or add one`);
+  if (!existsSync(path)) throw new Error(t("{dir} has no package.json; publish a single .ts file instead, or add one", { dir }));
   const pkg = JSON.parse(readFileSync(path, "utf8"));
-  if (!pkg.sasacode) throw new Error(`${path} has no "sasacode" field (the manifest: extensions, apiVersion, skills)`);
+  if (!pkg.sasacode) throw new Error(t('{path} has no "sasacode" field (the manifest: extensions, apiVersion, skills)', { path }));
   const notes: string[] = [];
   if (!pkg.keywords?.includes(PLUGIN_KEYWORD)) {
     pkg.keywords = [...(pkg.keywords ?? []), PLUGIN_KEYWORD];
     writeFileSync(path, `${JSON.stringify(pkg, null, 2)}\n`);
-    notes.push(`added the "${PLUGIN_KEYWORD}" keyword to package.json so that plugin search finds it`);
+    notes.push(t('added the "{keyword}" keyword to package.json so that plugin search finds it', { keyword: PLUGIN_KEYWORD }));
   }
   return { pkg, notes };
 }

@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
+import { t } from "@sasacode/host";
 import type { ProviderConfig } from "@sasacode/ai";
 
 /** Key variables of the built-in providers, each once, in provider order. */
@@ -16,13 +17,13 @@ export function keyVariables(providers: Record<string, ProviderConfig>): { name:
 export function ensureEnvFile(path: string, providers: Record<string, ProviderConfig>): boolean {
   if (existsSync(path)) return false;
   const lines = [
-    "# sasacode API keys. Fill in the providers you use; blank entries are ignored.",
-    "# Read on every start, from any directory. A project's ./.env is not read.",
-    "# Commands the agent runs (bash, background jobs) do not see what is set here.",
+    `# ${t("sasacode API keys. Fill in the providers you use; blank entries are ignored.")}`,
+    `# ${t("Read on every start, from any directory. A project's ./.env is not read.")}`,
+    `# ${t("Commands the agent runs (bash, background jobs) do not see what is set here.")}`,
     "",
   ];
-  for (const k of keyVariables(providers)) lines.push(`# ${k.label}${k.example ? ` (e.g. -m ${k.example})` : ""}`, `${k.name}=`, "");
-  lines.push("# Ollama (ollama/<model>) runs locally and needs no key.", "");
+  for (const k of keyVariables(providers)) lines.push(`# ${k.label}${k.example ? ` ${t("(e.g. -m {example})", { example: k.example })}` : ""}`, `${k.name}=`, "");
+  lines.push(`# ${t("Ollama (ollama/<model>) runs locally and needs no key.")}`, "");
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, lines.join("\n"), { mode: 0o600 });
   return true;

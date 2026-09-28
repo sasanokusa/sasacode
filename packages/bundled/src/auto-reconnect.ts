@@ -15,6 +15,7 @@
  * - retryMessage:     復旧後に inject するメッセージ
  * - quiet:            true にすると通知を出さない（ステータス表示と inject のみ）
  */
+import { t } from "@sasacode/host";
 import type { Plugin } from "@sasacode/plugin-api";
 
 interface AutoReconnectSettings {
@@ -83,7 +84,7 @@ const plugin: Plugin = (api) => {
     if (waiting || stopped) return;
     if (await isOnline()) {
       if (trigger === "manual") {
-        api.ui.notify("オンラインです。接続に問題ありません。", "info");
+        api.ui.notify(t("オンラインです。接続に問題ありません。"), "info");
         api.session.inject(
           "接続に問題ありません。直前で中断した作業があれば、続きから再開してください。",
           "now",
@@ -92,20 +93,20 @@ const plugin: Plugin = (api) => {
       return;
     }
     waiting = true;
-    api.ui.setStatus("auto-reconnect", "オフライン — ネットワーク復旧待ち");
+    api.ui.setStatus("auto-reconnect", t("オフライン — ネットワーク復旧待ち"));
     if (!quiet) {
-      api.ui.notify(`ネットワークに接続できません（${target()}）。復旧を待って自動再試行します。`, "warning");
+      api.ui.notify(t("ネットワークに接続できません（{target}）。復旧を待って自動再試行します。", { target: target() }), "warning");
     }
     const ok = await waitForOnline();
     waiting = false;
     api.ui.setStatus("auto-reconnect", undefined);
     if (stopped) return;
     if (ok) {
-      if (!quiet) api.ui.notify("ネットワークが復旧しました。自動再試行します。", "info");
+      if (!quiet) api.ui.notify(t("ネットワークが復旧しました。自動再試行します。"), "info");
       api.session.inject(retryMessage, "now");
     } else {
       api.ui.notify(
-        `ネットワークが復旧しませんでした（${Math.round(maxWaitMs / 1000)}秒待機）。/reconnect で手動再試行できます。`,
+        t("ネットワークが復旧しませんでした（{s}秒待機）。/reconnect で手動再試行できます。", { s: Math.round(maxWaitMs / 1000) }),
         "warning",
       );
     }
@@ -128,26 +129,26 @@ const plugin: Plugin = (api) => {
 
   api.registerCommand({
     name: "reconnect",
-    description: "ネットワーク復旧を待って接続を再試行する。引数なしで再試行、status で状態確認のみ。",
+    description: t("ネットワーク復旧を待って接続を再試行する。引数なしで再試行、status で状態確認のみ。"),
     argumentHint: "[status]",
     complete: (prefix) =>
       ["status"]
         .filter((a) => a.startsWith(prefix))
-        .map((a) => ({ value: a, label: a === "status" ? "状態確認のみ" : a })),
+        .map((a) => ({ value: a, label: a === "status" ? t("状態確認のみ") : a })),
     async run({ args }) {
       const arg = (args ?? "").trim();
       if (arg === "status") {
         const online = await isOnline();
         api.ui.notify(
           online
-            ? `オンラインです（${target()} に到達可能）。`
-            : `オフラインです（${target()} に接続できません）。`,
+            ? t("オンラインです（{target} に到達可能）。", { target: target() })
+            : t("オフラインです（{target} に接続できません）。", { target: target() }),
           online ? "info" : "warning",
         );
         return;
       }
       if (arg !== "") {
-        api.ui.notify(`不明な引数 "${arg}" です。/reconnect [status] を使ってください。`, "warning");
+        api.ui.notify(t('不明な引数 "{arg}" です。/reconnect [status] を使ってください。', { arg }), "warning");
         return;
       }
       void monitorAndRetry("manual");

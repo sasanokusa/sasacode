@@ -241,6 +241,8 @@ export type ToolRenderer = (call: ToolCall, result: ToolResult | undefined, opts
 export interface PluginUI {
   /** False in headless runs: confirm resolves false and select undefined. */
   readonly interactive: boolean;
+  /** The language the user reads the interface in: show notices and command descriptions in it. (since 1.8.0) */
+  readonly lang: "ja" | "en";
   notify(message: string, level?: "info" | "warning" | "error"): void;
   confirm(title: string, message?: string): Promise<boolean>;
   select(title: string, options: SelectOption[]): Promise<string | undefined>;

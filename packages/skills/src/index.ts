@@ -59,7 +59,7 @@ export function createSkillsPlugin(dirs: string[], opts: { builtinDir?: string }
         materializeBuiltinSkills(opts.builtinDir);
         dirs = [opts.builtinDir, ...dirs];
       } catch (e) {
-        api.ui.notify(`built-in skills unavailable: ${(e as Error).message}`, "warning");
+        api.ui.notify(`${api.ui.lang === "en" ? "built-in skills unavailable" : "組み込みの Skills を使えません"}: ${(e as Error).message}`, "warning");
       }
     }
     const skills = discoverSkills(dirs);
@@ -84,13 +84,13 @@ export function createSkillsPlugin(dirs: string[], opts: { builtinDir?: string }
             `Use the "${s.name}" skill (${s.path}). Its instructions:\n\n${body}${args ? `\n\nTask: ${args}` : ""}`,
             args ? "now" : "next",
           );
-          if (!args) api.ui.notify(`skill ${s.name} は次のメッセージと一緒に送られます`);
+          if (!args) api.ui.notify(api.ui.lang === "en" ? `skill ${s.name} goes with your next message` : `skill ${s.name} は次のメッセージと一緒に送られます`);
         },
       });
     }
     api.registerCommand({
       name: "skills",
-      description: "利用できる Skills の一覧",
+      description: api.ui.lang === "en" ? "list the available skills" : "利用できる Skills の一覧",
       run: () => api.ui.notify(skills.map((s) => `${s.name} — ${s.description}\n  ${s.path}`).join("\n")),
     });
   };

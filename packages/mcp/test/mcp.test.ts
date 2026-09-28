@@ -95,7 +95,7 @@ test("servers stay connected across a session switch (/clear, /resume, /fork) an
 test("a server that cannot start is reported without stopping anything", async () => {
   const { agent, notes, until, host } = await load({ broken: { command: "definitely-not-a-command-xyz" } });
   await until(() => notes.length > 0);
-  expect(notes[0]).toContain("MCP server broken failed to start");
+  expect(notes[0]).toContain("MCP サーバー broken を起動できませんでした");
   expect(agent.getTools()).toHaveLength(0);
   expect(host.status.get("mcp:servers")).toBe("MCP 0/1");
   await agent.hooks.run("session_end", {});
@@ -139,12 +139,12 @@ test("a server that drops is reconnected by itself, and its tools work again", a
 
 test("a server that never comes up retries a few times, then /mcp reconnect starts over", async () => {
   const { agent, host, notes, until } = await load({ broken: { command: "definitely-not-a-command-xyz" } }, { reconnectDelayMs: 10 });
-  await until(() => notes.some((n) => n.includes("gave up reconnecting")));
-  expect(notes.filter((n) => n.includes("failed to start"))).toHaveLength(1); // the retries stay quiet
+  await until(() => notes.some((n) => n.includes("再接続をあきらめました")));
+  expect(notes.filter((n) => n.includes("起動できませんでした"))).toHaveLength(1); // the retries stay quiet
   const mcp = host.commands.find((c) => c.name === "mcp")!;
   await mcp.run({ args: "reconnect broken" });
   expect(notes.at(-1)).toContain("再接続します: broken");
-  await until(() => notes.filter((n) => n.includes("gave up reconnecting")).length === 2); // the count starts over
+  await until(() => notes.filter((n) => n.includes("再接続をあきらめました")).length === 2); // the count starts over
   await mcp.run({ args: "" });
   expect(notes.at(-1)).toContain("broken: failed");
   await agent.hooks.run("session_end", {});

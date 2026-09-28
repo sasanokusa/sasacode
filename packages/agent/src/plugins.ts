@@ -36,6 +36,8 @@ export interface PluginHostOptions {
   registerProvider?: (name: string, config: ProviderConfig, implementation?: Provider) => void;
   /** Tools switched off in config (P3); registrations under these names are ignored. */
   disabledTools?: string[];
+  /** The language the user reads (PluginUI.lang); "ja" when not given. */
+  lang?: "ja" | "en";
 }
 
 export interface LoadedPlugin {
@@ -77,7 +79,7 @@ export class PluginHost {
     } catch (e) {
       const error = e instanceof Error ? e.message : String(e);
       this.plugins.push({ name, error });
-      this.notify(`plugin ${name} failed to load: ${error}`, "error");
+      this.notify(this.opts.lang === "en" ? `plugin ${name} failed to load: ${error}` : `プラグイン ${name} を読み込めなかった: ${error}`, "error");
       return false;
     }
   }
@@ -99,6 +101,7 @@ export class PluginHost {
       get interactive() {
         return host.ui.interactive;
       },
+      lang: this.opts.lang ?? "ja",
       notify: (m, level = "info") => host.notify(m, level),
       confirm: (t, m) => host.ui.confirm(t, m),
       select: (t, o) => host.ui.select(t, o),

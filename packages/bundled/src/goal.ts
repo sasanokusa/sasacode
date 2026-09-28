@@ -5,6 +5,7 @@
  *   - 状態はセッションエントリにのみ保存する（ファイルには何も書かない）
  *   - ゴールは1セッションに1件だけ。置き換えた古いゴールは残さない
  */
+import { t } from "@sasacode/host";
 import { errorResult, text, type Plugin } from "@sasacode/plugin-api";
 
 type Status = "active" | "paused" | "done";
@@ -22,7 +23,7 @@ const SOURCE_LABEL: Record<Source, string> = { human: "/goal コマンド", agen
 const ENTRY_KIND = "goal-snapshot";
 const FOOTER_CHARS = 50;
 
-const USAGE = [
+const USAGE = () => t([
   "使い方:",
   "  /goal                   現在のゴールを表示",
   "  /goal <テキスト>        ゴールを設定",
@@ -33,7 +34,7 @@ const USAGE = [
   "  /goal help              この表示",
   "",
   "エージェントは set_goal ツールで同じことができます。",
-].join("\n");
+].join("\n"));
 
 const plugin: Plugin = (api) => {
   let goal: GoalState | null = null;
@@ -76,8 +77,13 @@ const plugin: Plugin = (api) => {
   }
 
   function render(): string {
-    if (!goal) return "ゴールは未設定です。人間は /goal、エージェントは set_goal ツールで設定できます。";
-    return `🎯 ゴール: ${goal.text}\n  状態: ${STATUS_LABEL[goal.status]}　設定元: ${SOURCE_LABEL[goal.source]}\n  更新: ${new Date(goal.updatedAt).toLocaleString()}`;
+    if (!goal) return t("ゴールは未設定です。人間は /goal、エージェントは set_goal ツールで設定できます。");
+    return t("🎯 ゴール: {goal}\n  状態: {status}　設定元: {source}\n  更新: {updated}", {
+      goal: goal.text,
+      status: t(STATUS_LABEL[goal.status]),
+      source: t(SOURCE_LABEL[goal.source]),
+      updated: new Date(goal.updatedAt).toLocaleString(),
+    });
   }
 
   function paint(): void {
@@ -162,8 +168,8 @@ const plugin: Plugin = (api) => {
 
   api.registerCommand({
     name: "goal",
-    description: "このセッションのゴール（最終目的）を設定・表示・達成・一時停止・削除する",
-    argumentHint: "[<目的>|clear|done|pause|resume|help]",
+    description: t("このセッションのゴール（最終目的）を設定・表示・達成・一時停止・削除する"),
+    argumentHint: t("[<目的>|clear|done|pause|resume|help]"),
     complete: (prefix: string) => {
       const p = (prefix ?? "").toLowerCase();
       return (p ? SUBS.filter((s) => s.startsWith(p)) : SUBS).map((value) => ({ value, label: value }));
@@ -173,25 +179,25 @@ const plugin: Plugin = (api) => {
       const low = a.toLowerCase();
 
       if (!a) return api.ui.notify(render(), "info");
-      if (low === "help" || low === "-h" || low === "--help") return api.ui.notify(USAGE, "info");
+      if (low === "help" || low === "-h" || low === "--help") return api.ui.notify(USAGE(), "info");
 
       if (low === "clear") {
-        if (!goal) return api.ui.notify("[goal] 削除するゴールがありません（未設定です）", "warning");
+        if (!goal) return api.ui.notify(t("[goal] 削除するゴールがありません（未設定です）"), "warning");
         const gone = goal.text;
         clear();
-        return api.ui.notify(`[goal] 削除しました: ${gone}`, "info");
+        return api.ui.notify(t("[goal] 削除しました: {goal}", { goal: gone }), "info");
       }
 
       if (low === "done" || low === "pause" || low === "resume") {
         const status: Status = low === "done" ? "done" : low === "pause" ? "paused" : "active";
-        if (!change({ status }, "human")) return api.ui.notify("[goal] 対象のゴールがありません（未設定です）", "warning");
-        return api.ui.notify(`[goal] ${STATUS_LABEL[status]}としました: ${goal?.text}`, "info");
+        if (!change({ status }, "human")) return api.ui.notify(t("[goal] 対象のゴールがありません（未設定です）"), "warning");
+        return api.ui.notify(t(`[goal] ${STATUS_LABEL[status]}としました: {goal}`, { goal: goal?.text ?? "" }), "info");
       }
 
       if (!change({ text: a, status: "active" }, "human")) {
-        return api.ui.notify("[goal] 設定する内容が読み取れません（空です）", "error");
+        return api.ui.notify(t("[goal] 設定する内容が読み取れません（空です）"), "error");
       }
-      api.ui.notify(`[goal] 設定しました:\n${render()}`, "info");
+      api.ui.notify(`${t("[goal] 設定しました:")}\n${render()}`, "info");
       api.session.inject(`[goal] ゴールを設定しました: ${goal?.text}\nこのゴールに向けて作業を進めてください。`, "now");
     },
   });

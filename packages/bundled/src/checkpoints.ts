@@ -11,6 +11,7 @@
  */
 import { existsSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { t } from "@sasacode/host";
 import type { Plugin } from "@sasacode/plugin-api";
 
 interface Change {
@@ -88,37 +89,37 @@ const plugin: Plugin = (api) => {
   const restore = (c: Checkpoint): string[] =>
     c.changes.map((ch) => {
       try {
-        if (ch.skipped) return `${ch.path}: 内容を退避していないため戻せません`;
+        if (ch.skipped) return t("{path}: 内容を退避していないため戻せません", { path: ch.path });
         if (ch.created) {
-          if (!existsSync(ch.path)) return `${ch.path}: すでにありません`;
+          if (!existsSync(ch.path)) return t("{path}: すでにありません", { path: ch.path });
           rmSync(ch.path);
-          return `${ch.path}: 削除しました（変更前はなかったため）`;
+          return t("{path}: 削除しました（変更前はなかったため）", { path: ch.path });
         }
         writeFileSync(ch.path, ch.before ?? "");
-        return `${ch.path}: 戻しました`;
+        return t("{path}: 戻しました", { path: ch.path });
       } catch (e) {
-        return `${ch.path}: 戻せませんでした（${e instanceof Error ? e.message : e}）`;
+        return t("{path}: 戻せませんでした（{error}）", { path: ch.path, error: e instanceof Error ? e.message : String(e) });
       }
     });
 
   api.registerCommand({
     name: "undo",
-    description: "write / edit によるファイル変更を1件戻す",
+    description: t("write / edit によるファイル変更を1件戻す"),
     argumentHint: "[list | <path>]",
     complete: (prefix: string) => ["list"].filter((s) => s.startsWith(prefix ?? "")).map((value) => ({ value, label: value })),
     run({ args }: { args?: string }) {
       const a = (args ?? "").trim();
       const left = stack();
       if (a === "list") {
-        if (!left.length) return api.ui.notify("[undo] 戻せる変更はありません");
+        if (!left.length) return api.ui.notify(t("[undo] 戻せる変更はありません"));
         const lines = left.map((c, i) => `${left.length - i}. ${new Date(c.at).toLocaleTimeString()} ${c.tool} — ${c.changes.map((ch) => ch.path).join(", ")}`);
-        return api.ui.notify(`[undo] 戻せる変更（新しい順）:\n${lines.reverse().join("\n")}`);
+        return api.ui.notify(`${t("[undo] 戻せる変更（新しい順）:")}\n${lines.reverse().join("\n")}`);
       }
       const pick = a ? left.filter((c) => c.changes.some((ch) => ch.path === resolve(api.cwd, a) || ch.path.endsWith(a))).at(-1) : left.at(-1);
-      if (!pick) return api.ui.notify(a ? `[undo] ${a} の変更が見つかりません` : "[undo] 戻せる変更はありません", "warning");
+      if (!pick) return api.ui.notify(a ? t("[undo] {path} の変更が見つかりません", { path: a }) : t("[undo] 戻せる変更はありません"), "warning");
       // 戻した先からまた戻せる（＝変更の前後が入れ替わる）と迷うので、1件は消費したことにする。
       api.session.append(KIND, { undone: pick.id } satisfies Entry);
-      api.ui.notify(`[undo] 戻しました:\n${restore(pick).join("\n")}`);
+      api.ui.notify(`${t("[undo] 戻しました:")}\n${restore(pick).join("\n")}`);
     },
   });
 };

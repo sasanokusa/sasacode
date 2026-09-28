@@ -1,4 +1,5 @@
 import { fstatSync } from "node:fs";
+import { t } from "@sasacode/host";
 
 /** How long a pipe may stay silent before it is taken for one nobody writes to (without --stdin). */
 const PIPE_WAIT_MS = 5000;
@@ -25,7 +26,7 @@ export async function readPipedStdin(wait = false, fd = 0): Promise<string> {
   clearTimeout(timer);
   if (!first || first.done) {
     reader.releaseLock();
-    if (!first) console.error(`warning: nothing arrived on stdin within ${PIPE_WAIT_MS / 1000}s, so it was not read (pass --stdin to wait for it)`);
+    if (!first) console.error(t("warning: nothing arrived on stdin within {s}s, so it was not read (pass --stdin to wait for it)", { s: PIPE_WAIT_MS / 1000 }));
     return "";
   }
   const chunks = [first.value];

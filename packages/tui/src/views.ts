@@ -1,6 +1,7 @@
 import { type Component, Container, Markdown, Text, truncateToWidth } from "@earendil-works/pi-tui";
 import type { AssistantMessage, ToolCall, UserContent } from "@sasacode/ai";
 import type { ToolRenderer, ToolResult } from "@sasacode/plugin-api";
+import { t } from "@sasacode/host";
 import { c, markdownTheme } from "./theme.ts";
 
 /** Shared flag toggled by ctrl+o: show full tool output and thinking. */
@@ -98,7 +99,7 @@ export class ToolView implements Component {
     const dot = { pending: c.gray("○"), running: c.yellow("●"), done: c.green("●"), error: c.red("●") }[this.status];
     const summary = oneLine(plain(this.summary || argPreview(this.call.input)));
     const lines = [truncateToWidth(`${dot} ${c.bold(this.call.name)}${c.gray(`(${summary})`)}`, width)];
-    if (this.repairNote) lines.push(truncateToWidth(c.gray(`  ↻ 修復: ${plain(this.repairNote)}`), width));
+    if (this.repairNote) lines.push(truncateToWidth(c.gray(`  ↻ ${t("修復: {note}", { note: plain(this.repairNote) })}`), width));
     const body = plain(this.status === "running" ? this.live : this.output);
     let custom: string[] | undefined;
     if (this.renderer && this.status !== "running")

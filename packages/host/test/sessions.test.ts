@@ -4,7 +4,8 @@ import { afterAll, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { findSession, listSessions, loadSessionIndex, restore, type SessionEntry, type SessionInfo } from "../src/index.ts";
+import { restore, SessionFile, type SessionEntry, sessionDir } from "@sasacode/agent";
+import { findSession, listSessions, loadSessionIndex, type SessionInfo } from "../src/index.ts";
 
 const home = mkdtempSync(join(tmpdir(), "sasacode-index-"));
 afterAll(() => rmSync(home, { recursive: true, force: true }));
@@ -136,4 +137,13 @@ test("a session id is found from any directory, naming its working directory", (
   expect(findSession(root, path)!.id).toBe("ffff4444"); // exact path
   expect(findSession(root, "no-such-session")).toBeUndefined();
   expect(findSession(root, "headless")).toBeUndefined(); // a log without its header is not resumable
+});
+
+test("sessions in the shared pre-0.8 folder are told apart by the directory they record", () => {
+  const home2 = join(home, "home-dirs");
+  const legacy = join(home2, "sessions", "work-a-b-c");
+  const mine = SessionFile.create(legacy, "/work/a-b/c");
+  const theirs = SessionFile.create(legacy, "/work/a/b-c");
+  for (const f of [mine, theirs]) f.append({ type: "model", model: "t/m" });
+  expect(listSessions(sessionDir(home2, "/work/a-b/c"), "/work/a-b/c").map((x) => x.id)).toEqual([mine.id]);
 });

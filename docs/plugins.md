@@ -104,12 +104,14 @@ sasanokusa.com のおすすめ一覧に載せたいときは、[リポジトリ]
 | `version` / `name` / `cwd` | ホストの API の版 / このプラグインの名前 / 作業ディレクトリ |
 | `settings` | 設定ファイルの `plugins.settings.<名前>` |
 | `registerTool(def)` | ツールを追加する。同名を登録すると置き換わる（組み込みの `read` なども上書きできる） |
+| `unregisterTool(name)` | このプラグインが登録したツールを外す。ほかのプラグインのツールには触れない（1.8.0〜） |
 | `registerCommand(def)` | スラッシュコマンドを追加する |
 | `registerProvider(name, config, impl?)` | プロバイダーを追加する。`impl` を渡すと、新しい API 形式も足せる |
 | `on(hook, handler)` | フックを登録する（[フック](#フック)） |
 | `ready(promise)` | 起動時の非同期処理（サーバーへの接続など）をホストに知らせる。ヘッドレス実行はこれを待ってから最初のリクエストを送り、TUI は待たない（1.1.0〜） |
 | `permissions.addRules({allow, ask, deny, softDeny})` | 権限ルールを足す。`softDeny` は deny と同じく拒否するが、`permission` フックが「ユーザーに確認」まで下げられる（1.7.0〜） |
 | `ui.interactive` | TUI なら true。ヘッドレスでは false で、`confirm` は false、`select` は undefined を返す |
+| `ui.lang` | ユーザーが読む言語（`"ja"` / `"en"`）。通知やコマンドの説明をこの言語で出す（1.8.0〜） |
 | `ui.notify(msg, level?)` / `ui.confirm(title, msg?)` / `ui.select(title, options)` | 通知 / 確認 / 選択 |
 | `ui.setStatus(key, text)` | フッターのステータス行に出す（`undefined` で消す） |
 | `ui.registerToolRenderer(tool, fn)` | ツール結果の表示を差し替える。`fn(call, result, {expanded, width})` が行の配列を返す |
@@ -118,7 +120,7 @@ sasanokusa.com のおすすめ一覧に載せたいときは、[リポジトリ]
 | `session.messages()` / `session.replaceMessages(msgs)` | 会話を読む / 差し替える（圧縮など。差し替えもセッションに記録される） |
 | `session.inject(text, "next" \| "now")` | ユーザーメッセージを差し込む。`next` は次のターンか次の入力で、`now` は実行中でなければすぐ実行する |
 | `agent.model()` / `agent.tools()` | 現在のモデル / 登録済みのツール |
-| `agent.run({prompt, systemPrompt?, tools?, excludeTools?, model?, signal?, onProgress?})` | 独立した履歴でサブループを実行し、`{text, messages, cause}` を返す（サブエージェント） |
+| `agent.run({prompt, systemPrompt?, tools?, excludeTools?, model?, signal?, onProgress?, onStart?})` | 独立した履歴でサブループを実行し、`{text, messages, cause, error?}` を返す（サブエージェント）。`onStart` は実行中のループへの `send(text)`（次のターンで届く）と `stop()` を受け取る。`error` は `cause` が `"error"` のときの理由（1.8.0〜） |
 | `agent.complete({system, messages, model?, maxTokens?, signal?})` | ツールなしで1回だけモデルを呼び、本文を返す |
 | `log(...args)` | `SASACODE_DEBUG` が設定されているときだけ stderr に出す |
 
@@ -194,7 +196,7 @@ before_request → stream_delta（生成中、差分ごと） → assistant_mess
 | 1.5.0 | `Provider.listModels`（プロバイダーが自分のモデル一覧を返す）と `Request.fetch`（通信の差し替え）。別のプロバイダーを包むプロバイダーを書ける |
 | 1.6.0 | ツールの `permissionsAs`（別のツール名の権限ルールも当てる） |
 | 1.7.0 | `permission` フック（ルールとモードの判定の後に、決められた範囲で判定を変える）、`PermissionRules.softDeny`、型 `PermissionMode` と `VerdictSource` |
-| 1.8.0 | フックのハンドラの第2引数 `ctx`（型 `HookContext`。`ctx.agent` でサブエージェントを区別する）、`session_end` の `reason`（`"switch"` / `"exit"`）、関数 `sasacodeHome`・`childEnv`・`hideFromChildren`・`saveOutput` |
+| 1.8.0 | フックのハンドラの第2引数 `ctx`（型 `HookContext`。`ctx.agent` でサブエージェントを区別する）、`session_end` の `reason`（`"switch"` / `"exit"`）、関数 `sasacodeHome`・`childEnv`・`hideFromChildren`・`saveOutput`、`unregisterTool`、`ui.lang`、`agent.run` の `onStart`（実行中のサブエージェントへの `send` と `stop`）と結果の `error` |
 
 どれも既存のプラグインを壊さない追加。ただし 1.4.0 から、`tool_result` を「実行された」合図として数えているプラグインは `ran` を見る必要がある。
 

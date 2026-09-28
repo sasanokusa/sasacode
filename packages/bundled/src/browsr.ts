@@ -1,4 +1,5 @@
 import { connectServers } from "@sasacode/mcp";
+import { t } from "@sasacode/host";
 import type { Plugin } from "@sasacode/plugin-api";
 
 const INSTALL = "uv tool install browsr-4-agent && browsr-agent setup";
@@ -33,16 +34,16 @@ const browsr: Plugin = (api) => {
   let status = "";
   api.registerCommand({
     name: "browsr",
-    description: "browsr（Web 検索・閲覧）の状態",
+    description: t("browsr（Web 検索・閲覧）の状態"),
     run: () =>
       api.ui.notify(
         command
           ? `browsr: ${command}${status ? ` · ${status}` : ""}`
-          : `browsr-agent が見つかりません。インストール: ${INSTALL}\n別の場所にある場合は plugins.settings.browsr.command を指定してください。`,
+          : t("browsr-agent が見つかりません。インストール: {install}\n別の場所にある場合は plugins.settings.browsr.command を指定してください。", { install: INSTALL }),
       ),
   });
   if (!command) {
-    if (configured) api.ui.notify(`browsr: ${configured} が見つかりません`, "warning");
+    if (configured) api.ui.notify(t("browsr: {command} が見つかりません", { command: configured }), "warning");
     return;
   }
 
@@ -51,7 +52,7 @@ const browsr: Plugin = (api) => {
     try {
       manifest = await readManifest(command);
     } catch (e) {
-      api.ui.notify(`browsr: manifest を読めませんでした (${(e as Error).message})`, "warning");
+      api.ui.notify(t("browsr: manifest を読めませんでした ({error})", { error: (e as Error).message }), "warning");
       return;
     }
     if (manifest.manifest_version !== 1 || manifest.tool_schema_version !== 1) {
@@ -63,7 +64,7 @@ const browsr: Plugin = (api) => {
     }
     const mode = (api.settings.mode as string | undefined) ?? manifest.default_mode;
     if (!manifest.modes[mode]) {
-      api.ui.notify(`browsr: unknown mode "${mode}" (${Object.keys(manifest.modes).join(", ")})`, "warning");
+      api.ui.notify(t('browsr: unknown mode "{mode}" ({known})', { mode, known: Object.keys(manifest.modes).join(", ") }), "warning");
       return;
     }
     const args = [...manifest.entry.args, "--mode", mode, ...(api.settings.config ? ["--config", String(api.settings.config)] : [])];

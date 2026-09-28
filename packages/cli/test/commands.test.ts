@@ -1,13 +1,16 @@
 // Subcommands and input handling: flags in any position, piped input that arrives late.
-import { afterAll, beforeEach, expect, test } from "bun:test";
+import { afterAll, beforeAll, beforeEach, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { setLang } from "@sasacode/host";
 import { hideFromChildren, childEnv } from "@sasacode/plugin-api";
 import { endpointCommand } from "../src/endpoints.ts";
 import { loadEnvFile } from "../src/env.ts";
 import { discoverPlugins, pluginCommand } from "../src/loader.ts";
 import { readPipedStdin } from "../src/stdin.ts";
+
+beforeAll(() => setLang("en")); // these assertions quote the English strings
 
 const base = mkdtempSync(join(tmpdir(), "sasacode-commands-"));
 afterAll(() => rmSync(base, { recursive: true, force: true }));

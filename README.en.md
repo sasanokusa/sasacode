@@ -122,7 +122,7 @@ From `GET /v1/models` it tells OpenAI-style servers (called with Chat Completion
 
 Endpoints in a project's `.sasacode/config.json` are not used until you trust the project ([Project trust](#project-trust)): even a server without a key receives the conversation and the code.
 
-**Model lists**: when the TUI starts, it calls the Models API (`GET /v1/models`) of every provider with a key (and Ollama) in the background, and shows the models and their context lengths in `/model`. The context length is also used for the footer and the compaction threshold (`modelOverrides` in the config wins). Ollama is read through `/api/show`: the Modelfile's `num_ctx` is used as the real length when set, otherwise the model's maximum is shown for reference. OpenAI's Models API gives no context length, so the built-in model table fills it in. Services that offer several API formats on one key, such as Command Code, have each model routed to the provider of the matching format (Claude models go to `commandcode-anthropic/…`, for example).
+**Model lists**: when the TUI starts, it calls the Models API (`GET /v1/models`) of every provider with a key (and Ollama) in the background, and shows the models and their context lengths in `/model`. The context length is also used for the footer and the compaction threshold (`modelOverrides` in the config wins). Ollama is read through `/api/show`: the Modelfile's `num_ctx` is used as the real length when set, otherwise the model's maximum is shown for reference (a model already in memory uses the real length from `/api/ps`). Choosing a model without `num_ctx` brings one warning that Ollama silently cuts input longer than its default. OpenAI's Models API gives no context length, so the built-in model table fills it in. Services that offer several API formats on one key, such as Command Code, have each model routed to the provider of the matching format (Claude models go to `commandcode-anthropic/…`, for example).
 
 **API keys** are looked up in this order: shell environment → `~/.sasacode/.env` → OS keychain (macOS: `security add-generic-password -s sasacode -a <provider> -w`, Linux: `secret-tool store --label sasacode service sasacode account <provider>`). Blank values are ignored everywhere. The working directory's `.env` and `bunfig.toml` are never read (so a repository cannot redirect keys with `ANTHROPIC_BASE_URL` or run code at start). Keys in use are replaced with `[REDACTED]` before a session log is written. Keys set only in `~/.sasacode/.env` are not passed to the commands the agent runs (bash, background jobs). `~/.sasacode` (session logs, input history, saved long outputs in `tmp/`) is kept private to the user (0700).
 
@@ -155,7 +155,7 @@ Endpoints in a project's `.sasacode/config.json` are not used until you trust th
 }
 ```
 
-`models` go to the top of the `/model` list. `providers` adds OpenAI- or Anthropic-compatible endpoints. `lang` is the language of the interface (TUI and CLI alike; `"ja"` or `"en"`); by default `SASACODE_LANG`, else the system locale, decides. `updateCheck` controls the new-version notice at startup (default true).
+`models` go to the top of the `/model` list. `providers` adds OpenAI- or Anthropic-compatible endpoints. `lang` is the language of the interface (the TUI, the CLI and the bundled plugins alike; `"ja"` or `"en"`). `SASACODE_LANG` wins over it, and without either the system locale decides. Text for the model (tool descriptions and results) is not translated. `updateCheck` controls the new-version notice at startup (default true).
 
 **Cost**: the footer and the end-of-run summary show an estimate from the built-in model table (USD per 1M tokens), not a bill. OpenRouter reports the actual cost of a request, and that is used when it does. `modelOverrides` can set the price of any model.
 
@@ -336,5 +336,6 @@ bun run build       # dist/sasacode for this machine; --all for every target
 | `@sasacode/tui` | The interactive UI, built on pi-tui |
 | `@sasacode/cli` | Arguments, configuration, keys, model lists, finding, loading and trusting plugins, headless runs |
 | `@sasacode/mcp` / `@sasacode/skills` / `@sasacode/bundled` | MCP and Skills adapters, bundled plugins |
+| `@sasacode/host` | What the TUI, the CLI and the bundled plugins share: the interface language (the translation tables) and the session index |
 
-The core (ai, agent, plugin-api, tools) is about 3,600 lines, with a ceiling of 4,000. Runtime dependencies and why they are there are in [docs/dependencies.md](docs/dependencies.md).
+The core (ai, agent, plugin-api, tools) is about 3,950 lines, with a ceiling of 4,000. Runtime dependencies and why they are there are in [docs/dependencies.md](docs/dependencies.md).

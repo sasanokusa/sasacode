@@ -2,6 +2,7 @@
 // their API format is detected from the Models API and remembered.
 import { join } from "node:path";
 import { parseArgs } from "node:util";
+import { t } from "@sasacode/host";
 import { applyDetected, BUILTIN_PROVIDERS, type DetectedEndpoint, detectEndpoint, listModels, type ProviderConfig } from "@sasacode/ai";
 import { loadConfig, sasacodeHome } from "./config.ts";
 import { readJson, readJsonOr, writeJson } from "./json.ts";
@@ -25,7 +26,7 @@ export async function resolveEndpoints(
     Object.entries(providers).map(async ([name, p]) => {
       if (p.api) return;
       if (!p.baseUrl) {
-        warnings.push(`provider ${name} has neither "api" nor "baseUrl"; ignored`);
+        warnings.push(t('provider {name} has neither "api" nor "baseUrl"; ignored', { name }));
         delete providers[name];
         return;
       }
@@ -36,7 +37,7 @@ export async function resolveEndpoints(
           cache[p.baseUrl] = found;
           changed = true;
         } catch (e) {
-          warnings.push(`provider ${name} (${p.baseUrl}): ${(e as Error).message}; ignored`);
+          warnings.push(t("provider {name} ({url}): {error}; ignored", { name, url: p.baseUrl, error: (e as Error).message }));
           delete providers[name];
           return;
         }
@@ -58,43 +59,50 @@ export async function endpointCommand(args: string[], cwd: string): Promise<numb
   const path = configPath(cwd, project);
 
   if (sub === "add" && name && url) {
-    if (!/^[\w.-]+$/.test(name)) throw new Error("name may contain letters, digits, _ . - only");
-    if (BUILTIN_PROVIDERS[name]) throw new Error(`"${name}" is a built-in provider; choose another name`);
+    if (!/^[\w.-]+$/.test(name)) throw new Error(t("name may contain letters, digits, _ . - only"));
+    if (BUILTIN_PROVIDERS[name]) throw new Error(t('"{name}" is a built-in provider; choose another name', { name }));
     const config = readJson(path); // before detecting: a config that cannot be read stops here
     const key = keyEnv ? process.env[keyEnv] : undefined;
-    if (keyEnv && !key) console.error(`warning: ${keyEnv} is not set; detecting without a key`);
+    if (keyEnv && !key) console.error(t("warning: {keyEnv} is not set; detecting without a key", { keyEnv }));
     const found = await detectEndpoint(url, key, AbortSignal.timeout(10_000));
     const provider: Partial<ProviderConfig> = { ...applyDetected({}, found), ...(keyEnv ? { apiKeyEnv: keyEnv } : {}) };
     const flavour = found.llamacpp ? " (llama.cpp)" : found.ollama ? " (Ollama)" : "";
-    console.log(`${name}: ${found.api === "anthropic" ? "Anthropic Messages" : "OpenAI Chat Completions"}${flavour} at ${found.baseUrl}`);
+    console.log(
+      t("{name}: {api}{flavour} at {url}", {
+        name,
+        api: found.api === "anthropic" ? "Anthropic Messages" : "OpenAI Chat Completions",
+        flavour,
+        url: found.baseUrl,
+      }),
+    );
     const models = await listModels(provider as ProviderConfig, key, AbortSignal.timeout(10_000)).catch(() => []);
     for (const m of models.slice(0, 20))
-      console.log(`  ${name}/${m.id}${m.contextWindow ? `  (${m.contextWindow} ctx)` : m.maxContext ? `  (max ${m.maxContext})` : ""}`);
-    if (models.length > 20) console.log(`  … ${models.length - 20} more (see /model)`);
+      console.log(`  ${name}/${m.id}${m.contextWindow ? `  ${t("({ctx} ctx)", { ctx: m.contextWindow })}` : m.maxContext ? `  ${t("(max {max})", { max: m.maxContext })}` : ""}`);
+    if (models.length > 20) console.log(`  ${t("… {n} more (see /model)", { n: models.length - 20 })}`);
     config.providers = { ...config.providers, [name]: provider };
     writeJson(path, config);
-    console.log(`saved to ${path}${models[0] ? ` — try: sasacode -m ${name}/${models[0].id}` : ""}`);
-    if (project) console.log("note: endpoints in a project config are used once you trust the project (sasacode asks on the next start)");
+    console.log(`${t("saved to {path}", { path })}${models[0] ? ` — ${t("try: sasacode -m {spec}", { spec: `${name}/${models[0].id}` })}` : ""}`);
+    if (project) console.log(t("note: endpoints in a project config are used once you trust the project (sasacode asks on the next start)"));
     return 0;
   }
   if (sub === "remove" && name) {
     const config = readJson(path);
     if (!config.providers?.[name]) {
-      console.error(`${name} is not in ${path}`);
+      console.error(t("{name} is not in {path}", { name, path }));
       return 1;
     }
     delete config.providers[name];
     writeJson(path, config);
-    console.log(`removed ${name} from ${path}`);
+    console.log(t("removed {name} from {path}", { name, path }));
     return 0;
   }
   if (sub === "list" || !sub) {
     const { config } = loadConfig(cwd);
     const custom = Object.entries(config.providers ?? {}).filter(([n]) => !BUILTIN_PROVIDERS[n]);
-    if (!custom.length) console.log("no custom endpoints (add one: sasacode endpoint add <name> <url>)");
-    for (const [n, p] of custom) console.log(`${n}  ${p.baseUrl ?? "-"}  ${p.api ?? "auto"}${p.apiKeyEnv ? `  key: ${p.apiKeyEnv}` : ""}`);
+    if (!custom.length) console.log(t("no custom endpoints (add one: sasacode endpoint add <name> <url>)"));
+    for (const [n, p] of custom) console.log(`${n}  ${p.baseUrl ?? "-"}  ${p.api ?? "auto"}${p.apiKeyEnv ? `  ${t("key: {env}", { env: p.apiKeyEnv })}` : ""}`);
     return 0;
   }
-  console.error("usage: sasacode endpoint <add <name> <url> [--key-env VAR]|remove <name>|list> [--project]");
+  console.error(t("usage: sasacode endpoint <add <name> <url> [--key-env VAR]|remove <name>|list> [--project]"));
   return 1;
 }

@@ -1,8 +1,11 @@
-import { afterAll, expect, test } from "bun:test";
+import { afterAll, beforeAll, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { setLang } from "@sasacode/host";
 import { apiRangeFor, checkPackageDir, describeNpm, describeSource, formatListings, parseSpec, searchPlugins, stagePackage } from "../src/plugin-share.ts";
+
+beforeAll(() => setLang("en")); // these assertions quote the English strings
 
 const root = mkdtempSync(join(tmpdir(), "sasacode-share-"));
 afterAll(() => rmSync(root, { recursive: true, force: true }));

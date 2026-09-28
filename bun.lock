@@ -11,7 +11,7 @@
     },
     "packages/agent": {
       "name": "@sasacode/agent",
-      "version": "0.8.0",
+      "version": "0.9.4",
       "dependencies": {
         "@sasacode/ai": "workspace:*",
         "@sasacode/plugin-api": "workspace:*",
@@ -22,7 +22,7 @@
     },
     "packages/ai": {
       "name": "@sasacode/ai",
-      "version": "0.8.0",
+      "version": "0.9.4",
       "dependencies": {
         "@anthropic-ai/sdk": "^0.128.0",
         "openai": "^7.23.0",
@@ -30,21 +30,22 @@
     },
     "packages/bundled": {
       "name": "@sasacode/bundled",
-      "version": "0.8.0",
+      "version": "0.9.4",
       "dependencies": {
+        "@sasacode/agent": "workspace:*",
+        "@sasacode/host": "workspace:*",
         "@sasacode/mcp": "workspace:*",
         "@sasacode/plugin-api": "workspace:*",
       },
       "devDependencies": {
         "@modelcontextprotocol/sdk": "^1.30.1",
-        "@sasacode/agent": "workspace:*",
         "@sasacode/ai": "workspace:*",
         "@sasacode/tools": "workspace:*",
       },
     },
     "packages/cli": {
       "name": "@sasacode/cli",
-      "version": "0.8.0",
+      "version": "0.9.4",
       "bin": {
         "sasacode": "src/main.ts",
       },
@@ -52,6 +53,7 @@
         "@sasacode/agent": "workspace:*",
         "@sasacode/ai": "workspace:*",
         "@sasacode/bundled": "workspace:*",
+        "@sasacode/host": "workspace:*",
         "@sasacode/mcp": "workspace:*",
         "@sasacode/plugin-api": "workspace:*",
         "@sasacode/skills": "workspace:*",
@@ -59,9 +61,17 @@
         "@sasacode/tui": "workspace:*",
       },
     },
+    "packages/host": {
+      "name": "@sasacode/host",
+      "version": "0.9.4",
+      "dependencies": {
+        "@sasacode/agent": "workspace:*",
+        "@sasacode/ai": "workspace:*",
+      },
+    },
     "packages/mcp": {
       "name": "@sasacode/mcp",
-      "version": "0.8.0",
+      "version": "0.9.4",
       "dependencies": {
         "@modelcontextprotocol/sdk": "^1.30.1",
         "@sasacode/plugin-api": "workspace:*",
@@ -73,14 +83,14 @@
     },
     "packages/plugin-api": {
       "name": "@sasacode/plugin-api",
-      "version": "0.8.0",
+      "version": "0.9.4",
       "dependencies": {
         "@sasacode/ai": "workspace:*",
       },
     },
     "packages/skills": {
       "name": "@sasacode/skills",
-      "version": "0.8.0",
+      "version": "0.9.4",
       "dependencies": {
         "@sasacode/plugin-api": "workspace:*",
       },
@@ -92,18 +102,19 @@
     },
     "packages/tools": {
       "name": "@sasacode/tools",
-      "version": "0.8.0",
+      "version": "0.9.4",
       "dependencies": {
         "@sasacode/plugin-api": "workspace:*",
       },
     },
     "packages/tui": {
       "name": "@sasacode/tui",
-      "version": "0.8.0",
+      "version": "0.9.4",
       "dependencies": {
         "@earendil-works/pi-tui": "^0.87.1",
         "@sasacode/agent": "workspace:*",
         "@sasacode/ai": "workspace:*",
+        "@sasacode/host": "workspace:*",
         "@sasacode/plugin-api": "workspace:*",
       },
     },
@@ -129,6 +140,8 @@
     "@sasacode/bundled": ["@sasacode/bundled@workspace:packages/bundled"],
 
     "@sasacode/cli": ["@sasacode/cli@workspace:packages/cli"],
+
+    "@sasacode/host": ["@sasacode/host@workspace:packages/host"],
 
     "@sasacode/mcp": ["@sasacode/mcp@workspace:packages/mcp"],
 

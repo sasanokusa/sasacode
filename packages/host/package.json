@@ -1,20 +1,17 @@
 {
-  "name": "@sasacode/tui",
+  "name": "@sasacode/host",
   "version": "0.9.4",
   "type": "module",
   "main": "src/index.ts",
   "dependencies": {
-    "@earendil-works/pi-tui": "^0.87.1",
     "@sasacode/agent": "workspace:*",
-    "@sasacode/ai": "workspace:*",
-    "@sasacode/host": "workspace:*",
-    "@sasacode/plugin-api": "workspace:*"
+    "@sasacode/ai": "workspace:*"
   },
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/sasanokusa/sasacode.git",
-    "directory": "packages/tui"
+    "directory": "packages/host"
   },
   "files": [
     "src"

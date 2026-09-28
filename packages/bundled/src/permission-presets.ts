@@ -1,4 +1,5 @@
 import { CHAIN } from "@sasacode/agent";
+import { t } from "@sasacode/host";
 import type { PermissionRules, Plugin } from "@sasacode/plugin-api";
 
 /** Named rule sets, enabled with plugins.settings["permission-presets"].presets (default: guard). */
@@ -95,7 +96,7 @@ const permissionPresets: Plugin = (api) => {
   const enabled = (api.settings.presets as string[] | undefined) ?? ["guard"];
   for (const name of enabled) {
     const p = PRESETS[name];
-    if (!p) api.ui.notify(`unknown permission preset "${name}" (${Object.keys(PRESETS).join(", ")})`, "warning");
+    if (!p) api.ui.notify(t('unknown permission preset "{name}" ({known})', { name, known: Object.keys(PRESETS).join(", ") }), "warning");
     else api.permissions.addRules(p.rules);
   }
   if (enabled.includes("read-only-shell"))
@@ -107,12 +108,12 @@ const permissionPresets: Plugin = (api) => {
     });
   api.registerCommand({
     name: "presets",
-    description: "権限プリセットの一覧",
+    description: t("権限プリセットの一覧"),
     run: () =>
       api.ui.notify(
         Object.entries(PRESETS)
-          .map(([n, p]) => `${enabled.includes(n) ? "●" : "○"} ${n} — ${p.description}`)
-          .concat('有効化: config の plugins.settings["permission-presets"].presets')
+          .map(([n, p]) => `${enabled.includes(n) ? "●" : "○"} ${n} — ${t(p.description)}`)
+          .concat(t('有効化: config の plugins.settings["permission-presets"].presets'))
           .join("\n"),
       ),
   });

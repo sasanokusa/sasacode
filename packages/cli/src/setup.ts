@@ -1,21 +1,7 @@
 import { chmodSync, mkdirSync, statSync } from "node:fs";
 import { join, resolve as resolvePath } from "node:path";
-import {
-  Agent,
-  buildSystemPrompt,
-  findSession,
-  headlessUI,
-  isInside,
-  listSessions,
-  PERMISSION_MODES,
-  type PermissionMode,
-  PermissionPolicy,
-  PluginHost,
-  restore,
-  SessionFile,
-  sessionDir,
-  type UIBridge,
-} from "@sasacode/agent";
+import { Agent, buildSystemPrompt, headlessUI, isInside, PERMISSION_MODES, type PermissionMode, PermissionPolicy, PluginHost, restore, SessionFile, sessionDir, type UIBridge } from "@sasacode/agent";
+import { currentLang, findSession, listSessions, t } from "@sasacode/host";
 import { BUILTIN_PROVIDERS, defaultModelFor, type ModelInfo, type ProviderConfig, registerApi, resolveModel, type ThinkingLevel } from "@sasacode/ai";
 import { bundledPlugins, readCodexAuth } from "@sasacode/bundled";
 import { createMcpPlugin, type McpServerConfig } from "@sasacode/mcp";
@@ -92,7 +78,7 @@ export async function setup(opts: SetupOptions): Promise<Harness> {
   const resolve = (spec: string) => resolveModel(spec, providers, overrides());
 
   const mode = (opts.permission ?? config.permissions?.mode ?? "edits") as PermissionMode;
-  if (!PERMISSION_MODES.includes(mode)) throw new Error(`unknown permission mode "${mode}" (${PERMISSION_MODES.join(", ")})`);
+  if (!PERMISSION_MODES.includes(mode)) throw new Error(t('unknown permission mode "{mode}" ({modes})', { mode, modes: PERMISSION_MODES.join(", ") }));
   const home = sasacodeHome();
   const sessionsDir = sessionDir(home, opts.cwd);
   // Sessions, input history, saved outputs and keys live here: private to the user, whatever the umask.
@@ -122,6 +108,7 @@ export async function setup(opts: SetupOptions): Promise<Harness> {
 
   const disabled = new Set(config.plugins?.disabled ?? []);
   const host = new PluginHost({
+    lang: currentLang(),
     agent,
     cwd: opts.cwd,
     settings: (name) => config.plugins?.settings?.[name] ?? {},
@@ -156,7 +143,7 @@ export async function setup(opts: SetupOptions): Promise<Harness> {
       try {
         agent.model = resolve(state.model);
       } catch (e) {
-        warnings.push(`session model ${state.model} unavailable: ${(e as Error).message}`);
+        warnings.push(t("session model {model} unavailable: {error}", { model: state.model, error: (e as Error).message }));
       }
     }
   };
@@ -173,11 +160,11 @@ export async function setup(opts: SetupOptions): Promise<Harness> {
         ? list[0]
         : list.find((s) => s.id === opts.resume || s.path === opts.resume || s.id.startsWith(opts.resume!));
     if (!target) {
-      if (opts.resume === "last") throw new Error("no previous session in this directory");
+      if (opts.resume === "last") throw new Error(t("no previous session in this directory"));
       // The id alone is often all a script keeps: when the session lives in another directory,
       // name it, so the run can be continued from there instead of "not found".
       const elsewhere = findSession(join(home, "sessions"), opts.resume);
-      throw new Error(elsewhere ? `session ${opts.resume} belongs to ${elsewhere.cwd}: run sasacode from there` : `session not found: ${opts.resume}`);
+      throw new Error(elsewhere ? t("session {id} belongs to {cwd}: run sasacode from there", { id: opts.resume, cwd: elsewhere.cwd }) : t("session not found: {id}", { id: opts.resume }));
     }
     openSession(target.path, !!opts.model);
   } else createSession();
@@ -196,7 +183,7 @@ export async function setup(opts: SetupOptions): Promise<Harness> {
       for (let i = found.length - 1; i >= 0; i--) if (disabled.has(found[i]!.manifest.name)) found.splice(i, 1);
       const skipped = found.filter((p) => p.scope === "project" && !trusted);
       if (skipped.length)
-        host.notify(`project plugins not loaded until you trust this project: ${skipped.map((p) => p.manifest.name).join(", ")}`, "warning");
+        host.notify(t("project plugins not loaded until you trust this project: {names}", { names: skipped.map((p) => p.manifest.name).join(", ") }), "warning");
       const usable = found.filter((p) => p.scope === "global" || trusted);
       // A user or project plugin of the same name replaces the bundled one (both would hook twice).
       const own = new Set(usable.map((p) => p.manifest.name));
@@ -209,7 +196,7 @@ export async function setup(opts: SetupOptions): Promise<Harness> {
           const dir = resolvePath(p.dir, p.manifest.skills);
           // A plugin's skills come from its own folder, like its code.
           if (isInside(dir, p.dir)) return [dir];
-          host.notify(`plugin ${p.manifest.name}: skills folder ${p.manifest.skills} is outside the plugin; ignored`, "warning");
+          host.notify(t("plugin {name}: skills folder {folder} is outside the plugin; ignored", { name: p.manifest.name, folder: p.manifest.skills! }), "warning");
           return [];
         })];
         await host.load("skills", createSkillsPlugin(dirs, { builtinDir: join(home, "builtin-skills") }));
@@ -272,7 +259,7 @@ async function loadExternal(host: PluginHost, p: FoundPlugin): Promise<void> {
     exts = await importExtensions(p);
   } catch (e) {
     host.plugins.push({ name: p.manifest.name, error: (e as Error).message });
-    host.notify(`plugin ${p.manifest.name} skipped: ${(e as Error).message}`, "warning");
+    host.notify(t("plugin {name} skipped: {error}", { name: p.manifest.name, error: (e as Error).message }), "warning");
     return;
   }
   for (const [i, fn] of exts.entries()) await host.load(exts.length > 1 ? `${p.manifest.name}#${i}` : p.manifest.name, fn);

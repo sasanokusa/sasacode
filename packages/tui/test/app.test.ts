@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Terminal } from "@earendil-works/pi-tui";
 import { Agent, PermissionPolicy, PluginHost } from "@sasacode/agent";
+import { setLang } from "@sasacode/host";
 import { type AssistantContent, type AssistantMessage, emptyUsage, type ModelInfo, registerApi, replayProvider } from "@sasacode/ai";
 import { runTui, type TuiHost } from "../src/app.ts";
 
@@ -57,7 +58,7 @@ const reply = (content: AssistantContent[], extra: Partial<AssistantMessage> = {
   stopReason: content.some((c) => c.type === "tool_call") ? "tool_use" : "stop", timestamp: 0, ...extra,
 });
 
-async function start(script: AssistantMessage[], mode: "edits" | "auto" = "edits") {
+async function start(script: AssistantMessage[], mode: "edits" | "auto" = "edits", listed: Awaited<ReturnType<TuiHost["listModels"]>> = []) {
   registerApi("replay", replayProvider(script));
   const cwd = mkdtempSync(join(tmpdir(), "sasacode-tui-"));
   const agent = new Agent({ model, cwd, systemPrompt: "", permissions: new PermissionPolicy(mode) });
@@ -72,7 +73,7 @@ async function start(script: AssistantMessage[], mode: "edits" | "auto" = "edits
     config: { tui: { altScreen: false, bell: false } },
     resolve: () => model,
     sessionsDir: cwd,
-    listModels: async () => [],
+    listModels: async () => listed,
     loadPlugins: async (ui) => host.setUI(ui),
     loadSession: async () => void calls.push("loadSession"),
     newSession: async () => {
@@ -130,4 +131,45 @@ test("the context-limit notice appears only when the run really stops there", as
   await term.send("\r");
   await Bun.sleep(100);
   expect(term.text()).toContain("コンテキストの上限に達したため停止しました");
+});
+
+test("lang en: the approval prompt, the footer and /help are in English", async () => {
+  setLang("en");
+  try {
+    const { term } = await start([reply([{ type: "tool_call", id: "1", name: "bash", input: { command: "echo hi" } }]), reply([{ type: "text", text: "done" }])]);
+    expect(term.text()).toContain("permissions: reads and edits only");
+    await term.type("run it");
+    await term.send("\r");
+    await Bun.sleep(100);
+    expect(term.text()).toContain("Run bash?");
+    expect(term.text()).toContain("Always allow (until exit)");
+    await term.send("\r");
+    await Bun.sleep(300);
+    await term.type("/help");
+    await term.send("\r");
+    await Bun.sleep(100);
+    expect(term.text()).toContain("show commands and keys");
+    expect(term.text()).not.toMatch(/[ぁ-ん]/);
+  } finally {
+    setLang("ja");
+  }
+});
+
+test("a model without num_ctx gets one warning, at startup and not again on /model", async () => {
+  const { term } = await start([], "edits", [{ spec: "t/m", maxContext: 262_144 }]);
+  await Bun.sleep(50);
+  expect(term.text()).toContain("t/m には num_ctx が設定されていません");
+  const before = term.out.length;
+  await term.type("/model t/m");
+  await term.send("\r"); // takes the completion
+  await term.send("\r");
+  await Bun.sleep(50);
+  expect(term.text(before)).toContain("モデル: t/m");
+  expect(term.text(before)).not.toContain("num_ctx が設定されていません");
+});
+
+test("a model whose size is known gets no warning", async () => {
+  const { term } = await start([], "edits", [{ spec: "t/m", contextWindow: 32_768, maxContext: 262_144 }]);
+  await Bun.sleep(50);
+  expect(term.text()).not.toContain("num_ctx");
 });

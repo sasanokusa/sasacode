@@ -1,9 +1,12 @@
 // sasacode update: what the newest release is, how often that is asked, and what must never be replaced.
-import { afterAll, expect, test } from "bun:test";
+import { afterAll, beforeAll, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { setLang } from "@sasacode/host";
 import { checkForUpdate, compareVersions, currentVersion, latestRelease, releaseTarget, updateCommand } from "../src/update.ts";
+
+beforeAll(() => setLang("en")); // these assertions quote the English strings
 
 const home = mkdtempSync(join(tmpdir(), "sasacode-update-"));
 process.env.SASACODE_HOME = home;

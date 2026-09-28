@@ -25,6 +25,7 @@
 
 import { childEnv, errorResult, sasacodeHome, text, type Plugin, type ToolDefinition } from "@sasacode/plugin-api";
 import { spawn } from "node:child_process";
+import { t } from "@sasacode/host";
 import {
   closeSync,
   existsSync,
@@ -249,7 +250,7 @@ const plugin: Plugin = (api) => {
 
   function updateStatus(): void {
     const running = [...jobs.values()].filter((j) => j.status === "running").length;
-    api.ui.setStatus("bg", running ? `background-sessions: ${running} 実行中` : undefined);
+    api.ui.setStatus("bg", running ? t("background-sessions: {n} 実行中", { n: running }) : undefined);
   }
 
   /**
@@ -295,8 +296,13 @@ const plugin: Plugin = (api) => {
         : job.exitCode === null || job.exitCode === undefined
           ? "強制終了しました"
           : `exit ${job.exitCode}`;
+      const shown = job.spawnError
+        ? t("起動に失敗しました ({error})", { error: job.spawnError })
+        : job.exitCode === null || job.exitCode === undefined
+          ? t("強制終了しました")
+          : badge;
       api.ui.notify(
-        `バックグラウンドジョブ ${job.id} が終了: \`${job.command}\` — ${badge}、実行時間 ${elapsed}`,
+        t("バックグラウンドジョブ {id} が終了: `{command}` — {badge}、実行時間 {elapsed}", { id: job.id, command: job.command, badge: shown, elapsed }),
         job.exitCode === 0 ? "info" : "warning",
       );
       if (!autoNotify) return;
@@ -720,13 +726,13 @@ const plugin: Plugin = (api) => {
 
   api.registerCommand({
     name: "bg",
-    description: "バックグラウンドジョブの一覧・詳細表示・停止",
+    description: t("バックグラウンドジョブの一覧・詳細表示・停止"),
     argumentHint: "[id] | kill <id>",
     complete: (prefix) => {
       const ids = listRows(false).map((m) => m.id);
       return [...ids, "kill"]
         .filter((v) => v.startsWith(prefix))
-        .map((v) => ({ value: v, label: v, description: v === "kill" ? "ジョブを停止" : (jobs.get(v)?.command ?? "") }));
+        .map((v) => ({ value: v, label: v, description: v === "kill" ? t("ジョブを停止") : (jobs.get(v)?.command ?? "") }));
     },
     run({ args }) {
       const parts = args.trim().split(/\s+/).filter(Boolean);
@@ -734,8 +740,8 @@ const plugin: Plugin = (api) => {
       if (!parts.length) {
         api.ui.notify(
           rows.length
-            ? ["バックグラウンドジョブ:", ...rows.map(jobRow), "詳細: /bg <id>　停止: /bg kill <id>"].join("\n")
-            : "バックグラウンドジョブはありません",
+            ? [t("バックグラウンドジョブ:"), ...rows.map(jobRow), t("詳細: /bg <id>　停止: /bg kill <id>")].join("\n")
+            : t("バックグラウンドジョブはありません"),
         );
         return;
       }
@@ -743,33 +749,33 @@ const plugin: Plugin = (api) => {
         const id = parts[1];
         const meta = rows.find((m) => m.id === id);
         if (!meta) {
-          api.ui.notify(`ジョブが見つかりません: ${id}`, "warning");
+          api.ui.notify(t("ジョブが見つかりません: {id}", { id: id ?? "" }), "warning");
           return;
         }
         if (meta.status !== "running") {
-          api.ui.notify(`${meta.id} は既に終了しています (${meta.status})`);
+          api.ui.notify(t("{id} は既に終了しています ({status})", { id: meta.id, status: meta.status }));
           return;
         }
         const { job, dir } = findJob(meta.id);
         if (!stop(meta, job, dir)) {
-          api.ui.notify(`${meta.id} のプロセスはもう終了しています`);
+          api.ui.notify(t("{id} のプロセスはもう終了しています", { id: meta.id }));
           return;
         }
-        api.ui.notify(`${meta.id} に SIGTERM を送信しました (pid ${meta.pid})`);
+        api.ui.notify(t("{id} に SIGTERM を送信しました (pid {pid})", { id: meta.id, pid: meta.pid ?? "?" }));
         return;
       }
       const meta = rows.find((m) => m.id === parts[0]) ?? (findJob(parts[0]).meta as Meta | undefined);
       if (!meta) {
-        api.ui.notify(`ジョブが見つかりません: ${parts[0]}`, "warning");
+        api.ui.notify(t("ジョブが見つかりません: {id}", { id: parts[0] ?? "" }), "warning");
         return;
       }
       const tail = tailOf(logPathOf(jobs.get(meta.id)?.dir ?? findJob(meta.id).dir), 40);
       api.ui.notify(
         [
           jobRow(meta),
-          `出力ログ: ${logPathOf(jobs.get(meta.id)?.dir ?? findJob(meta.id).dir)}`,
-          "末尾 40 行:",
-          tail || "(出力はありません)",
+          t("出力ログ: {path}", { path: logPathOf(jobs.get(meta.id)?.dir ?? findJob(meta.id).dir) }),
+          t("末尾 40 行:"),
+          tail || t("(出力はありません)"),
         ].join("\n"),
       );
     },

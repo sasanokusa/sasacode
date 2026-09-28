@@ -1,3 +1,4 @@
+import { t } from "@sasacode/host";
 import type { Message, Plugin, PluginAPI } from "@sasacode/plugin-api";
 
 const SYSTEM =
@@ -43,7 +44,7 @@ export async function compact(api: PluginAPI, instructions = "", manual = false)
   const head = messages.slice(0, split);
   if (head.length < 2) return false;
   // One long model call with nothing streaming to the screen: say that it is under way.
-  api.ui.setStatus("compaction", `履歴を要約中（${head.length} 件）…`);
+  api.ui.setStatus("compaction", t("履歴を要約中（{n} 件）…", { n: head.length }));
   let summary: string;
   try {
     summary = await api.agent.complete({
@@ -66,7 +67,7 @@ export async function compact(api: PluginAPI, instructions = "", manual = false)
     { role: "user", timestamp: Date.now(), content: [{ type: "text", text: `[Summary of the earlier conversation, compacted to save context]\n\n${summary}` }] },
     ...messages.slice(split),
   ]);
-  api.ui.notify(`コンテキストを圧縮しました（${head.length} 件のメッセージを要約）`);
+  api.ui.notify(t("コンテキストを圧縮しました（{n} 件のメッセージを要約）", { n: head.length }));
   return true;
 }
 
@@ -80,10 +81,10 @@ const compaction: Plugin = (api) => {
   });
   api.registerCommand({
     name: "compact",
-    description: "会話履歴を要約してコンテキストを空ける",
-    argumentHint: "[要約への指示]",
+    description: t("会話履歴を要約してコンテキストを空ける"),
+    argumentHint: t("[要約への指示]"),
     async run({ args }) {
-      if (!(await compact(api, args, true))) api.ui.notify("圧縮するほどの履歴がありません");
+      if (!(await compact(api, args, true))) api.ui.notify(t("圧縮するほどの履歴がありません"));
     },
   });
 };

@@ -5,8 +5,9 @@
   "main": "src/index.ts",
   "dependencies": {
     "@sasacode/agent": "workspace:*",
-    "@sasacode/plugin-api": "workspace:*",
-    "@sasacode/mcp": "workspace:*"
+    "@sasacode/host": "workspace:*",
+    "@sasacode/mcp": "workspace:*",
+    "@sasacode/plugin-api": "workspace:*"
   },
   "devDependencies": {
     "@sasacode/ai": "workspace:*",

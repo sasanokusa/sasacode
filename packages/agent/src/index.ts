@@ -1,7 +1,6 @@
 export * from "./agent.ts";
 export * from "./events.ts";
 export * from "./hooks.ts";
-export * from "./i18n.ts";
 export * from "./permission.ts";
 export * from "./plugins.ts";
 export * from "./session.ts";

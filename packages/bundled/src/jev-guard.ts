@@ -2,6 +2,7 @@ import { existsSync, realpathSync, statSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { CHAIN, isInside } from "@sasacode/agent";
+import { t } from "@sasacode/host";
 import type { Decision, HookMap, Plugin, ToolDefinition } from "@sasacode/plugin-api";
 import { type Backend, type BackendName, type BackendSettings, detectService, makeBackend, parseNative, type Question, type RawAnswers } from "./jev-backends.ts";
 
@@ -369,17 +370,17 @@ const jevGuard: Plugin = (api) => {
 
   api.registerCommand({
     name: "jev",
-    description: "Jev ガード（実行前の安全判断）の状態",
+    description: t("Jev ガード（実行前の安全判断）の状態"),
     run: async () => {
       if (!s.enabled)
         return api.ui.notify(
-          'Jev ガード: 無効。config の plugins.settings["jev-guard"] に {"enabled": true} を書くと有効（Jev の API キーが必要：Command Code の CMD_API_KEY、TypeSafe の TYPESAFE_API_KEY など）',
+          t('Jev ガード: 無効。config の plugins.settings["jev-guard"] に {"enabled": true} を書くと有効（Jev の API キーが必要：Command Code の CMD_API_KEY、TypeSafe の TYPESAFE_API_KEY など）'),
         );
       const b = await (backend ??= pick()).catch((e: Error) => e);
       api.ui.notify(
         [
-          `Jev ガード: 有効 · ${b instanceof Error ? `接続先の設定エラー: ${b.message}` : b.label}`,
-          `問い合わせ ${stats.calls} 回 · 判定を変えた ${stats.changed} 回 · 失敗 ${stats.failures} 回`,
+          `${t("Jev ガード: 有効")} · ${b instanceof Error ? t("接続先の設定エラー: {error}", { error: b.message }) : b.label}`,
+          t("問い合わせ {calls} 回 · 判定を変えた {changed} 回 · 失敗 {failures} 回", { calls: stats.calls, changed: stats.changed, failures: stats.failures }),
           ...recent.slice(-5),
         ].join("\n"),
       );
@@ -405,7 +406,7 @@ const jevGuard: Plugin = (api) => {
     stats.failures++;
     if (message === warned) return;
     warned = message;
-    api.ui.notify(`jev-guard: ${message}（Jev なしで判定を続けます）`, "warning");
+    api.ui.notify(t("jev-guard: {message}（Jev なしで判定を続けます）", { message }), "warning");
   };
 
   async function ask(state: Record<string, unknown>, signal?: AbortSignal): Promise<JevAnswers | undefined> {

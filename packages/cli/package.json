@@ -9,12 +9,13 @@
   "dependencies": {
     "@sasacode/agent": "workspace:*",
     "@sasacode/ai": "workspace:*",
-    "@sasacode/plugin-api": "workspace:*",
-    "@sasacode/tools": "workspace:*",
-    "@sasacode/tui": "workspace:*",
     "@sasacode/bundled": "workspace:*",
+    "@sasacode/host": "workspace:*",
     "@sasacode/mcp": "workspace:*",
-    "@sasacode/skills": "workspace:*"
+    "@sasacode/plugin-api": "workspace:*",
+    "@sasacode/skills": "workspace:*",
+    "@sasacode/tools": "workspace:*",
+    "@sasacode/tui": "workspace:*"
   },
   "license": "Apache-2.0",
   "repository": {

@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type AssistantMessage, emptyUsage, type Message, registerApi, replayProvider } from "@sasacode/ai";
 import { editTool, readTool, writeTool } from "@sasacode/tools";
-import { Agent, listSessions, PermissionPolicy, realPath, restore, SessionFile, sessionDir } from "../src/index.ts";
+import { Agent, PermissionPolicy, realPath, restore, SessionFile, sessionDir } from "../src/index.ts";
 
 const root = mkdtempSync(join(tmpdir(), "sasacode-bounds-"));
 afterAll(() => rmSync(root, { recursive: true, force: true }));
@@ -179,10 +179,5 @@ test("a torn last line is set aside before the session is appended to", () => {
 test("directories whose names flatten the same get separate session folders", () => {
   const home = join(root, "home-dirs");
   expect(sessionDir(home, "/work/a-b/c")).not.toBe(sessionDir(home, "/work/a/b-c"));
-  // Sessions in the shared pre-0.8 folder are told apart by the directory they record.
-  const legacy = join(home, "sessions", "work-a-b-c");
-  const mine = SessionFile.create(legacy, "/work/a-b/c");
-  const theirs = SessionFile.create(legacy, "/work/a/b-c");
-  for (const f of [mine, theirs]) f.append({ type: "model", model: "t/m" });
-  expect(listSessions(sessionDir(home, "/work/a-b/c"), "/work/a-b/c").map((x) => x.id)).toEqual([mine.id]);
+  // (Sessions in the shared pre-0.8 folder: packages/host/test/sessions.test.ts.)
 });

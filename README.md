@@ -122,7 +122,7 @@ sasacode -m llama/<モデル名>
 
 プロジェクトの `.sasacode/config.json` に書いたエンドポイントは、そのプロジェクトを信頼するまで使わない（[プロジェクトの信頼](#プロジェクトの信頼)）。キーを使わないサーバーでも、会話とコードが送られるため。
 
-**モデル一覧の自動取得**：TUI の起動時に、キーのあるプロバイダー（と Ollama）の Models API（`GET /v1/models`）をバックグラウンドで呼び、`/model` に一覧とコンテキスト長を出す。取得したコンテキスト長は、フッターの使用率や圧縮のしきい値にも使う（設定の `modelOverrides` があればそちらが優先）。Ollama は独自の `/api/show` から読み、Modelfile の `num_ctx` があればそれを実際の長さとして使い、なければモデルの最大長を参考として表示する。OpenAI の Models API はコンテキスト長を返さないので、組み込みのモデル表の値で補う。Command Code のように1つのキーで複数の API 形式を提供するサービスでは、モデルごとに対応する形式のプロバイダーへ自動で振り分ける（例：Claude 系は `commandcode-anthropic/…`）。
+**モデル一覧の自動取得**：TUI の起動時に、キーのあるプロバイダー（と Ollama）の Models API（`GET /v1/models`）をバックグラウンドで呼び、`/model` に一覧とコンテキスト長を出す。取得したコンテキスト長は、フッターの使用率や圧縮のしきい値にも使う（設定の `modelOverrides` があればそちらが優先）。Ollama は独自の `/api/show` から読み、Modelfile の `num_ctx` があればそれを実際の長さとして使い、なければモデルの最大長を参考として表示する（メモリに載っているモデルは `/api/ps` の実際の長さを使う）。`num_ctx` のないモデルを選ぶと、Ollama が既定の長さを超えた入力を黙って切り詰めることを一度だけ警告する。OpenAI の Models API はコンテキスト長を返さないので、組み込みのモデル表の値で補う。Command Code のように1つのキーで複数の API 形式を提供するサービスでは、モデルごとに対応する形式のプロバイダーへ自動で振り分ける（例：Claude 系は `commandcode-anthropic/…`）。
 
 **API キー**は次の順で探す：シェルの環境変数 → `~/.sasacode/.env` → OS キーチェーン（macOS: `security add-generic-password -s sasacode -a <provider> -w`、Linux: `secret-tool store --label sasacode service sasacode account <provider>`）。どこでも空欄は無視する。作業ディレクトリの `.env` と `bunfig.toml` は読まない（リポジトリが `ANTHROPIC_BASE_URL` などで接続先を差し替えたり、起動時にスクリプトを実行させたりできないようにするため）。セッションのログには、使用中のキーを `[REDACTED]` に置き換えてから書く。`~/.sasacode/.env` にだけ書いたキーは、エージェントが実行するコマンド（bash、バックグラウンドジョブ）には渡さない。`~/.sasacode`（セッションのログ、入力履歴、長い出力の保存先 `tmp/`）は本人しか読めない権限（0700）にする。
 
@@ -155,7 +155,7 @@ sasacode -m llama/<モデル名>
 }
 ```
 
-`models` は `/model` の一覧の先頭に出す。`providers` で OpenAI 互換や Anthropic 互換のエンドポイントを足せる。`lang` は画面の言語（TUI と CLI を同じ言語にする。`"ja"` / `"en"`）。既定は環境変数 `SASACODE_LANG`、なければシステムのロケールで決まる。`updateCheck` は起動時の新版の知らせ（既定 true）。
+`models` は `/model` の一覧の先頭に出す。`providers` で OpenAI 互換や Anthropic 互換のエンドポイントを足せる。`lang` は画面の言語（TUI・CLI・同梱プラグインの表示を同じ言語にする。`"ja"` / `"en"`）。環境変数 `SASACODE_LANG` があればそちらが優先し、どちらもなければシステムのロケールで決まる。モデルに渡す文（ツールの説明や結果）は訳さない。`updateCheck` は起動時の新版の知らせ（既定 true）。
 
 **料金**：フッターや終了時の要約に出る料金は、組み込みのモデル表の価格（100万トークンあたりの米ドル）からの概算で、請求額そのものではない。OpenRouter はリクエストごとの実際の料金を返すので、それがあるときは実額を使う。価格は `modelOverrides` でモデルごとに設定・修正できる。
 
@@ -336,5 +336,6 @@ bun run build       # dist/sasacode（このマシン向け）。--all で全タ
 | `@sasacode/tui` | pi-tui の上に作った対話 UI |
 | `@sasacode/cli` | 引数、設定、キー、モデル一覧、プラグインの検出・読み込み・信頼確認、ヘッドレス実行 |
 | `@sasacode/mcp` / `@sasacode/skills` / `@sasacode/bundled` | MCP と Skills のアダプタ、同梱プラグイン |
+| `@sasacode/host` | TUI・CLI・同梱プラグインが共有するもの：画面の言語（訳の表）とセッションの索引 |
 
-コア（ai・agent・plugin-api・tools）は約 3,600 行で、上限は 4,000 行。実行時に依存するパッケージとその理由は [docs/dependencies.md](docs/dependencies.md) にまとめている。
+コア（ai・agent・plugin-api・tools）は約 3,950 行で、上限は 4,000 行。実行時に依存するパッケージとその理由は [docs/dependencies.md](docs/dependencies.md) にまとめている。

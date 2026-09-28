@@ -1,6 +1,7 @@
 // JSON files under ~/.sasacode and in projects. Two ways to read, chosen by what a bad file costs.
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
+import { t } from "@sasacode/host";
 
 /**
  * A file the user edits (config.json): missing is `{}`, but one that cannot be parsed is an error,
@@ -11,7 +12,7 @@ export function readJson(path: string): any {
     return JSON.parse(readFileSync(path, "utf8"));
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code === "ENOENT") return {};
-    throw new Error(`failed to read ${path}: ${(e as Error).message}`);
+    throw new Error(t("failed to read {path}: {error}", { path, error: (e as Error).message }));
   }
 }
 

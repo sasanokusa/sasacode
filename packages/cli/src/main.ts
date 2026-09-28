@@ -2,7 +2,8 @@
 // ^ the working directory is an untrusted repository: ignore its .env and bunfig.toml.
 import { join } from "node:path";
 import { parseArgs } from "node:util";
-import { PERMISSION_MODES, resolveLang, setLang } from "@sasacode/agent";
+import { PERMISSION_MODES } from "@sasacode/agent";
+import { resolveLang, setLang, t } from "@sasacode/host";
 import { BUILTIN_PROVIDERS } from "@sasacode/ai";
 import { hideFromChildren } from "@sasacode/plugin-api";
 import { codexLogin, codexLogout, codexStatus } from "@sasacode/bundled";
@@ -16,7 +17,7 @@ import { pluginCommand } from "./loader.ts";
 import { askTrust, assessProject, isTrusted, saveTrust } from "./trust.ts";
 import { setup } from "./setup.ts";
 
-const HELP = `sasacode — a small, pluggable coding agent
+const HELP_TEXT = `sasacode — a small, pluggable coding agent
 
 Usage:
   sasacode [prompt]              interactive session (optional first prompt)
@@ -28,7 +29,7 @@ Options:
       --output <text|jsonl>      headless output format (default text)
   -m, --model <provider/model>   e.g. anthropic/claude-opus-5, openai/gpt-5.5, ollama/gemma4:e4b
                                  (the TUI's /model lists what your providers offer)
-      --permission <mode>        ${PERMISSION_MODES.join(" | ")} (default edits)
+      --permission <mode>        {modes} (default edits)
       --thinking <level>         off | low | medium | high | xhigh | max
       --max-turns <n>            turns per run before stopping (default 200; 0 = no limit)
   -c, --continue                 resume the most recent session in this directory
@@ -50,8 +51,11 @@ Subcommands:
   -h, --help
   -v, --version`;
 
+// Translated when shown, not when this module loads: main() sets the language first.
+const help = () => t(HELP_TEXT, { modes: PERMISSION_MODES.join(" | ") });
+
 async function main(): Promise<number> {
-  // One language everywhere: the `lang` setting, else SASACODE_LANG, else the system locale.
+  // One language everywhere: SASACODE_LANG, else the `lang` setting, else the system locale.
   try {
     setLang(resolveLang(loadConfig(process.cwd()).global.lang));
   } catch {
@@ -62,7 +66,7 @@ async function main(): Promise<number> {
   const created = ensureEnvFile(envPath, BUILTIN_PROVIDERS);
   // Keys set only in ~/.sasacode/.env are for sasacode: the commands it runs do not get them.
   hideFromChildren(loadEnvFile(envPath));
-  if (created && process.stderr.isTTY) console.error(`created ${envPath}: add your API key there`);
+  if (created && process.stderr.isTTY) console.error(t("created {path}: add your API key there", { path: envPath }));
   if (process.argv[2] === "plugin") return pluginCommand(process.argv.slice(3), process.cwd());
   if (process.argv[2] === "endpoint") return endpointCommand(process.argv.slice(3), process.cwd());
   if (process.argv[2] === "login") return loginCommand(process.argv[3]);
@@ -86,7 +90,7 @@ async function main(): Promise<number> {
     },
   });
   if (values.help) {
-    console.log(HELP);
+    console.log(help());
     return 0;
   }
   if (values.version) {
@@ -113,13 +117,13 @@ async function main(): Promise<number> {
     trustProject: trusted,
     preloaded: project,
   });
-  for (const w of harness.warnings) console.error(`warning: ${w}`);
+  for (const w of harness.warnings) console.error(t("warning: {warning}", { warning: w }));
 
   if (values.print !== undefined) {
     let prompt = [values.print, ...positionals].join(" ");
     const piped = await readPipedStdin(!!values.stdin);
     if (piped.trim()) prompt = `${prompt}\n\n${piped}`;
-    if (values.output !== "text" && values.output !== "jsonl") throw new Error("--output must be text or jsonl");
+    if (values.output !== "text" && values.output !== "jsonl") throw new Error(t("--output must be text or jsonl"));
     return runHeadless(harness, prompt, values.output);
   }
   const { runTui } = await import("@sasacode/tui");
@@ -131,14 +135,14 @@ async function main(): Promise<number> {
 main().then(
   (code) => process.exit(code),
   (e) => {
-    console.error(`sasacode: ${e instanceof Error ? e.message : e}`);
+    console.error(t("sasacode: {error}", { error: e instanceof Error ? e.message : e }));
     process.exit(1);
   },
 );
 
 function turnsArg(v: string): number {
   const n = Number(v);
-  if (!Number.isInteger(n) || n < 0) throw new Error(`--max-turns needs a whole number (0 = no limit), got "${v}"`);
+  if (!Number.isInteger(n) || n < 0) throw new Error(t('--max-turns needs a whole number (0 = no limit), got "{value}"', { value: v }));
   return n;
 }
 
@@ -152,7 +156,7 @@ async function loginCommand(sub: string | undefined): Promise<number> {
     console.log(codexLogout());
     return 0;
   }
-  if (sub) throw new Error(`unknown login subcommand "${sub}" (status, logout)`);
+  if (sub) throw new Error(t('unknown login subcommand "{sub}" (status, logout)', { sub }));
   await codexLogin();
   return 0;
 }

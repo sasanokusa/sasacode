@@ -6,6 +6,7 @@ import { createHash, type Hash } from "node:crypto";
 import { readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { createInterface } from "node:readline/promises";
+import { t } from "@sasacode/host";
 import { type ConfigFiles, describeElevated, loadConfig, readConfigFiles, sasacodeHome } from "./config.ts";
 import { readJsonOr, writeJson } from "./json.ts";
 import { discoverPlugins, type FoundPlugin } from "./loader.ts";
@@ -36,7 +37,7 @@ export function assessProject(cwd: string): ProjectTrust {
   const warnings: string[] = [];
   const found = discoverPlugins(cwd, warnings);
   const plugins = found.filter((p) => p.scope === "project");
-  const items = [...plugins.map((p) => `plugin ${p.manifest.name}`), ...describeElevated(elevated)];
+  const items = [...plugins.map((p) => t("plugin {name}", { name: p.manifest.name })), ...describeElevated(elevated)];
   const manifests = plugins.map((p) => p.manifest).sort((a, b) => a.name.localeCompare(b.name));
   const hash = createHash("sha256").update(JSON.stringify({ elevated, manifests }));
   let complete = true;
@@ -103,15 +104,15 @@ export function saveTrust(cwd: string, t: ProjectTrust): void {
 }
 
 /** Ask on the terminal before anything from the project is used. */
-export async function askTrust(cwd: string, t: ProjectTrust): Promise<boolean> {
+export async function askTrust(cwd: string, trust: ProjectTrust): Promise<boolean> {
   process.stderr.write(
-    `\nThis project wants to use:\n${t.items.map((i) => `  - ${i}`).join("\n")}\n` +
-      "Plugins and MCP servers run code as you; endpoints receive your conversation and code.\n" +
-      (t.complete ? "" : "The plugins' code could not all be read (too many files, unreadable, or a link loop), so you will be asked every time.\n"),
+    `\n${t("This project wants to use:")}\n${trust.items.map((i) => `  - ${i}`).join("\n")}\n` +
+      t("Plugins and MCP servers run code as you; endpoints receive your conversation and code.") + "\n" +
+      (trust.complete ? "" : t("The plugins' code could not all be read (too many files, unreadable, or a link loop), so you will be asked every time.") + "\n"),
   );
   const rl = createInterface({ input: process.stdin, output: process.stderr });
   try {
-    const answer = (await rl.question(`Trust ${cwd}? [y/N] `)).trim().toLowerCase();
+    const answer = (await rl.question(t("Trust {cwd}? [y/N] ", { cwd }))).trim().toLowerCase();
     return answer === "y" || answer === "yes";
   } finally {
     rl.close();

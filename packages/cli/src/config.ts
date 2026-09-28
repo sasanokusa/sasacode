@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import { PERMISSION_MODES, type PermissionMode, type PermissionRules, type ToolSearchConfig } from "@sasacode/agent";
+import { t } from "@sasacode/host";
 import { BUILTIN_PROVIDERS, type ModelInfo, type ProviderConfig, type ThinkingLevel } from "@sasacode/ai";
 import { sasacodeHome } from "@sasacode/plugin-api";
 import { readJson } from "./json.ts";
@@ -83,14 +84,14 @@ const CHECKS: Record<keyof Config, (v: unknown) => boolean> = {
 
 export function sanitizeConfig(raw: unknown, source: string, warnings: string[]): Config {
   if (!isObject(raw)) {
-    warnings.push(`${source}: not a JSON object; ignored`);
+    warnings.push(t("{source}: not a JSON object; ignored", { source }));
     return {};
   }
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(raw)) {
     const check = CHECKS[k as keyof Config];
-    if (!check) warnings.push(`${source}: unknown key "${k}" ignored`);
-    else if (!check(v)) warnings.push(`${source}: "${k}" has an invalid value; ignored`);
+    if (!check) warnings.push(t('{source}: unknown key "{key}" ignored', { source, key: k }));
+    else if (!check(v)) warnings.push(t('{source}: "{key}" has an invalid value; ignored', { source, key: k }));
     else out[k] = v;
   }
   return out as Config;
@@ -174,16 +175,16 @@ export function splitProjectConfig(project: Config, global: Config): { safe: Con
 /** One line per thing the trust prompt covers. */
 export function describeElevated(e: Config): string[] {
   const out: string[] = [];
-  for (const [n, p] of Object.entries(e.providers ?? {})) out.push(`endpoint ${n} (${p.baseUrl ?? p.api ?? "?"})`);
-  if (e.model) out.push(`model ${e.model}`);
-  if (e.models?.length) out.push(`models ${e.models.join(", ")}`);
-  if (e.modelOverrides) out.push(`model overrides for ${Object.keys(e.modelOverrides).join(", ")}`);
-  for (const n of Object.keys(e.mcpServers ?? {})) out.push(`MCP server ${n}`);
-  if (e.plugins?.disabled?.length) out.push(`disables plugins ${e.plugins.disabled.join(", ")}`);
-  if (e.plugins?.settings) out.push(`settings for plugins ${Object.keys(e.plugins.settings).join(", ")}`);
-  if (e.permissions?.allow?.length) out.push(`allow rules ${e.permissions.allow.join(", ")}`);
-  if (e.permissions?.mode) out.push(`permission mode ${e.permissions.mode}`);
-  if (e.maxTurns !== undefined) out.push(`maxTurns ${e.maxTurns || "unlimited"}`);
+  for (const [n, p] of Object.entries(e.providers ?? {})) out.push(t("endpoint {name} ({url})", { name: n, url: p.baseUrl ?? p.api ?? "?" }));
+  if (e.model) out.push(t("model {model}", { model: e.model }));
+  if (e.models?.length) out.push(t("models {models}", { models: e.models.join(", ") }));
+  if (e.modelOverrides) out.push(t("model overrides for {models}", { models: Object.keys(e.modelOverrides).join(", ") }));
+  for (const n of Object.keys(e.mcpServers ?? {})) out.push(t("MCP server {name}", { name: n }));
+  if (e.plugins?.disabled?.length) out.push(t("disables plugins {names}", { names: e.plugins.disabled.join(", ") }));
+  if (e.plugins?.settings) out.push(t("settings for plugins {names}", { names: Object.keys(e.plugins.settings).join(", ") }));
+  if (e.permissions?.allow?.length) out.push(t("allow rules {rules}", { rules: e.permissions.allow.join(", ") }));
+  if (e.permissions?.mode) out.push(t("permission mode {mode}", { mode: e.permissions.mode }));
+  if (e.maxTurns !== undefined) out.push(e.maxTurns ? `maxTurns ${e.maxTurns}` : t("maxTurns unlimited"));
   if (e.maxRetries !== undefined) out.push(`maxRetries ${e.maxRetries}`);
   return out;
 }
@@ -209,7 +210,7 @@ export function readConfigFiles(cwd: string): ConfigFiles {
   const global = sanitizeConfig(readJson(globalPath), globalPath, warnings);
   const project = sanitizeConfig(readJson(join(cwd, ".sasacode", "config.json")), ".sasacode/config.json", warnings);
   if (project.trustedProjects) {
-    warnings.push(".sasacode/config.json: trustedProjects is only read from the global config; ignored");
+    warnings.push(t(".sasacode/config.json: trustedProjects is only read from the global config; ignored"));
     delete project.trustedProjects;
   }
   return { global, project, warnings };
@@ -222,8 +223,8 @@ export function loadConfig(cwd: string, trusted = false, files: ConfigFiles = re
   const { safe, elevated } = splitProjectConfig(project, global);
   const items = describeElevated(elevated);
   // Allowed without trust, but the user should know the project, not they, picked the model.
-  if (!trusted && safe.model && safe.model !== global.model) warnings.push(`.sasacode/config.json: this project selects the model ${safe.model}`);
+  if (!trusted && safe.model && safe.model !== global.model) warnings.push(t(".sasacode/config.json: this project selects the model {model}", { model: safe.model }));
   if (!trusted && items.length)
-    warnings.push(`.sasacode/config.json: not applied until you trust this project (${items.join("; ")})`);
+    warnings.push(t(".sasacode/config.json: not applied until you trust this project ({items})", { items: items.join("; ") }));
   return { config: mergeConfig(global, trusted ? project : safe), warnings, elevated, global };
 }

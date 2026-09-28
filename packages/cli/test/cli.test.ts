@@ -1,11 +1,14 @@
-import { afterAll, beforeEach, expect, test } from "bun:test";
+import { afterAll, beforeAll, beforeEach, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { setLang } from "@sasacode/host";
 import { emptyUsage, registerApi, replayProvider } from "@sasacode/ai";
 import { loadConfig, mergeConfig } from "../src/config.ts";
 import { runHeadless } from "../src/headless.ts";
 import { setup } from "../src/setup.ts";
+
+beforeAll(() => setLang("en")); // these assertions quote the English strings
 
 const root = mkdtempSync(join(tmpdir(), "sasacode-cli-"));
 const home = join(root, "home");
