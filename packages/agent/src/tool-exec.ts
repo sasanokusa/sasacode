@@ -82,15 +82,16 @@ interface Job {
   call: ToolCall;
   name: string;
   tool?: ToolDefinition<any>;
-  args?: Record<string, unknown>;
+  /** The call's input as it will run: repaired when a tool_call_raw hook fixed it. */
+  input?: Record<string, unknown>;
   result?: ToolResult;
   note?: string;
 }
 
 /**
  * Runs the calls of one response. Results are passed to `onResult` in call order, each as soon as
- * it and those before it are final, so they are saved before the next call starts (a crash then
- * loses at most the calls in flight).
+ * it and those before it are final, so a crash loses at most the calls in flight. A call is
+ * approved right before it runs, never all at once: what the user is asked about is what happens.
  */
 export async function executeTools(
   ctx: ToolRunContext,
@@ -118,37 +119,41 @@ export async function executeTools(
     while (flushed < jobs.length && messages.has(jobs[flushed]!)) opts.onResult(messages.get(jobs[flushed++]!)!);
   };
 
-  // Validation and permission prompts run one at a time, in order.
+  // Validation runs one call at a time, in order; permission prompts do not (below).
   for (const call of calls) {
     const fixed = opts.repairs.get(call.id);
-    const job: Job = { call, name: fixed?.name ?? call.name, note: fixed?.note };
+    const job: Job = { call, name: fixed?.name ?? call.name, note: fixed?.note, input: fixed?.input ?? call.input };
     jobs.push(job);
-    const rejected = preflight(ctx, job, fixed?.input ?? call.input, fixed ? fixed.rawInput : call.rawInput, opts);
-    if (rejected) {
-      await finish(job, rejected, false);
-      continue;
-    }
-    const { args, denied } = await authorize(ctx, job.tool!, call, fixed?.input ?? call.input);
-    if (denied) await finish(job, denied, false);
-    else job.args = args;
+    const rejected = preflight(ctx, job, job.input!, fixed ? fixed.rawInput : call.rawInput, opts);
+    if (rejected) await finish(job, rejected, false);
   }
 
-  // Runs of concurrency-safe tools execute in parallel; everything else in order.
-  let i = 0;
-  while (i < jobs.length) {
-    const batch: Job[] = [];
-    if (jobs[i]!.tool?.concurrent) {
-      while (i < jobs.length && (jobs[i]!.result || jobs[i]!.tool?.concurrent)) batch.push(jobs[i++]!);
-    } else batch.push(jobs[i++]!);
-    await Promise.all(
-      batch.map(async (j) => {
-        if (j.result) return;
-        // Approvals happen up front; a call must not start once the user has interrupted.
-        if (opts.signal.aborted) return finish(j, err("Interrupted by the user before this tool ran."), false);
-        await finish(j, await runTool(ctx, j.tool!, j.call, j.args!, opts.signal), true);
-      }),
-    );
+  // "Approve → run" one call at a time for tools that cannot run in parallel, so the user sees the
+  // previous call's result before deciding on the next one. Concurrency-safe tools run as soon as
+  // they are approved, together with the ones already in flight.
+  const running: Promise<void>[] = [];
+  for (const job of jobs) {
+    if (job.result) continue;
+    if (!job.tool?.concurrent && running.length) {
+      await Promise.all(running);
+      running.length = 0;
+    }
+    if (opts.signal.aborted) {
+      await finish(job, err("Interrupted by the user before this tool ran."), false);
+      continue;
+    }
+    // Approvals stay one at a time, in order: only the runs overlap.
+    const { args, denied } = await authorize(ctx, job.tool!, job.call, job.input!);
+    const run = async () => {
+      if (denied) return finish(job, denied, false);
+      // A call must not start once the user has interrupted.
+      if (opts.signal.aborted) return finish(job, err("Interrupted by the user before this tool ran."), false);
+      await finish(job, await runTool(ctx, job.tool!, job.call, args, opts.signal), true);
+    };
+    if (job.tool?.concurrent) running.push(run());
+    else await run();
   }
+  await Promise.all(running);
 }
 
 /** Checks that need no user: returns an error result when the call cannot run. */

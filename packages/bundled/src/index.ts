@@ -3,6 +3,7 @@ import agentsMd from "./agents-md.ts";
 import autoReconnect from "./auto-reconnect.ts";
 import backgroundSessions from "./background-sessions.ts";
 import browsr from "./browsr.ts";
+import checkpoints from "./checkpoints.ts";
 import compaction from "./compaction.ts";
 import goal from "./goal.ts";
 import jevGuard from "./jev-guard.ts";
@@ -44,4 +45,5 @@ export const bundledPlugins: Record<string, Plugin> = {
   goal,
   "background-sessions": backgroundSessions,
   "auto-reconnect": autoReconnect,
+  checkpoints,
 };

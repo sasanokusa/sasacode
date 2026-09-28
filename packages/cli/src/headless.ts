@@ -9,7 +9,9 @@ export async function runHeadless(h: Harness, prompt: string, output: "text" | "
   // Model and tool text reaching a terminal must not carry escape sequences it would act on.
   const tty = process.stdout.isTTY;
   const write = (s: string) => process.stdout.write(tty ? plain(s) : s);
-  const status = (s: string) => process.stderr.write(`\x1b[2m${plain(s)}\x1b[0m\n`);
+  // Dim only where it will be shown as dim: a log file or CI output must keep no escape codes (NO_COLOR too).
+  const dim = process.stderr.isTTY && !process.env.NO_COLOR ? (s: string) => `\x1b[2m${s}\x1b[0m` : (s: string) => s;
+  const status = (s: string) => process.stderr.write(`${dim(plain(s))}\n`);
   let atLineStart = true;
 
   agent.events.on((e: AgentEvent) => {

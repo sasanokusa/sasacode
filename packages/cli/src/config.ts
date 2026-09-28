@@ -6,6 +6,8 @@ import { readJson } from "./json.ts";
 
 export interface Config {
   model?: string;
+  /** The language the interface speaks: "ja" or "en" (default: SASACODE_LANG, else the system locale). */
+  lang?: "ja" | "en";
   /** Models offered by /model. */
   models?: string[];
   thinking?: ThinkingLevel;
@@ -18,6 +20,8 @@ export interface Config {
   instructions?: string;
   maxTurns?: number;
   maxRetries?: number;
+  /** Look for a newer release at startup and mention it quietly (default true). */
+  updateCheck?: boolean;
   /** Projects trusted without asking (global config only). */
   trustedProjects?: string[];
   plugins?: {
@@ -56,6 +60,7 @@ const THINKING = ["off", "low", "medium", "high", "xhigh", "max"];
 /** Shape checks per key; a value that fails is dropped with a warning instead of silently merging. */
 const CHECKS: Record<keyof Config, (v: unknown) => boolean> = {
   model: isString,
+  lang: (v) => v === "ja" || v === "en",
   models: isStrings,
   thinking: (v) => THINKING.includes(v as string),
   providers: isObjectOfObjects,
@@ -67,6 +72,7 @@ const CHECKS: Record<keyof Config, (v: unknown) => boolean> = {
   instructions: isString,
   maxTurns: isCount(100_000),
   maxRetries: isCount(20),
+  updateCheck: (v) => typeof v === "boolean",
   trustedProjects: isStrings,
   plugins: (v) => isObject(v) && (v.disabled === undefined || isStrings(v.disabled)) && (v.settings === undefined || isObjectOfObjects(v.settings)),
   tools: (v) => isObject(v) && (v.disabled === undefined || isStrings(v.disabled)),

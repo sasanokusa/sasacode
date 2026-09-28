@@ -35,16 +35,6 @@ const USAGE = [
   "エージェントは set_goal ツールで同じことができます。",
 ].join("\n");
 
-/** モデルに渡す依頼文: ゴール設定の申し出は正規表現では見ない。モデルに判断させる。 */
-const CONTRACT = [
-  "[goal] このセッションのゴール（最終目的）について:",
-  "- エンドユーザーが「これをgoalに設定して」「目的を固定して」「最終目的はこれ」のように",
-  "  ゴール・目標の設定や変更を頼んだときは、set_goal ツールを呼んで設定する。",
-  "  ゴールの中身は会話から要約して1〜2文で書く。作業手順の列ではなく、到達すべき最終状態を書く。",
-  "- ゴールに到達したら set_goal(status: \"done\")、一時的に置くなら set_goal(status: \"paused\")。",
-  "- ゴールを確認したいときは goal_status ツールを使う。",
-].join("\n");
-
 const plugin: Plugin = (api) => {
   let goal: GoalState | null = null;
 
@@ -159,10 +149,11 @@ const plugin: Plugin = (api) => {
 
   // ------------------------------------------------------------ system prompt
 
+  // A goal is a fact worth carrying in the prompt; how to reach it is not (A1). The rules for
+  // setting one live in the set_goal tool's own description, so they are not repeated here.
   api.on("system_prompt", ({ prompt }: { prompt: string }) => {
-    const extra = [CONTRACT];
-    if (goal?.status === "active") extra.push(`現在のゴール: ${goal.text}\n作業はこのゴールに向けて進める。`);
-    return { prompt: `${prompt}\n\n${extra.join("\n\n")}` };
+    if (goal?.status !== "active") return { prompt };
+    return { prompt: `${prompt}\n\n現在のゴール: ${goal.text}` };
   });
 
   // ------------------------------------------------------------ /goal コマンド

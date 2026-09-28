@@ -311,6 +311,11 @@ export interface PluginAPI {
   readonly settings: Record<string, unknown>;
   /** Adding a tool with an existing name replaces it (P3). */
   registerTool(tool: ToolDefinition<any>): void;
+  /**
+   * Take one of this plugin's tools off the model's list again (an MCP server dropped it).
+   * Another plugin's tool is left alone. (since 1.8.0)
+   */
+  unregisterTool(name: string): void;
   registerCommand(command: CommandDefinition): void;
   /** Add a provider (`name`) and, optionally, the implementation for its api (FR-P06). */
   registerProvider(name: string, config: ProviderConfig, implementation?: Provider): void;

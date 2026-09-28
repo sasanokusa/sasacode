@@ -9,7 +9,9 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 
 export function makeServer(): Server {
-  const server = new Server({ name: "fixture", version: "1.0.0" }, { capabilities: { tools: {}, prompts: {} } });
+  // `toggle` lists and unlists the `late` tool, announcing the change like a real server would.
+  let late = false;
+  const server = new Server({ name: "fixture", version: "1.0.0" }, { capabilities: { tools: { listChanged: true }, prompts: {} } });
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: [
       {
@@ -20,12 +22,19 @@ export function makeServer(): Server {
       },
       { name: "fail", description: "Always fails", inputSchema: { type: "object", properties: {} } },
       { name: "big", description: "Large output", inputSchema: { type: "object", properties: {} } },
+      { name: "toggle", description: "List or unlist the late tool", inputSchema: { type: "object", properties: {} } },
+      ...(late ? [{ name: "late", description: "Listed after toggle", inputSchema: { type: "object", properties: {} } }] : []),
     ],
   }));
   server.setRequestHandler(CallToolRequestSchema, async (req) => {
     const args = (req.params.arguments ?? {}) as { a: number; b: number };
     if (req.params.name === "add") return { content: [{ type: "text", text: String(args.a + args.b) }] };
     if (req.params.name === "big") return { content: [{ type: "text", text: "x".repeat(150_000) }] };
+    if (req.params.name === "toggle") {
+      late = !late;
+      await server.sendToolListChanged();
+      return { content: [{ type: "text", text: `late is now ${late ? "listed" : "gone"}` }] };
+    }
     return { content: [{ type: "text", text: "it broke" }], isError: true };
   });
   server.setRequestHandler(ListPromptsRequestSchema, async () => ({

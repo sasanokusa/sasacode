@@ -28,6 +28,7 @@ curl -fsSL https://sasanokusa.com/sasacode/install.sh | sh
 - macOS（arm64 / x64）と Linux（x64 / arm64、glibc / musl、AVX2 のない CPU 向けの baseline 版）の単一バイナリ。Bun は不要。
 - インストーラーもバイナリも、[GitHub Releases](https://github.com/sasanokusa/sasacode/releases) の最新版から取得して SHA256 を検証する。sasanokusa.com の URL は、最新リリースの `install.sh` へのリダイレクト。
 - `SASACODE_VERSION=v0.9.4` で版を固定でき、`SASACODE_INSTALL_DIR` で置き場所を変えられる。Windows は WSL から使う。
+- 更新は `sasacode update`（インストーラーと同じ検証つき。`--check` で確認だけ）。新しい版が出ていると起動時に一度だけ静かに知らせる（`"updateCheck": false` で止める）。ソースから動かしている場合は `git pull` と `bun install`。
 
 ソースから使う場合（[Bun](https://bun.sh) 1.4 以上）：
 
@@ -89,7 +90,7 @@ sasacode -r <id> -p "続き"            # セッション ID を指定して続�
 | `/effort` | 推論の深さ（`off` / `low` / `medium` / `high` / `xhigh` / `max`）を切り替える。引数なしなら一覧から選ぶ。現在の値はフッターに出る。OpenAI 形式のサーバーには `reasoning_effort` として送り、`off` は `none` として送る（vLLM などは送らないと推論する）。サーバーが受け付けない値なら近い値に替えて送り直し、以後はその値を使う（例：Command Code は `none` を受け付けないので `off` は `low` になる） |
 | `/copy` | 直前の応答をクリップボードにコピー（pbcopy / wl-copy / xclip、なければ端末経由） |
 | `/permission` `/help` `/exit`（`/quit`） | 権限モード / ヘルプ / 終了 |
-| `/usage` `/goal` `/bg` `/reconnect` `/compact` `/mcp` `/skills` `/skill:<name>` `/presets` `/browsr` | 同梱プラグインのコマンド |
+| `/usage` `/goal` `/bg` `/reconnect` `/compact` `/mcp` `/skills` `/skill:<name>` `/presets` `/browsr` `/undo` | 同梱プラグインのコマンド |
 
 フッターには、モデル、推論の深さ、権限モード、コンテキストの使用量（`ctx 77.6k/256k (30%)`）、セッション ID と、プラグインのステータス（MCP の接続数、TODO の進捗など）を出す。30 秒以上かかった実行が終わると、端末のベルを鳴らす（別の作業をしていても気づけるように。`"tui": { "bell": false }` で止める）。
 
@@ -133,6 +134,7 @@ sasacode -m llama/<モデル名>
 {
   "model": "commandcode/deepseek/deepseek-v4-flash",
   "models": ["commandcode/deepseek/deepseek-v4-pro", "ollama/gemma4:e4b"],
+  "lang": "ja",
   "thinking": "high",
   "providers": { "myproxy": { "api": "openai-chat", "baseUrl": "https://…/v1", "apiKeyEnv": "MY_KEY" } },
   "modelOverrides": { "myproxy/some-model": { "contextWindow": 200000, "images": false } },
@@ -148,11 +150,18 @@ sasacode -m llama/<モデル名>
   "tools": { "disabled": [] },
   "toolSearch": { "mode": "auto", "percent": 10, "count": 30 },
   "tui": { "altScreen": true, "bell": true },
+  "updateCheck": true,
   "trustedProjects": ["/path/to/project"]
 }
 ```
 
-`models` は `/model` の一覧の先頭に出す。`providers` で OpenAI 互換や Anthropic 互換のエンドポイントを足せる。
+`models` は `/model` の一覧の先頭に出す。`providers` で OpenAI 互換や Anthropic 互換のエンドポイントを足せる。`lang` は画面の言語（TUI と CLI を同じ言語にする。`"ja"` / `"en"`）。既定は環境変数 `SASACODE_LANG`、なければシステムのロケールで決まる。`updateCheck` は起動時の新版の知らせ（既定 true）。
+
+**料金**：フッターや終了時の要約に出る料金は、組み込みのモデル表の価格（100万トークンあたりの米ドル）からの概算で、請求額そのものではない。OpenRouter はリクエストごとの実際の料金を返すので、それがあるときは実額を使う。価格は `modelOverrides` でモデルごとに設定・修正できる。
+
+```json
+  "modelOverrides": { "myproxy/some-model": { "price": { "input": 1.25, "output": 10 } } }
+```
 
 `maxTurns`（既定 200、0 で無制限）は、1回の依頼でモデルに送るリクエスト数の上限。達すると、対話では続けるかを尋ね、ヘッドレスでは止まる。これとは別に、同梱の `loop-guard` が、ツール呼び出しがどれも実行されない（拒否や引数の不備が続く）ターンが5回続いたら実行を止める（`plugins.settings["loop-guard"].noProgressTurns` で変更、0 で無効）。
 
@@ -240,6 +249,7 @@ sasacode -m llama/<モデル名>
 | `goal` | セッションのゴール（最終目的）。`/goal <目的>` で設定し、`done` / `pause` / `resume` / `clear` で状態を変える。「これをゴールにして」と頼めば、モデルが `set_goal` ツールで会話から要約して設定する。作業中のゴールはシステムプロンプトとフッターに出る |
 | `background-sessions` | `bg_start` ツール。ビルドやテストなど長いコマンドをバックグラウンドで動かし、終わったら終了コードと出力の末尾を会話に届ける（待機中なら自動で続きを始める）。bash と同じ権限ルールで判定する（`permissionsAs`）。sasacode を終了してもジョブは続き、次の起動で結果を知らせる。`/bg` で一覧・詳細・停止。POSIX のみ |
 | `auto-reconnect` | 実行がエラーで終わったとき、使用中のエンドポイントに届かなければ、復旧を待って作業を自動で再開する（既定は最大10分）。`/reconnect` で手動でも同じことをする |
+| `checkpoints` | write / edit が変えたファイルの直前の内容をセッションに退避する。`/undo` で直近の1件から1つずつ戻せる（`/undo list` で一覧、`/undo <path>` で対象を絞る。bash の変更は対象外） |
 | `skills` / `mcp` | Agent Skills と MCP のアダプタ |
 
 ### MCP
@@ -253,7 +263,7 @@ sasacode -m llama/<モデル名>
 }
 ```
 
-stdio と Streamable HTTP に対応する。ツールは `mcp__<server>__<tool>` という名前になり、通常のツールと同じ権限確認とフックを通る。prompts はスラッシュコマンドになる。サーバーはバックグラウンドで接続するので、起動を待たせない。`${VAR}` は環境変数から展開する。
+stdio と Streamable HTTP に対応する。ツールは `mcp__<server>__<tool>` という名前になり、通常のツールと同じ権限確認とフックを通る。prompts はスラッシュコマンドになる。サーバーはバックグラウンドで接続するので、起動を待たせない。`${VAR}` は環境変数から展開する。落ちたサーバーは自動で再接続する（間隔を空けて数回まで。`/mcp reconnect [name]` で手動に）。サーバーのツールの一覧が変わったら、外れたツールはモデルに渡さなくなる。
 
 ### Skills
 

@@ -9,6 +9,7 @@ import {
   newAssistant,
   parseToolInput,
   type Provider,
+  reportedCost,
   samplingFields,
   type Request,
   type StreamEvent,
@@ -122,6 +123,9 @@ export const openaiResponsesProvider: Provider = {
               out.usage.input = u.input_tokens - cached;
               out.usage.cacheRead = cached;
               out.usage.output = u.output_tokens;
+              // Proxies over OpenAI (OpenRouter, Command Code) may report actual spend on the usage.
+              const reported = reportedCost(u as object);
+              if (reported !== undefined) out.usage.cost = reported;
             }
             if (ev.type === "response.incomplete") {
               const reason = ev.response.incomplete_details?.reason;
@@ -143,7 +147,8 @@ export const openaiResponsesProvider: Provider = {
     }
     out.content = out.content.filter((c) => !(c.type === "text" && !c.text));
     if (out.stopReason === "stop" && out.content.some((c) => c.type === "tool_call")) out.stopReason = "tool_use";
-    out.usage.cost = computeCost(model, out.usage);
+    // A cost reported with the usage stands; otherwise estimate from the price table.
+    if (!out.usage.cost) out.usage.cost = computeCost(model, out.usage);
     yield { type: "done", message: out };
   },
 };

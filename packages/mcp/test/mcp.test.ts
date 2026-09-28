@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { Agent, PermissionPolicy, PluginHost } from "@sasacode/agent";
 import type { ModelInfo } from "@sasacode/ai";
-import { convertResult, createMcpPlugin, toolName } from "../src/index.ts";
+import { convertResult, connectServers, createMcpPlugin, type ServerState, toolName } from "../src/index.ts";
 import { makeServer } from "./fixture-server.ts";
 
 const model: ModelInfo = { id: "m", provider: "t", api: "replay", contextWindow: 100_000, maxOutput: 1000 };
@@ -28,9 +28,9 @@ const http = Bun.serve({
 });
 afterAll(() => http.stop(true));
 
-async function load(servers: Parameters<typeof createMcpPlugin>[0]) {
+async function load(servers: Parameters<typeof createMcpPlugin>[0], settings: Record<string, unknown> = {}) {
   const agent = new Agent({ model, cwd: process.cwd(), systemPrompt: "", permissions: new PermissionPolicy("auto") });
-  const host = new PluginHost({ agent, cwd: process.cwd() });
+  const host = new PluginHost({ agent, cwd: process.cwd(), settings: () => settings });
   const notes: string[] = [];
   host.setUI({ interactive: false, notify: (m) => notes.push(m), confirm: async () => false, select: async () => undefined });
   await host.load("mcp", createMcpPlugin(servers));
@@ -40,9 +40,25 @@ async function load(servers: Parameters<typeof createMcpPlugin>[0]) {
   return { agent, host, notes, until };
 }
 
+/** The same wiring, with the server states in hand (to drop a connection and watch it return). */
+async function loadRaw(servers: Parameters<typeof createMcpPlugin>[0], settings: Record<string, unknown> = {}) {
+  const agent = new Agent({ model, cwd: process.cwd(), systemPrompt: "", permissions: new PermissionPolicy("auto") });
+  const host = new PluginHost({ agent, cwd: process.cwd(), settings: () => settings });
+  const notes: string[] = [];
+  host.setUI({ interactive: false, notify: (m) => notes.push(m), confirm: async () => false, select: async () => undefined });
+  let states!: Map<string, ServerState>;
+  await host.load("mcp", (api) => {
+    states = connectServers(api, servers);
+  });
+  const until = async (cond: () => boolean) => {
+    for (let i = 0; i < 100 && !cond(); i++) await Bun.sleep(50);
+  };
+  return { agent, host, notes, until, states };
+}
+
 test("stdio server: tools are namespaced, callable, and prompts become commands", async () => {
   const { agent, host, until } = await load({ fx: { command: "bun", args: [join(import.meta.dir, "fixture-server.ts")] } });
-  await until(() => agent.getTools().length === 3 && host.commands.some((c) => c.name.startsWith("mcp__fx__review")));
+  await until(() => agent.getTools().length === 4 && host.commands.some((c) => c.name.startsWith("mcp__fx__review")));
   const add = agent.getTools().find((t) => t.name === "mcp__fx__add")!;
   expect(add.kind).toBe("other");
   expect(add.concurrent).toBe(true);
@@ -59,7 +75,7 @@ test("stdio server: tools are namespaced, callable, and prompts become commands"
 test("streamable HTTP server with headers from the environment", async () => {
   process.env.FIXTURE_TOKEN = "secret-token";
   const { agent, until } = await load({ web: { url: `http://localhost:${http.port}/mcp`, headers: { authorization: "Bearer ${FIXTURE_TOKEN}" } } });
-  await until(() => agent.getTools().length === 3);
+  await until(() => agent.getTools().length === 4);
   const add = agent.getTools().find((t) => t.name === "mcp__web__add")!;
   const r = await add.execute({ a: 40, b: 2 }, { cwd: ".", signal: new AbortController().signal });
   expect(r.content).toEqual([{ type: "text", text: "42" }]);
@@ -68,7 +84,7 @@ test("streamable HTTP server with headers from the environment", async () => {
 
 test("servers stay connected across a session switch (/clear, /resume, /fork) and close on exit", async () => {
   const { agent, until } = await load({ fx: { command: "bun", args: [join(import.meta.dir, "fixture-server.ts")] } });
-  await until(() => agent.getTools().length === 3);
+  await until(() => agent.getTools().length === 4);
   const add = () => agent.getTools().find((t) => t.name === "mcp__fx__add")!.execute({ a: 1, b: 2 }, { cwd: ".", signal: new AbortController().signal });
   await agent.hooks.run("session_end", { reason: "switch" });
   expect((await add()).content).toEqual([{ type: "text", text: "3" }]);
@@ -82,6 +98,56 @@ test("a server that cannot start is reported without stopping anything", async (
   expect(notes[0]).toContain("MCP server broken failed to start");
   expect(agent.getTools()).toHaveLength(0);
   expect(host.status.get("mcp:servers")).toBe("MCP 0/1");
+  await agent.hooks.run("session_end", {});
+});
+
+test("a tool the server drops is taken off the model's list (tools/list_changed)", async () => {
+  const { agent, until } = await load({ fx: { command: "bun", args: [join(import.meta.dir, "fixture-server.ts")] } });
+  await until(() => agent.getTools().length === 4);
+  const ctx = { cwd: ".", signal: new AbortController().signal };
+  const toggle = agent.getTools().find((t) => t.name === "mcp__fx__toggle")!;
+  await toggle.execute({}, ctx);
+  await until(() => agent.getTools().some((t) => t.name === "mcp__fx__late"));
+  await toggle.execute({}, ctx);
+  await until(() => !agent.getTools().some((t) => t.name === "mcp__fx__late"));
+  expect(
+    agent
+      .getTools()
+      .filter((t) => t.name.startsWith("mcp__fx__"))
+      .map((t) => t.name)
+      .sort(),
+  ).toEqual(["mcp__fx__add", "mcp__fx__big", "mcp__fx__fail", "mcp__fx__toggle"]);
+  await agent.hooks.run("session_end", {});
+});
+
+test("a server that drops is reconnected by itself, and its tools work again", async () => {
+  const { agent, until, states } = await loadRaw(
+    { fx: { command: "bun", args: [join(import.meta.dir, "fixture-server.ts")] } },
+    { reconnectDelayMs: 150 },
+  );
+  const fx = () => states.get("fx")!;
+  await until(() => fx().status === "connected" && agent.getTools().length === 4);
+  const ctx = { cwd: ".", signal: new AbortController().signal };
+  void fx().client!.close(); // as far as sasacode can tell, the server went away
+  await until(() => fx().status === "closed");
+  await until(() => fx().status === "connected");
+  expect(fx().attempts).toBe(0);
+  const add = agent.getTools().find((t) => t.name === "mcp__fx__add")!;
+  expect((await add.execute({ a: 1, b: 2 }, ctx)).content).toEqual([{ type: "text", text: "3" }]);
+  await agent.hooks.run("session_end", {});
+});
+
+test("a server that never comes up retries a few times, then /mcp reconnect starts over", async () => {
+  const { agent, host, notes, until } = await load({ broken: { command: "definitely-not-a-command-xyz" } }, { reconnectDelayMs: 10 });
+  await until(() => notes.some((n) => n.includes("gave up reconnecting")));
+  expect(notes.filter((n) => n.includes("failed to start"))).toHaveLength(1); // the retries stay quiet
+  const mcp = host.commands.find((c) => c.name === "mcp")!;
+  await mcp.run({ args: "reconnect broken" });
+  expect(notes.at(-1)).toContain("再接続します: broken");
+  await until(() => notes.filter((n) => n.includes("gave up reconnecting")).length === 2); // the count starts over
+  await mcp.run({ args: "" });
+  expect(notes.at(-1)).toContain("broken: failed");
+  await agent.hooks.run("session_end", {});
 });
 
 test("names and results are normalized", () => {

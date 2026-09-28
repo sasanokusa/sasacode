@@ -2,14 +2,15 @@
 // ^ the working directory is an untrusted repository: ignore its .env and bunfig.toml.
 import { join } from "node:path";
 import { parseArgs } from "node:util";
-import { PERMISSION_MODES } from "@sasacode/agent";
+import { PERMISSION_MODES, resolveLang, setLang } from "@sasacode/agent";
 import { BUILTIN_PROVIDERS } from "@sasacode/ai";
 import { hideFromChildren } from "@sasacode/plugin-api";
 import { codexLogin, codexLogout, codexStatus } from "@sasacode/bundled";
-import { sasacodeHome } from "./config.ts";
+import { loadConfig, sasacodeHome } from "./config.ts";
 import { dropBlankKeys, ensureEnvFile, loadEnvFile } from "./env.ts";
 import { runHeadless } from "./headless.ts";
 import { readPipedStdin } from "./stdin.ts";
+import { notifyIfNewer, updateCommand } from "./update.ts";
 import { endpointCommand } from "./endpoints.ts";
 import { pluginCommand } from "./loader.ts";
 import { askTrust, assessProject, isTrusted, saveTrust } from "./trust.ts";
@@ -45,10 +46,17 @@ Subcommands:
   sasacode endpoint remove <name> [--project]
   sasacode endpoint list
   sasacode login [status|logout]    use a ChatGPT plan instead of an API key (openai-codex/… models)
+  sasacode update [--check] [tag]   download and install the newest release (checksum-verified)
   -h, --help
   -v, --version`;
 
 async function main(): Promise<number> {
+  // One language everywhere: the `lang` setting, else SASACODE_LANG, else the system locale.
+  try {
+    setLang(resolveLang(loadConfig(process.cwd()).global.lang));
+  } catch {
+    setLang(resolveLang());
+  }
   dropBlankKeys(BUILTIN_PROVIDERS);
   const envPath = join(sasacodeHome(), ".env");
   const created = ensureEnvFile(envPath, BUILTIN_PROVIDERS);
@@ -58,6 +66,7 @@ async function main(): Promise<number> {
   if (process.argv[2] === "plugin") return pluginCommand(process.argv.slice(3), process.cwd());
   if (process.argv[2] === "endpoint") return endpointCommand(process.argv.slice(3), process.cwd());
   if (process.argv[2] === "login") return loginCommand(process.argv[3]);
+  if (process.argv[2] === "update") return updateCommand(process.argv.slice(3));
   const { values, positionals } = parseArgs({
     allowPositionals: true,
     options: {
@@ -114,6 +123,8 @@ async function main(): Promise<number> {
     return runHeadless(harness, prompt, values.output);
   }
   const { runTui } = await import("@sasacode/tui");
+  // A quiet heads-up when a newer release is out; "updateCheck": false in config turns it off.
+  if (harness.config.updateCheck !== false) void notifyIfNewer((m, l) => harness.host.notify(m, l));
   return runTui(harness, positionals.join(" "));
 }
 

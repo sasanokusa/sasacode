@@ -1,7 +1,7 @@
 // /usage: what this run used, what the ChatGPT plan has left, and a record of every session on
-// this machine (read back from the session logs), with a contributions graph by day.
-import { readdirSync, readFileSync } from "node:fs";
+// this machine (read back through the session index), with a contributions graph by day.
 import { join } from "node:path";
+import { loadSessionIndex } from "@sasacode/agent";
 import { fmtTokens } from "@sasacode/ai";
 import { type AssistantMessage, type Plugin, sasacodeHome } from "@sasacode/plugin-api";
 import { codexTokens, readCodexAuth } from "./openai-codex/auth.ts";
@@ -25,42 +25,14 @@ function record(m: AssistantMessage): UsageRecord {
 }
 
 /**
- * Every model response recorded in the session logs under `home`. Summaries written by compaction
- * and subagent runs are not in the logs, so they are not counted.
+ * Every model response recorded in the session logs under `home`, sorted by time. Served from the
+ * session index, so this costs one stat per log and re-parses only logs that changed, not every
+ * log in full. Summaries written by compaction and subagent runs are not in the logs, so they are
+ * not counted; a log whose header was torn away still is.
  */
 export function readRecords(home = sasacodeHome()): UsageRecord[] {
-  const root = join(home, "sessions");
   const out: UsageRecord[] = [];
-  let dirs: string[] = [];
-  try {
-    dirs = readdirSync(root);
-  } catch {
-    return out;
-  }
-  for (const d of dirs) {
-    let files: string[] = [];
-    try {
-      files = readdirSync(join(root, d)).filter((f) => f.endsWith(".jsonl"));
-    } catch {
-      continue;
-    }
-    for (const f of files) {
-      let text = "";
-      try {
-        text = readFileSync(join(root, d, f), "utf8");
-      } catch {
-        continue;
-      }
-      for (const line of text.split("\n")) {
-        // Only new messages: a "replace" entry (compaction) lists earlier ones again.
-        if (!line.startsWith('{"type":"message"') || !line.includes('"role":"assistant"')) continue;
-        try {
-          const m = (JSON.parse(line) as { message: AssistantMessage }).message;
-          if (m.usage && m.timestamp) out.push(record(m));
-        } catch {}
-      }
-    }
-  }
+  for (const s of loadSessionIndex(join(home, "sessions")).values()) out.push(...s.usage);
   return out.sort((a, b) => a.t - b.t);
 }
 

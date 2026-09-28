@@ -46,7 +46,7 @@ export interface Usage {
   output: number;
   cacheRead: number;
   cacheWrite: number;
-  cost: number; // USD, 0 when the model has no price entry
+  cost: number; // USD: what the provider reported, else the price-table estimate, 0 when there is neither
 }
 
 export interface AssistantMessage {
@@ -142,7 +142,7 @@ export interface Provider {
    * The models this provider offers, for /model. Without it, the provider's Models API is asked
    * (GET /models for the OpenAI and Anthropic formats).
    */
-  listModels?(config: ProviderConfig, apiKey: string | undefined, signal?: AbortSignal): Promise<{ id: string; contextWindow?: number; maxOutput?: number }[]>;
+  listModels?(config: ProviderConfig, apiKey: string | undefined, signal?: AbortSignal): Promise<{ id: string; contextWindow?: number; maxOutput?: number; price?: ModelInfo["price"] }[]>;
 }
 
 export class ContextOverflowError extends Error {
@@ -180,6 +180,15 @@ export function computeCost(model: ModelInfo, u: Usage): number {
       u.cacheWrite * (p.cacheWrite ?? p.input * 1.25)) /
     1e6
   );
+}
+
+/**
+ * Cost in USD the provider reported alongside its usage (OpenRouter's `usage.cost`). Zero, negative
+ * or non-numeric means "not reported", so callers fall back to the price-table estimate.
+ */
+export function reportedCost(usage: object | undefined): number | undefined {
+  const c = (usage as { cost?: unknown } | undefined)?.cost;
+  return typeof c === "number" && Number.isFinite(c) && c > 0 ? c : undefined;
 }
 
 export function newAssistant(model: ModelInfo): AssistantMessage {

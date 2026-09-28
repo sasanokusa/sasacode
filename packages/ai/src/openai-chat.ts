@@ -9,14 +9,17 @@ import {
   ContextOverflowError,
   computeCost,
   type Message,
+  type ModelInfo,
   newAssistant,
   parseToolInput,
   type Provider,
+  reportedCost,
   samplingFields,
   type Request,
   type StreamEvent,
   type ThinkingContent,
   type ToolCall,
+  type Usage,
 } from "./types.ts";
 import { withEffort } from "./effort.ts";
 
@@ -34,6 +37,32 @@ export function openaiClient(req: Request): OpenAI {
 export function isContextOverflow(e: unknown): boolean {
   if (!(e instanceof OpenAI.APIError)) return false;
   return e.code === "context_length_exceeded" || /context length|context window|too many tokens|maximum context/i.test(e.message);
+}
+
+/** A Chat Completions usage object: the standard counts, plus fields vendors add on. */
+export interface ChatUsage {
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  prompt_tokens_details?: { cached_tokens?: number };
+  /** Actual spend in USD (OpenRouter reports it, with `cost_details` alongside); unknown to the SDK's types. */
+  cost?: unknown;
+}
+
+/**
+ * Usage of one streamed completion, from a `stream_options.include_usage` chunk. The cost is what
+ * the provider reported when it reports one (more trustworthy than any price table), else the estimate.
+ */
+export function parseChatUsage(model: ModelInfo, u: ChatUsage): Usage {
+  const cached = u.prompt_tokens_details?.cached_tokens ?? 0;
+  const usage: Usage = {
+    input: (u.prompt_tokens ?? 0) - cached,
+    output: u.completion_tokens ?? 0,
+    cacheRead: cached,
+    cacheWrite: 0,
+    cost: 0,
+  };
+  usage.cost = reportedCost(u) ?? computeCost(model, usage);
+  return usage;
 }
 
 export const openaiChatProvider: Provider = {
@@ -70,12 +99,7 @@ export const openaiChatProvider: Provider = {
       });
       for (let next: IteratorResult<ChatCompletionChunk> = stream.first; !next.done; next = await stream.it.next()) {
         const chunk = next.value;
-        if (chunk.usage) {
-          const cached = chunk.usage.prompt_tokens_details?.cached_tokens ?? 0;
-          out.usage.input = chunk.usage.prompt_tokens - cached;
-          out.usage.cacheRead = cached;
-          out.usage.output = chunk.usage.completion_tokens;
-        }
+        if (chunk.usage) out.usage = parseChatUsage(model, chunk.usage);
         const choice = chunk.choices[0];
         if (!choice) continue;
         const delta = choice.delta as typeof choice.delta & { reasoning?: string; reasoning_content?: string };
@@ -121,7 +145,8 @@ export const openaiChatProvider: Provider = {
     }
     for (const c of calls.values()) Object.assign(c.block, parseToolInput(c.json));
     if (out.stopReason === "stop" && calls.size) out.stopReason = "tool_use";
-    out.usage.cost = computeCost(model, out.usage);
+    // The usage chunk already resolved the cost (provider-reported when available); estimate the rest.
+    if (!out.usage.cost) out.usage.cost = computeCost(model, out.usage);
     yield { type: "done", message: out };
   },
 };

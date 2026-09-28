@@ -39,7 +39,7 @@ function groups(providers: Record<string, ProviderConfig>): string[][] {
 
 /** Models the configured providers offer, fetched from their Models API (GET /v1/models). */
 export class ModelCatalog {
-  /** Per spec, what the provider told us (context window, max output). */
+  /** Per spec, what the provider told us (context window, max output, price). */
   readonly discovered = new Map<string, Partial<ModelInfo>>();
   private pending?: Promise<ModelChoice[]>;
 
@@ -83,6 +83,9 @@ export class ModelCatalog {
       const info: Partial<ModelInfo> = {};
       if (m.contextWindow) info.contextWindow = m.contextWindow;
       if (m.maxOutput) info.maxOutput = m.maxOutput;
+      // A listing that reports an all-zero price is saying "unknown", not free: keep it from
+      // shadowing a price the built-in table knows.
+      if (m.price && (m.price.input > 0 || m.price.output > 0)) info.price = m.price;
       if (Object.keys(info).length) this.discovered.set(spec, info);
       out.push({ spec, contextWindow: m.contextWindow ?? KNOWN_MODELS[m.id]?.contextWindow, maxContext: m.maxContext });
     }

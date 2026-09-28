@@ -98,6 +98,31 @@ test("approval: deny with feedback, always-allow adds a rule, headless denies", 
   expect(JSON.stringify(headless.provider.requests[1]!.messages.at(-1))).toContain("no user is available");
 });
 
+test("a call is approved right before it runs: its approver sees the previous call's result", async () => {
+  const order: string[] = [];
+  let sawPreviousResult = false;
+  let agent!: Agent;
+  agent = setup(
+    [reply([call("1", "bash", { command: "echo first" }), call("2", "bash", { command: "echo second" })]), reply([say("ok")])],
+    {
+      permissions: new PermissionPolicy("ask"),
+      approve: async (r) => {
+        const command = String(r.args.command);
+        order.push(`ask:${command}`);
+        if (command === "echo second") sawPreviousResult = JSON.stringify(agent.messages.at(-1)).includes("first");
+        return { decision: "allow" };
+      },
+    },
+  ).agent;
+  agent.events.on((e) => {
+    if (e.type === "tool_start") order.push(`run:${String(e.call.input.command)}`);
+  });
+  await agent.prompt("go");
+  // Not "ask, ask, run, run": each call is approved after the one before it has finished.
+  expect(order).toEqual(["ask:echo first", "run:echo first", "ask:echo second", "run:echo second"]);
+  expect(sawPreviousResult).toBe(true);
+});
+
 test("interrupting a running tool reports it and tells the model on the next prompt", async () => {
   const { agent, provider } = setup(
     [reply([call("1", "bash", { command: "sleep 20" })]), reply([say("ok")])],

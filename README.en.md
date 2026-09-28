@@ -28,6 +28,7 @@ curl -fsSL https://sasanokusa.com/sasacode/install.sh | sh
 - Single binaries for macOS (arm64 / x64) and Linux (x64 / arm64, glibc / musl, and a baseline build for CPUs without AVX2). Bun is not needed.
 - The installer and the binary come from the latest [GitHub release](https://github.com/sasanokusa/sasacode/releases) and are checked against SHA256. The sasanokusa.com URL redirects to the latest release's `install.sh`.
 - `SASACODE_VERSION=v0.9.4` pins a version and `SASACODE_INSTALL_DIR` changes where it goes. On Windows, use WSL.
+- `sasacode update` updates in place (the same checks as the installer; `--check` only reports). A newer version is mentioned quietly once at startup (`"updateCheck": false` turns it off). From a source checkout, use `git pull` and `bun install`.
 
 From source ([Bun](https://bun.sh) 1.4 or later):
 
@@ -89,7 +90,7 @@ At start it asks the terminal how many cells it draws East Asian Ambiguous chara
 | `/effort` | Reasoning effort (`off` / `low` / `medium` / `high` / `xhigh` / `max`); without an argument, pick from a list. Shown in the footer. OpenAI-style servers receive it as `reasoning_effort`, and `off` is sent as `none` (servers such as vLLM think unless told so). A value a server refuses is replaced with the closest one it takes and remembered (Command Code refuses `none`, so `off` becomes `low` there) |
 | `/copy` | Copy the last answer (pbcopy / wl-copy / xclip, else through the terminal) |
 | `/permission` `/help` `/exit` (`/quit`) | Permission mode / help / quit |
-| `/usage` `/goal` `/bg` `/reconnect` `/compact` `/mcp` `/skills` `/skill:<name>` `/presets` `/browsr` | Commands of bundled plugins |
+| `/usage` `/goal` `/bg` `/reconnect` `/compact` `/mcp` `/skills` `/skill:<name>` `/presets` `/browsr` `/undo` | Commands of bundled plugins |
 
 The footer shows the model, the reasoning effort, the permission mode, context use (`ctx 77.6k/256k (30%)`), the session id and plugin statuses (MCP connections, TODO progress, …). When a run that took 30 seconds or more finishes, the terminal bell rings (`"tui": { "bell": false }` turns it off).
 
@@ -133,6 +134,7 @@ Endpoints in a project's `.sasacode/config.json` are not used until you trust th
 {
   "model": "commandcode/deepseek/deepseek-v4-flash",
   "models": ["commandcode/deepseek/deepseek-v4-pro", "ollama/gemma4:e4b"],
+  "lang": "en",
   "thinking": "high",
   "providers": { "myproxy": { "api": "openai-chat", "baseUrl": "https://…/v1", "apiKeyEnv": "MY_KEY" } },
   "modelOverrides": { "myproxy/some-model": { "contextWindow": 200000, "images": false } },
@@ -148,11 +150,18 @@ Endpoints in a project's `.sasacode/config.json` are not used until you trust th
   "tools": { "disabled": [] },
   "toolSearch": { "mode": "auto", "percent": 10, "count": 30 },
   "tui": { "altScreen": true, "bell": true },
+  "updateCheck": true,
   "trustedProjects": ["/path/to/project"]
 }
 ```
 
-`models` go to the top of the `/model` list. `providers` adds OpenAI- or Anthropic-compatible endpoints.
+`models` go to the top of the `/model` list. `providers` adds OpenAI- or Anthropic-compatible endpoints. `lang` is the language of the interface (TUI and CLI alike; `"ja"` or `"en"`); by default `SASACODE_LANG`, else the system locale, decides. `updateCheck` controls the new-version notice at startup (default true).
+
+**Cost**: the footer and the end-of-run summary show an estimate from the built-in model table (USD per 1M tokens), not a bill. OpenRouter reports the actual cost of a request, and that is used when it does. `modelOverrides` can set the price of any model.
+
+```json
+  "modelOverrides": { "myproxy/some-model": { "price": { "input": 1.25, "output": 10 } } }
+```
 
 `maxTurns` (default 200, 0 = no limit) caps the requests sent to the model for one request of yours. At the cap, the TUI asks whether to go on and a headless run stops. Separately, the bundled `loop-guard` stops a run after five turns in a row in which no tool call ran (refusals or bad arguments over and over; `plugins.settings["loop-guard"].noProgressTurns` changes it, 0 turns it off).
 
@@ -240,6 +249,7 @@ A plugin of the same name in `~/.sasacode/plugins` or the project is loaded inst
 | `goal` | The session's goal. `/goal <goal>` sets it; `done` / `pause` / `resume` / `clear` change it. Ask "make this the goal" and the model sets one with the `set_goal` tool, summarized from the conversation. An active goal is shown in the system prompt and the footer |
 | `background-sessions` | The `bg_start` tool: runs long commands such as builds and tests in the background and brings the exit code and the end of the output back into the conversation when they finish (starting the next turn when idle). Judged by the same permission rules as bash (`permissionsAs`). Jobs outlive sasacode and are reported at the next start. `/bg` lists, shows and stops them. POSIX only |
 | `auto-reconnect` | When a run ends in an error and the endpoint in use cannot be reached, waits for it to come back (up to 10 minutes by default) and resumes the work. `/reconnect` does the same by hand |
+| `checkpoints` | Keeps what write / edit changed just before it changed it, in the session. `/undo` brings one call's changes back at a time (`/undo list` shows what is left, `/undo <path>` picks one). bash changes are not covered |
 | `skills` / `mcp` | Adapters for Agent Skills and MCP |
 
 ### MCP
@@ -253,7 +263,7 @@ A plugin of the same name in `~/.sasacode/plugins` or the project is loaded inst
 }
 ```
 
-stdio and Streamable HTTP are supported. Tools are named `mcp__<server>__<tool>` and go through the same permission checks and hooks as any tool. Prompts become slash commands. Servers connect in the background, so startup does not wait. `${VAR}` is expanded from the environment.
+stdio and Streamable HTTP are supported. Tools are named `mcp__<server>__<tool>` and go through the same permission checks and hooks as any tool. Prompts become slash commands. Servers connect in the background, so startup does not wait. `${VAR}` is expanded from the environment. A server that drops is reconnected on its own (a few times, further apart; `/mcp reconnect [name]` by hand), and a tool that leaves the server's list leaves the model's.
 
 ### Skills
 

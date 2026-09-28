@@ -122,6 +122,13 @@ export class PluginHost {
         agent.setTool(tool);
         host.toolOwners.set(tool.name, name);
       },
+      unregisterTool(toolName) {
+        // Only the plugin that registered a tool may take it away; a name another plugin owns now
+        // (registerTool replaces) is left alone.
+        if (host.toolOwners.get(toolName) !== name) return;
+        host.toolOwners.delete(toolName);
+        agent.removeTool(toolName);
+      },
       registerCommand(command) {
         const i = host.commands.findIndex((c) => c.name === command.name);
         if (i >= 0) host.commands.splice(i, 1);

@@ -1,7 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import OpenAI from "openai";
 import type { ProviderConfig } from "./models.ts";
-import type { Api } from "./types.ts";
+import type { Api, ModelInfo } from "./types.ts";
 
 export interface ListedModel {
   id: string;
@@ -12,6 +12,8 @@ export interface ListedModel {
   maxOutput?: number;
   /** Endpoints the model answers on, when the provider says (e.g. Command Code: "/messages"). */
   endpoints?: string[];
+  /** List price in USD per 1M tokens, when the listing reports one (OpenRouter's `pricing`). */
+  price?: ModelInfo["price"];
 }
 
 export const API_ENDPOINT: Record<string, string> = {
@@ -22,6 +24,31 @@ export const API_ENDPOINT: Record<string, string> = {
 
 // OpenAI-style lists include embedding, audio and image models that cannot drive an agent.
 const NOT_CHAT = /embed|whisper|tts|dall-e|gpt-image|moderation|transcribe|realtime|audio|search-preview|^babbage|^davinci/i;
+
+/**
+ * OpenRouter's `pricing` (per token, decimal strings like "0.0000015") as `ModelInfo.price` (USD per
+ * 1M tokens). A zero or missing price is "unknown", not free: returning undefined keeps it from
+ * overriding a price the built-in table or a config override already knows.
+ */
+export function parsePricing(pricing: unknown): ModelInfo["price"] | undefined {
+  const p = pricing as Record<string, unknown> | undefined;
+  if (!p || typeof p !== "object") return undefined;
+  const perMillion = (v: unknown): number | undefined => {
+    const n = typeof v === "string" || typeof v === "number" ? Number(v) : NaN;
+    return Number.isFinite(n) && n > 0 ? n * 1e6 : undefined;
+  };
+  const input = perMillion(p.prompt);
+  const output = perMillion(p.completion);
+  if (input === undefined && output === undefined) return undefined;
+  const cacheRead = perMillion(p.input_cache_read);
+  const cacheWrite = perMillion(p.input_cache_write);
+  return {
+    input: input ?? 0,
+    output: output ?? 0,
+    ...(cacheRead !== undefined ? { cacheRead } : {}),
+    ...(cacheWrite !== undefined ? { cacheWrite } : {}),
+  };
+}
 
 /** GET <baseUrl>/models (the Models API) for one provider. Throws on network or auth errors. */
 export async function listModels(p: ProviderConfig, apiKey: string | undefined, signal?: AbortSignal): Promise<ListedModel[]> {
@@ -46,6 +73,7 @@ export async function listModels(p: ProviderConfig, apiKey: string | undefined, 
         contextWindow: num(x.context_length) ?? num(x.context_window) ?? num(x.max_input_tokens) ?? num(x.max_model_len) ?? num(meta?.n_ctx),
         maxOutput: num(top?.max_completion_tokens) ?? num(x.max_output_tokens),
         endpoints: Array.isArray(x.supported_endpoints) ? (x.supported_endpoints as string[]) : undefined,
+        price: parsePricing(x.pricing),
       });
     }
   }

@@ -40,8 +40,11 @@ const claude = (input: number, output: number, contextWindow = 1_000_000): Known
   images: true,
 });
 
-function gpt(contextWindow: number): Known {
-  return { contextWindow, maxOutput: 128_000, reasoning: true, images: true };
+// OpenAI prices are list-price estimates in USD per 1M tokens, in distinct tiers (the newest
+// generation at a premium, then flagship / smaller / mini). They only feed the cost line: a
+// provider that reports actual spend (OpenRouter) wins, and modelOverrides.price can correct any model.
+function gpt(input: number, output: number, contextWindow: number): Known {
+  return { contextWindow, maxOutput: 128_000, price: { input, output }, reasoning: true, images: true };
 }
 
 /** Known model metadata. Anything else gets conservative defaults and can be overridden in config. */
@@ -55,16 +58,16 @@ export const KNOWN_MODELS: Record<string, Known> = {
   "claude-haiku-4-5": { ...claude(1, 5, 200_000), reasoning: false },
   // OpenAI's Models API does not report context windows; these come from what Command Code's
   // Models API reports for the same models.
-  "gpt-6-astra": gpt(1_050_000),
-  "gpt-6-sol": gpt(1_050_000),
-  "gpt-6-luna": gpt(1_050_000),
-  "gpt-5.6-sol": gpt(1_050_000),
-  "gpt-5.6-terra": gpt(1_050_000),
-  "gpt-5.6-luna": gpt(1_050_000),
-  "gpt-5.5": gpt(400_000),
-  "gpt-5.4": gpt(400_000),
-  "gpt-5.4-mini": gpt(400_000),
-  "gpt-5.3-codex": gpt(400_000),
+  "gpt-6-astra": gpt(2.5, 20, 1_050_000),
+  "gpt-6-sol": gpt(2.5, 20, 1_050_000),
+  "gpt-6-luna": gpt(2.5, 20, 1_050_000),
+  "gpt-5.6-sol": gpt(1.25, 10, 1_050_000),
+  "gpt-5.6-terra": gpt(1.25, 10, 1_050_000),
+  "gpt-5.6-luna": gpt(1.25, 10, 1_050_000),
+  "gpt-5.5": gpt(1.25, 10, 400_000),
+  "gpt-5.4": gpt(1.25, 10, 400_000),
+  "gpt-5.4-mini": gpt(0.25, 2, 400_000),
+  "gpt-5.3-codex": gpt(0.5, 4, 400_000),
 };
 
 export const DEFAULT_MODEL = "anthropic/claude-opus-5";

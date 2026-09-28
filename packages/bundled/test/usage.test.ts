@@ -1,8 +1,8 @@
 import { afterAll, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { byDay, graph, planLines, readRecords } from "../src/usage.ts";
+import { byDay, graph, planLines, readRecords, type UsageRecord } from "../src/usage.ts";
 
 const home = mkdtempSync(join(tmpdir(), "sasacode-usage-"));
 afterAll(() => rmSync(home, { recursive: true, force: true }));
@@ -60,4 +60,58 @@ test("plan windows show use, time to reset and a warning at the limit", () => {
   expect(lines[1]).toMatch(/5時間の枠.*95% 使用 · あと 1時間30分でリセット/);
   expect(lines[2]).toMatch(/週の枠.*40% 使用 · あと 3日でリセット/);
   expect(lines[3]).toContain("上限に達しています");
+});
+
+// The pre-index algorithm, kept as the reference the index is checked against.
+function fullScan(root: string): UsageRecord[] {
+  const out: UsageRecord[] = [];
+  let dirs: string[] = [];
+  try {
+    dirs = readdirSync(root);
+  } catch {
+    return out;
+  }
+  for (const d of dirs) {
+    let files: string[] = [];
+    try {
+      files = readdirSync(join(root, d)).filter((f) => f.endsWith(".jsonl"));
+    } catch {
+      continue;
+    }
+    for (const f of files) {
+      let text = "";
+      try {
+        text = readFileSync(join(root, d, f), "utf8");
+      } catch {
+        continue;
+      }
+      for (const line of text.split("\n")) {
+        if (!line.startsWith('{"type":"message"') || !line.includes('"role":"assistant"')) continue;
+        try {
+          const m = (JSON.parse(line) as { message: { provider: string; model: string; usage?: Omit<UsageRecord, "t" | "model">; timestamp?: number } }).message;
+          if (m.usage && m.timestamp) out.push({ t: m.timestamp, model: `${m.provider}/${m.model}`, ...m.usage });
+        } catch {}
+      }
+    }
+  }
+  return out.sort((a, b) => a.t - b.t);
+}
+
+test("usage served from the index matches a full scan of the same logs, before and after a change", () => {
+  const h = mkdtempSync(join(tmpdir(), "sasacode-usage-scan-"));
+  const dir = join(h, "sessions", "proj");
+  mkdirSync(dir, { recursive: true });
+  const one = [JSON.stringify({ type: "session", version: 1, id: "s1", cwd: "/a", createdAt: "" }), assistant(day("2026-09-24"), 100, 10), JSON.stringify({ type: "replace", messages: [JSON.parse(assistant(day("2026-09-24"), 100, 10)).message] })];
+  // No session header and a torn line: counted by both algorithms alike.
+  const two = [assistant(day("2026-09-25", 8), 50, 5, "other"), "{ torn", assistant(day("2026-09-25", 20), 7, 3, "other")];
+  writeFileSync(join(dir, "one.jsonl"), one.join("\n"));
+  writeFileSync(join(dir, "two.jsonl"), two.join("\n"));
+  expect(readRecords(h)).toEqual(fullScan(join(h, "sessions")));
+  // one.jsonl is appended to (so it alone is re-parsed); two.jsonl keeps its indexed values.
+  writeFileSync(join(dir, "one.jsonl"), [...one, assistant(day("2026-09-26"), 1, 1)].join("\n"));
+  const records = readRecords(h);
+  expect(records).toEqual(fullScan(join(h, "sessions")));
+  const days = (r: UsageRecord[]) => [...byDay(r).entries()];
+  expect(days(records)).toEqual(days(fullScan(join(h, "sessions"))));
+  rmSync(h, { recursive: true, force: true });
 });

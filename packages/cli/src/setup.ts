@@ -3,6 +3,7 @@ import { join, resolve as resolvePath } from "node:path";
 import {
   Agent,
   buildSystemPrompt,
+  findSession,
   headlessUI,
   isInside,
   listSessions,
@@ -171,7 +172,13 @@ export async function setup(opts: SetupOptions): Promise<Harness> {
       opts.resume === "last"
         ? list[0]
         : list.find((s) => s.id === opts.resume || s.path === opts.resume || s.id.startsWith(opts.resume!));
-    if (!target) throw new Error(opts.resume === "last" ? "no previous session in this directory" : `session not found: ${opts.resume}`);
+    if (!target) {
+      if (opts.resume === "last") throw new Error("no previous session in this directory");
+      // The id alone is often all a script keeps: when the session lives in another directory,
+      // name it, so the run can be continued from there instead of "not found".
+      const elsewhere = findSession(join(home, "sessions"), opts.resume);
+      throw new Error(elsewhere ? `session ${opts.resume} belongs to ${elsewhere.cwd}: run sasacode from there` : `session not found: ${opts.resume}`);
+    }
     openSession(target.path, !!opts.model);
   } else createSession();
 
