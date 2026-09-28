@@ -12,6 +12,8 @@ interface Run {
   /** Tool calls so far, newest last. */
   trail: string[];
   status: "running" | "done" | "failed" | "stopped";
+  /** Stopped because the caller was interrupted (Esc): the report waits for the next message. */
+  interrupted?: boolean;
   report?: string;
   send?: (text: string) => void;
   stop?: () => void;
@@ -35,7 +37,7 @@ export function reportOf(r: { text: string; cause: string; error?: string }, tra
  * `task`: hand a self-contained job to a fresh agent loop. In the foreground the caller waits for the
  * report; with `background` it keeps working and the report arrives as a message when the run ends.
  * task_status / task_send / task_stop let the caller watch, steer and stop runs; `/task` does the
- * same for the user.
+ * same for the user. Interrupting the caller (Esc) stops its background runs too.
  */
 const subagent: Plugin = (api) => {
   const runs = new Map<string, Run>();
@@ -96,14 +98,21 @@ const subagent: Plugin = (api) => {
         const run = await start(args, false, ctx.signal, ctx.onUpdate).done;
         return { content: [{ type: "text", text: run.report! }], isError: run.status === "failed" };
       }
-      // Not tied to this turn's signal: Esc on the caller's turn leaves it running (task_stop ends it).
+      // Not tied to this turn's signal, which ends with the turn: agent_end below stops it on Esc.
       const { run, done } = start(args, true);
       void done.then((r) => {
         api.ui.notify(`task ${r.id}「${r.description}」が終了しました（${r.status}）`, r.status === "done" ? "info" : "warning");
-        api.session.inject(`[task ${r.id} "${r.description}" ended: ${r.status}]\n\n${r.report}`, "now");
+        // After an interruption the user decides what comes next: the report goes with their next message.
+        api.session.inject(`[task ${r.id} "${r.description}" ended: ${r.status}]\n\n${r.report}`, r.interrupted ? "next" : "now");
       });
       return { content: [{ type: "text", text: `Started ${run.id} in the background. Its report will arrive as a message; use task_status / task_send / task_stop with id "${run.id}".` }] };
     },
+  });
+
+  // Esc on the caller stops what it started in the background (a subagent's own end does not).
+  api.on("agent_end", (e, where) => {
+    if (where.agent || e.cause !== "aborted") return;
+    for (const r of runs.values()) if (r.background && r.stop) (r.interrupted = true), r.stop();
   });
 
   const find = (id: string) => {

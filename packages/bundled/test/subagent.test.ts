@@ -105,3 +105,37 @@ test("task_send reaches a running background subagent at its next turn", async (
   expect(JSON.stringify(inner.requests[1]!.messages)).toContain("look in src instead");
   expect(lastText(mainProvider)).toContain("changed course");
 });
+
+test("Esc on the caller stops its background runs, and the report waits for the next message", async () => {
+  let release!: () => void;
+  const gate = new Promise<void>((r) => (release = r));
+  const inner = replayProvider([reply([say("never reached")])]);
+  const sub: Provider = {
+    api: "gated",
+    async *stream(req) {
+      await gate;
+      yield* inner.stream(req);
+    },
+  };
+  const { agent, mainProvider, notices } = await setup(
+    [reply([call("1", "task", { description: "look", prompt: "look", model: "t/sub", background: true })]), reply([say("carry on")])],
+    sub,
+  );
+  // The caller's second request is held until Esc.
+  const replay = (await import("@sasacode/ai")).getProvider(agent.model.api);
+  const stream = replay.stream.bind(replay);
+  let calls = 0;
+  replay.stream = async function* (req) {
+    if (++calls === 2) await new Promise((r) => req.signal?.addEventListener("abort", r, { once: true }));
+    yield* stream(req);
+  };
+  const run = agent.prompt("go");
+  await until(() => calls === 2);
+  agent.abort();
+  expect(await run).toBe("aborted");
+  release();
+  await until(() => notices.some((m) => m.includes("t1") && m.includes("stopped")));
+  await new Promise((r) => setTimeout(r, 30));
+  expect(agent.isRunning).toBe(false);
+  expect(mainProvider.requests).toHaveLength(2);
+});
