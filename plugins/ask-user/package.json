@@ -1,6 +1,6 @@
 {
   "name": "sasacode-plugin-ask-user",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Let the model ask you multiple-choice questions in sasacode instead of guessing",
   "keywords": [
     "sasacode-plugin",
