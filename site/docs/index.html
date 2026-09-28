@@ -536,7 +536,7 @@ sasacode -m pgx/&lt;モデル名&gt;</code></pre>
         <tr><th>プラグイン</th><th>設定</th><th>既定</th><th>内容</th></tr>
         <tr><td><code>compaction</code></td><td><code>threshold</code></td><td><code>0.8</code></td><td>コンテキストがこの割合に達したら古い履歴を要約する（上限に来たときも）。<code>/compact [指示]</code> で手動</td></tr>
         <tr><td><code>agents-md</code></td><td>—</td><td></td><td><code>~/.sasacode/AGENTS.md</code> と、リポジトリのルートから作業ディレクトリまでの <code>AGENTS.md</code> を読む（CLAUDE.md は読まない）</td></tr>
-        <tr><td><code>subagent</code></td><td>—</td><td></td><td><code>task</code> ツール。別の履歴で作業させ、報告だけを受け取る</td></tr>
+        <tr><td><code>subagent</code></td><td>—</td><td></td><td><code>task</code> ツール。別の履歴で作業させ、報告だけを受け取る。<code>background: true</code> で待たずに続行し、<code>task_status</code>・<code>task_send</code>・<code>task_stop</code> で見る・指示する・止める。ユーザーは <code>/task</code> で同じことができる</td></tr>
         <tr><td><code>todo</code></td><td>—</td><td></td><td><code>todo_write</code> ツール。進捗をフッターに出す</td></tr>
         <tr><td><code>goal</code></td><td>—</td><td></td><td><code>/goal &lt;目的&gt;</code>、<code>done</code> / <code>pause</code> / <code>resume</code> / <code>clear</code>。「これをゴールにして」と頼めばモデルが <code>set_goal</code> で設定する</td></tr>
       </table></div>

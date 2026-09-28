@@ -504,7 +504,7 @@ export class Agent {
   }
 
   /** An independent loop sharing tools, permissions, approvals and tool hooks, with its own history. */
-  async runSubagent(o: SubagentOptions): Promise<{ text: string; messages: Message[]; cause: StopCause }> {
+  async runSubagent(o: SubagentOptions): Promise<{ text: string; messages: Message[]; cause: StopCause; error?: string }> {
     const exclude = new Set(o.excludeTools ?? []);
     const tools = this.getTools().filter((t) => (o.tools ? o.tools.includes(t.name) : !exclude.has(t.name)));
     const child = new Agent({
@@ -522,16 +522,20 @@ export class Agent {
       toolSearch: this.toolSearch,
     });
     child.isSubagent = true;
+    let error: string | undefined;
     child.events.on((e) => {
       if (e.type === "tool_start") o.onProgress?.(`${e.call.name}(${e.summary})`);
       if (e.type === "plugin_error") this.events.emit(e);
+      if (e.type === "error") error = e.error;
     });
     const onAbort = () => child.abort();
     o.signal?.addEventListener("abort", onAbort, { once: true });
+    o.onStart?.({ send: (text) => child.inject([{ type: "text", text }], "next"), stop: onAbort });
     try {
       const cause = await child.prompt(o.prompt);
-      const last = [...child.messages].reverse().find((m) => m.role === "assistant");
-      return { text: last ? textOf(last.content) : "", messages: child.messages, cause };
+      // The last thing it said, even when it stopped in the middle of tool calls.
+      const text = [...child.messages].reverse().map((m) => (m.role === "assistant" ? textOf(m.content).trim() : "")).find(Boolean) ?? "";
+      return { text, messages: child.messages, cause, error };
     } finally {
       o.signal?.removeEventListener("abort", onAbort);
     }

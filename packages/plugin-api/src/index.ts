@@ -272,6 +272,8 @@ export interface SubagentOptions {
   model?: string;
   signal?: AbortSignal;
   onProgress?(text: string): void;
+  /** Called once the loop starts: `send` adds a user message at its next turn, `stop` aborts it. (since 1.8.0) */
+  onStart?(run: { send(text: string): void; stop(): void }): void;
 }
 
 export interface CompleteOptions {
@@ -285,8 +287,8 @@ export interface CompleteOptions {
 export interface PluginAgent {
   model(): ModelInfo;
   tools(): ToolDefinition<any>[];
-  /** Run an independent agent loop with its own history (subagents). */
-  run(opts: SubagentOptions): Promise<{ text: string; messages: Message[]; cause: StopCause }>;
+  /** Run an independent agent loop with its own history (subagents). `error`: why it stopped, when cause is "error" (since 1.8.0). */
+  run(opts: SubagentOptions): Promise<{ text: string; messages: Message[]; cause: StopCause; error?: string }>;
   /** One model call without tools; returns the text. */
   complete(opts: CompleteOptions): Promise<string>;
 }
