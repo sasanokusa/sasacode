@@ -120,3 +120,100 @@ export class ApprovalDialog implements Component, Focusable {
     this.list.invalidate();
   }
 }
+
+/** One line of free text (api.ui.input). Enter submits what was typed, esc cancels. */
+export class InputDialog implements Component, Focusable {
+  private _focused = false;
+  private input: Input;
+
+  constructor(
+    private title: string,
+    private options: { message?: string; placeholder?: string; initial?: string },
+    done: (value: string | undefined) => void,
+  ) {
+    this.input = new Input({ placeholder: options.placeholder ? plain(options.placeholder) : undefined, placeholderStyle: c.gray });
+    // As a paste, so the cursor ends up after it and control characters are left out.
+    if (options.initial) this.input.handleInput(`\x1b[200~${options.initial.replace(/\x1b/g, "")}\x1b[201~`);
+    this.input.onSubmit = (value) => done(value);
+    this.input.onEscape = () => done(undefined);
+  }
+
+  get focused(): boolean {
+    return this._focused;
+  }
+  set focused(v: boolean) {
+    this._focused = v;
+    this.input.focused = v;
+  }
+
+  handleInput(data: string): void {
+    this.input.handleInput(data);
+  }
+
+  render(width: number): string[] {
+    const lines = plain(this.title).split("\n");
+    const message = this.options.message === undefined ? [] : plain(this.options.message).split("\n");
+    return [
+      truncateToWidth(c.gray("─".repeat(width)), width),
+      ...lines.map((l, i) => truncateToWidth(i === 0 ? c.bold(l) : c.gray(l), width)),
+      ...message.map((l) => truncateToWidth(c.gray(l), width)),
+      ...this.input.render(width),
+      truncateToWidth(c.gray(t("enter で決定 · esc でキャンセル")), width),
+    ];
+  }
+
+  invalidate(): void {
+    this.input.invalidate();
+  }
+}
+
+/** Check any number of items (api.ui.selectMany). Space toggles, enter confirms, esc cancels. */
+export class CheckList implements Component, Focusable {
+  focused = false;
+  private cursor = 0;
+  private checked: Set<string>;
+
+  constructor(
+    private title: string,
+    private items: SelectItem[],
+    selected: string[],
+    private done: (values: string[] | undefined) => void,
+    private maxVisible = 10,
+  ) {
+    this.checked = new Set(selected.filter((v) => items.some((i) => i.value === v)));
+  }
+
+  handleInput(data: string): void {
+    const n = this.items.length;
+    if (matchesKey(data, "escape")) this.done(undefined);
+    else if (matchesKey(data, "enter")) this.done(this.items.map((i) => i.value).filter((v) => this.checked.has(v)));
+    else if (!n) return;
+    else if (matchesKey(data, "up")) this.cursor = (this.cursor - 1 + n) % n;
+    else if (matchesKey(data, "down")) this.cursor = (this.cursor + 1) % n;
+    else if (matchesKey(data, "space")) {
+      const v = this.items[this.cursor]!.value;
+      if (!this.checked.delete(v)) this.checked.add(v);
+    }
+  }
+
+  render(width: number): string[] {
+    const start = Math.max(0, Math.min(this.cursor - Math.floor(this.maxVisible / 2), this.items.length - this.maxVisible));
+    const shown = this.items.slice(start, start + this.maxVisible);
+    const rows = shown.map((item, k) => {
+      const at = start + k === this.cursor;
+      const box = this.checked.has(item.value) ? "[x]" : "[ ]";
+      const label = `${at ? "›" : " "} ${box} ${plain(item.label)}`;
+      const desc = item.description ? `  ${c.gray(plain(item.description))}` : "";
+      return truncateToWidth((at ? c.bold(c.cyan(label)) : label) + desc, width);
+    });
+    if (this.items.length > this.maxVisible) rows.push(truncateToWidth(c.gray(`(${this.cursor + 1}/${this.items.length})`), width));
+    return [
+      truncateToWidth(c.gray("─".repeat(width)), width),
+      ...plain(this.title).split("\n").map((l, i) => truncateToWidth(i === 0 ? c.bold(l) : c.gray(l), width)),
+      ...rows,
+      truncateToWidth(c.gray(t("space で選択/解除 · ↑↓ で移動 · enter で決定 · esc でキャンセル")), width),
+    ];
+  }
+
+  invalidate(): void {}
+}

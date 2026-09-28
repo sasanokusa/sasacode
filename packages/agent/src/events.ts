@@ -9,9 +9,9 @@ export type AgentEvent =
   | { type: "message_start"; message: AssistantMessage }
   | { type: "message_update"; message: AssistantMessage; event: StreamEvent }
   | { type: "message_end"; message: Message }
-  | { type: "tool_start"; call: ToolCall; summary: string }
-  | { type: "tool_update"; call: ToolCall; text: string }
-  | { type: "tool_end"; call: ToolCall; result: ToolResult }
+  | { type: "tool_start"; call: ToolCall; summary: string; parentCallId?: string }
+  | { type: "tool_update"; call: ToolCall; text: string; parentCallId?: string }
+  | { type: "tool_end"; call: ToolCall; result: ToolResult; parentCallId?: string }
   | { type: "turn_end"; turn: number }
   | { type: "context_limit"; tokens: number; contextWindow: number }
   | { type: "error"; error: string }

@@ -1,0 +1,36 @@
+{
+  "name": "sasacode-plugin-workflows",
+  "version": "0.1.0",
+  "description": "Reusable review, diagnosis and release-check prompts for sasacode",
+  "keywords": [
+    "sasacode-plugin",
+    "sasacode",
+    "workflows"
+  ],
+  "type": "module",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sasanokusa/sasacode.git",
+    "directory": "plugins/workflows"
+  },
+  "files": [
+    "index.ts",
+    "prompts.ts",
+    "README.md",
+    "LICENSE"
+  ],
+  "peerDependencies": {
+    "@sasacode/plugin-api": "^1.9.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "sasacode": {
+    "name": "workflows",
+    "apiVersion": "^1.9.0",
+    "extensions": [
+      "index.ts"
+    ]
+  }
+}

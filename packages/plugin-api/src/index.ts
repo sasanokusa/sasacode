@@ -29,7 +29,7 @@ export type {
   UserContent,
 } from "@sasacode/ai";
 
-export const PLUGIN_API_VERSION = "1.8.0";
+export const PLUGIN_API_VERSION = "1.10.0";
 
 // ── tools ────────────────────────────────────────────────────────────
 
@@ -38,6 +38,11 @@ export interface ToolContext {
   signal: AbortSignal;
   /** Stream partial output (e.g. bash stdout) to the UI while the tool runs. */
   onUpdate?(text: string): void;
+  /** Call another registered tool through validation, hooks and its own permission check.
+   * Inherits cwd, agent and cancellation. Available only while execute is running; await it.
+   * Cycles and chains deeper than 8 tools return an error. No permission bypass. (since 1.9.0)
+   */
+  callTool?(name: string, args: Record<string, unknown>): Promise<ToolResult>;
 }
 
 export interface ToolResult {
@@ -238,14 +243,57 @@ export interface RenderOptions {
 /** Returns body lines (ANSI allowed, each at most `width` wide) or undefined for the default rendering. */
 export type ToolRenderer = (call: ToolCall, result: ToolResult | undefined, opts: RenderOptions) => string[] | undefined;
 
+export interface ShowTextOptions {
+  title: string;
+  text: string;
+  /** Presentation only; no HTML, scripts or automatic link opening. Default: text. */
+  format?: "text" | "markdown";
+}
+
+/** (since 1.10.0) */
+export interface InputOptions {
+  /** A line under the title, e.g. what the answer is for. */
+  message?: string;
+  placeholder?: string;
+  /** Text the field starts with. */
+  initial?: string;
+}
+
+/** (since 1.10.0) */
+export interface SelectManyOptions {
+  /** Values checked when the list opens. */
+  selected?: string[];
+}
+
+export interface SettingsDefinition<T extends Record<string, unknown> = Record<string, unknown>> {
+  /** Supported JSON Schema subset is documented in docs/plugins.md. Unknown keywords fail. */
+  schema: JSONSchema;
+  /** Recursively merged with settings. Arrays and null replace; no coercion or mutation. */
+  defaults?: Partial<T>;
+}
+
 export interface PluginUI {
   /** False in headless runs: confirm resolves false and select undefined. */
   readonly interactive: boolean;
   /** The language the user reads the interface in: show notices and command descriptions in it. (since 1.8.0) */
   readonly lang: "ja" | "en";
   notify(message: string, level?: "info" | "warning" | "error"): void;
+  /** Read-only text viewer. Resolves when closed; headless writes sanitized text to stderr.
+   * Does not change messages or call a model. Copy requires a user gesture. (since 1.9.0)
+   */
+  showText(options: ShowTextOptions): Promise<void>;
   confirm(title: string, message?: string): Promise<boolean>;
   select(title: string, options: SelectOption[]): Promise<string | undefined>;
+  /**
+   * One line of free text. Resolves with what was typed (possibly empty), or undefined when
+   * cancelled or headless. (since 1.10.0)
+   */
+  input(title: string, options?: InputOptions): Promise<string | undefined>;
+  /**
+   * Check any number of options. Resolves with the checked values in option order (possibly none),
+   * or undefined when cancelled or headless. (since 1.10.0)
+   */
+  selectMany(title: string, options: SelectOption[], opts?: SelectManyOptions): Promise<string[] | undefined>;
   /** Show (or clear with undefined) a status line item. */
   setStatus(key: string, text: string | undefined): void;
   registerToolRenderer(toolName: string, renderer: ToolRenderer): void;
@@ -313,6 +361,10 @@ export interface PluginAPI {
   readonly cwd: string;
   /** This plugin's settings from config (`plugins.settings.<name>`). */
   readonly settings: Record<string, unknown>;
+  /** Validate trusted plugin settings against a schema and defaults. Throws on invalid settings
+   * with a plugin-qualified field path. Call before registering tools/hooks. (since 1.9.0)
+   */
+  defineSettings<T extends Record<string, unknown> = Record<string, unknown>>(definition: SettingsDefinition<T>): T;
   /** Adding a tool with an existing name replaces it (P3). */
   registerTool(tool: ToolDefinition<any>): void;
   /**

@@ -1,0 +1,35 @@
+{
+  "name": "sasacode-plugin-project-checks",
+  "version": "0.1.0",
+  "description": "Named project checks with permission-aware execution and bounded logs for sasacode",
+  "keywords": [
+    "sasacode-plugin",
+    "sasacode",
+    "project-checks"
+  ],
+  "type": "module",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sasanokusa/sasacode.git",
+    "directory": "plugins/project-checks"
+  },
+  "files": [
+    "index.ts",
+    "README.md",
+    "LICENSE"
+  ],
+  "peerDependencies": {
+    "@sasacode/plugin-api": "^1.9.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "sasacode": {
+    "name": "project-checks",
+    "apiVersion": "^1.9.0",
+    "extensions": [
+      "index.ts"
+    ]
+  }
+}

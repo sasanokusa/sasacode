@@ -117,6 +117,8 @@ export async function describeNpm(spec: string, doFetch: typeof fetch = fetch): 
 
 /** The lowest plugin API a file needs, judged by the features it mentions. */
 export function apiRangeFor(source: string): string {
+  if (/ui\.input\b|\b(selectMany|InputOptions|SelectManyOptions)\b/.test(source)) return "^1.10.0";
+  if (/\b(callTool|showText|defineSettings|ShowTextOptions|SettingsDefinition)\b/.test(source)) return "^1.9.0";
   if (/ctx\.agent|["']switch["']|HookContext/.test(source)) return "^1.8.0";
   if (/on\(\s*["']permission["']|softDeny/.test(source)) return "^1.7.0";
   if (/permissionsAs/.test(source)) return "^1.6.0";

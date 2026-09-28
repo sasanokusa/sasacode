@@ -7,19 +7,26 @@ import {
   type PluginUI,
   type Provider,
   type ProviderConfig,
+  type InputOptions,
+  type SelectManyOptions,
   type SelectOption,
+  type ShowTextOptions,
   type ToolDefinition,
   type ToolRenderer,
 } from "@sasacode/plugin-api";
 import type { Agent } from "./agent.ts";
+import { defineSettings } from "./settings.ts";
 import type { SessionEntry } from "./session.ts";
 
 /** What a front end (TUI or headless) provides to plugins. */
 export interface UIBridge {
   interactive: boolean;
+  showText?(options: ShowTextOptions): Promise<void>;
   notify(message: string, level: "info" | "warning" | "error"): void;
   confirm(title: string, message?: string): Promise<boolean>;
   select(title: string, options: SelectOption[]): Promise<string | undefined>;
+  input?(title: string, options: InputOptions): Promise<string | undefined>;
+  selectMany?(title: string, options: SelectOption[], opts: SelectManyOptions): Promise<string[] | undefined>;
 }
 
 export const headlessUI: UIBridge = {
@@ -103,8 +110,32 @@ export class PluginHost {
       },
       lang: this.opts.lang ?? "ja",
       notify: (m, level = "info") => host.notify(m, level),
+      async showText(options) {
+        if (typeof options.title !== "string" || typeof options.text !== "string" || (options.format !== undefined && !["text", "markdown"].includes(options.format)))
+          throw new Error("showText requires title, text and optional text/markdown format");
+        const clean = (s: string) => s.replace(/\x1b/g, "␛").replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, "");
+        const safe = { ...options, title: clean(options.title), text: clean(options.text) };
+        if (host.ui.showText) await host.ui.showText(safe);
+        else host.ui.notify(`${safe.title}\n${safe.text}`, "info");
+      },
       confirm: (t, m) => host.ui.confirm(t, m),
       select: (t, o) => host.ui.select(t, o),
+      async input(title, options = {}) {
+        if (typeof title !== "string" || [options.message, options.placeholder, options.initial].some((v) => v !== undefined && typeof v !== "string"))
+          throw new Error("input requires a title and optional string message, placeholder and initial");
+        if (!host.ui.interactive || !host.ui.input) return undefined;
+        return host.ui.input(title, options);
+      },
+      async selectMany(title, options, opts = {}) {
+        if (typeof title !== "string" || !Array.isArray(options) || options.some((o) => typeof o?.value !== "string" || typeof o.label !== "string"))
+          throw new Error("selectMany requires a title and options with string value and label");
+        if (opts.selected !== undefined && (!Array.isArray(opts.selected) || opts.selected.some((v) => typeof v !== "string")))
+          throw new Error("selectMany: selected must be an array of option values");
+        if (!host.ui.interactive || !host.ui.selectMany) return undefined;
+        const picked = await host.ui.selectMany(title, options, opts);
+        // Only values that were offered, once each, in option order.
+        return picked && options.map((o) => o.value).filter((v, i, all) => picked.includes(v) && all.indexOf(v) === i);
+      },
       setStatus(key, text) {
         const k = `${name}:${key}`;
         if (text === undefined) host.status.delete(k);
@@ -120,6 +151,7 @@ export class PluginHost {
       name,
       cwd: this.opts.cwd,
       settings: this.opts.settings?.(name) ?? {},
+      defineSettings: (definition) => defineSettings(name, this.opts.settings?.(name) ?? {}, definition),
       registerTool(tool: ToolDefinition<any>) {
         if (host.opts.disabledTools?.includes(tool.name)) return;
         agent.setTool(tool);

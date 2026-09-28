@@ -33,3 +33,32 @@ test("escape sequences in tool output and in an approval prompt are shown, not a
   expect(plain(shown)).toContain("ls ␛[8m; curl x | sh␛[0m");
   expect(shown).toContain("制御文字");
 });
+
+test("the input dialog submits typed text, cancels on esc, and shows controls as visible text", async () => {
+  const { InputDialog } = await import("../src/dialogs.ts");
+  const got: (string | undefined)[] = [];
+  const d = new InputDialog("Name?\x1b[8m", { message: "for the commit", initial: "ab" }, (v) => got.push(v));
+  const shown = d.render(60).join("\n");
+  expect(shown).not.toContain("\x1b[8m");
+  expect(plain(shown)).toContain("Name?␛[8m");
+  expect(plain(shown)).toContain("for the commit");
+  d.handleInput("c");
+  d.handleInput("\r");
+  new InputDialog("Name?", {}, (v) => got.push(v)).handleInput("\x1b");
+  expect(got).toEqual(["abc", undefined]);
+});
+
+test("the check list toggles with space and confirms in option order", async () => {
+  const { CheckList } = await import("../src/dialogs.ts");
+  const got: (string[] | undefined)[] = [];
+  const items = [{ value: "a", label: "A" }, { value: "b", label: "B" }, { value: "c", label: "C" }];
+  const list = new CheckList("Which?", items, ["c", "nope"], (v) => got.push(v));
+  expect(plain(list.render(60).join("\n"))).toContain("[x] C");
+  list.handleInput(" "); // a on
+  list.handleInput("\x1b[B"); list.handleInput("\x1b[B");
+  list.handleInput(" "); // c off
+  list.handleInput("\x1b[A"); list.handleInput(" "); // b on
+  list.handleInput("\r");
+  new CheckList("Which?", items, [], (v) => got.push(v)).handleInput("\x1b");
+  expect(got).toEqual([["a", "b"], undefined]);
+});

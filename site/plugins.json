@@ -12,6 +12,30 @@
       "source": "sasacode-plugin-agent-hygiene",
       "description": "作業記録を散らかさない。STATE.md は「現在の作業」と「次の作業」だけにし、履歴は agent_log ツールで .agents/log.jsonl へ。/kickoff と /handoff の定型手順つき",
       "author": "sasanokusa"
+    },
+    {
+      "name": "ask-user",
+      "source": "sasacode-plugin-ask-user",
+      "description": "推測で進めず、選択肢つきの質問で判断を仰がせる ask_user ツール。複数選択と自由入力に対応（API 1.10）",
+      "author": "sasanokusa"
+    },
+    {
+      "name": "git-context",
+      "source": "sasacode-plugin-git-context",
+      "description": "レビュー用の Git 差分（作業中・ステージ・ブランチ）を1回で上限つきで集める git_context ツール",
+      "author": "sasanokusa"
+    },
+    {
+      "name": "project-checks",
+      "source": "sasacode-plugin-project-checks",
+      "description": "テスト・lint・型検査を名前で実行し、PASS / FAIL と終了コード、ログを返す。/checks で一覧（API 1.9）",
+      "author": "sasanokusa"
+    },
+    {
+      "name": "workflows",
+      "source": "sasacode-plugin-workflows",
+      "description": "レビュー・調査・リリース確認などの定型依頼を /workflow で再利用する（API 1.9）",
+      "author": "sasanokusa"
     }
   ]
 }

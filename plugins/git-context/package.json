@@ -1,0 +1,35 @@
+{
+  "name": "sasacode-plugin-git-context",
+  "version": "0.1.0",
+  "description": "Bounded Git review context for sasacode: working, staged and branch diffs",
+  "keywords": [
+    "sasacode-plugin",
+    "sasacode",
+    "git-context"
+  ],
+  "type": "module",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sasanokusa/sasacode.git",
+    "directory": "plugins/git-context"
+  },
+  "files": [
+    "index.ts",
+    "README.md",
+    "LICENSE"
+  ],
+  "peerDependencies": {
+    "@sasacode/plugin-api": "^1.8.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "sasacode": {
+    "name": "git-context",
+    "apiVersion": "^1.8.0",
+    "extensions": [
+      "index.ts"
+    ]
+  }
+}

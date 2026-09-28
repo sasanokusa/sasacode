@@ -1,0 +1,35 @@
+{
+  "name": "sasacode-plugin-ask-user",
+  "version": "0.1.0",
+  "description": "Let the model ask you multiple-choice questions in sasacode instead of guessing",
+  "keywords": [
+    "sasacode-plugin",
+    "sasacode",
+    "ask-user"
+  ],
+  "type": "module",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sasanokusa/sasacode.git",
+    "directory": "plugins/ask-user"
+  },
+  "files": [
+    "index.ts",
+    "README.md",
+    "LICENSE"
+  ],
+  "peerDependencies": {
+    "@sasacode/plugin-api": "^1.8.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "sasacode": {
+    "name": "ask-user",
+    "apiVersion": "^1.8.0",
+    "extensions": [
+      "index.ts"
+    ]
+  }
+}

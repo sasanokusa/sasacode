@@ -20,6 +20,8 @@ import { loadedFromHistory, makeToolSearchTool, shouldDefer, type ToolSearchConf
 import { executeTools, type Repair, repairCalls, type ToolRunContext } from "./tool-exec.ts";
 
 export interface ApprovalRequest extends PermissionCheck {
+  /** Cancel an obsolete approval when the calling run is interrupted. */
+  signal?: AbortSignal;
   call: ToolCall;
   reason: string;
 }

@@ -96,7 +96,8 @@ interface Job {
 export async function executeTools(
   ctx: ToolRunContext,
   calls: ToolCall[],
-  opts: { truncated: boolean; signal: AbortSignal; repairs: Map<string, Repair>; onResult: (m: ToolResultMessage) => void },
+  opts: { truncated: boolean; signal: AbortSignal; repairs: Map<string, Repair>; onResult: (m: ToolResultMessage) => void;
+    ancestors?: string[]; parentCallId?: string; onToolResult?: (result: ToolResult) => void },
 ): Promise<void> {
   const jobs: Job[] = [];
   let flushed = 0;
@@ -105,7 +106,8 @@ export async function executeTools(
     await ctx.hooks.run("tool_result", { call: job.call, result, ran: didRun }, (r, ev) => {
       if (r.result) result = ev.result = r.result;
     });
-    if (didRun) ctx.events.emit({ type: "tool_end", call: job.call, result });
+    if (didRun || opts.parentCallId) ctx.events.emit({ type: "tool_end", call: job.call, result, parentCallId: opts.parentCallId });
+    opts.onToolResult?.(result);
     job.result = result;
     messages.set(job, {
       role: "tool",
@@ -124,7 +126,9 @@ export async function executeTools(
     const fixed = opts.repairs.get(call.id);
     const job: Job = { call, name: fixed?.name ?? call.name, note: fixed?.note, input: fixed?.input ?? call.input };
     jobs.push(job);
-    const rejected = preflight(ctx, job, job.input!, fixed ? fixed.rawInput : call.rawInput, opts);
+    const rejected = opts.ancestors?.includes(job.name) ? err(`Nested tool cycle: ${[...opts.ancestors, job.name].join(" -> ")}`)
+      : (opts.ancestors?.length ?? 0) >= 8 ? err("Nested tool depth exceeds 8.")
+      : preflight(ctx, job, job.input!, fixed ? fixed.rawInput : call.rawInput, opts);
     if (rejected) await finish(job, rejected, false);
   }
 
@@ -143,12 +147,12 @@ export async function executeTools(
       continue;
     }
     // Approvals stay one at a time, in order: only the runs overlap.
-    const { args, denied } = await authorize(ctx, job.tool!, job.call, job.input!);
+    const { args, denied } = await authorize(ctx, job.tool!, job.call, job.input!, opts.signal);
     const run = async () => {
       if (denied) return finish(job, denied, false);
       // A call must not start once the user has interrupted.
       if (opts.signal.aborted) return finish(job, err("Interrupted by the user before this tool ran."), false);
-      await finish(job, await runTool(ctx, job.tool!, job.call, args, opts.signal), true);
+      await finish(job, await runTool(ctx, job.tool!, job.call, args, opts.signal, opts.ancestors ?? [], opts.parentCallId), true);
     };
     if (job.tool?.concurrent) running.push(run());
     else await run();
@@ -220,6 +224,7 @@ async function authorize(
   tool: ToolDefinition<any>,
   call: ToolCall,
   input: Record<string, unknown>,
+  signal: AbortSignal,
 ): Promise<{ args: Record<string, unknown>; denied?: ToolResult }> {
   let args = input;
   let forced: { decision: Decision; reason: string } | undefined;
@@ -228,8 +233,13 @@ async function authorize(
     if (r.decision && (!forced || RANK[r.decision] > RANK[forced.decision])) forced = { decision: r.decision, reason: r.reason ?? "plugin" };
     return forced?.decision !== "deny";
   });
+  // A hook may rewrite args: validate the values that will actually be authorized and executed.
+  const problems = validate(tool.parameters, args);
+  if (problems.length) return { args, denied: err(`Invalid arguments after tool_call: ${problems.join("; ")}`) };
   const check: PermissionCheck = { tool, args, cwd: ctx.cwd };
+  if (signal.aborted) return { args, denied: err("Interrupted by the user before this tool ran.") };
   const verdict = await decide(ctx, check, call, forced);
+  if (signal.aborted) return { args, denied: err("Interrupted by the user before this tool ran.") };
   if (verdict.decision === "allow") return { args };
   if (verdict.decision === "deny") return { args, denied: err(`Permission denied (${verdict.reason}).`) };
   if (!ctx.approve)
@@ -237,22 +247,57 @@ async function authorize(
       args,
       denied: err(`This call needs user approval (${verdict.reason}), but no user is available to approve it (non-interactive run). It was not executed.`),
     };
-  const answer = await ctx.approve({ ...check, call, reason: verdict.reason });
+  let onAbort!: () => void;
+  const interrupted = new Promise<ApprovalAnswer>((resolve) => {
+    onAbort = () => resolve({ decision: "deny" });
+    signal.addEventListener("abort", onAbort, { once: true });
+    if (signal.aborted) onAbort();
+  });
+  let answer: ApprovalAnswer;
+  try { answer = await Promise.race([interrupted, ctx.approve({ ...check, call, reason: verdict.reason, signal })]); }
+  finally { signal.removeEventListener("abort", onAbort); }
+  if (signal.aborted) return { args, denied: err("Interrupted by the user before this tool ran.") };
   if (answer.decision === "always") ctx.permissions.addRules({ allow: PermissionPolicy.rulesFor(check) });
   if (answer.decision === "deny")
     return { args, denied: err(`The user denied this tool call.${answer.feedback ? ` User feedback: ${answer.feedback}` : ""}`) };
   return { args };
 }
 
-async function runTool(ctx: ToolRunContext, tool: ToolDefinition<any>, call: ToolCall, args: Record<string, unknown>, signal: AbortSignal): Promise<ToolResult> {
+async function runTool(ctx: ToolRunContext, tool: ToolDefinition<any>, call: ToolCall, args: Record<string, unknown>, signal: AbortSignal, ancestors: string[], parentCallId?: string): Promise<ToolResult> {
   let summary = "";
+  try { summary = tool.summary?.(args) ?? ""; } catch {}
+  if (parentCallId) ctx.session?.append({ type: "custom", plugin: "core", kind: "nested_tool_execute", data: { parentCallId, call, args } });
+  ctx.events.emit({ type: "tool_start", call, summary, parentCallId });
+  let active = true;
+  // Calls from one execution are serialized, including when the caller uses Promise.all.
+  // Each child has its own queue, so ordinary nested delegation never deadlocks.
+  let pending: Promise<unknown> = Promise.resolve();
+  const callTool = (name: string, input: Record<string, unknown>): Promise<ToolResult> => {
+    if (!active) return Promise.resolve(err("Tool context is no longer active."));
+    let copied: Record<string, unknown>;
+    try { copied = structuredClone(input); } catch { return Promise.resolve(err("Tool arguments must be cloneable JSON values.")); }
+    const childCall: ToolCall = { type: "tool_call", id: `nested-${crypto.randomUUID()}`, name, input: copied };
+    const work = pending.then(async () => {
+      let result = err("Nested tool did not return a result.");
+      ctx.session?.append({ type: "custom", plugin: "core", kind: "nested_tool_call", data: { parentCallId: call.id, call: childCall } });
+      // Programmatic calls are already structured; tool_call_raw (model-output repair) is skipped.
+      await executeTools(ctx, [childCall], {
+        truncated: false, signal, repairs: new Map(), ancestors: [...ancestors, tool.name], parentCallId: call.id,
+        onResult: () => {}, onToolResult: (r) => { result = r; },
+      });
+      ctx.session?.append({ type: "custom", plugin: "core", kind: "nested_tool_result", data: { parentCallId: call.id, call: childCall, result } });
+      return result;
+    }).catch((e) => err(`Nested tool failed: ${e instanceof Error ? e.message : String(e)}`));
+    pending = work;
+    return work;
+  };
   try {
-    summary = tool.summary?.(args) ?? "";
-  } catch {}
-  ctx.events.emit({ type: "tool_start", call, summary });
-  try {
-    return await tool.execute(args, { cwd: ctx.cwd, signal, onUpdate: (text) => ctx.events.emit({ type: "tool_update", call, text }) });
+    return await tool.execute(args, { cwd: ctx.cwd, signal, callTool, onUpdate: (text) => ctx.events.emit({ type: "tool_update", call, text, parentCallId }) });
   } catch (e) {
     return err(`Tool failed: ${e instanceof Error ? e.message : String(e)}`);
+  } finally {
+    active = false;
+    // Even a plugin forgetting await cannot leave children running after its tool has finished.
+    await pending;
   }
 }

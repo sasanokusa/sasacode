@@ -46,7 +46,7 @@ npm のパッケージは `bun run pack:plugin-api` で `dist/plugin-api` に作
 }
 ```
 
-- `apiVersion` がホストの API（現在 1.8.0）と互換でなければ、警告を出して読み込まない。
+- `apiVersion` がホストの API（現在 1.10.0）と互換でなければ、警告を出して読み込まない。
 - `skills` は `SKILL.md` を含むフォルダが並ぶディレクトリ。
 - `mcpServers` は設定ファイルの `mcpServers` と同じ形式。`${VAR}` は環境変数から展開される。
 
@@ -81,7 +81,7 @@ sasacode plugin publish my-tool.ts --license MIT             # npm publish（npm
 - `package.json` には、`sasacode` フィールド（マニフェスト）、検索用のキーワード `sasacode-plugin`、ピア依存の `@sasacode/plugin-api` を入れる。README はファイル先頭のコメントから作る。
 - 版は、npm に出ている最新版の次のパッチ（初回は 0.1.0）。`--version` で指定できる。
 - 説明文は、ファイルの最初のコメントから取る（`--description` で指定できる）。
-- `apiVersion` は、使っている機能から決める（フックの `ctx` や `session_end` の `reason` なら ^1.8.0、`permission` フックや `softDeny` なら ^1.7.0、`permissionsAs` なら ^1.6.0、など）。`--api` で指定できる。
+- `apiVersion` は、使っている機能から決める（`ui.input`・`ui.selectMany` なら ^1.10.0、`callTool`・`showText`・`defineSettings` なら ^1.9.0、フックの `ctx` や `session_end` の `reason` なら ^1.8.0、`permission` フックや `softDeny` なら ^1.7.0、`permissionsAs` なら ^1.6.0、など）。`--api` で指定できる。
 - 同じフォルダのほかのファイルを import していると、それは含まれない（注意を出す）。そういうプラグインは、`package.json` に `sasacode` フィールドを書いたディレクトリごと `sasacode plugin publish <ディレクトリ>` で出す（キーワードがなければ足す）。
 - ライセンスを付けないと、ほかの人は再利用できない。`--license MIT` のように付ける。
 
@@ -95,7 +95,7 @@ sasanokusa.com のおすすめ一覧に載せたいときは、[リポジトリ]
 
 ## API リファレンス
 
-公開 API は `@sasacode/plugin-api` の `PluginAPI` で、現在の版は 1.8.0。変更の履歴は[最後の表](#api-の版)にある。
+公開 API は `@sasacode/plugin-api` の `PluginAPI` で、現在の版は 1.10.0。変更の履歴は[最後の表](#api-の版)にある。
 
 ### PluginAPI
 
@@ -103,6 +103,7 @@ sasanokusa.com のおすすめ一覧に載せたいときは、[リポジトリ]
 | --- | --- |
 | `version` / `name` / `cwd` | ホストの API の版 / このプラグインの名前 / 作業ディレクトリ |
 | `settings` | 設定ファイルの `plugins.settings.<名前>` |
+| `defineSettings({schema, defaults?})` | 設定を既定値とマージし、JSON Schema の対応範囲で検証する。型変換せず、不正なら例外（1.9.0〜） |
 | `registerTool(def)` | ツールを追加する。同名を登録すると置き換わる（組み込みの `read` なども上書きできる） |
 | `unregisterTool(name)` | このプラグインが登録したツールを外す。ほかのプラグインのツールには触れない（1.8.0〜） |
 | `registerCommand(def)` | スラッシュコマンドを追加する |
@@ -110,9 +111,12 @@ sasanokusa.com のおすすめ一覧に載せたいときは、[リポジトリ]
 | `on(hook, handler)` | フックを登録する（[フック](#フック)） |
 | `ready(promise)` | 起動時の非同期処理（サーバーへの接続など）をホストに知らせる。ヘッドレス実行はこれを待ってから最初のリクエストを送り、TUI は待たない（1.1.0〜） |
 | `permissions.addRules({allow, ask, deny, softDeny})` | 権限ルールを足す。`softDeny` は deny と同じく拒否するが、`permission` フックが「ユーザーに確認」まで下げられる（1.7.0〜） |
-| `ui.interactive` | TUI なら true。ヘッドレスでは false で、`confirm` は false、`select` は undefined を返す |
+| `ui.interactive` | TUI なら true。ヘッドレスでは false で、`confirm` は false、`select`・`input`・`selectMany` は undefined を返す |
 | `ui.lang` | ユーザーが読む言語（`"ja"` / `"en"`）。通知やコマンドの説明をこの言語で出す（1.8.0〜） |
 | `ui.notify(msg, level?)` / `ui.confirm(title, msg?)` / `ui.select(title, options)` | 通知 / 確認 / 選択 |
+| `ui.input(title, {message?, placeholder?, initial?})` | 1行の自由入力。入力された文字列（空文字もありうる）を返し、esc なら undefined（1.10.0〜） |
+| `ui.selectMany(title, options, {selected?})` | 複数選択。space で切り替え、enter で決定。選ばれた値を選択肢の順で返し（0個もありうる）、esc なら undefined。渡した選択肢にない値は返さない（1.10.0〜） |
+| `ui.showText({title, text, format?})` | 長文の閲覧パネル。スクロール・検索・ユーザー操作によるコピー。閉じるまで待つ。ヘッドレスは stderr に表示（1.9.0〜） |
 | `ui.setStatus(key, text)` | フッターのステータス行に出す（`undefined` で消す） |
 | `ui.registerToolRenderer(tool, fn)` | ツール結果の表示を差し替える。`fn(call, result, {expanded, width})` が行の配列を返す |
 | `session.id` | セッション ID（`--no-session` なら undefined） |
@@ -138,9 +142,59 @@ sasanokusa.com のおすすめ一覧に載せたいときは、[リポジトリ]
 | `concurrent` | 同じターンの、ほかの concurrent なツールと並行して実行してよい |
 | `alwaysLoad` | ツールの遅延ロードが有効でも、常に定義を送る |
 | `summary(args)` | UI に出す1行の要約 |
-| `execute(args, ctx)` | 本体。`ctx` は `{cwd, signal, onUpdate(text)}`。`{content, isError?, details?}` を返す（`details` は表示用で、モデルには送らない） |
+| `execute(args, ctx)` | 本体。`ctx` は `{cwd, signal, onUpdate(text), callTool(name, args)}`（`callTool` は1.9.0〜）。`{content, isError?, details?}` を返す（`details` は表示用で、モデルには送らない） |
 
 ツールが例外を投げると、エラーの tool_result としてモデルに返る。ループは止まらない。
+
+### 別のツールを呼ぶ（1.9.0〜）
+
+`execute` の `ctx.callTool(name, args)` は、現在のエージェントに登録されているツールを通常の実行経路で呼び、`ToolResult`（`details` を含む）を返す。たとえば名前付き検査を作るプラグインは、プロセス実行を実装し直さず `bash` を利用できる。
+
+```ts
+execute: async (_args, ctx) => {
+  if (!ctx.callTool) throw new Error("plugin API 1.9+ is required");
+  return await ctx.callTool("bash", { command: "bun run typecheck", timeout: 120 });
+}
+```
+
+- 子ツールは、引数検証 → `tool_call` → 書き換え後の再検証 → 権限ルール・`permission`・必要に応じユーザー確認 → 実行 → `tool_result` を通る。構造化済みの呼び出しなので、モデル出力の修復用 `tool_call_raw` は通らない。
+- 親への許可は子への許可にならない。親と子の両方に確認が必要なら、それぞれ確認する。拒否、未登録・無効化・サブエージェント対象外のツール、不正な引数はエラー結果。ヘッドレスで必要な確認を省略することはない。
+- cwd、キャンセル、サブエージェントの識別は親と同じ。確認待ちの中断も実行せずに終了する。終了後のコンテキストでは呼べない。型定義では古いホストや直接実行用のコンテキストとの互換性のため省略可能だが、1.9.0以降のホストは必ず提供する。
+- 同じ `execute` からの呼び出しは順番に実行する。呼び出し元と同じツールに戻る循環と、親を含め8段を超える入れ子は拒否する。返った Promise は必ず await する。ホストも開始済みの子の完了を待ってから親を終了する。
+- 子の出力は親の戻り値を通じてモデルに渡す。対応する assistant 呼び出しがない tool メッセージを履歴に追加しない。実行イベントには `parentCallId` が付き、セッションを保存している場合は `core` の `nested_tool_call` / `nested_tool_execute`（実際の引数）/ `nested_tool_result` に記録する。
+
+### 設定を宣言する（1.9.0〜）
+
+ツールやフックを登録する前に `api.defineSettings()` を呼ぶ。プロジェクト設定の既存の信頼確認は引き続き適用され、スキーマ検証によって権限を追加することはない。
+
+```ts
+const settings = api.defineSettings<{ timeout: number; enabled: boolean }>({
+  schema: {
+    type: "object",
+    properties: {
+      timeout: { type: "integer", minimum: 1, maximum: 3600 },
+      enabled: { type: "boolean" },
+    },
+    required: ["timeout", "enabled"],
+    additionalProperties: false,
+  },
+  defaults: { timeout: 120, enabled: true },
+});
+```
+
+オブジェクトは再帰的にマージし、配列と null は設定側で置き換える。返す値はコピーで、`api.settings` や `defaults` を変更しない。文字列から数値への変換はしない。不正な場合はプラグイン名と `plugins.settings.<名前>.<項目>` を含む例外になり、ホストが読み込み失敗として表示する。入力された値そのものは診断に含めない。
+
+対応するスキーマはルートが `type: "object"` の次の範囲：`type`（型の配列も可）、`properties`、`required`、`additionalProperties`（真偽値またはスキーマ）、`items`、`enum`、`const`、`anyOf` / `oneOf` / `allOf`、`minimum` / `maximum` / `exclusiveMinimum` / `exclusiveMaximum`、`minLength` / `maxLength` / `pattern`、`minItems` / `maxItems`、`minProperties` / `maxProperties`。文字数は Unicode コードポイント、pattern は JavaScript の Unicode 正規表現。`title` / `description` / `$comment` / `examples` は注釈として受け入れる。未対応のキーワード（`$ref`、`format`、スキーマ内の `default` など）や不正なスキーマは明示的にエラーにし、外部参照は取得しない。既定値は上記の `defaults` に指定する。
+
+### 長文を表示する（1.9.0〜）
+
+```ts
+await api.ui.showText({ title: "検査結果", text: report, format: "markdown" });
+```
+
+`format` は `text`（既定）または `markdown`。TUI は矢印・PageUp/PageDown で移動、`/` で検索、`n` / `N` で次／前、`y` で内容をコピー、Esc で閉じる。検索中の Esc は検索入力を閉じる。表示とコピーに使う内容の端末制御文字を無害化し、HTML・スクリプト・リンクの実行はしない。モデル呼び出しや履歴への追加はなく、コピーはユーザー操作時だけ行う。確認・選択ダイアログと順番待ちを共有し、表示中の確認を上書きしない。
+
+ヘッドレスでは内容を stderr に表示して直ちに完了する。独自の UI ブリッジは省略可能な `showText(options)` を実装でき、未実装の場合は `notify` にタイトルと本文を渡す。
 
 ### コマンドの定義（`registerCommand`）
 
@@ -197,6 +251,8 @@ before_request → stream_delta（生成中、差分ごと） → assistant_mess
 | 1.6.0 | ツールの `permissionsAs`（別のツール名の権限ルールも当てる） |
 | 1.7.0 | `permission` フック（ルールとモードの判定の後に、決められた範囲で判定を変える）、`PermissionRules.softDeny`、型 `PermissionMode` と `VerdictSource` |
 | 1.8.0 | フックのハンドラの第2引数 `ctx`（型 `HookContext`。`ctx.agent` でサブエージェントを区別する）、`session_end` の `reason`（`"switch"` / `"exit"`）、関数 `sasacodeHome`・`childEnv`・`hideFromChildren`・`saveOutput`、`unregisterTool`、`ui.lang`、`agent.run` の `onStart`（実行中のサブエージェントへの `send` と `stop`）と結果の `error` |
+| 1.9.0 | `ToolContext.callTool`（権限・フック・中断を共有するツール呼び出し）、`PluginAPI.defineSettings`、`PluginUI.showText`、型 `SettingsDefinition` / `ShowTextOptions`。引数の制約検証と `tool_call` 書き換え後の再検証も強化 |
+| 1.10.0 | `PluginUI.input`（1行の自由入力）、`PluginUI.selectMany`（複数選択）、型 `InputOptions` / `SelectManyOptions` |
 
 どれも既存のプラグインを壊さない追加。ただし 1.4.0 から、`tool_result` を「実行された」合図として数えているプラグインは `ran` を見る必要がある。
 

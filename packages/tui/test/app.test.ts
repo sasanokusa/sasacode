@@ -86,7 +86,7 @@ async function start(script: AssistantMessage[], mode: "edits" | "auto" = "edits
   const term = new FakeTerminal();
   const exited = runTui(tuiHost, "", term);
   await Bun.sleep(50);
-  return { term, agent, calls, exited };
+  return { term, agent, host, calls, exited };
 }
 
 test("a prompt is sent and the answer shown; /clear starts a new session; /exit quits", async () => {
@@ -172,4 +172,33 @@ test("a model whose size is known gets no warning", async () => {
   const { term } = await start([], "edits", [{ spec: "t/m", contextWindow: 32_768, maxContext: 262_144 }]);
   await Bun.sleep(50);
   expect(term.text()).not.toContain("num_ctx");
+});
+
+
+test("plugin text viewer owns input, serializes with approvals and returns to the editor", async () => {
+  const { term, host, agent, exited } = await start([]);
+  const api = host.api("viewer-test");
+  let closed = false;
+  const viewing = api.ui.showText({ title: "Long preview", text: Array.from({ length: 60 }, (_, i) => `entry-${i}`).join("\n") }).then(() => { closed = true; });
+  await Bun.sleep(40);
+  expect(term.text()).toContain("Long preview");
+  const bash = agent.getTools().find((t) => t.name === "bash")!;
+  const approval = agent.approve!({ tool: bash, args: { command: "echo queued" }, cwd: agent.cwd,
+    call: { type: "tool_call", id: "queued", name: "bash", input: { command: "echo queued" } }, reason: "test" });
+  const from = term.out.length;
+  await term.send("G"); expect(term.text(from)).toContain("entry-59"); expect(closed).toBe(false);
+  await term.send("\x1b"); await viewing;
+  expect(term.text()).toContain("echo queued");
+  await term.send("\x1b"); expect((await approval).decision).toBe("deny");
+  await term.type("/exit"); await term.send("\r"); expect(await exited).toBe(0);
+});
+
+test("an interrupted approval closes and restores input", async () => {
+  const { term, agent, exited } = await start([]);
+  const controller = new AbortController();
+  const bash = agent.getTools().find((t) => t.name === "bash")!;
+  const approval = agent.approve!({ tool: bash, args: { command: "echo cancelled" }, cwd: agent.cwd,
+    call: { type: "tool_call", id: "cancelled", name: "bash", input: {} }, reason: "test", signal: controller.signal });
+  await Bun.sleep(30); controller.abort(); expect((await approval).decision).toBe("deny");
+  await term.type("/exit"); await term.send("\r"); expect(await exited).toBe(0);
 });

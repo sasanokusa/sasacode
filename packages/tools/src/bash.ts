@@ -27,6 +27,7 @@ export const bashTool: ToolDefinition<Args> = {
   matchTarget: (a) => a.command,
   summary: (a) => a.command,
   execute(args, ctx) {
+    if (ctx.signal.aborted) return Promise.resolve({ content: [text("[Command was interrupted before execution]")], isError: true });
     const timeoutS = args.timeout && args.timeout > 0 ? args.timeout : DEFAULT_TIMEOUT_S;
     return new Promise((resolve) => {
       // detached: the command gets its own process group so we can kill everything it spawned.
@@ -53,16 +54,15 @@ export const bashTool: ToolDefinition<Args> = {
       child.stderr!.setEncoding("utf8").on("data", onData);
 
       let killedBy: "timeout" | "abort" | undefined;
+      let escalation: ReturnType<typeof setTimeout> | undefined;
+      const signalGroup = (s: NodeJS.Signals) => {
+        if (child.pid) try { process.kill(-child.pid, s); } catch {}
+      };
       const kill = (why: "timeout" | "abort") => {
         if (killedBy || child.exitCode !== null) return;
         killedBy = why;
-        const signal = (s: NodeJS.Signals) => {
-          try {
-            process.kill(-child.pid!, s);
-          } catch {}
-        };
-        signal("SIGTERM");
-        setTimeout(() => signal("SIGKILL"), 2000).unref();
+        signalGroup("SIGTERM");
+        escalation = setTimeout(() => signalGroup("SIGKILL"), 2000);
       };
       const timer = setTimeout(() => kill("timeout"), timeoutS * 1000);
       const onAbort = () => kill("abort");
@@ -74,6 +74,8 @@ export const bashTool: ToolDefinition<Args> = {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
+        if (killedBy) signalGroup("SIGKILL");
+        if (escalation) clearTimeout(escalation);
         ctx.signal.removeEventListener("abort", onAbort);
         // Background jobs may keep the pipes open; stop listening once the shell itself is gone.
         child.stdout!.destroy();
@@ -88,7 +90,7 @@ export const bashTool: ToolDefinition<Args> = {
         notes.push(code !== null ? `[exit code ${code}]` : `[terminated by ${sig}]`);
         resolve({
           content: [text([output.trimEnd(), ...notes].filter(Boolean).join("\n"))],
-          isError: code !== 0,
+          isError: code !== 0 || killedBy !== undefined,
           details: { exitCode: code, killedBy },
         });
       };

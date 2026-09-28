@@ -93,6 +93,8 @@ test("a single file becomes a package: manifest, search keyword, API range from 
 });
 
 test("API ranges and descriptions", () => {
+  for (const source of ["api.ui.input(\"Name?\")", "api.ui.selectMany(\"x\", [])"]) expect(apiRangeFor(source)).toBe("^1.10.0");
+  for (const source of ["ctx.callTool('bash', {})", "api.ui.showText({})", "api.defineSettings({})"]) expect(apiRangeFor(source)).toBe("^1.9.0");
   expect(apiRangeFor(`api.on("permission", () => {})`)).toBe("^1.7.0");
   expect(apiRangeFor(`api.registerTool({})`)).toBe("^1.4.0");
   expect(describeSource("// quick — does a quick thing\nexport default () => {}")).toBe("does a quick thing");

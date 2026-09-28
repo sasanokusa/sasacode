@@ -20,9 +20,10 @@ import {
 import { type Agent, type AgentEvent, type ApprovalAnswer, type ApprovalRequest, PERMISSION_MODE_LABELS, PERMISSION_MODES, type PermissionMode, type PluginHost, type UIBridge } from "@sasacode/agent";
 import { listSessions, t } from "@sasacode/host";
 import { fmtTokens, type ModelInfo, textOf, type ThinkingLevel, type ToolCall } from "@sasacode/ai";
-import type { CommandDefinition, SelectOption } from "@sasacode/plugin-api";
+import type { CommandDefinition, SelectOption, ShowTextOptions } from "@sasacode/plugin-api";
 import { matchAmbiguousWidth } from "./ambiguous.ts";
-import { ApprovalDialog, Picker } from "./dialogs.ts";
+import { ApprovalDialog, CheckList, InputDialog, Picker } from "./dialogs.ts";
+import { TextViewer } from "./text-viewer.ts";
 import { copyToClipboard } from "./clipboard.ts";
 import { exitSummary, UsageTally } from "./summary.ts";
 import { c, editorTheme } from "./theme.ts";
@@ -91,7 +92,7 @@ class App {
 
   constructor(
     private host: TuiHost,
-    terminal: Terminal,
+    private terminal: Terminal,
   ) {
     // Full screen by default: the transcript scrolls above a fixed input line, and on exit the
     // terminal comes back as it was, with a short summary instead of the whole conversation.
@@ -212,6 +213,9 @@ class App {
           { value: "no", label: t("いいえ") },
         ])) === "yes",
       select: (title, options: SelectOption[]) => this.pick(title, options),
+      input: (title, options) => this.ask((done) => new InputDialog(title, options, done)),
+      selectMany: (title, options, opts) => this.ask((done) => new CheckList(title, options, opts.selected ?? [], done)),
+      showText: (options) => this.showText(options),
     };
   }
 
@@ -219,6 +223,8 @@ class App {
 
   private onKey(data: string): { consume: boolean } | undefined {
     const agent = this.host.agent;
+    // The pager owns its navigation keys, including Esc; it must not stop an active agent.
+    if (this.inputSlot.children[0] instanceof TextViewer && !matchesKey(data, "ctrl+c")) return undefined;
     if (
       matchesKey(data, "escape") &&
       agent.isRunning &&
@@ -335,7 +341,12 @@ class App {
         break;
       }
       case "tool_start": {
-        const v = this.tools.get(e.call.id);
+        let v = this.tools.get(e.call.id);
+        if (!v && e.parentCallId) {
+          v = new ToolView(e.call);
+          this.tools.set(e.call.id, v);
+          this.chat.addChild(v);
+        }
         if (v) {
           v.status = "running";
           if (e.summary) v.summary = e.summary;
@@ -349,7 +360,12 @@ class App {
         break;
       }
       case "tool_end": {
-        const v = this.tools.get(e.call.id);
+        let v = this.tools.get(e.call.id);
+        if (!v && e.parentCallId) {
+          v = new ToolView(e.call);
+          this.tools.set(e.call.id, v);
+          this.chat.addChild(v);
+        }
         if (v) {
           v.output = textOf(e.result.content);
           v.diff = typeof e.result.details?.diff === "string" ? e.result.details.diff : undefined;
@@ -419,16 +435,23 @@ class App {
   }
 
   private showApproval(req: ApprovalRequest): Promise<ApprovalAnswer> {
+    if (req.signal?.aborted) return Promise.resolve({ decision: "deny" });
     return new Promise((resolve) => {
       let summary = "";
-      try {
-        summary = req.tool.summary?.(req.args) ?? "";
-      } catch {}
-      const dialog = new ApprovalDialog(req, summary, (answer) => {
+      try { summary = req.tool.summary?.(req.args) ?? ""; } catch {}
+      let settled = false;
+      const done = (answer: ApprovalAnswer) => {
+        if (settled) return;
+        settled = true;
+        req.signal?.removeEventListener("abort", onAbort);
         this.showEditor();
         resolve(answer);
-      });
+      };
+      const onAbort = () => done({ decision: "deny" });
+      const dialog = new ApprovalDialog(req, summary, done);
       this.showInput(dialog);
+      req.signal?.addEventListener("abort", onAbort, { once: true });
+      if (req.signal?.aborted) onAbort();
     });
   }
 
@@ -672,8 +695,29 @@ class App {
 
   // ── view helpers ───────────────────────────────────────────────────
 
+  private showText(options: ShowTextOptions): Promise<void> {
+    const next = this.approvals.then(() => new Promise<void>((resolve) => {
+      this.showInput(new TextViewer(options, () => { this.showEditor(); resolve(); }, copyToClipboard,
+        () => this.tui.requestRender(), () => Math.max(1, Math.min(24, this.terminal.rows - 12)), this.host.host.api("core-commands").ui.lang));
+    }));
+    this.approvals = next.catch(() => {});
+    return next;
+  }
+
+  /** Show a dialog after any earlier one closes; resolves with what it reports. */
+  private ask<T>(make: (done: (value: T) => void) => Component): Promise<T> {
+    const next = this.approvals.then(() => new Promise<T>((resolve) => {
+      this.showInput(make((value) => {
+        this.showEditor();
+        resolve(value);
+      }));
+    }));
+    this.approvals = next.catch(() => {});
+    return next;
+  }
+
   private pick(title: string, items: SelectOption[], maxVisible = 10): Promise<string | undefined> {
-    return new Promise((resolve) => {
+    const next = this.approvals.then(() => new Promise<string | undefined>((resolve) => {
       this.showInput(
         new Picker(
           title,
@@ -685,7 +729,9 @@ class App {
           maxVisible,
         ),
       );
-    });
+    }));
+    this.approvals = next.catch(() => {});
+    return next;
   }
 
   private showInput(component: Component): void {

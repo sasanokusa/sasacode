@@ -27,7 +27,7 @@ curl -fsSL https://sasanokusa.com/sasacode/install.sh | sh
 
 - Single binaries for macOS (arm64 / x64) and Linux (x64 / arm64, glibc / musl, and a baseline build for CPUs without AVX2). Bun is not needed.
 - The installer and the binary come from the latest [GitHub release](https://github.com/sasanokusa/sasacode/releases) and are checked against SHA256. The sasanokusa.com URL redirects to the latest release's `install.sh`.
-- `SASACODE_VERSION=v0.9.6` pins a version and `SASACODE_INSTALL_DIR` changes where it goes. On Windows, use WSL.
+- `SASACODE_VERSION=v0.9.7` pins a version and `SASACODE_INSTALL_DIR` changes where it goes. On Windows, use WSL.
 - `sasacode update` updates in place (the same checks as the installer; `--check` only reports). A newer version is mentioned quietly once at startup (`"updateCheck": false` turns it off). From a source checkout, use `git pull` and `bun install`.
 
 From source ([Bun](https://bun.sh) 1.4 or later):
@@ -269,11 +269,11 @@ export default ((api) => {
 }) satisfies Plugin;
 ```
 
-What the public API (now 1.8.0; frozen at 1.4.0, so 1.x only adds; [compatibility promise](docs/plugins.md#互換性の約束140-で確定)) offers:
+What the public API (now 1.10.0; frozen at 1.4.0, so 1.x only adds; [compatibility promise](docs/plugins.md#互換性の約束140-で確定)) offers:
 
 - **Registration**: tools (with `permissionsAs` to apply another tool's permission rules), slash commands (with argument completion), providers (model lists, custom fetch), permission rules (including `softDeny`)
 - **Hooks**: `session_start/end`, `user_prompt`, `system_prompt`, `before_request`, `stream_delta`, `assistant_message`, `tool_call_raw`, `tool_call`, `permission`, `tool_result`, `turn_end`, `agent_end`, `context_limit`
-- **UI**: notices, confirmations, choices, status line, custom rendering of tool results
+- **UI**: notices, confirmations, single and multiple choice, free-text input, a long-text viewer, status line, custom rendering of tool results
 - **Session**: saving state, replacing the history, injecting messages
 - **Agent**: subagents, single model calls
 

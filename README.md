@@ -27,7 +27,7 @@ curl -fsSL https://sasanokusa.com/sasacode/install.sh | sh
 
 - macOS（arm64 / x64）と Linux（x64 / arm64、glibc / musl、AVX2 のない CPU 向けの baseline 版）の単一バイナリ。Bun は不要。
 - インストーラーもバイナリも、[GitHub Releases](https://github.com/sasanokusa/sasacode/releases) の最新版から取得して SHA256 を検証する。sasanokusa.com の URL は、最新リリースの `install.sh` へのリダイレクト。
-- `SASACODE_VERSION=v0.9.6` で版を固定でき、`SASACODE_INSTALL_DIR` で置き場所を変えられる。Windows は WSL から使う。
+- `SASACODE_VERSION=v0.9.7` で版を固定でき、`SASACODE_INSTALL_DIR` で置き場所を変えられる。Windows は WSL から使う。
 - 更新は `sasacode update`（インストーラーと同じ検証つき。`--check` で確認だけ）。新しい版が出ていると起動時に一度だけ静かに知らせる（`"updateCheck": false` で止める）。ソースから動かしている場合は `git pull` と `bun install`。
 
 ソースから使う場合（[Bun](https://bun.sh) 1.4 以上）：
@@ -269,11 +269,11 @@ export default ((api) => {
 }) satisfies Plugin;
 ```
 
-公開 API（現在 1.8.0。1.4.0 で締め切り、1.x の間は追加だけ。[互換性の約束](docs/plugins.md#互換性の約束140-で確定)）でできることは次のとおり。
+公開 API（現在 1.10.0。1.4.0 で締め切り、1.x の間は追加だけ。[互換性の約束](docs/plugins.md#互換性の約束140-で確定)）でできることは次のとおり。
 
 - **登録**：ツール（別のツールの権限ルールを当てる `permissionsAs` つき）、スラッシュコマンド（引数の補完つき）、プロバイダー（モデル一覧の取得、通信の差し替え）、権限ルール（`softDeny` を含む）
 - **フック**：`session_start/end`、`user_prompt`、`system_prompt`、`before_request`、`stream_delta`、`assistant_message`、`tool_call_raw`、`tool_call`、`permission`、`tool_result`、`turn_end`、`agent_end`、`context_limit`
-- **UI**：通知・確認・選択・ステータス行、ツール結果の描画
+- **UI**：通知・確認・選択（単一・複数）・自由入力・長文表示・ステータス行、ツール結果の描画
 - **セッション**：状態の保存、履歴の差し替え、メッセージの差し込み
 - **エージェント**：サブエージェント、単発の呼び出し
 

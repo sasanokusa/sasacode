@@ -85,6 +85,8 @@ export const TO_EN: Record<string, string> = {
   "自動許可": "allow everything",
   "絞り込み: {filter}": "filter: {filter}",
   "入力で絞り込み · ↑↓ で選択 · enter で決定 · esc でキャンセル": "type to filter · ↑↓ select · enter choose · esc cancel",
+  "enter で決定 · esc でキャンセル": "enter submit · esc cancel",
+  "space で選択/解除 · ↑↓ で移動 · enter で決定 · esc でキャンセル": "space toggle · ↑↓ move · enter confirm · esc cancel",
   "⚠ 制御文字（端末のエスケープシーケンスなど）を含んでいます。␛ などの表示を確かめてください。": "⚠ Contains control characters (terminal escape sequences, for example). Check what ␛ and the like stand for.",
   "{tool} を実行しますか？": "Run {tool}?",
   "常に許可（終了するまで）": "Always allow (until exit)",
