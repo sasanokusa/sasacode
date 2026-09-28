@@ -39,7 +39,8 @@ writeFileSync(
       emitDeclarationOnly: true,
       strict: true,
       skipLibCheck: true,
-      types: [],
+      // Only to check the host helpers (node:fs, process); the emitted declarations need no Node types.
+      types: ["bun"],
       outDir: ".",
       rootDir: "src",
     },
