@@ -25,6 +25,8 @@ export interface Backend {
   /** What /jev shows, e.g. "Command Code (typesafe/jev)". */
   label: string;
   ask(state: Record<string, unknown>, questions: Record<string, Question>, signal: AbortSignal): Promise<RawAnswers>;
+  /** What keeps it from answering at all (no API key), checked before /jev on turns it on. */
+  problem?(): Promise<string | undefined>;
 }
 
 export interface BackendSettings {
@@ -179,6 +181,10 @@ function serviceBackend(name: Exclude<BackendName, "chat">, s: BackendSettings):
   return {
     name,
     label: `${svc.label} (${model})`,
+    async problem() {
+      key ??= keyFor(svc, s.apiKeyEnv);
+      return (await key) ? undefined : `API キーがありません（${s.apiKeyEnv ?? svc.keyEnv}）`;
+    },
     async ask(state, questions, signal) {
       key ??= keyFor(svc, s.apiKeyEnv);
       const k = await key;

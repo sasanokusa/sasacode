@@ -289,7 +289,7 @@ sasacode                    <span class="c"># 対話モードで始める</span>
         <tr><td><code>/compact</code></td><td>会話を要約してコンテキストを空ける</td><td>compaction</td></tr>
         <tr><td><code>/undo</code></td><td>write / edit によるファイルの変更を1件戻す（<code>list</code> で一覧）</td><td>checkpoints</td></tr>
         <tr><td><code>/task</code></td><td>サブエージェントの一覧・詳細、<code>send &lt;id&gt; &lt;内容&gt;</code> で指示、<code>stop &lt;id&gt;</code> で停止</td><td>subagent</td></tr>
-        <tr><td><code>/presets</code> <code>/jev</code></td><td>権限プリセットの一覧 / Jev の状態と直近の判定</td><td>permission-presets / jev-guard</td></tr>
+        <tr><td><code>/presets</code> <code>/jev</code></td><td>権限プリセットの一覧 / Jev の状態と直近の判定（<code>/jev on</code>・<code>/jev off</code> で切り替え）</td><td>permission-presets / jev-guard</td></tr>
         <tr><td><code>/mcp</code> <code>/skills</code> <code>/skill:&lt;name&gt;</code> <code>/browsr</code></td><td>MCP の接続状態（<code>/mcp reconnect [name]</code> で再接続。落ちたときは数回まで自動で再接続する） / Skills の一覧 / Skill を明示して使う / browsr の状態</td><td>mcp / skills / browsr</td></tr>
       </table></div>
 
@@ -429,7 +429,7 @@ sasacode -m pgx/&lt;モデル名&gt;</code></pre>
       </ul>
 
       <h3 id="jev">Jev による判定（<code>jev-guard</code>）</h3>
-      <p>判断専用モデル Jev に、呼び出しが安全かを確率で答えさせ、上の <code>permission</code> フックで判定を変える。既定は無効。</p>
+      <p>判断専用モデル Jev に、呼び出しが安全かを確率で答えさせ、上の <code>permission</code> フックで判定を変える。既定は無効。TUI で <code>/jev on</code> と打てばそのセッションで有効になり（<code>/jev off</code> で無効。<code>/resume</code> 後も保たれる）、いつも使うなら設定に書く。</p>
       <pre><code>{ "plugins": { "settings": { "jev-guard": { "enabled": true } } } }</code></pre>
       <div class="tbl"><table>
         <tr><th>元の判定</th><th>Jev が「安全」</th><th>Jev が「要確認」</th><th>Jev が「危険」</th></tr>

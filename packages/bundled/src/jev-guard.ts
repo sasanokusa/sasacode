@@ -354,6 +354,8 @@ const textOf = (content: readonly { type: string; text?: string }[]) => content.
 
 /** Session entry holding what the user last asked, so a resumed session still knows it. */
 const REQUEST_ENTRY = "jev-guard-request";
+/** Session entry: /jev on or off, which outlasts the config's `enabled` for that session. */
+const ENABLED_ENTRY = "jev-guard-enabled";
 
 const jevGuard: Plugin = (api) => {
   const s = api.settings as JevSettings;
@@ -367,26 +369,53 @@ const jevGuard: Plugin = (api) => {
   // Named, or the first of Command Code / TypeSafe with a key (Command Code when neither has one,
   // so the warning names the key to set).
   const pick = async () => makeBackend(api, s.backend ?? (await detectService()) ?? "commandcode", s);
+  // The config's `enabled` is the default; /jev on|off decides for the session (and a resumed one).
+  let enabled = s.enabled === true;
+
+  const status = async () => {
+    if (!enabled) return api.ui.notify(t("Jev ガード: 無効。/jev on で有効（このセッション）。いつも使うなら config の plugins.settings[\"jev-guard\"] に {\"enabled\": true}"));
+    const b = await (backend ??= pick()).catch((e: Error) => e);
+    api.ui.notify(
+      [
+        `${t("Jev ガード: 有効")} · ${b instanceof Error ? t("接続先の設定エラー: {error}", { error: b.message }) : b.label}`,
+        t("問い合わせ {calls} 回 · 判定を変えた {changed} 回 · 失敗 {failures} 回", { calls: stats.calls, changed: stats.changed, failures: stats.failures }),
+        ...recent.slice(-5),
+      ].join("\n"),
+    );
+  };
 
   api.registerCommand({
     name: "jev",
-    description: t("Jev ガード（実行前の安全判断）の状態"),
-    run: async () => {
-      if (!s.enabled)
-        return api.ui.notify(
-          t('Jev ガード: 無効。config の plugins.settings["jev-guard"] に {"enabled": true} を書くと有効（Jev の API キーが必要：Command Code の CMD_API_KEY、TypeSafe の TYPESAFE_API_KEY など）'),
-        );
-      const b = await (backend ??= pick()).catch((e: Error) => e);
-      api.ui.notify(
-        [
-          `${t("Jev ガード: 有効")} · ${b instanceof Error ? t("接続先の設定エラー: {error}", { error: b.message }) : b.label}`,
-          t("問い合わせ {calls} 回 · 判定を変えた {changed} 回 · 失敗 {failures} 回", { calls: stats.calls, changed: stats.changed, failures: stats.failures }),
-          ...recent.slice(-5),
-        ].join("\n"),
-      );
+    description: t("Jev ガード（実行前の安全判断）の状態と有効・無効"),
+    argumentHint: "[on | off]",
+    complete: (prefix) =>
+      [
+        { value: "on", label: "on", description: t("このセッションで有効にする") },
+        { value: "off", label: "off", description: t("このセッションで無効にする") },
+      ].filter((o) => o.value.startsWith(prefix)),
+    run: async ({ args }) => {
+      const arg = args.trim().toLowerCase();
+      if (!arg || arg === "status") return status();
+      if (arg !== "on" && arg !== "off") return api.ui.notify(t("使い方: /jev [on | off]"), "warning");
+      if (arg === "off") {
+        enabled = false;
+        api.session.append(ENABLED_ENTRY, false);
+        return api.ui.notify(t("Jev ガードを無効にしました（このセッション）"));
+      }
+      // A backend without a key would only fail on every call: say so now, and stay off.
+      backend = undefined;
+      warned = "";
+      const b = await (backend = pick()).catch((e: Error) => e);
+      const problem = b instanceof Error ? b.message : await b.problem?.();
+      if (problem) {
+        backend = undefined;
+        return api.ui.notify(t("Jev ガードを有効にできません: {error}", { error: problem }), "warning");
+      }
+      enabled = true;
+      api.session.append(ENABLED_ENTRY, true);
+      api.ui.notify(t("Jev ガードを有効にしました（このセッション · {backend}）", { backend: (b as Backend).label }));
     },
   });
-  if (!s.enabled) return;
 
   // The user's own words only: user_prompt fires for what the user typed, not for messages plugins
   // inject (a background job's output, a harness note), which must not pass for the user's request.
@@ -394,11 +423,14 @@ const jevGuard: Plugin = (api) => {
   api.on("session_start", () => {
     const last = api.session.entries(REQUEST_ENTRY).at(-1);
     userRequest = typeof last === "string" ? last : undefined;
+    const chosen = api.session.entries(ENABLED_ENTRY).at(-1);
+    enabled = typeof chosen === "boolean" ? chosen : s.enabled === true;
   });
   api.on("user_prompt", ({ content }) => {
     const text = textOf(content);
     if (!text.trim() || text === userRequest) return;
     userRequest = text;
+    // Kept while off too, so /jev on in the middle of a task knows what was asked.
     api.session.append(REQUEST_ENTRY, text);
   });
 
@@ -432,6 +464,7 @@ const jevGuard: Plugin = (api) => {
   }
 
   api.on("permission", async (ev) => {
+    if (!enabled) return;
     const { decision, source } = ev.verdict;
     // A hard deny stays; nothing Jev says can change it.
     if (decision === "deny" && source !== "soft") return;

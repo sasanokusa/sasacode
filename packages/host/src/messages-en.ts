@@ -224,8 +224,6 @@ export const TO_EN: Record<string, string> = {
   "browsr: {command} が見つかりません": "browsr: {command} not found",
   "browsr: manifest を読めませんでした ({error})": "browsr: could not read the manifest ({error})",
   // ── bundled: jev-guard ────────────────────────────────────────────────
-  "Jev ガード（実行前の安全判断）の状態": "Jev guard (a safety check before each call) status",
-  "Jev ガード: 無効。config の plugins.settings[\"jev-guard\"] に {\"enabled\": true} を書くと有効（Jev の API キーが必要：Command Code の CMD_API_KEY、TypeSafe の TYPESAFE_API_KEY など）": "Jev guard: off. Turn it on with {\"enabled\": true} in plugins.settings[\"jev-guard\"] in the config (needs a Jev API key: CMD_API_KEY for Command Code, TYPESAFE_API_KEY for TypeSafe, …)",
   "Jev ガード: 有効": "Jev guard: on",
   "接続先の設定エラー: {error}": "endpoint setting error: {error}",
   "問い合わせ {calls} 回 · 判定を変えた {changed} 回 · 失敗 {failures} 回": "{calls} checks · {changed} decisions changed · {failures} failures",
@@ -239,4 +237,13 @@ export const TO_EN: Record<string, string> = {
   "{id} に送りました": "Sent to {id}",
   // ── the TUI: Ollama without num_ctx ───────────────────────────────────
   "{spec} には num_ctx が設定されていません。Ollama を OLLAMA_CONTEXT_LENGTH で起動していなければ、Ollama の既定の長さ（数千トークン）を超えた入力は黙って切り詰められます。Modelfile に PARAMETER num_ctx 32768 などを書くか、OLLAMA_CONTEXT_LENGTH を設定してください（このモデルは最大 {max}）。": "{spec} has no num_ctx. Unless Ollama was started with OLLAMA_CONTEXT_LENGTH, input longer than its default (a few thousand tokens) is cut short without a word. Put PARAMETER num_ctx 32768 (for example) in the Modelfile, or set OLLAMA_CONTEXT_LENGTH (this model goes up to {max}).",
+  // ── bundled: jev-guard on / off ───────────────────────────────────────
+  "Jev ガード: 無効。/jev on で有効（このセッション）。いつも使うなら config の plugins.settings[\"jev-guard\"] に {\"enabled\": true}": "Jev guard: off. /jev on turns it on (for this session); to have it always, put {\"enabled\": true} in plugins.settings[\"jev-guard\"] in the config",
+  "Jev ガード（実行前の安全判断）の状態と有効・無効": "Jev guard (a safety check before each call): status, on and off",
+  "このセッションで有効にする": "turn it on for this session",
+  "このセッションで無効にする": "turn it off for this session",
+  "使い方: /jev [on | off]": "usage: /jev [on | off]",
+  "Jev ガードを無効にしました（このセッション）": "Jev guard is off (for this session)",
+  "Jev ガードを有効にできません: {error}": "Cannot turn Jev guard on: {error}",
+  "Jev ガードを有効にしました（このセッション · {backend}）": "Jev guard is on (for this session · {backend})",
 };

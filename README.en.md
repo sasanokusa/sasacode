@@ -187,6 +187,8 @@ Endpoints in a project's `.sasacode/config.json` are not used until you trust th
 
 Adds Jev's judgment after the rules and the permission mode. Jev answers typed questions with probabilities instead of text and takes a few hundred milliseconds a call.
 
+Type `/jev on` in the TUI to turn it on for the session (`/jev off` turns it off; the choice survives `/resume`). To have it always, put it in the config:
+
 ```json
 { "plugins": { "settings": { "jev-guard": { "enabled": true } } } }
 ```
@@ -212,7 +214,7 @@ Adds Jev's judgment after the rules and the permission mode. Jev answers typed q
 - Jev gets only facts the harness collected and your own request, never tool output or file contents (Jev could be steered by instructions hidden in them).
 - Reads and edits inside the working directory are not judged. When Jev cannot be reached (no key, network error, 5-second timeout), the decision stands without it.
 - Thresholds are set with `thresholds` (`allow` 0.8, headless `headlessAllow` 0.9, `deny` 0.85, `confidence` 0.6, `risk` 0.6, `flag` 0.7, `clear` 0.3). Other settings: `timeoutMs` (default 5 seconds, 60 for `chat`) and `skip` (tools never judged; default `todo_write`, `task`).
-- `/jev` shows the state and the latest judgments. Judgments are also recorded in the session.
+- `/jev` shows the state and the latest judgments. `/jev on` / `/jev off` switch it for this session (without a key it stays off and says why). Judgments are also recorded in the session.
 - Jev judges by the command line, so a read on another machine such as `ssh host 'ps aux'` looks safe, and a call whose script it cannot see, such as `bun run clean`, is judged without knowing what the script does. The `guard` preset always asks before operations on other machines. To always be asked about scripts, write a rule (e.g. `"permissions": { "ask": ["bash(bun run *)", "bash(make *)"] }`).
 - On 5,135 calls from real session logs: 92% of the safe calls are not stopped in `auto`, 71% run without asking in `agent`, and 1% of the calls that need a look ran without asking in `agent` (locally). Details in [docs/benchmarks.md](docs/benchmarks.md).
 
