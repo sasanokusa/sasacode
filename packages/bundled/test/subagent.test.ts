@@ -1,7 +1,8 @@
 import { expect, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { Agent, PermissionPolicy, PluginHost } from "@sasacode/agent";
-import { type AssistantContent, type AssistantMessage, emptyUsage, type Provider, registerApi, replayProvider } from "@sasacode/ai";
+import { type AssistantContent, type AssistantMessage, emptyUsage, type Provider, registerApi } from "@sasacode/ai";
+import { replayProvider } from "@sasacode/testing";
 import builtinTools from "@sasacode/tools";
 import { bundledPlugins } from "../src/index.ts";
 import { reportOf } from "../src/subagent.ts";

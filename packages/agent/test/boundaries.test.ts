@@ -3,7 +3,8 @@ import { afterAll, expect, test } from "bun:test";
 import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type AssistantMessage, emptyUsage, type Message, registerApi, replayProvider } from "@sasacode/ai";
+import { type AssistantMessage, emptyUsage, type Message, registerApi } from "@sasacode/ai";
+import { replayProvider } from "@sasacode/testing";
 import { editTool, readTool, writeTool } from "@sasacode/tools";
 import { Agent, PermissionPolicy, realPath, restore, SessionFile, sessionDir } from "../src/index.ts";
 

@@ -2,7 +2,8 @@ import { expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type AssistantMessage, emptyUsage, type Request, recordingProvider, replayProvider, type StreamEvent } from "../src/index.ts";
+import { type AssistantMessage, emptyUsage, type Request, type StreamEvent } from "@sasacode/ai";
+import { recordingProvider, replayProvider } from "../src/index.ts";
 
 const model = { id: "m", provider: "t", api: "replay", contextWindow: 1e5, maxOutput: 1e3 };
 const req = (signal?: AbortSignal): Request => ({ model, system: "", messages: [], tools: [], signal });

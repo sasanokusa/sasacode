@@ -8,6 +8,7 @@
     "@sasacode/plugin-api": "workspace:*"
   },
   "devDependencies": {
+    "@sasacode/testing": "workspace:*",
     "@sasacode/tools": "workspace:*"
   },
   "license": "Apache-2.0",

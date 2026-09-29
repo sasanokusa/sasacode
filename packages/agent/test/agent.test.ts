@@ -2,16 +2,8 @@ import { afterAll, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-  type AssistantContent,
-  type AssistantMessage,
-  emptyUsage,
-  INCOMPLETE_STREAM,
-  type ModelInfo,
-  type Provider,
-  registerApi,
-  replayProvider,
-} from "@sasacode/ai";
+import { type AssistantContent, type AssistantMessage, emptyUsage, INCOMPLETE_STREAM, type ModelInfo, type Provider, registerApi } from "@sasacode/ai";
+import { replayProvider } from "@sasacode/testing";
 import builtinTools, { bashTool, editTool, readTool, writeTool } from "@sasacode/tools";
 import { Agent, type AgentEvent, PermissionPolicy, PluginHost, replyBudget, responseRoom, restore, SessionFile } from "../src/index.ts";
 

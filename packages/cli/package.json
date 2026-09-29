@@ -32,5 +32,8 @@
   "description": "sasacode: a small, pluggable coding agent for the terminal (requires Bun)",
   "engines": {
     "bun": ">=1.4.0"
+  },
+  "devDependencies": {
+    "@sasacode/testing": "workspace:*"
   }
 }
