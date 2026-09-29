@@ -59,7 +59,8 @@ export async function checkForUpdate(): Promise<string | undefined> {
 export async function notifyIfNewer(notify: (message: string, level?: "info" | "warning" | "error") => void): Promise<void> {
   try {
     const latest = await checkForUpdate();
-    if (latest) notify(t("a newer version is available: {latest} (this is {version}) — run `sasacode update`", { latest, version: VERSION }));
+    const how = process.env.SASACODE_INSTALLED_BY === "npm" ? "npm install -g sasacode@latest" : "sasacode update";
+    if (latest) notify(t("a newer version is available: {latest} (this is {version}) — run `{how}`", { latest, version: VERSION, how }));
   } catch {}
 }
 
@@ -84,6 +85,8 @@ export function releaseTarget(): string {
 
 /** What stands in for the installed binary; refuses anything it must not touch. */
 function installedBinary(): string {
+  // The npm package's launcher keeps its own binary per version: npm does the updating there.
+  if (process.env.SASACODE_INSTALLED_BY === "npm") throw new Error(t("this sasacode was installed with npm: update it with `npm install -g sasacode@latest`"));
   const exec = process.execPath;
   // From a source checkout the running "binary" is bun itself (or some interpreter): never that.
   if (existsSync(join(import.meta.dir, "main.ts")) || /^bun(\.exe)?$/.test(basename(exec)))

@@ -25,8 +25,10 @@ sasacode
 curl -fsSL https://sasanokusa.com/sasacode/install.sh | sh
 ```
 
+- Also on npm: `npm install -g sasacode`. The npm package is a small launcher: its first run downloads the binary of the same version from GitHub Releases, checks its SHA256 and keeps it in `~/.sasacode/npm-bin`. Update with `npm install -g sasacode@latest`.
 - Single binaries for macOS (arm64 / x64) and Linux (x64 / arm64, glibc / musl, and a baseline build for CPUs without AVX2). Bun is not needed.
 - The installer and the binary come from the latest [GitHub release](https://github.com/sasanokusa/sasacode/releases) and are checked against SHA256. The sasanokusa.com URL redirects to the latest release's `install.sh`.
+- SHA256 only catches a broken download. That a file was built by this repository's GitHub Actions is proved by the signed provenance attached to releases from v0.9.8: `gh attestation verify sasacode-darwin-arm64.tar.gz --repo sasanokusa/sasacode` (on a file downloaded from the release; `install.sh` too).
 - `SASACODE_VERSION=v0.9.7` pins a version and `SASACODE_INSTALL_DIR` changes where it goes. On Windows, use WSL.
 - `sasacode update` updates in place (the same checks as the installer; `--check` only reports). A newer version is mentioned quietly once at startup (`"updateCheck": false` turns it off). From a source checkout, use `git pull` and `bun install`.
 
@@ -142,7 +144,7 @@ Endpoints in a project's `.sasacode/config.json` are not used until you trust th
     "mode": "edits",
     "allow": ["bash(git status*)", "bash(bun test*)"],
     "ask": ["bash(git push*)"],
-    "deny": ["bash(rm -rf *)", "edit(.env)"]
+    "deny": ["read(**/.env)", "edit(**/.env)", "write(**/.env)", "bash(rm -rf *)"]
   },
   "instructions": "Text appended to the system prompt",
   "mcpServers": { "github": { "command": "npx", "args": ["-y", "@modelcontextprotocol/server-github"] } },
@@ -171,10 +173,10 @@ Endpoints in a project's `.sasacode/config.json` are not used until you trust th
 | --- | --- |
 | `edits` (default) | read / write / edit inside the working directory run without asking; bash and anything outside ask |
 | `ask` | Every tool call asks, reads included |
-| `agent` | Reads inside the working directory run; everything else is judged by the current model: safe runs, anything else asks |
+| `agent` | Reads inside the working directory run; everything else is judged by the current model: safe runs, anything else asks. The judge is the same model that made the call and it reads the call's arguments, so text written to steer the model can steer the judgment too; this is a convenience, not protection against prompt injection (use deny / ask rules and the `guard` preset for that) |
 | `auto` | Everything runs (deny and ask rules still apply). Shown in red in the TUI footer |
 
-- A rule is `tool` or `tool(pattern)`. bash matches the command string with `*` wildcards; read / write / edit match paths with globs. Write `\*` for a literal `*`.
+- A rule is `tool` or `tool(pattern)`. bash matches the command string with `*` wildcards; read / write / edit match paths with globs. Write `\*` for a literal `*`. A path rule only applies to the tool it names, so to protect `.env` list read, edit and write, and add `**/` to include subdirectories (`edit(.env)` only stops edits of the `.env` directly in the working directory). Command rules match the text of the command, so reordered options or a full path to the binary slip past them: they are a guard against mistakes, not a complete defense.
 - "Always allow" in the approval prompt adds a rule no wider than what was shown: the command as written (its `*` are not wildcards), or, for a file tool, just that path. The rule lasts until sasacode exits (across `/clear`).
 - The order is deny → softDeny → ask → allow → mode → the `permission` hook (plugins). `softDeny` refuses like deny, but a plugin such as `jev-guard` may lower it to "ask the user" (never to running without asking); it is meant for broad patterns that also catch legitimate calls. An allow rule only lets a command through when **every** part joined with `&&`, `;` or `|` is allowed. Commands with `$(…)`, backticks or `>` never pass by an allow rule.
 - The bundled `permission-presets` enables `guard` by default: sudo, `rm -rf /`, disk operations, `| sh` and the like are always denied; `rm -rf ~…` under home and force pushes are softDeny; `ssh`, `scp`, `sftp` and `rsync` to another machine always ask, in `auto` mode too.
@@ -301,7 +303,7 @@ bun run typecheck
 bun run build       # dist/sasacode for this machine; --all for every target
 ```
 
-**Releasing**: pushing a `v*` tag makes GitHub Actions build the binaries and create the GitHub release (macOS binaries are built on macOS runners and started once to check them). Installs from sasanokusa.com pick up the new version by themselves. Run `scripts/publish-site.sh` only when the site changes.
+**Releasing**: pushing a `v*` tag makes GitHub Actions build the binaries and create the GitHub release: it checks that the tag matches `packages/cli/package.json` and runs the typecheck, builds the macOS binaries on macOS runners, starts all seven binaries where they run (x64 macOS under Rosetta, musl in an Alpine container), and attaches signed provenance. Installs from sasanokusa.com pick up the new version by themselves. Run `scripts/publish-site.sh <host>` (or set `SASACODE_SITE_HOST`) when the site changes and after a release: the version text on the pages is filled in at that time from `packages/cli/package.json`. Once the release is out, `cd npm/sasacode && npm publish` brings the npm `sasacode` to the same version (keep `npm/sasacode/package.json` at the version of `packages/cli`; the release workflow stops if they differ).
 
 | Package | Role |
 | --- | --- |

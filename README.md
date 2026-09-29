@@ -25,8 +25,10 @@ sasacode
 curl -fsSL https://sasanokusa.com/sasacode/install.sh | sh
 ```
 
+- npm からも入れられる：`npm install -g sasacode`。npm のパッケージは起動用の小さなスクリプトで、初回の実行時に同じ版のバイナリを GitHub Releases から取得して SHA256 を検証し、`~/.sasacode/npm-bin` に置く。更新は `npm install -g sasacode@latest`。
 - macOS（arm64 / x64）と Linux（x64 / arm64、glibc / musl、AVX2 のない CPU 向けの baseline 版）の単一バイナリ。Bun は不要。
 - インストーラーもバイナリも、[GitHub Releases](https://github.com/sasanokusa/sasacode/releases) の最新版から取得して SHA256 を検証する。sasanokusa.com の URL は、最新リリースの `install.sh` へのリダイレクト。
+- SHA256 が防ぐのは壊れたダウンロードまで。ファイルがこのリポジトリの GitHub Actions でビルドされたものかは、v0.9.8 以降のリリースに付けた署名つきの来歴で確かめられる：`gh attestation verify sasacode-darwin-arm64.tar.gz --repo sasanokusa/sasacode`（リリースから落としたファイルに対して。`install.sh` も同じ）。
 - `SASACODE_VERSION=v0.9.7` で版を固定でき、`SASACODE_INSTALL_DIR` で置き場所を変えられる。Windows は WSL から使う。
 - 更新は `sasacode update`（インストーラーと同じ検証つき。`--check` で確認だけ）。新しい版が出ていると起動時に一度だけ静かに知らせる（`"updateCheck": false` で止める）。ソースから動かしている場合は `git pull` と `bun install`。
 
@@ -142,7 +144,7 @@ sasacode -m llama/<モデル名>
     "mode": "edits",
     "allow": ["bash(git status*)", "bash(bun test*)"],
     "ask": ["bash(git push*)"],
-    "deny": ["bash(rm -rf *)", "edit(.env)"]
+    "deny": ["read(**/.env)", "edit(**/.env)", "write(**/.env)", "bash(rm -rf *)"]
   },
   "instructions": "システムプロンプトに追記するテキスト",
   "mcpServers": { "github": { "command": "npx", "args": ["-y", "@modelcontextprotocol/server-github"] } },
@@ -171,10 +173,10 @@ sasacode -m llama/<モデル名>
 | --- | --- |
 | `edits`（既定） | 作業ディレクトリ内の read / write / edit は自動で許可し、bash やディレクトリ外への操作は確認する |
 | `ask` | 読み取りを含む、すべてのツール実行を確認する |
-| `agent` | 作業ディレクトリ内の read は自動で許可し、それ以外は現在のモデルに危険度を判定させる。安全なら許可、そうでなければ確認する |
+| `agent` | 作業ディレクトリ内の read は自動で許可し、それ以外は現在のモデルに危険度を判定させる。安全なら許可、そうでなければ確認する。判定するのは呼び出しを作ったのと同じモデルで、呼び出しの引数も読むため、モデルを誘導する文が判定も誘導しうる。利便のための機能で、プロンプトインジェクションへの防御ではない（それには deny / ask ルールと `guard` プリセットを使う） |
 | `auto` | すべて許可する（deny と ask のルールは効く）。TUI のフッターでは赤字で表示する |
 
-- ルールは `ツール名` か `ツール名(パターン)`。bash はコマンド文字列を `*` のワイルドカードで、read / write / edit はパスを glob で照合する。`*` そのものは `\*` と書く。
+- ルールは `ツール名` か `ツール名(パターン)`。bash はコマンド文字列を `*` のワイルドカードで、read / write / edit はパスを glob で照合する。`*` そのものは `\*` と書く。パスのルールは書いたツールにだけ効くので、`.env` を守るなら read / edit / write を並べ、サブディレクトリも含めるには `**/` を付ける（`edit(.env)` は作業ディレクトリ直下の `.env` の edit だけを止める）。コマンドのルールはコマンドの文字列に合わせるだけなので、オプションの順を変えたり絶対パスで呼んだりすれば当たらない。間違いを防ぐ柵であって、完全な防御ではない。
 - 確認の「常に許可」で足すルールは、見たものより広くならない。コマンドはそのまま（中の `*` はワイルドカードにしない）、ファイルを触るツールはそのパスだけを許可する。ルールは sasacode を終了するまで残る（`/clear` をまたぐ）。
 - 判定の順番は deny → softDeny → ask → allow → モード → `permission` フック（プラグイン）。`softDeny` は deny と同じく拒否するが、`jev-guard` などのプラグインが「ユーザーに確認」まで下げられる（確認なしに実行されることはない）。広すぎて正当な操作も巻き込むパターン向け。allow ルールで通るのは、`&&` `;` `|` でつないだコマンドの**すべて**が許可されている場合だけ。`$(…)`、バッククォート、`>` を含むコマンドは、allow ルールでは通らない。
 - 同梱の `permission-presets` が、既定で `guard`（sudo、`rm -rf /`、ディスク操作、`| sh` などを常に拒否。ホーム配下の `rm -rf ~…` と force push は softDeny。`ssh`、`scp`、`sftp`、リモートへの `rsync` は `auto` モードでも常に確認）を有効にしている。
@@ -301,7 +303,7 @@ bun run typecheck
 bun run build       # dist/sasacode（このマシン向け）。--all で全ターゲット
 ```
 
-**リリースの手順**：`v*` のタグを push すると、GitHub Actions がバイナリをビルドして GitHub Release を作る。macOS 版は macOS のランナーでビルドし、起動を確認する。sasanokusa.com からのインストールも、それだけで新しい版になる。案内ページを変えたときだけ `scripts/publish-site.sh` を実行する。
+**リリースの手順**：`v*` のタグを push すると、GitHub Actions がバイナリをビルドして GitHub Release を作る。タグと `packages/cli/package.json` の版が合っているかと型チェックを確かめ、macOS 版は macOS のランナーでビルドし、7種類のバイナリをすべて動く環境で起動してから（x64 の macOS は Rosetta、musl は Alpine のコンテナ）、署名つきの来歴を付けて公開する。sasanokusa.com からのインストールも、それだけで新しい版になる。案内ページを変えたときと、新しい版を出した後に `scripts/publish-site.sh <ホスト>`（または環境変数 `SASACODE_SITE_HOST`）を実行する。ページの版の表記は、`packages/cli/package.json` の版で実行時に埋める。リリースが公開されたら `cd npm/sasacode && npm publish` で npm の `sasacode` も同じ版にする（`npm/sasacode/package.json` の版は `packages/cli` と合わせておく。合っていないとリリースのワークフローが止まる）。
 
 | パッケージ | 役割 |
 | --- | --- |

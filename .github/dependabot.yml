@@ -1,0 +1,10 @@
+# The workflows pin actions to commits; this keeps those pins current (one PR a week at most).
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]

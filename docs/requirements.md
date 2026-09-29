@@ -260,7 +260,7 @@ flowchart TD
 
 | 候補 | 形態 | 採用実績 | 適合度と懸念 |
 | --- | --- | --- | --- |
-| [pi-tui](https://github.com/earendil-works/pi)（`@earendil-works/pi-tui` 0.84.1、MIT） | TS の命令型コンポーネント。差分描画と同期出力（CSI 2026）で、スクロールバックを壊さない | pi | ◎ 依存は marked と get-east-asian-width のみ（全角幅に対応）。補完付きエディタ、Markdown、オーバーレイ、画像を同梱。engines は Node 22.19 以上で、Bun での動作は検証が必要 |
+| [pi-tui](https://github.com/earendil-works/pi)（`@earendil-works/pi-tui` 0.87.1、MIT） | TS の命令型コンポーネント。差分描画と同期出力（CSI 2026）で、スクロールバックを壊さない | pi | ◎ 依存は marked と get-east-asian-width のみ（全角幅に対応）。補完付きエディタ、Markdown、オーバーレイ、画像を同梱。engines は Node 22.19 以上で、Bun での動作は検証が必要 |
 | [OpenTUI](https://github.com/anomalyco/opentui)（`@opentui/core`、MIT） | Zig のネイティブコア＋TS、React / Solid バインディング | OpenCode | ○ Bun 前提で相性は良い。ただしネイティブバイナリに依存し、Windows ARM64 で起動できない報告がある |
 | [Ink](https://github.com/vadimdemedes/ink)（MIT） | React＋Yoga（Flexbox） | Claude Code、Gemini CLI、GitHub Copilot CLI | △ 実績は最多で、`incrementalRendering` オプションもある。ただし React が入ってコアが重くなる。Claude Code はちらつき対策で描画層を書き直した |
 
