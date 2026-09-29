@@ -1,4 +1,4 @@
-import type { ProviderConfig } from "./models.ts";
+import type { ProviderConfig } from "@sasacode/ai";
 
 export interface DetectedEndpoint {
   api: "openai-chat" | "anthropic";
