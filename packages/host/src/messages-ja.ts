@@ -220,4 +220,5 @@ export const TO_JA: Record<string, string> = {
   "jev-guard is no longer bundled, so the Jev check your config turns on is not running: sasacode plugin install sasacode-plugin-jev-guard":
     "jev-guard は同梱ではなくなったため、config で有効にしている Jev の判定は動いていない: sasacode plugin install sasacode-plugin-jev-guard",
   "could not pack {dir}": "{dir} をまとめられなかった",
+  "the connection dropped mid-reply; asking again": "接続が応答の途中で切れたため、やり直す",
 };

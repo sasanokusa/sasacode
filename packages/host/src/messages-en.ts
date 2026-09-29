@@ -234,4 +234,6 @@ export const TO_EN: Record<string, string> = {
   "{id} に送りました": "Sent to {id}",
   // ── the TUI: Ollama without num_ctx ───────────────────────────────────
   "{spec} には num_ctx が設定されていません。Ollama を OLLAMA_CONTEXT_LENGTH で起動していなければ、Ollama の既定の長さ（数千トークン）を超えた入力は黙って切り詰められます。Modelfile に PARAMETER num_ctx 32768 などを書くか、OLLAMA_CONTEXT_LENGTH を設定してください（このモデルは最大 {max}）。": "{spec} has no num_ctx. Unless Ollama was started with OLLAMA_CONTEXT_LENGTH, input longer than its default (a few thousand tokens) is cut short without a word. Put PARAMETER num_ctx 32768 (for example) in the Modelfile, or set OLLAMA_CONTEXT_LENGTH (this model goes up to {max}).",
+  // ── the TUI: a reply cut off ──────────────────────────────────────────
+  "接続が応答の途中で切れたため、やり直します": "The connection dropped mid-reply; asking again",
 };

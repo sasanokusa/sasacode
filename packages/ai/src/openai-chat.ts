@@ -18,6 +18,7 @@ import {
   type Request,
   type StreamEvent,
   type ThinkingContent,
+  INCOMPLETE_STREAM,
   type ToolCall,
   type Usage,
 } from "./types.ts";
@@ -89,6 +90,7 @@ export const openaiChatProvider: Provider = {
     let thinking: ThinkingContent | undefined;
     let text: { type: "text"; text: string } | undefined;
     const calls = new Map<number, { block: ToolCall; json: string; index: number }>();
+    let ended = false;
     try {
       // "off" is sent too: servers such as vLLM think by default unless told "none".
       const stream = await withEffort(`${model.baseUrl} ${model.id}`, model.reasoning ? req.thinking : undefined, async (effort) => {
@@ -99,7 +101,10 @@ export const openaiChatProvider: Provider = {
       });
       for (let next: IteratorResult<ChatCompletionChunk> = stream.first; !next.done; next = await stream.it.next()) {
         const chunk = next.value;
-        if (chunk.usage) out.usage = parseChatUsage(model, chunk.usage);
+        if (chunk.usage) {
+          out.usage = parseChatUsage(model, chunk.usage);
+          ended = true;
+        }
         const choice = chunk.choices[0];
         if (!choice) continue;
         const delta = choice.delta as typeof choice.delta & { reasoning?: string; reasoning_content?: string };
@@ -135,6 +140,7 @@ export const openaiChatProvider: Provider = {
             yield { type: "toolcall_delta", index: c.index, delta: tc.function.arguments, partial: out };
           }
         }
+        if (choice.finish_reason) ended = true;
         if (choice.finish_reason === "length") out.stopReason = "max_tokens";
         else if (choice.finish_reason === "content_filter") out.stopReason = "refusal";
       }
@@ -142,6 +148,11 @@ export const openaiChatProvider: Provider = {
       if (e instanceof OpenAI.APIUserAbortError || req.signal?.aborted) out.stopReason = "aborted";
       else if (isContextOverflow(e)) throw new ContextOverflowError((e as Error).message);
       else throw e;
+    }
+    // Neither a finish reason nor the usage chunk: the stream was cut, not finished.
+    if (!ended && out.stopReason !== "aborted") {
+      out.stopReason = "error";
+      out.errorMessage = INCOMPLETE_STREAM;
     }
     for (const c of calls.values()) Object.assign(c.block, parseToolInput(c.json));
     if (out.stopReason === "stop" && calls.size) out.stopReason = "tool_use";

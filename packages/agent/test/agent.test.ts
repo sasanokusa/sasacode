@@ -6,6 +6,7 @@ import {
   type AssistantContent,
   type AssistantMessage,
   emptyUsage,
+  INCOMPLETE_STREAM,
   type ModelInfo,
   type Provider,
   registerApi,
@@ -269,4 +270,14 @@ test("max_tokens shrinks to the room left in a small window, and is left alone o
   expect(replyBudget(small, [used], 0)).toBe(8192 - Math.ceil(6100 * 1.1));
   expect(replyBudget(small, [reply([say("x")], { usage: { ...emptyUsage(), input: 8000, output: 100 } })], 0)).toBe(1024);
   expect(replyBudget(model, [used], 0)).toBeUndefined();
+});
+
+test("a reply whose stream was cut is thrown away and asked for again, not taken as the answer", async () => {
+  const cut = reply([{ type: "thinking", thinking: "let me see, the file" }], { stopReason: "error", errorMessage: INCOMPLETE_STREAM });
+  const { agent, provider, events } = setup([cut, reply([say("the answer")])]);
+  expect(await agent.prompt("q")).toBe("done");
+  expect(provider.requests).toHaveLength(2);
+  expect(events.filter((e) => e.type === "message_discarded")).toHaveLength(1);
+  const answers = agent.messages.filter((m) => m.role === "assistant");
+  expect(answers.map((m) => JSON.stringify(m.content))).toEqual([JSON.stringify([say("the answer")])]);
 });

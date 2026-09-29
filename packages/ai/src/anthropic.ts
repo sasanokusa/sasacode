@@ -9,6 +9,7 @@ import {
   type AssistantMessage,
   ContextOverflowError,
   computeCost,
+  INCOMPLETE_STREAM,
   type Message,
   newAssistant,
   parseToolInput,
@@ -109,6 +110,7 @@ export const anthropicProvider: Provider = {
 
     const out = newAssistant(model);
     const jsonBuf = new Map<number, string>();
+    let ended = false;
     yield { type: "start", partial: out };
     for (let attempt = 0; ; attempt++) {
       const { params, headers } = build();
@@ -160,6 +162,10 @@ export const anthropicProvider: Provider = {
               if (ev.delta.stop_reason === "model_context_window_exceeded")
                 throw new ContextOverflowError("model context window exceeded");
               out.stopReason = mapStop(ev.delta.stop_reason);
+              if (ev.delta.stop_reason) ended = true;
+              break;
+            case "message_stop":
+              ended = true;
               break;
           }
         }
@@ -175,6 +181,11 @@ export const anthropicProvider: Provider = {
       break;
     }
     out.content = out.content.filter(Boolean);
+    // No stop reason and no message_stop: the stream was cut, not finished.
+    if (!ended && out.stopReason !== "aborted") {
+      out.stopReason = "error";
+      out.errorMessage = INCOMPLETE_STREAM;
+    }
     out.usage.cost = computeCost(model, out.usage);
     yield { type: "done", message: out };
   },

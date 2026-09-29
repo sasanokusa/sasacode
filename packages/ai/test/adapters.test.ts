@@ -2,7 +2,7 @@
 // stream. Covers the conversion of the history and the parsing of the stream.
 import { expect, test } from "bun:test";
 import { anthropicProvider } from "../src/anthropic.ts";
-import { type AssistantMessage, emptyUsage, type Message, type ModelInfo, type Request, type StreamEvent } from "../src/index.ts";
+import { type AssistantMessage, emptyUsage, INCOMPLETE_STREAM, type Message, type ModelInfo, type Request, type StreamEvent } from "../src/index.ts";
 import { openaiChatProvider } from "../src/openai-chat.ts";
 import { openaiResponsesProvider } from "../src/openai-responses.ts";
 
@@ -138,4 +138,47 @@ test("anthropic: same-role messages merged, tool result images kept, own thinkin
   ]);
   expect(message.stopReason).toBe("tool_use");
   expect(message.usage).toMatchObject({ input: 30, cacheRead: 5, output: 9 });
+});
+
+test("a stream cut before the reply finished is an error with what arrived, not a finished reply (all three formats)", async () => {
+  const req = (model: ModelInfo, fetch: typeof globalThis.fetch): Request => ({ model, system: "", messages: [user("x")], tools: [], fetch, maxRetries: 0 });
+  const chunk = (delta: object, extra: object = {}) => ({ id: "1", object: "chat.completion.chunk", created: 0, model: "m", choices: [{ index: 0, delta, finish_reason: null }], ...extra });
+  const chat: ModelInfo = { id: "m", provider: "p", api: "openai-chat", baseUrl: "http://x/v1", contextWindow: 1e5, maxOutput: 1000 };
+  // Thinking, then nothing: no finish reason, no usage chunk, no [DONE].
+  const cutChat = fakeFetch(sse([chunk({ reasoning_content: "let me see" })]).replace("data: [DONE]\n\n", ""));
+  const m1 = (await run(openaiChatProvider, req(chat, cutChat.fetch))).message;
+  expect(m1.stopReason).toBe("error");
+  expect(m1.errorMessage).toBe(INCOMPLETE_STREAM);
+  expect(m1.content).toEqual([{ type: "thinking", thinking: "let me see" }]);
+  // A server that never sends finish_reason but does send the usage chunk has finished.
+  const usageOnly = fakeFetch(sse([chunk({ content: "hi" }), { ...chunk({}), choices: [], usage: { prompt_tokens: 3, completion_tokens: 1, total_tokens: 4 } }]));
+  expect((await run(openaiChatProvider, req(chat, usageOnly.fetch))).message.stopReason).toBe("stop");
+
+  const responses: ModelInfo = { id: "gpt-r", provider: "openai", api: "openai-responses", baseUrl: "http://x/v1", contextWindow: 1e5, maxOutput: 1000 };
+  const cutResponses = fakeFetch(
+    sse(
+      [
+        { type: "response.output_item.added", output_index: 0, item: { type: "message", id: "m1", role: "assistant", content: [] } },
+        { type: "response.output_text.delta", item_id: "m1", output_index: 0, content_index: 0, delta: "par" },
+      ],
+      true,
+    ),
+  );
+  const m2 = (await run(openaiResponsesProvider, req(responses, cutResponses.fetch))).message;
+  expect([m2.stopReason, m2.errorMessage]).toEqual(["error", INCOMPLETE_STREAM]);
+
+  const claude: ModelInfo = { id: "claude-x", provider: "anthropic", api: "anthropic", baseUrl: "http://x", contextWindow: 1e5, maxOutput: 1000 };
+  const cutClaude = fakeFetch(
+    sse(
+      [
+        { type: "message_start", message: { id: "m", type: "message", role: "assistant", model: "claude-x", content: [], stop_reason: null, usage: { input_tokens: 5, output_tokens: 0 } } },
+        { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+        { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "par" } },
+      ],
+      true,
+    ),
+  );
+  const m3 = (await run(anthropicProvider, { ...req(claude, cutClaude.fetch), apiKey: "k" })).message;
+  expect([m3.stopReason, m3.errorMessage]).toEqual(["error", INCOMPLETE_STREAM]);
+  expect(m3.content).toEqual([{ type: "text", text: "par" }]);
 });

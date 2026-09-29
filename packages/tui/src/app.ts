@@ -302,6 +302,7 @@ class App {
         if (this.current) this.chat.removeChild(this.current);
         if (this.currentSpacer) this.chat.removeChild(this.currentSpacer);
         this.current = undefined;
+        if (e.message.stopReason === "error") this.notify(t("接続が応答の途中で切れたため、やり直します"), c.yellow);
         break;
       case "tool_repaired": {
         const v = this.tools.get(e.call.id);

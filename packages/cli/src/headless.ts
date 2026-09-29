@@ -26,6 +26,10 @@ export async function runHeadless(h: Harness, prompt: string, output: "text" | "
     } else if (e.type === "message_end" && e.message.role === "assistant" && textOf(e.message.content) && !atLineStart) {
       write("\n");
       atLineStart = true;
+    } else if (e.type === "message_discarded" && e.message.stopReason === "error") {
+      if (!atLineStart) write("\n");
+      atLineStart = true;
+      status(t("the connection dropped mid-reply; asking again"));
     } else if (e.type === "tool_start") status(`● ${e.call.name}(${e.summary})`);
     else if (e.type === "tool_end" && e.result.isError) status(`  ⎿ ${textOf(e.result.content).split("\n").slice(-1)[0]}`);
     else if (e.type === "error") process.stderr.write(`${t("error: {error}", { error: plain(e.error) })}\n`);

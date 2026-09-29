@@ -5,6 +5,7 @@ import { isContextOverflow, openaiClient } from "./openai-chat.ts";
 import {
   ContextOverflowError,
   computeCost,
+  INCOMPLETE_STREAM,
   type Message,
   newAssistant,
   parseToolInput,
@@ -44,6 +45,7 @@ export const openaiResponsesProvider: Provider = {
     const out = newAssistant(model);
     yield { type: "start", partial: out };
     const items = new Map<string, { index: number; json?: string }>();
+    let ended = false;
     const block = (id: string) => {
       const it = items.get(id);
       return it ? { it, b: out.content[it.index] } : undefined;
@@ -117,6 +119,7 @@ export const openaiResponsesProvider: Provider = {
           }
           case "response.completed":
           case "response.incomplete": {
+            ended = true;
             const u = ev.response.usage;
             if (u) {
               const cached = u.input_tokens_details?.cached_tokens ?? 0;
@@ -146,6 +149,11 @@ export const openaiResponsesProvider: Provider = {
       else throw e;
     }
     out.content = out.content.filter((c) => !(c.type === "text" && !c.text));
+    // Neither response.completed nor response.incomplete: the stream was cut, not finished.
+    if (!ended && out.stopReason !== "aborted") {
+      out.stopReason = "error";
+      out.errorMessage = INCOMPLETE_STREAM;
+    }
     if (out.stopReason === "stop" && out.content.some((c) => c.type === "tool_call")) out.stopReason = "tool_use";
     // A cost reported with the usage stands; otherwise estimate from the price table.
     if (!out.usage.cost) out.usage.cost = computeCost(model, out.usage);

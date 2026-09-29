@@ -360,8 +360,16 @@ export class Agent {
    * repaired (tool_call_raw), and stored.
    */
   private async respond(signal: AbortSignal): Promise<{ message: AssistantMessage; repairs: Map<string, Repair> }> {
-    for (let attempt = 0; ; attempt++) {
+    for (let attempt = 0, cut = 0; ; attempt++) {
       const { message, stopped } = await this.stream(signal);
+      // The connection dropped mid-reply: ask again (after 1, 2, 4 s) rather than take a fragment as the answer.
+      if (message.stopReason === "error" && !signal.aborted) {
+        if (cut >= 3) throw new Error(message.errorMessage ?? "the reply failed");
+        this.events.emit({ type: "message_discarded", message });
+        await Promise.race([Bun.sleep(1000 * 2 ** cut++), new Promise((r) => signal.addEventListener("abort", r, { once: true }))]);
+        attempt--;
+        continue;
+      }
       const userAborted = message.stopReason === "aborted";
       if (userAborted || stopped) {
         // Half-streamed tool calls never ran and unsigned thinking cannot be replayed; keep what was finished.

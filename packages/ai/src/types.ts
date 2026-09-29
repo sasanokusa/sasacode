@@ -41,6 +41,12 @@ export interface UserMessage {
 /** `stopped`: a plugin ended generation early (e.g. repetition). */
 export type StopReason = "stop" | "tool_use" | "max_tokens" | "refusal" | "aborted" | "stopped" | "error";
 
+/**
+ * errorMessage of a reply whose stream ended without the provider saying it was done (no finish
+ * reason, no usage): the connection dropped mid-reply. What arrived is kept, with stopReason "error".
+ */
+export const INCOMPLETE_STREAM = "the stream ended before the reply was complete";
+
 export interface Usage {
   input: number;
   output: number;
