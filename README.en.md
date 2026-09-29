@@ -301,7 +301,7 @@ bun run typecheck
 bun run build       # dist/sasacode for this machine; --all for every target
 ```
 
-**Releasing**: pushing a `v*` tag makes GitHub Actions build the binaries and create the GitHub release (macOS binaries are built on macOS runners and started once to check them). Installs from sasanokusa.com pick up the new version by themselves. Run `scripts/publish-site.sh` only when the site changes.
+**Releasing**: pushing a `v*` tag makes GitHub Actions build the binaries and create the GitHub release (macOS binaries are built on macOS runners and started once to check them). Installs from sasanokusa.com pick up the new version by themselves. Run `scripts/publish-site.sh <host>` (or set `SASACODE_SITE_HOST`) when the site changes and after a release: the version text on the pages is filled in at that time from `packages/cli/package.json`.
 
 | Package | Role |
 | --- | --- |

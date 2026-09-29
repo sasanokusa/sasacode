@@ -301,7 +301,7 @@ bun run typecheck
 bun run build       # dist/sasacode（このマシン向け）。--all で全ターゲット
 ```
 
-**リリースの手順**：`v*` のタグを push すると、GitHub Actions がバイナリをビルドして GitHub Release を作る。macOS 版は macOS のランナーでビルドし、起動を確認する。sasanokusa.com からのインストールも、それだけで新しい版になる。案内ページを変えたときだけ `scripts/publish-site.sh` を実行する。
+**リリースの手順**：`v*` のタグを push すると、GitHub Actions がバイナリをビルドして GitHub Release を作る。macOS 版は macOS のランナーでビルドし、起動を確認する。sasanokusa.com からのインストールも、それだけで新しい版になる。案内ページを変えたときと、新しい版を出した後に `scripts/publish-site.sh <ホスト>`（または環境変数 `SASACODE_SITE_HOST`）を実行する。ページの版の表記は、`packages/cli/package.json` の版で実行時に埋める。
 
 | パッケージ | 役割 |
 | --- | --- |
