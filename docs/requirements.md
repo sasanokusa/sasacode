@@ -52,7 +52,7 @@ sasa-code-harness は TypeScript (Bun) で作るターミナル向けコーデ�
 | 区分 | 含むもの |
 | --- | --- |
 | コア | エージェントループ、イベントバス、プロバイダー（Anthropic / OpenAI互換）、組み込みツール（read / write / edit / bash）、TUI、ヘッドレス実行、セッション保存・再開、設定、権限確認の仕組み、プラグインローダー（モジュール / MCP / Skills） |
-| 同梱プラグイン | プロジェクト指示の読み込み（AGENTS.md）、コンテキスト圧縮（compaction）、サブエージェント、TODO、Web取得・検索（web-fetch、browsr）、権限ポリシープリセット、小型モデル向けの修復と反復・堂々巡りの抑止（tool-repair、repetition-guard、loop-guard）、Jev による実行前判断（jev-guard）、ChatGPT プラン（openai-codex）、使用量（usage）、ゴール（goal）、バックグラウンド実行（background-sessions）、接続の復旧待ち（auto-reconnect） |
+| 同梱プラグイン | プロジェクト指示の読み込み（AGENTS.md）、コンテキスト圧縮（compaction）、サブエージェント、TODO、Web取得・検索（web-fetch、browsr）、権限ポリシープリセット、小型モデル向けの修復と反復・堂々巡りの抑止（tool-repair、repetition-guard、loop-guard）、ChatGPT プラン（openai-codex）、使用量（usage）、ゴール（goal）、バックグラウンド実行（background-sessions）、接続の復旧待ち（auto-reconnect）、ファイル変更の取り消し（checkpoints）、画像の添付（image-attach） |
 | 対象外（v1） | IDE拡張、GUI / Web UI、クラウド実行、マルチユーザー管理、OSレベルのサンドボックス、プラグインマーケットプレイス |
 
 検索系ツール（grep / glob）はコアに入れず、bash 経由の ripgrep に任せる（原則 P1・A3）。

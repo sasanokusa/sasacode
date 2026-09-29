@@ -1,6 +1,6 @@
 {
   "name": "sasacode",
-  "version": "0.9.8",
+  "version": "0.9.9",
   "description": "A small, pluggable coding agent for the terminal. This package fetches the single binary for your machine on first run.",
   "keywords": ["coding-agent", "cli", "llm", "agent", "terminal"],
   "type": "module",

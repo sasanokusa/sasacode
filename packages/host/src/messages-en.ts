@@ -236,4 +236,10 @@ export const TO_EN: Record<string, string> = {
   "{spec} には num_ctx が設定されていません。Ollama を OLLAMA_CONTEXT_LENGTH で起動していなければ、Ollama の既定の長さ（数千トークン）を超えた入力は黙って切り詰められます。Modelfile に PARAMETER num_ctx 32768 などを書くか、OLLAMA_CONTEXT_LENGTH を設定してください（このモデルは最大 {max}）。": "{spec} has no num_ctx. Unless Ollama was started with OLLAMA_CONTEXT_LENGTH, input longer than its default (a few thousand tokens) is cut short without a word. Put PARAMETER num_ctx 32768 (for example) in the Modelfile, or set OLLAMA_CONTEXT_LENGTH (this model goes up to {max}).",
   // ── the TUI: a reply cut off ──────────────────────────────────────────
   "接続が応答の途中で切れたため、やり直します": "The connection dropped mid-reply; asking again",
+  // ── image-attach ───────────────────────────────────────────────────
+  "画像を付けられません: {name}: {error}": "Cannot attach {name}: {error}",
+  "画像を次のメッセージに添付（引数なし: クリップボード、clear: 取り消し）": "Attach images to the next message (no argument: the clipboard; clear: drop them)",
+  "添付を取り消しました": "Attachments cleared",
+  "画像は{n}枚までです": "At most {n} images",
+  "画像 {n} 枚を次のメッセージに添付します": "{n} image(s) will go with your next message",
 };

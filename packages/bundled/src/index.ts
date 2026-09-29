@@ -6,6 +6,7 @@ import browsr from "./browsr.ts";
 import checkpoints from "./checkpoints.ts";
 import compaction from "./compaction.ts";
 import goal from "./goal.ts";
+import imageAttach from "./image-attach.ts";
 import loopGuard from "./loop-guard.ts";
 import openaiCodex from "./openai-codex/index.ts";
 import permissionPresets from "./permission-presets.ts";
@@ -43,4 +44,5 @@ export const bundledPlugins: Record<string, Plugin> = {
   "background-sessions": backgroundSessions,
   "auto-reconnect": autoReconnect,
   checkpoints,
+  "image-attach": imageAttach,
 };
