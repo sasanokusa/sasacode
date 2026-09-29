@@ -5,7 +5,7 @@ import { isContextOverflow, openaiClient } from "./openai-chat.ts";
 import {
   ContextOverflowError,
   computeCost,
-  INCOMPLETE_STREAM,
+  markIfCut,
   type Message,
   newAssistant,
   parseToolInput,
@@ -149,11 +149,7 @@ export const openaiResponsesProvider: Provider = {
       else throw e;
     }
     out.content = out.content.filter((c) => !(c.type === "text" && !c.text));
-    // Neither response.completed nor response.incomplete: the stream was cut, not finished.
-    if (!ended && out.stopReason !== "aborted") {
-      out.stopReason = "error";
-      out.errorMessage = INCOMPLETE_STREAM;
-    }
+    markIfCut(out, ended); // neither response.completed nor response.incomplete
     if (out.stopReason === "stop" && out.content.some((c) => c.type === "tool_call")) out.stopReason = "tool_use";
     // A cost reported with the usage stands; otherwise estimate from the price table.
     if (!out.usage.cost) out.usage.cost = computeCost(model, out.usage);

@@ -18,7 +18,7 @@ import {
   type Request,
   type StreamEvent,
   type ThinkingContent,
-  INCOMPLETE_STREAM,
+  markIfCut,
   type ToolCall,
   type Usage,
 } from "./types.ts";
@@ -149,11 +149,7 @@ export const openaiChatProvider: Provider = {
       else if (isContextOverflow(e)) throw new ContextOverflowError((e as Error).message);
       else throw e;
     }
-    // Neither a finish reason nor the usage chunk: the stream was cut, not finished.
-    if (!ended && out.stopReason !== "aborted") {
-      out.stopReason = "error";
-      out.errorMessage = INCOMPLETE_STREAM;
-    }
+    markIfCut(out, ended); // neither a finish reason nor the usage chunk
     for (const c of calls.values()) Object.assign(c.block, parseToolInput(c.json));
     if (out.stopReason === "stop" && calls.size) out.stopReason = "tool_use";
     // The usage chunk already resolved the cost (provider-reported when available); estimate the rest.

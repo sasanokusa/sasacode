@@ -63,26 +63,18 @@ export function validate(schema: JSONSchema, value: unknown, path = "input"): st
   return errors;
 }
 
-function typeMatches(t: string, v: unknown): boolean {
-  switch (t) {
-    case "string":
-      return typeof v === "string";
-    case "number":
-      return typeof v === "number";
-    case "integer":
-      return Number.isInteger(v);
-    case "boolean":
-      return typeof v === "boolean";
-    case "array":
-      return Array.isArray(v);
-    case "object":
-      return !!v && typeof v === "object" && !Array.isArray(v);
-    case "null":
-      return v === null;
-    default:
-      return true;
-  }
-}
+export const isObject = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
+
+const TYPE_CHECKS: Record<string, (v: unknown) => boolean> = {
+  string: (v) => typeof v === "string",
+  number: (v) => typeof v === "number",
+  integer: Number.isInteger,
+  boolean: (v) => typeof v === "boolean",
+  array: Array.isArray,
+  object: isObject,
+  null: (v) => v === null,
+};
+const typeMatches = (t: string, v: unknown) => TYPE_CHECKS[t]?.(v) ?? true;
 
 function describe(v: unknown): string {
   return v === null ? "null" : Array.isArray(v) ? "array" : typeof v;
