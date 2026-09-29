@@ -8,7 +8,7 @@ import * as pluginApi from "@sasacode/plugin-api";
 import { isCompatible, type Plugin } from "@sasacode/plugin-api";
 import { type McpServerConfig, sasacodeHome } from "./config.ts";
 import { readJsonOr } from "./json.ts";
-import { checkPackageDir, describeLocal, describeNpm, formatListings, isDir, latestVersion, parseSpec, searchPlugins, stagePackage } from "./plugin-share.ts";
+import { checkPackageDir, describeLocal, describeNpm, NotAPlugin, formatListings, isDir, latestVersion, parseSpec, searchPlugins, stagePackage } from "./plugin-share.ts";
 
 export interface Manifest {
   name: string;
@@ -199,9 +199,12 @@ export async function pluginCommand(args: string[], cwd: string): Promise<number
         console.log(`${url}\n  ${t("cloned into {path}", { path: join(dir, name) })}\n${t(warning)}`);
         if (!(await confirm(t("Install it?"), yes))) return 1;
         await sh(["git", "clone", "--depth", "1", url, name], dir);
+        if (!readManifest(join(dir, name))) {
+          rmSync(join(dir, name), { recursive: true, force: true }); // the clone made it; nothing else was there
+          throw new NotAPlugin(t('{name} has no plugin.json or "sasacode" field in package.json, so it is not a sasacode plugin and was not installed', { name }));
+        }
         // Like npm installs: the plugin's own install scripts do not run.
         if (existsSync(join(dir, name, "package.json"))) await bun(["install", "--production", "--ignore-scripts"], join(dir, name));
-        if (!readManifest(join(dir, name))) console.error(t('warning: {name} has no plugin.json or "sasacode" field in package.json', { name }));
         console.log(t("installed {name} at commit {commit}", { name, commit: gitHead(join(dir, name)) }));
       } else {
         const local = isDir(spec) ? resolve(spec) : undefined;
@@ -239,7 +242,14 @@ export async function pluginCommand(args: string[], cwd: string): Promise<number
         // Shown and asked like an install: a new version is new code.
         const changed: string[] = [];
         for (const n of npmTargets) {
-          const lines = await describeNpm(`${n}@latest`);
+          let lines: string[];
+          try {
+            lines = await describeNpm(`${n}@latest`);
+          } catch (e) {
+            if (!(e instanceof NotAPlugin)) throw e;
+            console.error(t("{name}: not a sasacode plugin, skipped (sasacode plugin remove {name})", { name: n }));
+            continue;
+          }
           if (lines[0]?.startsWith(`${n}@${before[n]}`)) {
             console.log(t("{name}: {version} (already the newest)", { name: n, version: before[n] ?? "?" }));
             continue;
@@ -301,6 +311,11 @@ export async function pluginCommand(args: string[], cwd: string): Promise<number
     if (sub === "list" || !sub) {
       for (const p of discoverPlugins(cwd))
         console.log(`${p.manifest.name}${p.manifest.version ? `@${p.manifest.version}` : ""}  [${p.scope}]  ${p.dir}`);
+      // Installed by name before install refused them: never loaded, but worth removing.
+      for (const { dir: d, scope } of pluginDirs(cwd))
+        for (const n of Object.keys(readJson(join(d, "package.json"))?.dependencies ?? {}))
+          if (existsSync(join(d, "node_modules", n)) && !readManifest(join(d, "node_modules", n)))
+            console.error(t("{name}  [{scope}]  not a sasacode plugin, never loaded: sasacode plugin remove {name}{flag}", { name: n, scope, flag: scope === "project" ? " --project" : "" }));
       return 0;
     }
   } catch (e) {

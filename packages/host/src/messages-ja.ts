@@ -99,7 +99,8 @@ export const TO_JA: Record<string, string> = {
     "プラグインはあなたの権限で sasacode 内部から動く。信頼できるコードだけ入れる",
   "{path} already exists; remove it first or use plugin update": "{path} はすでに存在。先に消すか plugin update を使う",
   "cloned into {path}": "{path} に clone",
-  'warning: {name} has no plugin.json or "sasacode" field in package.json': '警告: {name} に plugin.json も package.json の "sasacode" もない',
+  '{name} has no plugin.json or "sasacode" field in package.json, so it is not a sasacode plugin and was not installed':
+    '{name} には plugin.json も package.json の "sasacode" もないため、sasacode のプラグインではない。インストールしなかった',
   "installed {name} at commit {commit}": "{name} を commit {commit} に入れた",
   "installed {name}@{version} into {dir}": "{name}@{version} を {dir} に入れた",
   "{spec} is not an installed npm or git plugin here": "{spec} はここでは npm でも git でもインストール済みのプラグインではない",
@@ -127,8 +128,12 @@ export const TO_JA: Record<string, string> = {
   "no plugins found": "プラグインが見つからない",
   "by {author}": "作者: {author}",
   "{name}@{version}  (local: {dir})": "{name}@{version}（ローカル: {dir}）",
-  'warning: no "sasacode" field in package.json, so it may not be a sasacode plugin':
-    '警告: package.json に "sasacode" がない。sasacode のプラグインでないかもしれない',
+  '{name} is not a sasacode plugin (no "sasacode" field in its package.json), so it was not installed.':
+    '{name} は sasacode のプラグインではない（package.json に "sasacode" がない）ため、インストールしなかった。',
+  "Did you mean {alt}?  sasacode plugin install {alt}": "{alt} のことですか？  sasacode plugin install {alt}",
+  "{name}: not a sasacode plugin, skipped (sasacode plugin remove {name})": "{name}: sasacode のプラグインではないので飛ばした（sasacode plugin remove {name}）",
+  "{name}  [{scope}]  not a sasacode plugin, never loaded: sasacode plugin remove {name}{flag}":
+    "{name}  [{scope}]  sasacode のプラグインではなく、読み込まれていない: sasacode plugin remove {name}{flag}",
   "(range {range}: the newest match is installed)": "（{range} のうち最新をインストール）",
   "published by {people}": "公開者: {people}",
   "on {date}": "（{date}）",

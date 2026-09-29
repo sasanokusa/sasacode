@@ -79,12 +79,27 @@ export function parseSpec(spec: string): { name: string; range?: string } {
   return at < 0 ? { name: spec } : { name: spec.slice(0, at), range: spec.slice(at + 1) || undefined };
 }
 
+/**
+ * A package that is not a sasacode plugin, refused before anything is downloaded. Plugin names
+ * are often typed without their prefix (`jev-guard` for sasacode-plugin-jev-guard), and the
+ * unprefixed name on npm is usually someone else's unrelated package.
+ */
+export class NotAPlugin extends Error {}
+
+export async function notAPlugin(name: string, doFetch: typeof fetch = fetch): Promise<NotAPlugin> {
+  const alt = /^(@|sasacode-plugin-)/.test(name) ? undefined : `sasacode-plugin-${name}`;
+  const message = t('{name} is not a sasacode plugin (no "sasacode" field in its package.json), so it was not installed.', { name });
+  const hint = alt && (await latestVersion(alt, doFetch)) ? `\n${t("Did you mean {alt}?  sasacode plugin install {alt}", { alt })}` : "";
+  return new NotAPlugin(message + hint);
+}
+
 /** A package in a local directory (to try one before publishing it). */
 export function describeLocal(dir: string): string[] {
   const pkg = JSON.parse(readFileSync(join(dir, "package.json"), "utf8"));
+  if (!pkg.sasacode && !existsSync(join(dir, "plugin.json")))
+    throw new NotAPlugin(t('{name} is not a sasacode plugin (no "sasacode" field in its package.json), so it was not installed.', { name: pkg.name ?? dir }));
   const lines = [t("{name}@{version}  (local: {dir})", { name: pkg.name ?? "?", version: pkg.version ?? "?", dir })];
   if (pkg.description) lines.push(`  ${pkg.description}`);
-  if (!pkg.sasacode) lines.push(`  ${t('warning: no "sasacode" field in package.json, so it may not be a sasacode plugin')}`);
   return lines;
 }
 
@@ -94,6 +109,7 @@ export async function describeNpm(spec: string, doFetch: typeof fetch = fetch): 
   const doc = await getJson(`${registry()}/${name.replace("/", "%2f")}`, doFetch);
   const version = range && doc.versions?.[range] ? range : range && doc["dist-tags"]?.[range] ? doc["dist-tags"][range] : doc["dist-tags"]?.latest;
   const v = doc.versions?.[version] ?? {};
+  if (!v.sasacode) throw await notAPlugin(name, doFetch);
   const head = `${name}@${version ?? "?"}${range && !doc.versions?.[range] && !doc["dist-tags"]?.[range] ? ` ${t("(range {range}: the newest match is installed)", { range })}` : ""}`;
   const lines = [head];
   if (v.description) lines.push(`  ${v.description}`);
@@ -107,7 +123,6 @@ export async function describeNpm(spec: string, doFetch: typeof fetch = fetch): 
   const deps = Object.keys(v.dependencies ?? {});
   if (deps.length) lines.push(`  ${t("depends on {deps}", { deps: deps.join(", ") })}`);
   if (v.scripts?.preinstall || v.scripts?.install || v.scripts?.postinstall) lines.push(`  ${t("has install scripts (not run: packages are added without them)")}`);
-  if (!v.sasacode) lines.push(`  ${t('warning: no "sasacode" field in package.json, so it may not be a sasacode plugin')}`);
   const repo = typeof v.repository === "string" ? v.repository : v.repository?.url;
   if (repo) lines.push(`  ${t("source {repo}", { repo })}`);
   return lines;

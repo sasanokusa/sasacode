@@ -64,7 +64,8 @@ sasacode plugin remove <名前>
 ```
 
 - `search` は、sasanokusa.com に置いた小さな一覧（`plugins.json`、数 KB）と、npm のキーワード `sasacode-plugin` の検索を合わせて出す。一覧に載っているものには ★ が付く。どちらかに届かなくても、もう一方の結果は出る。本体は npm や GitHub から直接取るので、sasanokusa.com を通るのは一覧だけ。
-- `install` は、入れる前に中身を見せて確認を取る。npm なら版、公開者、公開日、ファイル数と大きさ、依存パッケージ、install スクリプトの有無（実行はしない）、`sasacode` フィールドの有無。git なら URL を見せ、入れた後にコミットを出す。端末がないとき（スクリプトなど）は `--yes` が要る。
+- `install` は、入れる前に中身を見せて確認を取る。npm なら版、公開者、公開日、ファイル数と大きさ、依存パッケージ、install スクリプトの有無（実行はしない）。git なら URL を見せ、入れた後にコミットを出す。端末がないとき（スクリプトなど）は `--yes` が要る。
+- sasacode のプラグインでないもの（`package.json` に `sasacode` フィールドがなく、`plugin.json` もない）は入れない。npm は取得する前、git は clone した後に確かめる（clone は消す）。プラグインは `sasacode-plugin-` を省いた名前で呼ばれることが多く、省いた名前の npm パッケージは大抵別物なので、`sasacode plugin install jev-guard` は断ったうえで `sasacode-plugin-jev-guard` を案内する。以前に入ってしまったものは `plugin list` が知らせる。
 - パッケージの取得には sasacode に内蔵の Bun を使うので、Bun や npm を入れていなくても動く。
 - `update` は、git のプラグインなら新しいコミットの一覧と変更の規模（`git diff --stat`）を見せてから更新する。
 

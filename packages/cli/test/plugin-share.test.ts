@@ -48,7 +48,7 @@ test("before installing, the package is described: version, publisher, size, and
       "dist-tags": { latest: "1.1.0" },
       time: { "1.1.0": "2026-09-20T00:00:00Z" },
       versions: {
-        "1.1.0": { description: "does things", maintainers: [{ name: "alice" }], dist: { fileCount: 3, unpackedSize: 4096 }, dependencies: { chalk: "^5" }, scripts: { postinstall: "node x.js" } },
+        "1.1.0": { description: "does things", maintainers: [{ name: "alice" }], dist: { fileCount: 3, unpackedSize: 4096 }, dependencies: { chalk: "^5" }, scripts: { postinstall: "node x.js" }, sasacode: { name: "tool" } },
       },
     });
   }) as unknown as typeof fetch;
@@ -59,7 +59,6 @@ test("before installing, the package is described: version, publisher, size, and
   expect(lines).toContain("3 files, 4 KB");
   expect(lines).toContain("depends on chalk");
   expect(lines).toContain("install scripts");
-  expect(lines).toContain('no "sasacode" field');
 });
 
 test("a single file becomes a package: manifest, search keyword, API range from what it uses, next version", () => {
