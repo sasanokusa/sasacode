@@ -1,3 +1,4 @@
+import { contentChars } from "@sasacode/agent";
 import { t } from "@sasacode/host";
 import type { Message, Plugin, PluginAPI } from "@sasacode/plugin-api";
 
@@ -5,7 +6,7 @@ const SYSTEM =
   "You write handoff summaries of coding sessions so the work can continue in a fresh context. Include: the user's goals and constraints, decisions made, files read or changed (paths), commands run and their outcomes, the current state, and the next steps. Be specific and concise.";
 
 function estimate(m: Message): number {
-  return Math.ceil(JSON.stringify(m.content).length / 4);
+  return Math.ceil(contentChars(m) / 4);
 }
 
 /** Plain-text transcript, so tool call/result pairing does not matter to the summarizer. */

@@ -59,6 +59,10 @@ export function withoutImages(messages: Message[]): Message[] {
   return messages.map((m) => (m.role === "assistant" || !m.content.some((c) => c.type === "image") ? m : ({ ...m, content: strip(m.content) } as Message)));
 }
 
+/** Characters a message stands for, an image as about 1,600 tokens rather than its base64. */
+export const contentChars = (m: Message): number =>
+  JSON.stringify(m.content, (k, v) => (k === "data" && typeof v === "string" && v.length > 64 ? "" : v)).length + 6400 * m.content.filter((c) => c.type === "image").length;
+
 /**
  * max_tokens for the next reply: the model's maximum, unless less room is left in the window.
  * Servers such as vLLM reject a request whose input plus max_tokens exceeds the window, and
@@ -77,7 +81,7 @@ export function replyBudget(model: ModelInfo, messages: readonly Message[], fixe
     }
   }
   // The system prompt and tool definitions are in the reported usage once there is one.
-  const chars = (from ? 0 : fixedChars) + messages.slice(from).reduce((n, m) => n + JSON.stringify(m.content).length, 0);
+  const chars = (from ? 0 : fixedChars) + messages.slice(from).reduce((n, m) => n + contentChars(m), 0);
   const estimate = Math.ceil((used + chars / 4) * 1.1);
   const room = model.contextWindow - estimate;
   if (room >= model.maxOutput) return undefined;

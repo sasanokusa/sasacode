@@ -264,6 +264,14 @@ test("max_tokens shrinks to the room left in a small window, and is left alone o
   expect(replyBudget(model, [used], 0)).toBeUndefined();
 });
 
+test("an attached image counts as an image, not as its base64, when max_tokens is sized", async () => {
+  // A 3 MB screenshot is ~4 MB of base64: read as text it looked like a full window, and the
+  // reply was squeezed to 1,024 tokens, which a thinking model spends before it says anything.
+  const { agent, provider } = setup([reply([say("a jet")])], { model: { ...model, contextWindow: 131_072, maxOutput: 32_000 } });
+  await agent.prompt([{ type: "text", text: "describe" }, { type: "image", mediaType: "image/png", data: "A".repeat(4_000_000) }]);
+  expect(provider.requests[0]!.maxTokens).toBeUndefined();
+});
+
 test("a reply whose stream was cut is thrown away and asked for again, not taken as the answer", async () => {
   const cut = reply([{ type: "thinking", thinking: "let me see, the file" }], { stopReason: "error", errorMessage: INCOMPLETE_STREAM });
   const { agent, provider, events } = setup([cut, reply([say("the answer")])]);
