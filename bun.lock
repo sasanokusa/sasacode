@@ -66,6 +66,10 @@
         "@sasacode/testing": "workspace:*",
       },
     },
+    "packages/e2e": {
+      "name": "@sasacode/e2e",
+      "version": "0.9.7",
+    },
     "packages/host": {
       "name": "@sasacode/host",
       "version": "0.9.7",
@@ -156,6 +160,8 @@
     "@sasacode/bundled": ["@sasacode/bundled@workspace:packages/bundled"],
 
     "@sasacode/cli": ["@sasacode/cli@workspace:packages/cli"],
+
+    "@sasacode/e2e": ["@sasacode/e2e@workspace:packages/e2e"],
 
     "@sasacode/host": ["@sasacode/host@workspace:packages/host"],
 
