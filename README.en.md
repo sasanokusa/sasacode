@@ -25,6 +25,7 @@ sasacode
 curl -fsSL https://sasanokusa.com/sasacode/install.sh | sh
 ```
 
+- Also on npm: `npm install -g sasacode`. The npm package is a small launcher: its first run downloads the binary of the same version from GitHub Releases, checks its SHA256 and keeps it in `~/.sasacode/npm-bin`. Update with `npm install -g sasacode@latest`.
 - Single binaries for macOS (arm64 / x64) and Linux (x64 / arm64, glibc / musl, and a baseline build for CPUs without AVX2). Bun is not needed.
 - The installer and the binary come from the latest [GitHub release](https://github.com/sasanokusa/sasacode/releases) and are checked against SHA256. The sasanokusa.com URL redirects to the latest release's `install.sh`.
 - SHA256 only catches a broken download. That a file was built by this repository's GitHub Actions is proved by the signed provenance attached to releases from v0.9.8: `gh attestation verify sasacode-darwin-arm64.tar.gz --repo sasanokusa/sasacode` (on a file downloaded from the release; `install.sh` too).
@@ -302,7 +303,7 @@ bun run typecheck
 bun run build       # dist/sasacode for this machine; --all for every target
 ```
 
-**Releasing**: pushing a `v*` tag makes GitHub Actions build the binaries and create the GitHub release: it checks that the tag matches `packages/cli/package.json` and runs the typecheck, builds the macOS binaries on macOS runners, starts all seven binaries where they run (x64 macOS under Rosetta, musl in an Alpine container), and attaches signed provenance. Installs from sasanokusa.com pick up the new version by themselves. Run `scripts/publish-site.sh <host>` (or set `SASACODE_SITE_HOST`) when the site changes and after a release: the version text on the pages is filled in at that time from `packages/cli/package.json`.
+**Releasing**: pushing a `v*` tag makes GitHub Actions build the binaries and create the GitHub release: it checks that the tag matches `packages/cli/package.json` and runs the typecheck, builds the macOS binaries on macOS runners, starts all seven binaries where they run (x64 macOS under Rosetta, musl in an Alpine container), and attaches signed provenance. Installs from sasanokusa.com pick up the new version by themselves. Run `scripts/publish-site.sh <host>` (or set `SASACODE_SITE_HOST`) when the site changes and after a release: the version text on the pages is filled in at that time from `packages/cli/package.json`. Once the release is out, `cd npm/sasacode && npm publish` brings the npm `sasacode` to the same version (keep `npm/sasacode/package.json` at the version of `packages/cli`; the release workflow stops if they differ).
 
 | Package | Role |
 | --- | --- |

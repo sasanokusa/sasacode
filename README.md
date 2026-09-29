@@ -25,6 +25,7 @@ sasacode
 curl -fsSL https://sasanokusa.com/sasacode/install.sh | sh
 ```
 
+- npm からも入れられる：`npm install -g sasacode`。npm のパッケージは起動用の小さなスクリプトで、初回の実行時に同じ版のバイナリを GitHub Releases から取得して SHA256 を検証し、`~/.sasacode/npm-bin` に置く。更新は `npm install -g sasacode@latest`。
 - macOS（arm64 / x64）と Linux（x64 / arm64、glibc / musl、AVX2 のない CPU 向けの baseline 版）の単一バイナリ。Bun は不要。
 - インストーラーもバイナリも、[GitHub Releases](https://github.com/sasanokusa/sasacode/releases) の最新版から取得して SHA256 を検証する。sasanokusa.com の URL は、最新リリースの `install.sh` へのリダイレクト。
 - SHA256 が防ぐのは壊れたダウンロードまで。ファイルがこのリポジトリの GitHub Actions でビルドされたものかは、v0.9.8 以降のリリースに付けた署名つきの来歴で確かめられる：`gh attestation verify sasacode-darwin-arm64.tar.gz --repo sasanokusa/sasacode`（リリースから落としたファイルに対して。`install.sh` も同じ）。
@@ -302,7 +303,7 @@ bun run typecheck
 bun run build       # dist/sasacode（このマシン向け）。--all で全ターゲット
 ```
 
-**リリースの手順**：`v*` のタグを push すると、GitHub Actions がバイナリをビルドして GitHub Release を作る。タグと `packages/cli/package.json` の版が合っているかと型チェックを確かめ、macOS 版は macOS のランナーでビルドし、7種類のバイナリをすべて動く環境で起動してから（x64 の macOS は Rosetta、musl は Alpine のコンテナ）、署名つきの来歴を付けて公開する。sasanokusa.com からのインストールも、それだけで新しい版になる。案内ページを変えたときと、新しい版を出した後に `scripts/publish-site.sh <ホスト>`（または環境変数 `SASACODE_SITE_HOST`）を実行する。ページの版の表記は、`packages/cli/package.json` の版で実行時に埋める。
+**リリースの手順**：`v*` のタグを push すると、GitHub Actions がバイナリをビルドして GitHub Release を作る。タグと `packages/cli/package.json` の版が合っているかと型チェックを確かめ、macOS 版は macOS のランナーでビルドし、7種類のバイナリをすべて動く環境で起動してから（x64 の macOS は Rosetta、musl は Alpine のコンテナ）、署名つきの来歴を付けて公開する。sasanokusa.com からのインストールも、それだけで新しい版になる。案内ページを変えたときと、新しい版を出した後に `scripts/publish-site.sh <ホスト>`（または環境変数 `SASACODE_SITE_HOST`）を実行する。ページの版の表記は、`packages/cli/package.json` の版で実行時に埋める。リリースが公開されたら `cd npm/sasacode && npm publish` で npm の `sasacode` も同じ版にする（`npm/sasacode/package.json` の版は `packages/cli` と合わせておく。合っていないとリリースのワークフローが止まる）。
 
 | パッケージ | 役割 |
 | --- | --- |

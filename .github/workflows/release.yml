@@ -8,7 +8,7 @@ on:
   push:
     tags: ["v*"]
   pull_request:
-    paths: [.github/workflows/release.yml, scripts/build.ts, package.json]
+    paths: [.github/workflows/release.yml, scripts/build.ts, package.json, npm/**]
   workflow_dispatch:
 permissions:
   contents: read
@@ -24,6 +24,8 @@ jobs:
         run: |
           version="v$(jq -r .version packages/cli/package.json)"
           echo "version=$version" >> "$GITHUB_OUTPUT"
+          npm="v$(jq -r .version npm/sasacode/package.json)"
+          [ "$npm" = "$version" ] || { echo "npm/sasacode/package.json is $npm, packages/cli/package.json is $version"; exit 1; }
           case "$GITHUB_REF" in
             refs/tags/*) [ "$version" = "$GITHUB_REF_NAME" ] || { echo "tag $GITHUB_REF_NAME does not match packages/cli/package.json ($version)"; exit 1; } ;;
           esac

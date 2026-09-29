@@ -186,8 +186,8 @@ export const TO_JA: Record<string, string> = {
 
   // ── update.ts: `sasacode update` ───────────────────────────────────
   "cannot tell the latest version ({status} from {base})": "最新版がわからない（{base} から {status}）",
-  "a newer version is available: {latest} (this is {version}) — run `sasacode update`":
-    "新しい版がある: {latest}（いまは {version}）— `sasacode update` を実行",
+  "a newer version is available: {latest} (this is {version}) — run `{how}`":
+    "新しい版がある: {latest}（いまは {version}）— `{how}` を実行",
   "unsupported OS: {platform} (Windows is supported through WSL)": "未対応の OS: {platform}（Windows は WSL 経由で使う）",
   "unsupported CPU: {arch}": "未対応の CPU: {arch}",
   "this sasacode runs from source: update the checkout (git pull && bun install) instead of `sasacode update`":
@@ -221,4 +221,5 @@ export const TO_JA: Record<string, string> = {
     "jev-guard は同梱ではなくなったため、config で有効にしている Jev の判定は動いていない: sasacode plugin install sasacode-plugin-jev-guard",
   "could not pack {dir}": "{dir} をまとめられなかった",
   "the connection dropped mid-reply; asking again": "接続が応答の途中で切れたため、やり直す",
+  "this sasacode was installed with npm: update it with `npm install -g sasacode@latest`": "この sasacode は npm で入れたもの。更新は `npm install -g sasacode@latest`",
 };
