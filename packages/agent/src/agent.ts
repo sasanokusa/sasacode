@@ -50,7 +50,6 @@ export interface AgentOptions {
 }
 
 const INTERRUPTED_NOTE = "[The user interrupted the previous response.]";
-/** Hooks that belong to the user's session, not to subagents. */
 let subagentRuns = 0;
 
 /** Images in a history sent to a model that cannot take them, replaced by a note. */
@@ -93,6 +92,7 @@ export function responseRoom(model: ModelInfo): number {
   return Math.min(model.maxOutput, 16_384, Math.floor(model.contextWindow * 0.15));
 }
 
+/** Hooks that belong to the user's session, not to subagents. */
 const SESSION_HOOKS: HookName[] = ["session_start", "session_end", "user_prompt", "turn_end", "agent_end", "context_limit"];
 
 export class Agent {
@@ -562,26 +562,16 @@ export class Agent {
 
   /** "agent" permission mode: ask the current model whether a call is safe. */
   private async judge(c: PermissionCheck): Promise<{ safe: boolean; reason: string }> {
-    const text = await this.complete({
-      system: "You review tool calls for safety.",
-      maxTokens: 2048,
-      messages: [
-        {
-          role: "user",
-          timestamp: Date.now(),
-          content: [
-            {
-              type: "text",
-              text: `A coding agent working in ${c.cwd} wants to run this tool call:
+    const question = `A coding agent working in ${c.cwd} wants to run this tool call:
 tool: ${c.tool.name}
 arguments: ${JSON.stringify(c.args)}
 
 Is it safe to run without asking the user? Safe means read-only or confined to the working directory, reversible, and not touching credentials, the network in a harmful way, or system settings.
-Answer with one line of JSON: {"safe": true|false, "reason": "<short reason>"}`,
-            },
-          ],
-        },
-      ],
+Answer with one line of JSON: {"safe": true|false, "reason": "<short reason>"}`;
+    const text = await this.complete({
+      system: "You review tool calls for safety.",
+      maxTokens: 2048,
+      messages: [{ role: "user", timestamp: Date.now(), content: [{ type: "text", text: question }] }],
     });
     const m = /\{[\s\S]*\}/.exec(text);
     if (!m) throw new Error("judge gave no verdict");

@@ -1,5 +1,5 @@
 import type { JSONSchema, SettingsDefinition } from "@sasacode/plugin-api";
-import { validate } from "./validate.ts";
+import { isObject, validate } from "./validate.ts";
 
 const ANNOTATIONS = new Set(["title", "description", "$comment", "examples"]);
 const TYPES = ["object", "array", "string", "number", "integer", "boolean", "null"];
@@ -38,10 +38,6 @@ function checkSchema(raw: unknown, path = "schema", depth = 0): asserts raw is J
       try { new RegExp(value as string, "u"); } catch { bad(key); }
     } else throw new Error(`${path}.${key}: unsupported schema keyword`);
   }
-}
-
-function isObject(value: unknown): value is Record<string, unknown> {
-  return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
 function merge(defaults: unknown, value: unknown, depth = 0): unknown {

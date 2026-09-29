@@ -9,7 +9,7 @@ import {
   type AssistantMessage,
   ContextOverflowError,
   computeCost,
-  INCOMPLETE_STREAM,
+  markIfCut,
   type Message,
   newAssistant,
   parseToolInput,
@@ -181,11 +181,7 @@ export const anthropicProvider: Provider = {
       break;
     }
     out.content = out.content.filter(Boolean);
-    // No stop reason and no message_stop: the stream was cut, not finished.
-    if (!ended && out.stopReason !== "aborted") {
-      out.stopReason = "error";
-      out.errorMessage = INCOMPLETE_STREAM;
-    }
+    markIfCut(out, ended); // no stop reason and no message_stop
     out.usage.cost = computeCost(model, out.usage);
     yield { type: "done", message: out };
   },

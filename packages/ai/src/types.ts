@@ -47,6 +47,11 @@ export type StopReason = "stop" | "tool_use" | "max_tokens" | "refusal" | "abort
  */
 export const INCOMPLETE_STREAM = "the stream ended before the reply was complete";
 
+/** Marks `out` as cut off unless the provider said it was done (`ended`) or the user aborted. */
+export function markIfCut(out: AssistantMessage, ended: boolean): void {
+  if (!ended && out.stopReason !== "aborted") Object.assign(out, { stopReason: "error", errorMessage: INCOMPLETE_STREAM });
+}
+
 export interface Usage {
   input: number;
   output: number;

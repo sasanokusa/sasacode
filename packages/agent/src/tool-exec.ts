@@ -34,6 +34,8 @@ export function err(message: string): ToolResult {
   return { content: [{ type: "text", text: message }], isError: true };
 }
 
+const notRun = (): ToolResult => err("Interrupted by the user before this tool ran.");
+
 /**
  * Let tool_call_raw hooks fix names and arguments before anything checks them.
  * The stored message is rewritten to the repaired call (the model imitates its own history), unless
@@ -143,7 +145,7 @@ export async function executeTools(
       running.length = 0;
     }
     if (opts.signal.aborted) {
-      await finish(job, err("Interrupted by the user before this tool ran."), false);
+      await finish(job, notRun(), false);
       continue;
     }
     // Approvals stay one at a time, in order: only the runs overlap.
@@ -151,7 +153,7 @@ export async function executeTools(
     const run = async () => {
       if (denied) return finish(job, denied, false);
       // A call must not start once the user has interrupted.
-      if (opts.signal.aborted) return finish(job, err("Interrupted by the user before this tool ran."), false);
+      if (opts.signal.aborted) return finish(job, notRun(), false);
       await finish(job, await runTool(ctx, job.tool!, job.call, args, opts.signal, opts.ancestors ?? [], opts.parentCallId), true);
     };
     if (job.tool?.concurrent) running.push(run());
@@ -168,7 +170,7 @@ function preflight(
   rawInput: string | undefined,
   opts: { truncated: boolean; signal: AbortSignal },
 ): ToolResult | undefined {
-  if (opts.signal.aborted) return err("Interrupted by the user before this tool ran.");
+  if (opts.signal.aborted) return notRun();
   if (opts.truncated)
     return err("The response hit max_tokens before this tool call was complete, so it was not run. Retry with smaller input.");
   const tool = ctx.findTool(job.name);
@@ -237,29 +239,26 @@ async function authorize(
   const problems = validate(tool.parameters, args);
   if (problems.length) return { args, denied: err(`Invalid arguments after tool_call: ${problems.join("; ")}`) };
   const check: PermissionCheck = { tool, args, cwd: ctx.cwd };
-  if (signal.aborted) return { args, denied: err("Interrupted by the user before this tool ran.") };
+  const denied = (result: ToolResult) => ({ args, denied: result });
+  if (signal.aborted) return denied(notRun());
   const verdict = await decide(ctx, check, call, forced);
-  if (signal.aborted) return { args, denied: err("Interrupted by the user before this tool ran.") };
+  if (signal.aborted) return denied(notRun());
   if (verdict.decision === "allow") return { args };
-  if (verdict.decision === "deny") return { args, denied: err(`Permission denied (${verdict.reason}).`) };
-  if (!ctx.approve)
-    return {
-      args,
-      denied: err(`This call needs user approval (${verdict.reason}), but no user is available to approve it (non-interactive run). It was not executed.`),
-    };
-  let onAbort!: () => void;
-  const interrupted = new Promise<ApprovalAnswer>((resolve) => {
-    onAbort = () => resolve({ decision: "deny" });
+  if (verdict.decision === "deny") return denied(err(`Permission denied (${verdict.reason}).`));
+  const approve = ctx.approve;
+  if (!approve)
+    return denied(err(`This call needs user approval (${verdict.reason}), but no user is available to approve it (non-interactive run). It was not executed.`));
+  // Esc while the question is open answers it: the call does not run.
+  const answer = await new Promise<ApprovalAnswer | undefined>((resolve, reject) => {
+    const onAbort = () => resolve(undefined);
     signal.addEventListener("abort", onAbort, { once: true });
-    if (signal.aborted) onAbort();
+    approve({ ...check, call, reason: verdict.reason, signal })
+      .then(resolve, reject)
+      .finally(() => signal.removeEventListener("abort", onAbort));
   });
-  let answer: ApprovalAnswer;
-  try { answer = await Promise.race([interrupted, ctx.approve({ ...check, call, reason: verdict.reason, signal })]); }
-  finally { signal.removeEventListener("abort", onAbort); }
-  if (signal.aborted) return { args, denied: err("Interrupted by the user before this tool ran.") };
+  if (!answer || signal.aborted) return denied(notRun());
   if (answer.decision === "always") ctx.permissions.addRules({ allow: PermissionPolicy.rulesFor(check) });
-  if (answer.decision === "deny")
-    return { args, denied: err(`The user denied this tool call.${answer.feedback ? ` User feedback: ${answer.feedback}` : ""}`) };
+  if (answer.decision === "deny") return denied(err(`The user denied this tool call.${answer.feedback ? ` User feedback: ${answer.feedback}` : ""}`));
   return { args };
 }
 

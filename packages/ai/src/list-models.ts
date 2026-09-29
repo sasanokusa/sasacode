@@ -1,7 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import OpenAI from "openai";
 import type { ProviderConfig } from "./models.ts";
-import type { Api, ModelInfo } from "./types.ts";
+import type { ModelInfo } from "./types.ts";
 
 export interface ListedModel {
   id: string;
@@ -132,8 +132,4 @@ async function ollamaDetails(p: ProviderConfig, m: ListedModel, loaded: Map<stri
     if (numCtx) m.contextWindow = Number(numCtx);
     else if (typeof trained === "number") m.maxContext = trained;
   } catch {}
-}
-
-export function apiForEndpoint(endpoint: string): Api | undefined {
-  return Object.keys(API_ENDPOINT).find((a) => API_ENDPOINT[a] === endpoint);
 }
