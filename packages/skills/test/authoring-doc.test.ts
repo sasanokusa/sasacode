@@ -2,7 +2,8 @@
 // are run here against the real host: if the API drifts, this fails.
 import { expect, test } from "bun:test";
 import { Agent, PermissionPolicy, PluginHost } from "@sasacode/agent";
-import { type AssistantMessage, emptyUsage, registerApi, replayProvider } from "@sasacode/ai";
+import { type AssistantMessage, emptyUsage, registerApi } from "@sasacode/ai";
+import { replayProvider } from "@sasacode/testing";
 import * as pluginApi from "@sasacode/plugin-api";
 import builtinTools, { bashTool } from "@sasacode/tools";
 import { BUILTIN_SKILLS } from "../src/index.ts";

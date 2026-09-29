@@ -3,7 +3,8 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setLang } from "@sasacode/host";
-import { emptyUsage, registerApi, replayProvider } from "@sasacode/ai";
+import { emptyUsage, registerApi } from "@sasacode/ai";
+import { replayProvider } from "@sasacode/testing";
 import { discoverPlugins, pluginCommand } from "../src/loader.ts";
 import { assessProject, isTrusted, saveTrust } from "../src/trust.ts";
 import { setup } from "../src/setup.ts";

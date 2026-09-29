@@ -6,7 +6,8 @@ import { join } from "node:path";
 import type { Terminal } from "@earendil-works/pi-tui";
 import { Agent, PermissionPolicy, PluginHost } from "@sasacode/agent";
 import { setLang } from "@sasacode/host";
-import { type AssistantContent, type AssistantMessage, emptyUsage, type ModelInfo, registerApi, replayProvider } from "@sasacode/ai";
+import { type AssistantContent, type AssistantMessage, emptyUsage, type ModelInfo, registerApi } from "@sasacode/ai";
+import { replayProvider } from "@sasacode/testing";
 import { runTui, type TuiHost } from "../src/app.ts";
 
 class FakeTerminal implements Terminal {

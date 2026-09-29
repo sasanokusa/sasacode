@@ -1,0 +1,11 @@
+{
+  "name": "@sasacode/testing",
+  "version": "0.9.7",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "dependencies": {
+    "@sasacode/ai": "workspace:*"
+  },
+  "license": "Apache-2.0"
+}

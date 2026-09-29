@@ -1,5 +1,7 @@
+// Test support: record a provider's replies and replay them, so loops and plugins run end to end
+// without a model. Not part of the core.
 import { appendFileSync, readFileSync } from "node:fs";
-import type { AssistantMessage, Provider, Request, StreamEvent } from "./types.ts";
+import type { AssistantMessage, Provider, Request, StreamEvent } from "@sasacode/ai";
 
 /**
  * Recording format: one JSON line per request, holding the final assistant message plus

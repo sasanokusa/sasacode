@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { Agent, PermissionPolicy, PluginHost } from "@sasacode/agent";
-import { type AssistantMessage, emptyUsage, registerApi, replayProvider } from "@sasacode/ai";
+import { type AssistantMessage, emptyUsage, registerApi } from "@sasacode/ai";
+import { replayProvider } from "@sasacode/testing";
 import builtinTools, { editTool, readTool, writeTool } from "@sasacode/tools";
 import { bundledPlugins, closestName, detectRepetition, fitToSchema, repairJson } from "../src/index.ts";
 

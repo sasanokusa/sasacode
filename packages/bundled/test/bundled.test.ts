@@ -3,7 +3,8 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Agent, makeToolSearchTool, PermissionPolicy, PluginHost, SessionFile } from "@sasacode/agent";
-import { type AssistantContent, type AssistantMessage, emptyUsage, type Message, registerApi, replayProvider } from "@sasacode/ai";
+import { type AssistantContent, type AssistantMessage, emptyUsage, type Message, registerApi } from "@sasacode/ai";
+import { replayProvider } from "@sasacode/testing";
 import builtinTools, { bashTool } from "@sasacode/tools";
 import { agentsFiles, bundledPlugins, htmlToText, splitPoint } from "../src/index.ts";
 
