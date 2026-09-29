@@ -292,19 +292,14 @@ const plugin: Plugin = (api) => {
       save(job);
 
       const elapsed = fmtDur((job.finishedAt ?? Date.now()) - job.startedAt);
-      const badge = job.spawnError
-        ? `起動に失敗しました (${job.spawnError})`
-        : job.exitCode === null || job.exitCode === undefined
-          ? "強制終了しました"
-          : `exit ${job.exitCode}`;
-      const shown = job.spawnError
-        ? t("起動に失敗しました ({error})", { error: job.spawnError })
-        : job.exitCode === null || job.exitCode === undefined
-          ? t("強制終了しました")
-          : badge;
+      // A stopped job is "killed" whatever its wrapper managed to record (macOS's bash 3.2 can still
+      // write an exit code, 0 even, as the TERM arrives).
+      const killed = job.status === "killed" || job.exitCode === null || job.exitCode === undefined;
+      const badge = job.spawnError ? `起動に失敗しました (${job.spawnError})` : killed ? "強制終了しました" : `exit ${job.exitCode}`;
+      const shown = job.spawnError ? t("起動に失敗しました ({error})", { error: job.spawnError }) : killed ? t("強制終了しました") : badge;
       api.ui.notify(
         t("バックグラウンドジョブ {id} が終了: `{command}` — {badge}、実行時間 {elapsed}", { id: job.id, command: job.command, badge: shown, elapsed }),
-        job.exitCode === 0 ? "info" : "warning",
+        job.exitCode === 0 && !killed ? "info" : "warning",
       );
       if (!autoNotify) return;
 

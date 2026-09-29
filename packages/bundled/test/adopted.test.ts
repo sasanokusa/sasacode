@@ -1,8 +1,8 @@
 // goal, background-sessions and auto-reconnect: user plugins that became bundled ones.
 import { afterAll, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { Plugin } from "@sasacode/plugin-api";
 import autoReconnect from "../src/auto-reconnect.ts";
 import backgroundSessions from "../src/background-sessions.ts";
@@ -77,6 +77,8 @@ test("background-sessions: a job runs detached and its exit code and output come
     expect(b.tools.bg_start.permissionsAs).toBe("bash");
 
     const long = await b.tools.bg_start.execute({ command: "sleep 30" }, { cwd: root });
+    // As macOS's bash 3.2 may do when the TERM arrives: an exit code is on disk. Still "killed".
+    writeFileSync(join(dirname(long.details.logPath), "exit-code"), "0\n");
     await b.commands.bg.run({ args: `kill ${long.details.id}` });
     for (let i = 0; i < 100 && b.injected.length < 2; i++) await Bun.sleep(20);
     expect(b.injected[1]).toContain("強制終了");
