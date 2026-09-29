@@ -1,6 +1,6 @@
 {
   "name": "@sasacode/e2e",
-  "version": "0.9.7",
+  "version": "0.9.8",
   "private": true,
   "type": "module",
   "license": "Apache-2.0"
