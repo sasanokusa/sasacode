@@ -391,6 +391,7 @@ sasacode -m pgx/&lt;モデル名&gt;</code></pre>
         <tr><td><code>agent</code></td><td class="yes">許可</td><td colspan="2">モデルが判定（安全なら許可、それ以外は確認）</td></tr>
         <tr><td><code>auto</code></td><td class="yes">許可</td><td class="yes">許可</td><td class="yes">許可（deny ルールと ask ルールは効く）</td></tr>
       </table></div>
+      <p><code>agent</code> モードで判定するのは呼び出しを作ったのと同じモデルで、呼び出しの引数も読むため、モデルを誘導する文が判定も誘導しうる。利便のための機能で、プロンプトインジェクションへの防御ではない（それには deny / ask ルールと <code>guard</code> プリセットを使う）。</p>
       <p>切り替えは <kbd>shift+tab</kbd>、<code>/permission &lt;mode&gt;</code>、<code>--permission</code>、設定の <code>permissions.mode</code>。</p>
 
       <h3 id="rules">ルールの書き方</h3>
@@ -398,7 +399,7 @@ sasacode -m pgx/&lt;モデル名&gt;</code></pre>
         <tr><th>ルール</th><th>当てはまるもの</th></tr>
         <tr><td><code>bash</code></td><td>bash の呼び出しすべて</td></tr>
         <tr><td><code>bash(git status*)</code></td><td><code>git status</code> で始まるコマンド（<code>*</code> はワイルドカード）</td></tr>
-        <tr><td><code>edit(.env)</code> <code>write(src/**)</code></td><td>パスの glob（シンボリックリンクをたどった先で照合）</td></tr>
+        <tr><td><code>edit(**/.env)</code> <code>write(src/**)</code></td><td>パスの glob（シンボリックリンクをたどった先で照合）</td></tr>
         <tr><td><code>mcp__github__*</code></td><td>MCP サーバー github のツール全部</td></tr>
         <tr><td><code>bg_start(make*)</code></td><td>プラグインのツールも同じ書き方。<code>bg_start</code> は <code>permissionsAs: "bash"</code> なので、bash のルールも当たる</td></tr>
       </table></div>
@@ -406,10 +407,12 @@ sasacode -m pgx/&lt;モデル名&gt;</code></pre>
   "permissions": {
     "allow": ["bash(bun test*)", "bash(git diff*)"],
     "ask": ["bash(git push*)"],
-    "deny": ["edit(.env)", "bash(curl * | sh)"],
+    "deny": ["read(**/.env)", "edit(**/.env)", "write(**/.env)", "bash(curl * | sh)"],
     "softDeny": ["bash(git reset --hard*)"]
   }
 }</code></pre>
+
+      <p>パスのルールは書いたツールにだけ効くので、<code>.env</code> を守るなら read / edit / write を並べ、サブディレクトリも含めるには <code>**/</code> を付ける。コマンドのルールはコマンドの文字列に合わせるだけなので、オプションの順を変えたり絶対パスで呼んだりすれば当たらない。間違いを防ぐ柵であって、完全な防御ではない。</p>
 
       <h3 id="presets">プリセット</h3>
       <p><code>plugins.settings["permission-presets"].presets</code> で選ぶ（既定 <code>["guard"]</code>）。<code>/presets</code> で一覧。</p>
