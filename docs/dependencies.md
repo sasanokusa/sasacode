@@ -9,6 +9,8 @@
 | `@modelcontextprotocol/sdk` | `@sasacode/mcp` | 公式の MCP クライアント。プロトコルのバージョン交渉、stdio と Streamable HTTP のトランスポート、セッション ID、進捗通知によるタイムアウト延長を仕様どおりに扱える。単一バイナリに含まれるのは import しているクライアント部分だけ（サーバー用の express などは入らない） | 自前の JSON-RPC 実装：HTTP 側のセッション管理や SSE の再接続まで追うと、保守の負担が大きい |
 | `@earendil-works/pi-tui` | `@sasacode/tui` | 決定事項 8.2。差分描画、同期出力、IME 対応エディタ、貼り付け処理、Markdown 表示がそろっていて、依存は `marked` と `get-east-asian-width` の2つだけ | OpenTUI（ネイティブバイナリに依存）、Ink（React が入る） |
 
+**pi-tui のパッチ**：`patches/@earendil-works%2Fpi-tui@0.87.1.patch` を、ルートの `package.json` の `patchedDependencies` で 0.87.1 に当てている。pi-tui は East Asian Ambiguous 幅の文字（①、○ など）を常に1セルとして数えるので、これを2セルで表示する端末（CJK 向けの設定）で行の幅がずれる。パッチは `setAmbiguousWidth(1 | 2)` を追加して `get-east-asian-width` に `ambiguousAsWide` を渡すようにし、`@sasacode/tui` が端末に合わせて呼ぶ（`SASACODE_AMBIGUOUS_WIDTH=1|2` で固定できる）。pi-tui の版を上げるときは、パッチを作り直す。
+
 ## pi-tui の Bun 上での検証（M1 冒頭）
 
 `@earendil-works/pi-tui@0.87.1` を Bun 1.4.2 で次の点について検証した。

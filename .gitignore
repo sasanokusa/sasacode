@@ -9,4 +9,5 @@ dist/
 
 # local benchmark scripts and results
 bench/
+.DS_Store
 .claude/worktrees/

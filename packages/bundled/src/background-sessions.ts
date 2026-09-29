@@ -20,8 +20,9 @@
 // foreignGraceMs (how long the session that started a job gets to claim its completion notice
 // before another session reports it).
 //
-// POSIX only (bash, kill(-pid)). Tool descriptions are English (model-facing); notices are
-// Japanese (user-facing).
+// POSIX only (bash, kill(-pid)). Tool descriptions and results are English; the system-prompt
+// addition and the completion notice injected into the session are Japanese (both are read by the
+// model); notices shown to the user go through t() from @sasacode/host.
 
 import { childEnv, errorResult, sasacodeHome, text, type Plugin, type ToolDefinition } from "@sasacode/plugin-api";
 import { spawn } from "node:child_process";

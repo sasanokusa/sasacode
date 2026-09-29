@@ -180,7 +180,7 @@
   <main>
     <div class="hero">
       <h1>sasacode ドキュメント</h1>
-      <p>README では書ききれない、画面の見方、権限の判定の流れ、設定と同梱プラグインの全項目、プラグインの共有、ヘッドレス実行、困ったときの対処をまとめた。v0.9.7 時点の内容。</p>
+      <p>README では書ききれない、画面の見方、権限の判定の流れ、設定と同梱プラグインの全項目、プラグインの共有、ヘッドレス実行、困ったときの対処をまとめた。{{VERSION}} 時点の内容。</p>
     </div>
 
     <details class="toc-m"><summary>目次</summary><ol id="toc-m"></ol></details>
@@ -194,7 +194,7 @@
       <p>macOS（Apple Silicon / Intel）と Linux（x64 / arm64、glibc / musl、AVX2 のない CPU 向けの baseline 版）の単一バイナリが <code>~/.local/bin/sasacode</code> に入る。Bun も Node.js も要らない。Windows は WSL から使う。</p>
       <ul>
         <li>インストーラーとバイナリは GitHub Releases の最新版から取り、SHA256 を確かめてから置く。</li>
-        <li>版を固定する：<code>SASACODE_VERSION=v0.9.7</code>。置き場所を変える：<code>SASACODE_INSTALL_DIR=/usr/local/bin</code>。</li>
+        <li>版を固定する：<code>SASACODE_VERSION={{VERSION}}</code>。置き場所を変える：<code>SASACODE_INSTALL_DIR=/usr/local/bin</code>。</li>
         <li><b>更新</b>は <code>sasacode update</code>（インストーラーと同じ検証つき。<code>--check</code> で確かめるだけ）か、同じインストールコマンドをもう一度実行する。新しい版が出ると起動時に一度だけ知らせる（設定の <code>"updateCheck": false</code> で止まる）。<b>削除</b>は <code>~/.local/bin/sasacode</code> と <code>~/.sasacode</code>（設定・セッション・プラグイン）を消す。</li>
       </ul>
 
@@ -391,6 +391,7 @@ sasacode -m pgx/&lt;モデル名&gt;</code></pre>
         <tr><td><code>agent</code></td><td class="yes">許可</td><td colspan="2">モデルが判定（安全なら許可、それ以外は確認）</td></tr>
         <tr><td><code>auto</code></td><td class="yes">許可</td><td class="yes">許可</td><td class="yes">許可（deny ルールと ask ルールは効く）</td></tr>
       </table></div>
+      <p><code>agent</code> モードで判定するのは呼び出しを作ったのと同じモデルで、呼び出しの引数も読むため、モデルを誘導する文が判定も誘導しうる。利便のための機能で、プロンプトインジェクションへの防御ではない（それには deny / ask ルールと <code>guard</code> プリセットを使う）。</p>
       <p>切り替えは <kbd>shift+tab</kbd>、<code>/permission &lt;mode&gt;</code>、<code>--permission</code>、設定の <code>permissions.mode</code>。</p>
 
       <h3 id="rules">ルールの書き方</h3>
@@ -398,7 +399,7 @@ sasacode -m pgx/&lt;モデル名&gt;</code></pre>
         <tr><th>ルール</th><th>当てはまるもの</th></tr>
         <tr><td><code>bash</code></td><td>bash の呼び出しすべて</td></tr>
         <tr><td><code>bash(git status*)</code></td><td><code>git status</code> で始まるコマンド（<code>*</code> はワイルドカード）</td></tr>
-        <tr><td><code>edit(.env)</code> <code>write(src/**)</code></td><td>パスの glob（シンボリックリンクをたどった先で照合）</td></tr>
+        <tr><td><code>edit(**/.env)</code> <code>write(src/**)</code></td><td>パスの glob（シンボリックリンクをたどった先で照合）</td></tr>
         <tr><td><code>mcp__github__*</code></td><td>MCP サーバー github のツール全部</td></tr>
         <tr><td><code>bg_start(make*)</code></td><td>プラグインのツールも同じ書き方。<code>bg_start</code> は <code>permissionsAs: "bash"</code> なので、bash のルールも当たる</td></tr>
       </table></div>
@@ -406,10 +407,12 @@ sasacode -m pgx/&lt;モデル名&gt;</code></pre>
   "permissions": {
     "allow": ["bash(bun test*)", "bash(git diff*)"],
     "ask": ["bash(git push*)"],
-    "deny": ["edit(.env)", "bash(curl * | sh)"],
+    "deny": ["read(**/.env)", "edit(**/.env)", "write(**/.env)", "bash(curl * | sh)"],
     "softDeny": ["bash(git reset --hard*)"]
   }
 }</code></pre>
+
+      <p>パスのルールは書いたツールにだけ効くので、<code>.env</code> を守るなら read / edit / write を並べ、サブディレクトリも含めるには <code>**/</code> を付ける。コマンドのルールはコマンドの文字列に合わせるだけなので、オプションの順を変えたり絶対パスで呼んだりすれば当たらない。間違いを防ぐ柵であって、完全な防御ではない。</p>
 
       <h3 id="presets">プリセット</h3>
       <p><code>plugins.settings["permission-presets"].presets</code> で選ぶ（既定 <code>["guard"]</code>）。<code>/presets</code> で一覧。</p>
@@ -813,7 +816,7 @@ sasacode -p "…" --permission auto --trust-project   <span class="c"># CI な�
   </main>
 </div>
 
-<footer>sasacode v0.9.7 · <a href="../">トップ</a> · <a href="https://github.com/sasanokusa/sasacode">GitHub</a> · Apache-2.0</footer>
+<footer>sasacode {{VERSION}} · <a href="../">トップ</a> · <a href="https://github.com/sasanokusa/sasacode">GitHub</a> · Apache-2.0</footer>
 
 <script>
   // Table of contents from the section and h3 headings, highlighted while scrolling.

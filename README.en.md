@@ -143,7 +143,7 @@ Endpoints in a project's `.sasacode/config.json` are not used until you trust th
     "mode": "edits",
     "allow": ["bash(git status*)", "bash(bun test*)"],
     "ask": ["bash(git push*)"],
-    "deny": ["bash(rm -rf *)", "edit(.env)"]
+    "deny": ["read(**/.env)", "edit(**/.env)", "write(**/.env)", "bash(rm -rf *)"]
   },
   "instructions": "Text appended to the system prompt",
   "mcpServers": { "github": { "command": "npx", "args": ["-y", "@modelcontextprotocol/server-github"] } },
@@ -172,10 +172,10 @@ Endpoints in a project's `.sasacode/config.json` are not used until you trust th
 | --- | --- |
 | `edits` (default) | read / write / edit inside the working directory run without asking; bash and anything outside ask |
 | `ask` | Every tool call asks, reads included |
-| `agent` | Reads inside the working directory run; everything else is judged by the current model: safe runs, anything else asks |
+| `agent` | Reads inside the working directory run; everything else is judged by the current model: safe runs, anything else asks. The judge is the same model that made the call and it reads the call's arguments, so text written to steer the model can steer the judgment too; this is a convenience, not protection against prompt injection (use deny / ask rules and the `guard` preset for that) |
 | `auto` | Everything runs (deny and ask rules still apply). Shown in red in the TUI footer |
 
-- A rule is `tool` or `tool(pattern)`. bash matches the command string with `*` wildcards; read / write / edit match paths with globs. Write `\*` for a literal `*`.
+- A rule is `tool` or `tool(pattern)`. bash matches the command string with `*` wildcards; read / write / edit match paths with globs. Write `\*` for a literal `*`. A path rule only applies to the tool it names, so to protect `.env` list read, edit and write, and add `**/` to include subdirectories (`edit(.env)` only stops edits of the `.env` directly in the working directory). Command rules match the text of the command, so reordered options or a full path to the binary slip past them: they are a guard against mistakes, not a complete defense.
 - "Always allow" in the approval prompt adds a rule no wider than what was shown: the command as written (its `*` are not wildcards), or, for a file tool, just that path. The rule lasts until sasacode exits (across `/clear`).
 - The order is deny → softDeny → ask → allow → mode → the `permission` hook (plugins). `softDeny` refuses like deny, but a plugin such as `jev-guard` may lower it to "ask the user" (never to running without asking); it is meant for broad patterns that also catch legitimate calls. An allow rule only lets a command through when **every** part joined with `&&`, `;` or `|` is allowed. Commands with `$(…)`, backticks or `>` never pass by an allow rule.
 - The bundled `permission-presets` enables `guard` by default: sudo, `rm -rf /`, disk operations, `| sh` and the like are always denied; `rm -rf ~…` under home and force pushes are softDeny; `ssh`, `scp`, `sftp` and `rsync` to another machine always ask, in `auto` mode too.
@@ -302,7 +302,7 @@ bun run typecheck
 bun run build       # dist/sasacode for this machine; --all for every target
 ```
 
-**Releasing**: pushing a `v*` tag makes GitHub Actions build the binaries and create the GitHub release (macOS binaries are built on macOS runners and started once to check them). Installs from sasanokusa.com pick up the new version by themselves. Run `scripts/publish-site.sh` only when the site changes.
+**Releasing**: pushing a `v*` tag makes GitHub Actions build the binaries and create the GitHub release: it checks that the tag matches `packages/cli/package.json` and runs the typecheck, builds the macOS binaries on macOS runners, starts all seven binaries where they run (x64 macOS under Rosetta, musl in an Alpine container), and attaches signed provenance. Installs from sasanokusa.com pick up the new version by themselves. Run `scripts/publish-site.sh <host>` (or set `SASACODE_SITE_HOST`) when the site changes and after a release: the version text on the pages is filled in at that time from `packages/cli/package.json`.
 
 | Package | Role |
 | --- | --- |
