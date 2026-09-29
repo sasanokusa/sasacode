@@ -1,13 +1,37 @@
 name: release
-# Push a tag like v0.4.0: build single-file binaries (macOS ones on macOS, so they are natively
-# signed and smoke-tested), then attach them to a GitHub release.
+# Push a tag like v0.4.0: check that the tag matches the version, build single-file binaries (macOS
+# ones on macOS, so they are natively signed), start every one of them on a machine that can run
+# it, then attach them to a GitHub release with build provenance.
+# Actions are pinned to commits (Dependabot keeps them current); Bun comes from package.json.
+# A pull request that changes this workflow or the build runs everything but the release itself.
 on:
   push:
     tags: ["v*"]
+  pull_request:
+    paths: [.github/workflows/release.yml, scripts/build.ts, package.json]
+  workflow_dispatch:
 permissions:
-  contents: write
+  contents: read
 jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - name: The tag is the version the binary will report
+        id: version
+        run: |
+          version="v$(jq -r .version packages/cli/package.json)"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          case "$GITHUB_REF" in
+            refs/tags/*) [ "$version" = "$GITHUB_REF_NAME" ] || { echo "tag $GITHUB_REF_NAME does not match packages/cli/package.json ($version)"; exit 1; } ;;
+          esac
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+      - run: bun install --frozen-lockfile
+      - run: bun run typecheck
   build:
+    needs: check
     strategy:
       matrix:
         include:
@@ -17,42 +41,88 @@ jobs:
             targets: linux
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v5
-      - uses: oven-sh/setup-bun@v2
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
       - run: bun install --frozen-lockfile
       - run: bun test
       - run: bun run build --targets ${{ matrix.targets }}
-      - name: Smoke test the native binary
-        run: |
-          case "$(uname -s)-$(uname -m)" in
-            Darwin-arm64) b=dist/sasacode-darwin-arm64 ;;
-            Linux-x86_64) b=dist/sasacode-linux-x64 ;;
-          esac
-          "$b" --version
       - name: Package
         run: |
           cd dist
           for f in sasacode-*; do
             case "$f" in *.map) ;; *) tar czf "$f.tar.gz" "$f" ;; esac
           done
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: dist-${{ matrix.targets }}
           path: dist/*.tar.gz
-  release:
-    needs: build
-    runs-on: ubuntu-latest
+  smoke:
+    # Every binary is started once: --version must be the tag, --help and a subcommand must run.
+    needs: [check, build]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: darwin-arm64, os: macos-latest, run: "" }
+          - { target: darwin-x64, os: macos-latest, run: "arch -x86_64" } # Rosetta
+          - { target: linux-x64, os: ubuntu-latest, run: "" }
+          - { target: linux-x64-baseline, os: ubuntu-latest, run: "" }
+          - { target: linux-arm64, os: ubuntu-24.04-arm, run: "" }
+          - { target: linux-x64-musl, os: ubuntu-latest, run: alpine }
+          - { target: linux-arm64-musl, os: ubuntu-24.04-arm, run: alpine }
+    runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/download-artifact@v5
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
         with:
           path: dist
           merge-multiple: true
+      - name: Start sasacode-${{ matrix.target }}
+        env:
+          BIN: sasacode-${{ matrix.target }}
+          RUNNER: ${{ matrix.run }}
+          VERSION: ${{ needs.check.outputs.version }}
+        run: |
+          cd dist
+          tar xzf "$BIN.tar.gz"
+          cat > smoke.sh <<'EOF'
+          set -eu
+          export SASACODE_HOME="$(mktemp -d)"
+          got="$("./$1" --version)"
+          [ "v$got" = "$2" ] || { echo "--version said $got, expected $2"; exit 1; }
+          "./$1" --help > /dev/null
+          "./$1" plugin list > /dev/null
+          echo "$1 $got ok"
+          EOF
+          if [ "$RUNNER" = alpine ]; then
+            docker run --rm -v "$PWD:/w" -w /w alpine:3 sh -c "apk add -q libstdc++ libgcc && sh smoke.sh $BIN $VERSION"
+          else
+            $RUNNER sh smoke.sh "$BIN" "$VERSION"
+          fi
+  release:
+    needs: smoke
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+        with:
+          path: dist
+          merge-multiple: true
+      - run: cp scripts/install.sh dist/ && cd dist && sha256sum *.tar.gz > SHA256SUMS
+      # Signed provenance: `gh attestation verify <file> --repo sasanokusa/sasacode` proves a file
+      # was built by this workflow from this repository, which a matching checksum alone cannot.
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            dist/*.tar.gz
+            dist/install.sh
       - name: Create release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           cd dist
-          sha256sum *.tar.gz > SHA256SUMS
-          cp ../scripts/install.sh .
           gh release create "$GITHUB_REF_NAME" --generate-notes *.tar.gz SHA256SUMS install.sh

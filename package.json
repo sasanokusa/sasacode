@@ -2,6 +2,7 @@
   "name": "sasa-code-harness",
   "private": true,
   "type": "module",
+  "packageManager": "bun@1.4.2",
   "workspaces": [
     "packages/*"
   ],

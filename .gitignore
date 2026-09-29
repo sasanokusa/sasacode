@@ -9,3 +9,4 @@ dist/
 
 # local benchmark scripts and results
 bench/
+.claude/worktrees/
