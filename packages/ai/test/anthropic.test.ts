@@ -1,6 +1,6 @@
 import { afterAll, expect, test } from "bun:test";
 import { anthropicProvider, thinkingFields } from "../src/anthropic.ts";
-import { type AssistantMessage, emptyUsage, type Message, type ModelInfo, type StreamEvent } from "../src/index.ts";
+import { type AssistantMessage, emptyUsage, replayScope, type Message, type ModelInfo, type StreamEvent } from "../src/index.ts";
 
 test("effort off: said explicitly on Claude 5; low effort where thinking cannot be turned off", () => {
   expect(thinkingFields("claude-opus-5", "off", true)).toEqual({ thinking: { type: "disabled" } });
@@ -48,7 +48,7 @@ async function run(id: string, messages: Message[], thinking?: "xhigh") {
 test("thinking bound to another conversation: sent again once without thinking blocks", async () => {
   bodies.length = 0;
   const earlier: AssistantMessage = {
-    role: "assistant", api: "anthropic", provider: "anthropic", model: "claude-opus-5-5", usage: emptyUsage(), stopReason: "stop", timestamp: 0,
+    replayScope: replayScope(model("claude-opus-5-5")), role: "assistant", api: "anthropic", provider: "anthropic", model: "claude-opus-5-5", usage: emptyUsage(), stopReason: "stop", timestamp: 0,
     content: [{ type: "thinking", thinking: "hmm", signature: "sig" }, { type: "text", text: "earlier" }],
   };
   const out = await run("claude-opus-5-5", [user("a"), earlier, user("b")]);

@@ -110,8 +110,8 @@ const loopGuard: Plugin = (api) => {
     };
     if (st.locked.has(sig)) return deny(`this ${call.name} call belongs to a loop that was stopped, and no file has changed since; change the approach`);
     if (st.thisTurn.has(sig)) return deny(`the same ${call.name} call appears earlier in this response with nothing in between that could change its result; it is not run twice`);
-    // After a call that may change things, repeating an earlier check is legitimate (read → write → read).
-    if (tool.kind !== "read") st.thisTurn = new Set();
+    // Arbitrary effects remain unknown; edit tools reset checks only after a successful change.
+    if (tool.kind === "exec" || tool.kind === "other") st.thisTurn = new Set();
     st.thisTurn.add(sig);
     for (let p = 1; p <= Math.min(MAX_PERIOD, history.length); p++) {
       if (history[history.length - p]!.call !== sig) continue;
@@ -139,10 +139,14 @@ const loopGuard: Plugin = (api) => {
       call: `${call.name}:${stable(call.input)}`,
       result: resultText(result),
       isError: !!result.isError,
-      changes: tool?.kind === "edit" && !result.isError,
+      // Built-ins report actual changes; preserve the edit-kind contract for older plugins.
+      changes: didRun && !result.isError && (typeof result.details?.changed === "boolean" ? result.details.changed : tool?.kind === "edit"),
     };
     // A file changed (by any agent): stopped loops may make progress again.
-    if (step.changes) for (const other of states.values()) other.locked = new Set();
+    if (step.changes) {
+      for (const other of states.values()) { other.locked = new Set(); other.history = []; other.thisTurn = new Set(); }
+      st.thisTurn.add(step.call);
+    }
     const sameError = step.isError ? errorStreak(st.history, step.result) + 1 : 0;
     st.history.push(step);
     if (st.history.length > 50) st.history = st.history.slice(-50);

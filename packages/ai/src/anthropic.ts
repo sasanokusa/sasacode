@@ -11,7 +11,6 @@ import {
   computeCost,
   markIfCut,
   type Message,
-  newAssistant,
   parseToolInput,
   type Provider,
   samplingFields,
@@ -21,35 +20,38 @@ import {
   type ThinkingLevel,
   type UserContent,
 } from "./types.ts";
+import { canReplay, newReply as newAssistant } from "./replay.ts";
 
 const OFFICIAL_BASE = "https://api.anthropic.com";
 
 /** Thinking cannot be turned off on these: effort is the only control. */
 const ALWAYS_THINKS = /^claude-(opus-5-5|fable|mythos)/;
-/**
- * These bind a thinking block to the system prompt, tools and messages before it, and reject it
- * when any of those changed (preserved thinking). sasacode changes them mid-conversation (plugins
- * append to the system prompt, MCP tools arrive late, compaction keeps a recent tail).
- */
-const BINDS_THINKING = /^claude-(opus-5-5|fable-5-1|mythos-5-1)/;
+/** These reject preserved thinking when the prompt, tools or earlier messages change. */
+const BINDS_THINKING = /^claude-(opus-5-5|sonnet-5-5|fable-5-1)/;
 const BINDING_BETA = "thinking-binding-controls-2026-08-01";
 
 /** What a model turned out not to accept, so later requests go straight to what works. */
-const learned = { noDisable: new Set<string>(), noXhigh: new Set<string>(), noBinding: new Set<string>() };
+const learned = new Map<string, { noDisable?: boolean; noXhigh?: boolean; noBinding?: boolean }>();
+
+function officialEndpoint(baseUrl: string = OFFICIAL_BASE): boolean {
+  try { return new URL(baseUrl).origin === OFFICIAL_BASE; } catch { return false; }
+}
 
 /** The thinking fields for a level. Only the official API gets fields beyond what was sent before. */
-export function thinkingFields(id: string, level: ThinkingLevel | undefined, official: boolean): Pick<MessageCreateParamsStreaming, "thinking" | "output_config"> {
+export function thinkingFields(id: string, level: ThinkingLevel | undefined, official: boolean, known: { noDisable?: boolean; noXhigh?: boolean } = {}): Pick<MessageCreateParamsStreaming, "thinking" | "output_config"> {
   const adaptive = (effort?: string) => ({
     thinking: { type: "adaptive", display: "summarized" } as MessageCreateParamsStreaming["thinking"],
     ...(effort ? { output_config: { effort } as MessageCreateParamsStreaming["output_config"] } : {}),
   });
   if (!level) return BINDS_THINKING.test(id) && official ? adaptive() : {};
   if (level === "off") {
-    // Leaving thinking out runs adaptive thinking on Claude 5 models: off has to be said.
-    if (ALWAYS_THINKS.test(id) || learned.noDisable.has(id)) return adaptive("low");
+    if (!official) return {};
+    // The installed SDK predates Sonnet 5.5's lowest thinking setting.
+    if (/^claude-sonnet-5-5(?:-|$)/.test(id)) return { thinking: { type: "between_tools" } as unknown as MessageCreateParamsStreaming["thinking"] };
+    if (ALWAYS_THINKS.test(id) || known.noDisable) return adaptive("low");
     return official && id.startsWith("claude-") ? { thinking: { type: "disabled" } } : {};
   }
-  return adaptive(level === "xhigh" && learned.noXhigh.has(id) ? "high" : level);
+  return adaptive(level === "xhigh" && known.noXhigh ? "high" : level);
 }
 
 export const anthropicProvider: Provider = {
@@ -59,13 +61,15 @@ export const anthropicProvider: Provider = {
     const client = new Anthropic({
       // Without an explicit key the SDK resolves env vars and `ant auth login` profiles itself.
       ...(req.apiKey ? { apiKey: req.apiKey } : {}),
-      baseURL: model.baseUrl,
+      baseURL: model.baseUrl ?? OFFICIAL_BASE,
       maxRetries: req.maxRetries ?? 8,
       defaultHeaders: model.headers,
       ...(req.fetch ? { fetch: req.fetch } : {}),
     });
-    // Proxies may reject eager_input_streaming, so only send it to the official API.
-    const official = !model.baseUrl || model.baseUrl.startsWith(OFFICIAL_BASE);
+    const official = officialEndpoint(model.baseUrl);
+    const key = JSON.stringify([model.baseUrl ?? OFFICIAL_BASE, model.id]);
+    const known = learned.get(key) ?? {};
+    learned.set(key, known);
     const tools: Tool[] = req.tools.map((t) => ({
       name: t.name,
       description: t.description,
@@ -78,31 +82,28 @@ export const anthropicProvider: Provider = {
         model: model.id,
         max_tokens: req.maxTokens ?? model.maxOutput,
         system: req.system,
-        messages: toAnthropicMessages(req.messages, model.id, stripThinking),
+        messages: toAnthropicMessages(req.messages, model, stripThinking),
         tools,
         stream: true,
         cache_control: { type: "ephemeral" },
-        ...(model.reasoning ? thinkingFields(model.id, req.thinking, official) : {}),
+        ...(model.reasoning ? thinkingFields(model.id, req.thinking, official, known) : {}),
       };
       // Newer Claude models reject sampling parameters; only what a plugin or config set explicitly is sent.
       Object.assign(params, samplingFields(req.sampling, ["temperature", "top_p"]));
       let beta: string | undefined;
-      if (official && params.thinking?.type === "adaptive" && BINDS_THINKING.test(model.id) && !learned.noBinding.has(model.id)) {
+      if (official && params.thinking?.type === "adaptive" && BINDS_THINKING.test(model.id) && !known.noBinding) {
         // A block whose context changed is dropped instead of failing the whole request.
         (params.thinking as unknown as Record<string, unknown>).block_binding = { prefix_mismatch_behavior: "drop_block" };
-        beta = [model.headers?.["anthropic-beta"], BINDING_BETA].filter(Boolean).join(",");
+        beta = [new Headers(model.headers).get("anthropic-beta"), BINDING_BETA].filter(Boolean).join(",");
       }
       return { params, headers: beta ? { "anthropic-beta": beta } : undefined };
     };
 
-    /**
-     * Learn from a 400 about the request's own shape and say whether sending it again can help.
-     * Nothing has been streamed yet when this is called.
-     */
+    /** Adjust a rejected request only before any content has arrived. */
     function adjust(message: string, params: MessageCreateParamsStreaming): boolean {
-      if (params.thinking?.type === "disabled" && /thinking\.type\.disabled|disabled.*not supported/i.test(message)) return !!learned.noDisable.add(params.model);
-      if (params.output_config?.effort === "xhigh" && /effort/i.test(message)) return !!learned.noXhigh.add(params.model);
-      if (/block_binding/.test(message) && !learned.noBinding.has(params.model)) return !!learned.noBinding.add(params.model);
+      if (params.thinking?.type === "disabled" && /thinking\.type\.disabled|disabled.*not supported/i.test(message)) return (known.noDisable = true);
+      if (params.output_config?.effort === "xhigh" && !/messages[.\[]|signature|reasoning_content/i.test(message) && /effort/i.test(message)) return (known.noXhigh = true);
+      if (params.thinking?.type === "adaptive" && "block_binding" in params.thinking && /block_binding/.test(message) && !known.noBinding) return (known.noBinding = true);
       // Preserved thinking where the binding controls are not offered: send the history without thinking once.
       if (/bound to a different conversation/i.test(message) && !stripThinking) return (stripThinking = true);
       return false;
@@ -210,7 +211,7 @@ function userBlocks(content: UserContent[]): ContentBlockParam[] {
 }
 
 /** `noThinking` leaves out every thinking block (a model that rejected them as bound elsewhere). */
-export function toAnthropicMessages(messages: Message[], modelId: string, noThinking = false): MessageParam[] {
+export function toAnthropicMessages(messages: Message[], model: Request["model"], noThinking = false): MessageParam[] {
   const out: MessageParam[] = [];
   const push = (role: "user" | "assistant", blocks: ContentBlockParam[]) => {
     const last = out[out.length - 1];
@@ -225,7 +226,7 @@ export function toAnthropicMessages(messages: Message[], modelId: string, noThin
         { type: "tool_result", tool_use_id: m.toolCallId, content: userBlocks(m.content) as never, is_error: m.isError },
       ]);
     else {
-      const sameModel = m.api === "anthropic" && m.model === modelId;
+      const sameModel = canReplay(m, model);
       const blocks: ContentBlockParam[] = [];
       for (const c of m.content) {
         if (c.type === "text") {

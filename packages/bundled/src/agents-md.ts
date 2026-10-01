@@ -25,7 +25,8 @@ const agentsMd: Plugin = (api) => {
       const text = files.map((f) => `Instructions from ${f}:\n${readFileSync(f, "utf8").trim()}`).join("\n\n");
       cache = { key, text };
     }
-    return { prompt: `${prompt}\n\n${cache.text}` };
+    const at = prompt.indexOf("\n\nEnvironment:");
+    return { prompt: at < 0 ? `${prompt}\n\n${cache.text}` : `${prompt.slice(0, at)}\n\n${cache.text}${prompt.slice(at)}` };
   });
 };
 export default agentsMd;

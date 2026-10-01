@@ -31,13 +31,14 @@ export const writeTool: ToolDefinition<Args> = {
     const path = resolvePath(args.path, ctx.cwd);
     const before = await readFile(path, "utf8").catch(() => undefined);
     if (ctx.signal.aborted) return interrupted();
+    if (before === args.content) return { content: [text(`Unchanged ${path}; nothing was written.`)], details: { path, changed: false } };
     await mkdir(dirname(path), { recursive: true });
     if (ctx.signal.aborted) return interrupted();
     await writeFile(path, args.content);
     const lines = args.content.split("\n").length;
     return {
       content: [text(`${before === undefined ? "Created" : "Overwrote"} ${path} (${lines} lines).`)],
-      details: { path, created: before === undefined, diff: before === undefined ? undefined : lineDiff(before, args.content) },
+      details: { path, changed: true, created: before === undefined, diff: before === undefined ? undefined : lineDiff(before, args.content) },
     };
   },
 };

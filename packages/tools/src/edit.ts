@@ -46,7 +46,7 @@ export const editTool: ToolDefinition<Args> = {
     const diff = lineDiff(before, after);
     return {
       content: [text(`Edited ${path} (${count} replacement${count > 1 ? "s" : ""}).`)],
-      details: { path, diff },
+      details: { path, changed: true, diff },
     };
   },
 };

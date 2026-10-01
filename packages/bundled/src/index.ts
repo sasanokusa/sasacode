@@ -5,6 +5,7 @@ import backgroundSessions from "./background-sessions.ts";
 import browsr from "./browsr.ts";
 import checkpoints from "./checkpoints.ts";
 import compaction from "./compaction.ts";
+import diagnostics from "./diagnostics.ts";
 import goal from "./goal.ts";
 import imageAttach from "./image-attach.ts";
 import loopGuard from "./loop-guard.ts";
@@ -33,6 +34,7 @@ export const bundledPlugins: Record<string, Plugin> = {
   "loop-guard": loopGuard,
   "agents-md": agentsMd,
   compaction,
+  diagnostics,
   subagent,
   todo,
   "web-fetch": webFetch,

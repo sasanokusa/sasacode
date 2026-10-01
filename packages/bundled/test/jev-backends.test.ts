@@ -40,7 +40,7 @@ test("native dialect: Command Code, TypeSafe and OpenRouter differ only in URL, 
   const cases = [
     ["commandcode", "CMD_API_KEY", "https://api.commandcode.ai/provider/v1/systemone", "typesafe/jev"],
     ["typesafe", "TYPESAFE_API_KEY", "https://api.typesafe.ai/v1/systemone", "jev-latest"],
-    ["openrouter", "OPENROUTER_API_KEY", "https://openrouter.ai/api/alpha/decisions", "typesafe/jev-latest"],
+    ["openrouter", "OPENROUTER_API_KEY", "https://openrouter.ai/api/alpha/decisions", "~typesafe/jev-latest"],
   ] as const;
   for (const [name, env, url, model] of cases) {
     process.env[env] = `key-${name}`;
@@ -69,9 +69,9 @@ test("vercel dialect: model in a header, noul as boolean/probability, confidence
   expect(sent[0]!.body.questions.risky.type).toBe("boolean");
   expect(raw.choice.verdict!.confidence).toBe(0.85);
   expect(raw.noul.risky).toBe(0.05);
-  // Without the reported confidence, the top probability stands in.
+  // Without reported calibration, a high probability cannot stand in for confidence.
   const est = parseVercel({ answers: { verdict: { choice: "ask", probabilities: { allow: 0.3, ask: 0.6, deny: 0.1 } }, risky: { probability: 1 } } }, questions);
-  expect(est.choice.verdict!.confidence).toBe(0.6);
+  expect(est.choice.verdict!.confidence).toBe(0);
 });
 
 test("settings override model, endpoint and key variable; a missing key is an error, not a guess", async () => {
@@ -129,4 +129,33 @@ test("chat backend: any sasacode model answers the same questions as JSON", asyn
   await expect(makeBackend(bad, "chat", {}).ask({}, questions, signal)).rejects.toThrow('chose "maybe"');
   const none = { agent: { complete: async () => "I cannot help" } } as unknown as PluginAPI;
   await expect(makeBackend(none, "chat", {}).ask({}, questions, signal)).rejects.toThrow("no JSON");
+});
+
+test("Jev retries honor Retry-After and cancellation rather than hammering a busy service", async () => {
+  process.env.TYPESAFE_API_KEY = "k";
+  let calls = 0;
+  globalThis.fetch = (async () => { calls++; return new Response("busy", { status: 429, headers: { "retry-after": "1" } }); }) as unknown as typeof fetch;
+  const ac = new AbortController();
+  const started = Date.now();
+  const pending = makeBackend(api, "typesafe", {}).ask({}, questions, ac.signal);
+  setTimeout(() => ac.abort(new Error("judge deadline")), 20);
+  await expect(pending).rejects.toThrow("judge deadline");
+  expect(calls).toBe(1); expect(Date.now() - started).toBeLessThan(500);
+  calls = 0;
+  globalThis.fetch = (async () => ++calls === 1 ? new Response("busy", { status: 529, headers: { "retry-after": "0" } }) : Response.json(native)) as unknown as typeof fetch;
+  expect((await makeBackend(api, "typesafe", {}).ask({}, questions, signal)).choice.verdict!.confidence).toBe(0.8);
+  expect(calls).toBe(2);
+});
+
+test("Jev does not retry validation errors or wait beyond its retry budget", async () => {
+  process.env.TYPESAFE_API_KEY = "k";
+  for (const status of [400, 401, 403, 422]) {
+    const sent = capture({ error: "validation" }, status);
+    await expect(makeBackend(api, "typesafe", {}).ask({}, questions, signal)).rejects.toThrow(`HTTP ${status}`);
+    expect(sent).toHaveLength(1);
+  }
+  let calls = 0;
+  globalThis.fetch = (async () => { calls++; return new Response("busy", { status: 503, headers: { "retry-after": new Date(Date.now() + 60000).toUTCString() } }); }) as unknown as typeof fetch;
+  await expect(makeBackend(api, "typesafe", {}).ask({}, questions, signal)).rejects.toThrow("retry deferred");
+  expect(calls).toBe(1);
 });
