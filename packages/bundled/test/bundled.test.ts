@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Agent, makeToolSearchTool, PermissionPolicy, PluginHost, SessionFile } from "@sasacode/agent";
 import { type AssistantContent, type AssistantMessage, emptyUsage, type Message, registerApi } from "@sasacode/ai";
+import { buildSystemPrompt } from "../../agent/src/system-prompt.ts";
 import { replayProvider } from "@sasacode/testing";
 import builtinTools, { bashTool } from "@sasacode/tools";
 import { agentsFiles, bundledPlugins, htmlToText, splitPoint } from "../src/index.ts";
@@ -56,8 +57,10 @@ test("agents-md: global and repo-root-to-cwd AGENTS.md go into the system prompt
   expect(agentsFiles(sub, home)).toEqual([join(home, "AGENTS.md"), join(repo, "AGENTS.md"), join(sub, "AGENTS.md")]);
   process.env.SASACODE_HOME = home;
   const { agent, provider } = await setup([reply([say("ok")])], ["agents-md"], { cwd: sub });
+  agent.systemPrompt = buildSystemPrompt({ cwd: sub });
   await agent.prompt("hi");
   const sys = provider.requests[0]!.system;
+  expect(sys.indexOf("pkg rule")).toBeLessThan(sys.indexOf("Environment:"));
   expect(sys.indexOf("global rule")).toBeLessThan(sys.indexOf("repo rule"));
   expect(sys.indexOf("repo rule")).toBeLessThan(sys.indexOf("pkg rule"));
   expect(sys).not.toContain("claude rule");

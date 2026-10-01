@@ -2,7 +2,7 @@
 // stream. Covers the conversion of the history and the parsing of the stream.
 import { expect, test } from "bun:test";
 import { anthropicProvider } from "../src/anthropic.ts";
-import { type AssistantMessage, emptyUsage, INCOMPLETE_STREAM, type Message, type ModelInfo, type Request, type StreamEvent } from "../src/index.ts";
+import { type AssistantMessage, emptyUsage, replayScope, INCOMPLETE_STREAM, type Message, type ModelInfo, type Request, type StreamEvent } from "../src/index.ts";
 import { openaiChatProvider } from "../src/openai-chat.ts";
 import { openaiResponsesProvider } from "../src/openai-responses.ts";
 
@@ -28,7 +28,7 @@ async function run(provider: typeof openaiChatProvider, req: Request) {
 const png = { type: "image" as const, mediaType: "image/png", data: "iVBORw0KGgo=" };
 const user = (text: string): Message => ({ role: "user", content: [{ type: "text", text }], timestamp: 0 });
 const assistant = (model: ModelInfo, content: AssistantMessage["content"]): AssistantMessage => ({
-  role: "assistant", content, api: model.api, provider: model.provider, model: model.id, usage: emptyUsage(), stopReason: "tool_use", timestamp: 0,
+  role: "assistant", content, replayScope: replayScope(model), api: model.api, provider: model.provider, model: model.id, usage: emptyUsage(), stopReason: "tool_use", timestamp: 0,
 });
 const history = (model: ModelInfo): Message[] => [
   user("look at a.png"),
@@ -57,7 +57,7 @@ test("openai-chat: tool results are tool messages, their images follow as a user
   expect(body.messages[2].tool_calls[0].function).toEqual({ name: "read", arguments: '{"path":"a.png"}' });
   expect(body.messages[4].content[1].image_url.url).toStartWith("data:image/png;base64,");
   expect(message.content).toEqual([
-    { type: "thinking", thinking: "think" },
+    { type: "thinking", thinking: "think", reasoningField: "reasoning_content" },
     { type: "text", text: "Hello" },
     { type: "tool_call", id: "c2", name: "read", input: { path: "b" } },
   ]);
@@ -149,7 +149,7 @@ test("a stream cut before the reply finished is an error with what arrived, not 
   const m1 = (await run(openaiChatProvider, req(chat, cutChat.fetch))).message;
   expect(m1.stopReason).toBe("error");
   expect(m1.errorMessage).toBe(INCOMPLETE_STREAM);
-  expect(m1.content).toEqual([{ type: "thinking", thinking: "let me see" }]);
+  expect(m1.content).toEqual([{ type: "thinking", thinking: "let me see", reasoningField: "reasoning_content" }]);
   // A server that never sends finish_reason but does send the usage chunk has finished.
   const usageOnly = fakeFetch(sse([chunk({ content: "hi" }), { ...chunk({}), choices: [], usage: { prompt_tokens: 3, completion_tokens: 1, total_tokens: 4 } }]));
   expect((await run(openaiChatProvider, req(chat, usageOnly.fetch))).message.stopReason).toBe("stop");

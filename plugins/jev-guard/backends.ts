@@ -70,7 +70,7 @@ export const SERVICES: Record<Exclude<BackendName, "chat">, Service> = {
     label: "OpenRouter",
     keyEnv: "OPENROUTER_API_KEY",
     keychain: "openrouter",
-    model: "typesafe/jev-latest",
+    model: "~typesafe/jev-latest",
     endpoint: "https://openrouter.ai/api/alpha/decisions",
     dialect: "native",
   },
@@ -116,7 +116,20 @@ async function post(url: string, headers: Record<string, string>, body: unknown,
     fetch(url, { method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(body), signal });
   let res = await send();
   // Overloaded or rate limited: one more try within the same time limit.
-  if (res.status === 429 || res.status === 529 || res.status >= 500) res = await send();
+  if (res.status === 429 || res.status === 529 || res.status >= 500) {
+    const header = res.headers.get("retry-after");
+    const ms = header === null ? 500 : /^\d+(?:\.\d+)?$/.test(header) ? Number(header) * 1000 : Date.parse(header) - Date.now();
+    await res.body?.cancel();
+    // Longer waits exceed this judge's useful retry budget. Let its caller apply the failure policy.
+    if (Number.isFinite(ms) && ms > 30_000) throw new BackendError("retry deferred by server");
+    await new Promise<void>((resolve, reject) => {
+      const abort = () => { clearTimeout(timer); signal.removeEventListener("abort", abort); reject(signal.reason ?? new BackendError("aborted")); };
+      const timer = setTimeout(() => { signal.removeEventListener("abort", abort); resolve(); }, Number.isFinite(ms) ? Math.max(0, ms) : 500);
+      signal.addEventListener("abort", abort, { once: true });
+      if (signal.aborted) abort();
+    });
+    res = await send();
+  }
   if (!res.ok) throw new BackendError(`HTTP ${res.status} ${(await res.text()).trim().slice(0, 200)}`);
   return res.json();
 }
@@ -145,8 +158,8 @@ export function parseNative(body: any, questions: Record<string, Question>): Raw
 
 /**
  * Vercel's dialect: noul is "boolean" with a `probability`; the model goes in a header; a
- * choice's confidence arrives in providerMetadata.typesafe.confidence (estimated from the
- * probabilities when missing).
+ * choice's confidence arrives in providerMetadata.typesafe.confidence. Missing calibration
+ * is represented as zero confidence, so it cannot automatically allow a tool call.
  */
 export function vercelBody(state: unknown, questions: Record<string, Question>) {
   return {
@@ -166,8 +179,7 @@ export function parseVercel(body: any, questions: Record<string, Question>): Raw
     if (q.type === "noul") out.noul[id] = num(a.probability);
     else {
       if (!a.probabilities || typeof a.probabilities !== "object") throw new BackendError(`no probabilities for ${id}`);
-      const probs = Object.values(a.probabilities as Record<string, number>);
-      const confidence = typeof reported[id] === "number" ? reported[id] : Math.max(...probs);
+      const confidence = typeof reported[id] === "number" ? num(reported[id]) : 0;
       out.choice[id] = { choice: String(a.choice), probabilities: a.probabilities, confidence };
     }
   }

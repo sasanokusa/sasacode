@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync, statSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { bashTool, editTool, readTool, writeTool } from "../src/index.ts";
@@ -92,4 +92,19 @@ test("read: pipes and devices are refused, big images too, big files read only a
   writeFileSync(join(dir, "big.log"), `${"x".repeat(99)}\n`.repeat(120_000)); // 12 MB
   const r = out(await readTool.execute({ path: "big.log", limit: 3 }, ctx()));
   expect(r).toContain("Showing lines 1-3 of a 12 MB file. Use offset=4");
+});
+
+
+test("an identical write is a no-op: contents, mtime and inode stay unchanged", async () => {
+  const path = join(dir, "same.txt");
+  expect((await writeTool.execute({ path, content: "same" }, ctx())).details?.changed).toBe(true);
+  utimesSync(path, new Date(1000), new Date(1000));
+  const before = statSync(path);
+  const result = await writeTool.execute({ path, content: "same" }, ctx());
+  expect(result.details?.changed).toBe(false);
+  expect(result.details?.diff).toBeUndefined();
+  expect(statSync(path).mtimeMs).toBe(before.mtimeMs);
+  expect(statSync(path).ino).toBe(before.ino);
+  expect(readFileSync(path, "utf8")).toBe("same");
+  expect((await writeTool.execute({ path, content: "changed" }, ctx())).details?.changed).toBe(true);
 });

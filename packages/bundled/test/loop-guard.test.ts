@@ -17,6 +17,8 @@ async function run(script: AssistantMessage[], onCause?: (cause: string) => void
   let n = 0;
   const tools: Plugin = (api) => {
     api.registerTool({ name: "check", description: "", parameters: { type: "object", properties: { x: { type: "number" } } }, kind: "read", execute: async () => ({ content: [{ type: "text", text: "same output" }] }) });
+    api.registerTool({ name: "noop", description: "", parameters: { type: "object", properties: {} }, kind: "edit", paths: () => [], execute: async () => ({ content: [{ type: "text", text: "unchanged" }], details: { changed: false } }) });
+    api.registerTool({ name: "failed", description: "", parameters: { type: "object", properties: {} }, kind: "edit", paths: () => [], execute: async () => ({ content: [{ type: "text", text: "failed" }], isError: true, details: { changed: true } }) });
     api.registerTool({ name: "fix", description: "", parameters: { type: "object", properties: {} }, kind: "edit", paths: () => [], execute: async () => ({ content: [{ type: "text", text: `changed ${++n}` }] }) });
   };
   const agent = new Agent({ model: { id: "m", provider: "t", api: "replay", contextWindow: 1e5, maxOutput: 1e3 }, cwd: import.meta.dir, systemPrompt: "", permissions: new PermissionPolicy("auto") });
@@ -123,4 +125,43 @@ test("parallel subagents keep separate state: the same read in each is not a rep
   );
   await agent.prompt("go");
   expect(refused).toEqual([]);
+});
+
+
+test("successful no-op writes and failed edits are not progress", async () => {
+  for (const name of ["noop", "failed"]) {
+    const results = await run([...Array.from({ length: 5 }, (_, i) => call(String(i), name, {})), reply([{ type: "text", text: "done" }])]);
+    expect(results[2]).toContain("[harness]");
+    expect(results[4]).toContain("loop-guard");
+  }
+});
+
+test("read → no-op edit → same read in one response remains a duplicate", async () => {
+  const results = await run([reply([
+    { type: "tool_call", id: "r1", name: "check", input: { x: 1 } },
+    { type: "tool_call", id: "w", name: "noop", input: {} },
+    { type: "tool_call", id: "r2", name: "check", input: { x: 1 } },
+  ]), reply([{ type: "text", text: "done" }])]);
+  expect(results[2]).toContain("appears earlier in this response");
+});
+
+test("a change by another agent clears both locked calls and their stale history", async () => {
+  const agent = new Agent({ model: { id: "m", provider: "t", api: "replay", contextWindow: 1e5, maxOutput: 1000 }, cwd: import.meta.dir, systemPrompt: "", permissions: new PermissionPolicy("auto") });
+  const host = new PluginHost({ agent, cwd: agent.cwd });
+  await host.load("tools", api => api.registerTool({ name: "check", description: "", parameters: {}, kind: "read", execute: async () => ({ content: [] }) }));
+  await host.load("loop-guard", bundledPlugins["loop-guard"]!);
+  const read = { type: "tool_call" as const, id: "read", name: "check", input: {} };
+  for (let i = 0; i < 4; i++) {
+    await agent.hooks.run("assistant_message", { message: reply([]) });
+    await agent.hooks.run("tool_result", { call: read, ran: true, result: { content: [{ type: "text", text: "same" }] } });
+  }
+  const verdict = async () => {
+    await agent.hooks.run("assistant_message", { message: reply([]) });
+    let decision: string | undefined;
+    await agent.hooks.run("tool_call", { call: read, args: {}, tool: agent.getTools()[0]! }, r => { decision = r.decision; });
+    return decision;
+  };
+  expect(await verdict()).toBe("deny");
+  await agent.hooks.without([], { agent: "worker" }).run("tool_result", { call: { ...read, id: "changed", name: "write" }, ran: true, result: { content: [], details: { changed: true } } });
+  expect(await verdict()).toBeUndefined();
 });

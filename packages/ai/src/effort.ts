@@ -24,7 +24,9 @@ const accepted = new Map<string, number>();
 export function isEffortRejected(e: unknown): boolean {
   if (!(e instanceof OpenAI.APIError)) return false;
   const bad = e.status === 400 || e.status === 422 || (e.status === undefined && (String(e.code) === "400" || /BadRequest|invalid_request/i.test(String(e.type))));
-  return bad && /reasoning|effort|thinking/i.test(`${e.param ?? ""} ${e.message}`);
+  const text = `${e.param ?? ""} ${e.message}`;
+  return bad && !/reasoning_content|reasoning_details|signature|encrypted_content|messages\[|messages\./i.test(text)
+    && /reasoning[_ .]effort|\beffort\b|(?:does not support|unsupported).*thinking/i.test(text);
 }
 
 /**

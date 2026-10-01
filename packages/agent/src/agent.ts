@@ -416,9 +416,11 @@ export class Agent {
     });
     let messages = this.messages;
     let sampling: SamplingOptions = {};
-    await this.hooks.run("before_request", { messages: [...messages], model: this.model, sampling }, (r, ev) => {
+    let requestFetch: typeof fetch | undefined;
+    await this.hooks.run("before_request", { messages: [...messages], model: this.model, sampling, fetch: requestFetch }, (r, ev) => {
       if (r.messages) messages = ev.messages = r.messages;
       if (r.sampling) sampling = ev.sampling = { ...sampling, ...r.sampling };
+      if (r.fetch) requestFetch = ev.fetch = r.fetch;
     });
 
     // A model that takes no images gets a note instead: one image would fail every request after it.
@@ -445,6 +447,7 @@ export class Agent {
         maxRetries: this.opts.maxRetries,
         maxTokens: replyBudget(this.model, messages, system.length + JSON.stringify(tools).length),
         sampling,
+        fetch: requestFetch,
         signal: request.signal,
       })) {
         if (ev.type === "start") this.events.emit({ type: "message_start", message: ev.partial });

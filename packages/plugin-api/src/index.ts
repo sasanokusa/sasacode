@@ -29,7 +29,7 @@ export type {
   UserContent,
 } from "@sasacode/ai";
 
-export const PLUGIN_API_VERSION = "1.10.0";
+export const PLUGIN_API_VERSION = "1.11.0";
 
 // ── tools ────────────────────────────────────────────────────────────
 
@@ -38,10 +38,7 @@ export interface ToolContext {
   signal: AbortSignal;
   /** Stream partial output (e.g. bash stdout) to the UI while the tool runs. */
   onUpdate?(text: string): void;
-  /** Call another registered tool through validation, hooks and its own permission check.
-   * Inherits cwd, agent and cancellation. Available only while execute is running; await it.
-   * Cycles and chains deeper than 8 tools return an error. No permission bypass. (since 1.9.0)
-   */
+  /** Call a tool with inherited context and its own validation/permission check (since 1.9.0); see docs/plugins.md. */
   callTool?(name: string, args: Record<string, unknown>): Promise<ToolResult>;
 }
 
@@ -71,12 +68,7 @@ export interface ToolDefinition<Args = Record<string, any>> {
   paths?(args: Args, cwd: string): string[];
   /** String matched by permission patterns such as `bash(git *)`. */
   matchTarget?(args: Args): string;
-  /**
-   * Also judged by the permission rules written for this tool name, e.g. "bash" for a tool that
-   * runs shell commands another way (in the background, remotely): the user's `bash(sudo *)`
-   * deny rules, the guard preset and `bash(git status*)` allow rules then cover it too, matched
-   * against this tool's matchTarget / paths. Its own rules still apply. (since 1.6.0)
-   */
+  /** Also apply the rules for this tool name (since 1.6.0); see docs/plugins.md for precedence. */
   permissionsAs?: string;
   /** One-line label for UIs, e.g. the command or path. */
   summary?(args: Args): string;
@@ -113,51 +105,31 @@ export type StopCause = "done" | "aborted" | "error" | "refusal" | "context_limi
 
 export type DeltaKind = "text" | "thinking" | "toolcall";
 
-/**
- * Each hook: the payload handlers receive and what they may return. Handlers run in registration order.
- * Order around one model response:
- *   before_request → [stream_delta …] → assistant_message → tool_call_raw (per call)
- *   → validation → tool_call → rules and mode → permission → execute → tool_result
- */
+/** Hooks run in registration order; lifecycle and contracts are documented in docs/plugins.md. */
 export interface HookMap {
   session_start: { event: { sessionId?: string; resumed: boolean }; result: void };
-  /**
-   * `reason` (since 1.8.0): "switch" when another session follows (/clear, /resume, /fork), "exit" when
-   * sasacode quits. Undefined from older hosts; treat it as "exit".
-   */
+  /** Session ends for "switch" or "exit"; undefined from older hosts means "exit" (since 1.8.0). */
   session_end: { event: { sessionId?: string; reason?: "switch" | "exit" }; result: void };
   /** Transform input, or consume it (`handled`) so it never reaches the model. */
   user_prompt: { event: { content: UserContent[] }; result: { content?: UserContent[]; handled?: boolean } };
   /** Append to (or rewrite) the system prompt for this request. */
   system_prompt: { event: { prompt: string }; result: { prompt?: string } };
-  /** Change the messages or sampling options of this request (not what is stored). */
+  /** Change messages, sampling, or compose the request fetch transport (since 1.11.0; see docs/plugins.md). */
   before_request: {
-    event: { messages: Message[]; model: ModelInfo; sampling: SamplingOptions };
-    result: { messages?: Message[]; sampling?: SamplingOptions };
+    event: { messages: Message[]; model: ModelInfo; sampling: SamplingOptions; fetch?: typeof fetch };
+    result: { messages?: Message[]; sampling?: SamplingOptions; fetch?: typeof fetch };
   };
-  /**
-   * Called for every streamed delta. Must be synchronous and cheap (it runs on the stream).
-   * `text` is the block's accumulated text so far. Return `stop` to end generation early. (since 1.2.0)
-   */
+  /** Synchronous, cheap streaming handler; accumulated text and early stop (since 1.2.0). */
   stream_delta: {
     event: { kind: DeltaKind; index: number; delta: string; text: string; message: Readonly<AssistantMessage> };
     result: { stop?: string };
   };
-  /**
-   * The finished response, before it is stored. `stopped` says which plugin ended it and why.
-   * Rewrite it (`message`), drop it and ask again (`retry`), or keep it and add a user
-   * message so the loop continues (`inject`). (since 1.2.0)
-   */
+  /** Rewrite, retry, or inject after the finished response, before storage (since 1.2.0). */
   assistant_message: {
     event: { message: AssistantMessage; stopped?: { plugin: string; reason: string } };
     result: { message?: AssistantMessage; retry?: boolean; inject?: string };
   };
-  /**
-   * A tool call as the model produced it, before the tool is looked up and arguments validated.
-   * `rawInput` is set when the arguments were not valid JSON. Return a corrected `name` / `input`
-   * and a short `note`; the model is told about the repair. Truncated calls (stopReason
-   * max_tokens) never reach this hook. (since 1.2.0)
-   */
+  /** Repair model-produced calls before validation; excludes truncated calls (since 1.2.0). */
   tool_call_raw: {
     event: {
       call: Readonly<ToolCall>;
@@ -174,13 +146,7 @@ export interface HookMap {
     event: { call: ToolCall; tool: ToolDefinition<any>; args: Record<string, unknown> };
     result: { args?: Record<string, unknown>; decision?: Decision; reason?: string };
   };
-  /**
-   * The verdict of the rules, the permission mode and tool_call hooks, before the user is asked.
-   * Return a `decision` to change it: stricter is always accepted; looser only down to `lowest`
-   * (a mode default may go to "allow", a softDeny rule to "ask", the user's rules and tool_call
-   * decisions only stricter). In agent mode, a call no handler decided goes to the model judge.
-   * (since 1.7.0)
-   */
+  /** Refine permission within `lowest`; rules and hook decisions only tighten (since 1.7.0). */
   permission: {
     event: {
       call: ToolCall;
@@ -193,17 +159,9 @@ export interface HookMap {
     };
     result: { decision?: Decision; reason?: string };
   };
-  /**
-   * Every call's result, including calls that never ran (`ran: false`: unknown tool, invalid
-   * arguments, denied, interrupted), so a plugin can see a model repeating the same mistake.
-   * (`ran` since 1.4.0; before that, only calls that ran reached this hook.)
-   */
+  /** Results include calls that never ran (`ran: false` since 1.4.0); see docs/plugins.md. */
   tool_result: { event: { call: ToolCall; result: ToolResult; ran: boolean }; result: { result?: ToolResult } };
-  /**
-   * Return `inject` to add a user message and keep the loop going, or `stop` (a reason) to end the
-   * run here, e.g. when it makes no progress (`stop` since 1.4.0). The core itself only stops for
-   * permission, interrupts and the context limit (principle A6); anything else is a plugin's call.
-   */
+  /** Continue via inject or stop the run with a reason (since 1.4.0; see docs/plugins.md). */
   turn_end: { event: { turn: number; message: AssistantMessage }; result: { inject?: string; stop?: string } };
   /** `stopped` is set when cause is "stopped" (since 1.4.0). */
   agent_end: { event: { cause: StopCause; stopped?: { plugin: string; reason: string } }; result: { inject?: string } };
@@ -215,10 +173,7 @@ export type HookName = keyof HookMap;
 
 /** Where a hook fired. (since 1.8.0) */
 export interface HookContext {
-  /**
-   * Undefined for the main agent. Each subagent run (agent.run, the task tool) has its own id,
-   * so a plugin keeping per-conversation state can keep parallel subagents apart.
-   */
+  /** Undefined for main; a unique id for each subagent run (since 1.8.0). */
   agent?: string;
 }
 
@@ -278,21 +233,13 @@ export interface PluginUI {
   /** The language the user reads the interface in: show notices and command descriptions in it. (since 1.8.0) */
   readonly lang: "ja" | "en";
   notify(message: string, level?: "info" | "warning" | "error"): void;
-  /** Read-only text viewer. Resolves when closed; headless writes sanitized text to stderr.
-   * Does not change messages or call a model. Copy requires a user gesture. (since 1.9.0)
-   */
+  /** Read-only text; sanitized headless stderr, user-initiated copy only (since 1.9.0). */
   showText(options: ShowTextOptions): Promise<void>;
   confirm(title: string, message?: string): Promise<boolean>;
   select(title: string, options: SelectOption[]): Promise<string | undefined>;
-  /**
-   * One line of free text. Resolves with what was typed (possibly empty), or undefined when
-   * cancelled or headless. (since 1.10.0)
-   */
+  /** One-line input; undefined on cancel or headless (since 1.10.0). */
   input(title: string, options?: InputOptions): Promise<string | undefined>;
-  /**
-   * Check any number of options. Resolves with the checked values in option order (possibly none),
-   * or undefined when cancelled or headless. (since 1.10.0)
-   */
+  /** Checked values in option order; undefined on cancel/headless (since 1.10.0). */
   selectMany(title: string, options: SelectOption[], opts?: SelectManyOptions): Promise<string[] | undefined>;
   /** Show (or clear with undefined) a status line item. */
   setStatus(key: string, text: string | undefined): void;
@@ -361,25 +308,17 @@ export interface PluginAPI {
   readonly cwd: string;
   /** This plugin's settings from config (`plugins.settings.<name>`). */
   readonly settings: Record<string, unknown>;
-  /** Validate trusted plugin settings against a schema and defaults. Throws on invalid settings
-   * with a plugin-qualified field path. Call before registering tools/hooks. (since 1.9.0)
-   */
+  /** Validate settings/schema/defaults before registering hooks; throws on invalid fields (since 1.9.0). */
   defineSettings<T extends Record<string, unknown> = Record<string, unknown>>(definition: SettingsDefinition<T>): T;
   /** Adding a tool with an existing name replaces it (P3). */
   registerTool(tool: ToolDefinition<any>): void;
-  /**
-   * Take one of this plugin's tools off the model's list again (an MCP server dropped it).
-   * Another plugin's tool is left alone. (since 1.8.0)
-   */
+  /** Unregister this plugin's tool; leaves other plugins' tools alone (since 1.8.0). */
   unregisterTool(name: string): void;
   registerCommand(command: CommandDefinition): void;
   /** Add a provider (`name`) and, optionally, the implementation for its api (FR-P06). */
   registerProvider(name: string, config: ProviderConfig, implementation?: Provider): void;
   on<K extends HookName>(event: K, handler: HookHandler<K>): void;
-  /**
-   * Report background startup work (e.g. connecting a server). Headless runs wait for it before
-   * the first request; the TUI does not block on it. (since 1.1.0)
-   */
+  /** Headless waits for ready work before requests; TUI remains responsive (since 1.1.0). */
   ready(work: Promise<unknown>): void;
   permissions: { addRules(rules: PermissionRules): void };
   ui: PluginUI;
@@ -425,10 +364,7 @@ export function hideFromChildren(names: Iterable<string>): void {
   for (const n of names) hiddenEnv.add(n);
 }
 
-/**
- * The environment for commands the agent runs (bash, background jobs): this process's, without the
- * variables hidden with hideFromChildren, plus `extra`. (since 1.8.0)
- */
+/** Child environment excludes hidden variables and merges extra overrides (since 1.8.0). */
 export function childEnv(extra: Record<string, string> = {}): Record<string, string> {
   const env: Record<string, string> = {};
   for (const [k, v] of Object.entries(process.env)) if (v !== undefined && !hiddenEnv.has(k)) env[k] = v;
@@ -438,10 +374,7 @@ export function childEnv(extra: Record<string, string> = {}): Record<string, str
 const OUTPUT_DAYS = 7;
 let pruned = false;
 
-/**
- * Save a long tool output the model is shown only part of, and return its path. Files go to
- * ~/.sasacode/tmp (owner-only, not a shared /tmp); ones older than a week are removed. (since 1.8.0)
- */
+/** Save long output privately in sasacodeHome()/tmp; prune files older than a week (since 1.8.0). */
 export function saveOutput(prefix: string, content: string): string {
   const dir = join(sasacodeHome(), "tmp");
   mkdirSync(dir, { recursive: true, mode: 0o700 });

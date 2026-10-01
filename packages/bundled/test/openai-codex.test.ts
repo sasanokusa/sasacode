@@ -200,3 +200,13 @@ test("an empty paste cancels, and a failed exchange says why", async () => {
   const refused = (async () => new Response("bad code", { status: 400 })) as unknown as typeof fetch;
   await expect(codexLogin({ ...base, prompt: async () => "c", fetch: refused })).rejects.toThrow(/returned 400/);
 });
+
+test("Codex delegates its adapted wire body to the per-request fetch hook", async () => {
+  const seen: { url?: string; headers?: Headers; body?: any } = {};
+  let unused = 0;
+  const provider = codexProvider(() => "observed-session", { tokens: async () => tokens(), fetch: (async () => { unused++; return json({}, 500); }) as unknown as typeof fetch });
+  await run(provider, { fetch: sse(reply, seen) });
+  expect(unused).toBe(0);
+  expect(seen.body.prompt_cache_key).toBe("observed-session");
+  expect(seen.body.max_output_tokens).toBeUndefined();
+});

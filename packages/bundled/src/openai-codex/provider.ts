@@ -58,7 +58,7 @@ export function codexProvider(sessionId: () => string, deps: { tokens?: () => Pr
           ...req,
           apiKey: t.access,
           model: { ...req.model, headers: headers(t, req.model.headers, id) },
-          fetch: codexFetch(id, deps.fetch),
+          fetch: codexFetch(id, req.fetch ?? deps.fetch),
           // A usage limit is not fixed by retrying for minutes.
           maxRetries: Math.min(req.maxRetries ?? 2, 2),
         });

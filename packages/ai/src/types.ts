@@ -4,6 +4,8 @@
 export interface TextContent {
   type: "text";
   text: string;
+  /** Responses phase is per output message, not per response. */
+  phase?: "commentary" | "final_answer" | null;
 }
 
 export interface ImageContent {
@@ -18,6 +20,8 @@ export interface ThinkingContent {
   /** Opaque provider state needed to replay this block (Anthropic signature, Responses reasoning item). */
   signature?: string;
   redacted?: boolean;
+  /** Chat-compatible servers use different plaintext reasoning field names. */
+  reasoningField?: "reasoning" | "reasoning_content";
 }
 
 export interface ToolCall {
@@ -66,6 +70,8 @@ export interface AssistantMessage {
   api: Api;
   provider: string;
   model: string;
+  /** Digest of API/provider/model/endpoint, never its URL or credential. */
+  replayScope?: string;
   usage: Usage;
   stopReason: StopReason;
   errorMessage?: string;

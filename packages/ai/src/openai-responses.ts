@@ -7,7 +7,6 @@ import {
   computeCost,
   markIfCut,
   type Message,
-  newAssistant,
   parseToolInput,
   type Provider,
   reportedCost,
@@ -18,6 +17,7 @@ import {
   type ToolCall,
   type UserContent,
 } from "./types.ts";
+import { canReplay, replayScope, newReply as newAssistant } from "./replay.ts";
 
 export const openaiResponsesProvider: Provider = {
   api: "openai-responses",
@@ -51,14 +51,18 @@ export const openaiResponsesProvider: Provider = {
       return it ? { it, b: out.content[it.index] } : undefined;
     };
     try {
-      const stream = await withEffort(`${model.baseUrl} ${model.id}`, model.reasoning ? req.thinking : undefined, (effort) =>
-        client.responses.create(
-          // Stateless (store: false) reasoning continuity needs the encrypted reasoning items back.
-          effort ? { ...params, reasoning: { effort: effort as never, summary: "auto" }, include: ["reasoning.encrypted_content"] } : params,
+      const stream = await withEffort(replayScope(model), params.reasoning?.effort !== undefined ? undefined : model.reasoning ? req.thinking : undefined, async (effort) => {
+        const s = await client.responses.create(
+          // Request encrypted state explicitly for compatible services that predate automatic inclusion.
+          effort ? { ...params, reasoning: { effort: effort as never, summary: "auto", ...params.reasoning }, include: [...new Set([...(params.include ?? []), "reasoning.encrypted_content" as const])] } : params,
           { signal: req.signal },
-        ),
-      );
-      for await (const ev of stream) {
+        );
+        const it = s[Symbol.asyncIterator](), first = await it.next();
+        if (!first.done && first.value.type === "error") throw new OpenAI.APIError(undefined, first.value, first.value.message, new Headers());
+        return { it, first };
+      });
+      for (let next = stream.first; !next.done; next = await stream.it.next()) {
+        const ev = next.value;
         switch (ev.type) {
           case "response.output_item.added": {
             const item = ev.item;
@@ -71,12 +75,14 @@ export const openaiResponsesProvider: Provider = {
               out.content.push({ type: "thinking", thinking: "" });
               items.set(item.id, { index: out.content.length - 1 });
             } else if (item.type === "message") {
-              out.content.push({ type: "text", text: "" });
+              out.content.push({ type: "text", text: "", ...(Object.hasOwn(item, "phase") ? { phase: (item as unknown as { phase: "commentary" | "final_answer" | null }).phase } : {}) });
               items.set(item.id, { index: out.content.length - 1 });
             }
             break;
           }
+          case "response.refusal.delta":
           case "response.output_text.delta": {
+            if (ev.type === "response.refusal.delta") out.stopReason = "refusal";
             const r = block(ev.item_id);
             if (r?.b?.type === "text") {
               r.b.text += ev.delta;
@@ -115,6 +121,7 @@ export const openaiResponsesProvider: Provider = {
               (r.b as ThinkingContent).thinking = r.b.thinking.trim();
               (r.b as ThinkingContent).signature = JSON.stringify(ev.item);
             }
+            else if (ev.item.type === "message" && r.b?.type === "text" && Object.hasOwn(ev.item, "phase")) r.b.phase = (ev.item as unknown as { phase: "commentary" | "final_answer" | null }).phase;
             break;
           }
           case "response.completed":
@@ -123,7 +130,9 @@ export const openaiResponsesProvider: Provider = {
             const u = ev.response.usage;
             if (u) {
               const cached = u.input_tokens_details?.cached_tokens ?? 0;
-              out.usage.input = u.input_tokens - cached;
+              const written = (u.input_tokens_details as typeof u.input_tokens_details & { cache_write_tokens?: number })?.cache_write_tokens ?? 0;
+              out.usage.input = u.input_tokens - cached - written;
+              out.usage.cacheWrite = written;
               out.usage.cacheRead = cached;
               out.usage.output = u.output_tokens;
               // Proxies over OpenAI (OpenRouter, Command Code) may report actual spend on the usage.
@@ -173,10 +182,10 @@ function toResponsesInput(messages: Message[], model: Request["model"]): Respons
       out.push({ type: "function_call_output", call_id: m.toolCallId, output: inputContent(m.content) });
     else {
       // Encrypted reasoning only goes back to the service and model that produced it.
-      const sameModel = m.api === model.api && m.provider === model.provider && m.model === model.id;
+      const sameModel = canReplay(m, model);
       for (const c of m.content) {
         if (c.type === "text") {
-          if (c.text) out.push({ role: "assistant", content: c.text });
+          if (c.text) out.push({ role: "assistant", content: c.text, ...(m.api === model.api && c.phase !== undefined ? { phase: c.phase } : {}) });
         } else if (c.type === "thinking") {
           // Reasoning items only carry over to the model that produced them.
           if (sameModel && c.signature) out.push(JSON.parse(c.signature));
