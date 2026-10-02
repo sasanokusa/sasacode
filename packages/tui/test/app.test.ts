@@ -203,3 +203,44 @@ test("an interrupted approval closes and restores input", async () => {
   await Bun.sleep(30); controller.abort(); expect((await approval).decision).toBe("deny");
   await term.type("/exit"); await term.send("\r"); expect(await exited).toBe(0);
 });
+
+test("a long tool call shows its arguments arriving, then that its permission check is running", async () => {
+  // A model writing a large file sends the content as the call's arguments for many seconds, and
+  // an agent-mode judge or jev-guard then asks a model again: neither may look like a stall.
+  const input = { path: "big.txt", content: "x".repeat(3000) };
+  const json = JSON.stringify(input);
+  let resume!: () => void;
+  const midStream = new Promise<void>((r) => (resume = r));
+  let allow!: () => void;
+  const checked = new Promise<void>((r) => (allow = r));
+  const { term, host, agent } = await start([]);
+  let requests = 0;
+  registerApi("replay", {
+    api: "replay",
+    async *stream() {
+      const partial = reply([]);
+      yield { type: "start", partial };
+      if (requests++) return yield { type: "done", message: reply([{ type: "text", text: "written" }]) };
+      partial.content.push({ type: "tool_call", id: "w1", name: "write", input: {} });
+      yield { type: "toolcall_start", index: 0, id: "w1", name: "write", partial };
+      yield { type: "toolcall_delta", index: 0, delta: json.slice(0, 2000), partial };
+      await midStream;
+      yield { type: "toolcall_delta", index: 0, delta: json.slice(2000), partial };
+      yield { type: "done", message: reply([{ type: "tool_call", id: "w1", name: "write", input }]) };
+    },
+  });
+  await host.load("slow-check", (api) => api.on("permission", async () => void (await checked)));
+  await term.type("write it");
+  await term.send("\r");
+  await Bun.sleep(100);
+  expect(term.text()).toContain("受信中… 2,000 字");
+  const before = term.out.length;
+  resume();
+  await Bun.sleep(150);
+  expect(term.text(before)).toContain("write の実行前の確認中");
+  expect(agent.messages.some((m) => m.role === "tool")).toBe(false);
+  allow();
+  for (let i = 0; i < 40 && !term.text().includes("written"); i++) await Bun.sleep(50);
+  expect(term.text()).toContain("written");
+  expect(agent.messages.some((m) => m.role === "tool" && !m.isError)).toBe(true);
+});

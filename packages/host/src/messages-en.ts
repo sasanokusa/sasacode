@@ -242,4 +242,7 @@ export const TO_EN: Record<string, string> = {
   "添付を取り消しました": "Attachments cleared",
   "画像は{n}枚までです": "At most {n} images",
   "画像 {n} 枚を次のメッセージに添付します": "{n} image(s) will go with your next message",
+  // ── tool calls in progress ─────────────────────────────────────────
+  "受信中… {n} 字": "receiving… {n} chars",
+  "{tool} の実行前の確認中… (esc で中断)": "checking {tool} before it runs… (esc to interrupt)",
 };

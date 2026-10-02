@@ -74,6 +74,12 @@ export class AssistantView extends Container {
     this.invalidate();
   }
 
+  /** Arguments arriving for the tool call at `index`: a long file to write can take many seconds. */
+  receiving(index: number, chars: number): void {
+    const view = this.blocks.get(index);
+    if (view instanceof ToolView) view.received += chars;
+  }
+
   private add(i: number, v: Component): void {
     this.blocks.set(i, v);
     this.addChild(v);
@@ -92,12 +98,15 @@ export class ToolView implements Component {
   renderer?: ToolRenderer;
   /** Set when a tool_call_raw hook fixed this call. */
   repairNote?: string;
+  /** Characters of arguments streamed so far; the input is parsed only when the call is complete. */
+  received = 0;
 
   constructor(public call: ToolCall) {}
 
   render(width: number): string[] {
     const dot = { pending: c.gray("○"), running: c.yellow("●"), done: c.green("●"), error: c.red("●") }[this.status];
-    const summary = oneLine(plain(this.summary || argPreview(this.call.input)));
+    const streaming = this.status === "pending" && this.received > 0 && !Object.keys(this.call.input).length;
+    const summary = streaming ? t("受信中… {n} 字", { n: this.received.toLocaleString("en-US") }) : oneLine(plain(this.summary || argPreview(this.call.input)));
     const lines = [truncateToWidth(`${dot} ${c.bold(this.call.name)}${c.gray(`(${summary})`)}`, width)];
     if (this.repairNote) lines.push(truncateToWidth(c.gray(`  ↻ ${t("修復: {note}", { note: plain(this.repairNote) })}`), width));
     const body = plain(this.status === "running" ? this.live : this.output);

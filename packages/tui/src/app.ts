@@ -76,6 +76,8 @@ class App {
   private footer = new Line();
   private editor: Editor;
   private loader?: Loader;
+  /** Tool calls of the last reply that have not started yet (their permission checks are running). */
+  private checking: ToolCall[] = [];
   private current?: AssistantView;
   private currentSpacer?: Spacer;
   private tools = new Map<string, ToolView>();
@@ -292,6 +294,7 @@ class App {
         this.renderStatus();
         break;
       case "message_start":
+        this.checking = [];
         this.current = new AssistantView((call, view) => this.trackTool(call, view));
         this.currentSpacer = new Spacer(1);
         this.chat.addChild(this.currentSpacer);
@@ -311,6 +314,7 @@ class App {
       }
       case "message_update":
         this.current?.update(e.message);
+        if (e.event.type === "toolcall_delta") this.current?.receiving(e.event.index, e.event.delta.length);
         break;
       case "message_end": {
         const m = e.message;
@@ -324,6 +328,9 @@ class App {
         } else if (m.role === "assistant") {
           this.current?.update(m);
           for (const b of m.content) if (b.type === "tool_call") this.describeTool(b);
+          // Until each call starts, permission checks run unseen: an agent-mode judge or jev-guard asks a model.
+          this.checking = m.stopReason === "tool_use" ? m.content.flatMap((b) => (b.type === "tool_call" ? [b] : [])) : [];
+          this.showChecking();
           this.totalCost += m.usage.cost;
           this.usage.add(m);
           const ctx = m.usage.input + m.usage.cacheRead + m.usage.cacheWrite + m.usage.output;
@@ -338,6 +345,10 @@ class App {
             view.output = textOf(m.content);
             view.status = m.isError ? "error" : "done";
           }
+          // A call refused or interrupted before it started has no tool_end.
+          const waiting = this.checking.length;
+          this.checking = this.checking.filter((b) => b.id !== m.toolCallId);
+          if (this.checking.length !== waiting) this.showChecking();
         }
         break;
       }
@@ -352,6 +363,7 @@ class App {
           v.status = "running";
           if (e.summary) v.summary = e.summary;
         }
+        this.checking = this.checking.filter((b) => b.id !== e.call.id);
         this.loader?.setMessage(t("{tool} を実行中… (esc で中断)", { tool: e.call.name }));
         break;
       }
@@ -373,7 +385,7 @@ class App {
           v.result = e.result;
           v.status = e.result.isError ? "error" : "done";
         }
-        this.loader?.setMessage(t("考え中… (esc で中断)"));
+        this.showChecking();
         break;
       }
       case "error":
@@ -411,6 +423,12 @@ class App {
       { value: "no", label: t("ここで止める") },
     ]);
     if (more === "yes") void agent.continue();
+  }
+
+  /** What the run waits for: the next call's permission check, or the model. */
+  private showChecking(): void {
+    const next = this.checking[0];
+    this.loader?.setMessage(next ? t("{tool} の実行前の確認中… (esc で中断)", { tool: next.name }) : t("考え中… (esc で中断)"));
   }
 
   private trackTool(call: ToolCall, view: ToolView): void {
