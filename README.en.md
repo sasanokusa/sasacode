@@ -29,7 +29,7 @@ curl -fsSL https://sasanokusa.com/sasacode/install.sh | sh
 - Single binaries for macOS (arm64 / x64) and Linux (x64 / arm64, glibc / musl, and a baseline build for CPUs without AVX2). Bun is not needed.
 - The installer and the binary come from the latest [GitHub release](https://github.com/sasanokusa/sasacode/releases) and are checked against SHA256. The sasanokusa.com URL redirects to the latest release's `install.sh`.
 - SHA256 only catches a broken download. That a file was built by this repository's GitHub Actions is proved by the signed provenance attached to releases from v0.9.8: `gh attestation verify sasacode-darwin-arm64.tar.gz --repo sasanokusa/sasacode` (on a file downloaded from the release; `install.sh` too).
-- `SASACODE_VERSION=v0.9.9` pins a version and `SASACODE_INSTALL_DIR` changes where it goes. On Windows, use WSL.
+- `SASACODE_VERSION=v0.10.0` pins a version and `SASACODE_INSTALL_DIR` changes where it goes. On Windows, use WSL.
 - `sasacode update` updates in place (the same checks as the installer; `--check` only reports). A newer version is mentioned quietly once at startup (`"updateCheck": false` turns it off). From a source checkout, use `git pull` and `bun install`.
 
 From source ([Bun](https://bun.sh) 1.4 or later):
@@ -230,6 +230,7 @@ A plugin of the same name in `~/.sasacode/plugins` or the project is loaded inst
 | `auto-reconnect` | When a run ends in an error and the endpoint in use cannot be reached, waits for it to come back (up to 10 minutes by default) and resumes the work. `/reconnect` does the same by hand |
 | `checkpoints` | Keeps what write / edit changed just before it changed it, in the session. `/undo` brings one call's changes back at a time (`/undo list` shows what is left, `/undo <path>` picks one). bash changes are not covered |
 | `image-attach` | Sends images with a message to a vision model: `@path`, a file dropped into the terminal (its pasted absolute path), `/image <path…>`, or `/image` alone for the clipboard (macOS; Linux with `wl-paste` or `xclip`). The type is read from the bytes (PNG, JPEG, GIF, WebP); 5 MB each, 8 per message. `dropPaths: false` in `plugins.settings.image-attach` ignores paths without `@` |
+| `diagnostics` | API diagnostics (off by default). `/diagnostics on` records metadata only (whether requests succeeded, stop reasons, token counts), and `show` lists the last 100. No contents or secrets are recorded |
 | `skills` / `mcp` | Adapters for Agent Skills and MCP |
 
 ### MCP

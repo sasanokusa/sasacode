@@ -29,7 +29,7 @@ curl -fsSL https://sasanokusa.com/sasacode/install.sh | sh
 - macOS（arm64 / x64）と Linux（x64 / arm64、glibc / musl、AVX2 のない CPU 向けの baseline 版）の単一バイナリ。Bun は不要。
 - インストーラーもバイナリも、[GitHub Releases](https://github.com/sasanokusa/sasacode/releases) の最新版から取得して SHA256 を検証する。sasanokusa.com の URL は、最新リリースの `install.sh` へのリダイレクト。
 - SHA256 が防ぐのは壊れたダウンロードまで。ファイルがこのリポジトリの GitHub Actions でビルドされたものかは、v0.9.8 以降のリリースに付けた署名つきの来歴で確かめられる：`gh attestation verify sasacode-darwin-arm64.tar.gz --repo sasanokusa/sasacode`（リリースから落としたファイルに対して。`install.sh` も同じ）。
-- `SASACODE_VERSION=v0.9.9` で版を固定でき、`SASACODE_INSTALL_DIR` で置き場所を変えられる。Windows は WSL から使う。
+- `SASACODE_VERSION=v0.10.0` で版を固定でき、`SASACODE_INSTALL_DIR` で置き場所を変えられる。Windows は WSL から使う。
 - 更新は `sasacode update`（インストーラーと同じ検証つき。`--check` で確認だけ）。新しい版が出ていると起動時に一度だけ静かに知らせる（`"updateCheck": false` で止める）。ソースから動かしている場合は `git pull` と `bun install`。
 
 ソースから使う場合（[Bun](https://bun.sh) 1.4 以上）：
@@ -230,6 +230,7 @@ sasacode plugin install sasacode-plugin-jev-guard
 | `auto-reconnect` | 実行がエラーで終わったとき、使用中のエンドポイントに届かなければ、復旧を待って作業を自動で再開する（既定は最大10分）。`/reconnect` で手動でも同じことをする |
 | `checkpoints` | write / edit が変えたファイルの直前の内容をセッションに退避する。`/undo` で直近の1件から1つずつ戻せる（`/undo list` で一覧、`/undo <path>` で対象を絞る。bash の変更は対象外） |
 | `image-attach` | 画像対応モデルにメッセージと画像を送る。`@パス`、ターミナルへのドラッグ&ドロップ（貼られた絶対パス）、`/image パス…`、`/image` だけならクリップボード（macOS、Linux は `wl-paste` か `xclip`）。形式は中身で判定（PNG / JPEG / GIF / WebP）、1枚 5 MB・1メッセージ 8 枚まで。`plugins.settings.image-attach` の `dropPaths: false` で `@` なしのパスを無視 |
+| `diagnostics` | API の診断（既定で無効）。`/diagnostics on` で、リクエストの成否・停止理由・トークン数などのメタデータだけを記録し、`show` で直近100件を見る。本文や秘密値は記録しない |
 | `skills` / `mcp` | Agent Skills と MCP のアダプタ |
 
 ### MCP
