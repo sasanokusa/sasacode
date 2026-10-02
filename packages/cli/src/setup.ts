@@ -1,7 +1,7 @@
 import { chmodSync, mkdirSync, statSync } from "node:fs";
 import { join, resolve as resolvePath } from "node:path";
 import { Agent, buildSystemPrompt, headlessUI, isInside, PERMISSION_MODES, type PermissionMode, PermissionPolicy, PluginHost, restore, SessionFile, sessionDir, type UIBridge } from "@sasacode/agent";
-import { currentLang, findSession, listSessions, t } from "@sasacode/host";
+import { currentLang, findSession, type Lang, listSessions, t } from "@sasacode/host";
 import { BUILTIN_PROVIDERS, defaultModelFor, type ModelInfo, type ProviderConfig, registerApi, resolveModel, type ThinkingLevel } from "@sasacode/ai";
 import { bundledPlugins, readCodexAuth } from "@sasacode/bundled";
 import { createMcpPlugin, type McpServerConfig } from "@sasacode/mcp";
@@ -12,6 +12,7 @@ import { discoverPlugins, type FoundPlugin, importExtensions } from "./loader.ts
 import { type ModelChoice, ModelCatalog } from "./catalog.ts";
 import { resolveEndpoints } from "./endpoints.ts";
 import { resolveApiKey } from "./keys.ts";
+import { readJson, writeJson } from "./json.ts";
 
 /**
  * The first provider whose API key is set; with no key at all but a ChatGPT login, that plan.
@@ -56,6 +57,8 @@ export interface Harness {
   /** New session holding the conversation up to (not including) message `index`. */
   fork(index: number): Promise<void>;
   shutdown(): Promise<void>;
+  /** /language: the `lang` setting in the global config.json. */
+  saveLang(lang: Lang): void;
 }
 
 export async function setup(opts: SetupOptions): Promise<Harness> {
@@ -249,6 +252,10 @@ export async function setup(opts: SetupOptions): Promise<Harness> {
       for (const m of kept) agent.session?.append({ type: "message", message: m });
       agent.messages = kept;
       await startSession(false);
+    },
+    saveLang(lang) {
+      const path = join(sasacodeHome(), "config.json");
+      writeJson(path, { ...readJson(path), lang }); // a config.json that cannot be read is left alone (readJson throws)
     },
     async shutdown() {
       await endSession("exit");

@@ -38,6 +38,18 @@ export function currentLang(): Lang {
  * write dynamic parts as placeholders (`t("エラー: {error}", { error })`), so the whole sentence
  * is what the translation table matches on.
  */
+let fromEnglish: Record<string, string> | undefined;
+
+/**
+ * A string already shown in the other language, in the current one: what /language does to text
+ * made before the switch (command descriptions). Text written in either language is found.
+ */
+export function retranslate(text: string): string {
+  if (lang === "en") return TO_EN[text] ?? text;
+  fromEnglish ??= Object.fromEntries(Object.entries(TO_EN).map(([ja, en]) => [en, ja]));
+  return TO_JA[text] ?? fromEnglish[text] ?? text;
+}
+
 export function t(text: string, params: Record<string, string | number> = {}): string {
   const out = (lang === "ja" ? TO_JA[text] : TO_EN[text]) ?? text;
   return Object.keys(params).length ? out.replace(/\{(\w+)\}/g, (m, k) => (k in params ? String(params[k]) : m)) : out;

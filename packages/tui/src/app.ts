@@ -5,7 +5,6 @@ import {
   Container,
   Editor,
   getKeybindings,
-  Loader,
   matchesKey,
   ProcessTerminal,
   ScrollView,
@@ -18,10 +17,11 @@ import {
   VStack,
 } from "@earendil-works/pi-tui";
 import { type Agent, type AgentEvent, type ApprovalAnswer, type ApprovalRequest, PERMISSION_MODE_LABELS, PERMISSION_MODES, type PermissionMode, type PluginHost, type UIBridge } from "@sasacode/agent";
-import { listSessions, t } from "@sasacode/host";
+import { type Lang, listSessions, retranslate, setLang, t } from "@sasacode/host";
 import { fmtTokens, type ModelInfo, textOf, type ThinkingLevel, type ToolCall } from "@sasacode/ai";
 import type { CommandDefinition, SelectOption, ShowTextOptions } from "@sasacode/plugin-api";
 import { matchAmbiguousWidth } from "./ambiguous.ts";
+import { Activity } from "./activity.ts";
 import { ApprovalDialog, CheckList, InputDialog, Picker } from "./dialogs.ts";
 import { TextViewer } from "./text-viewer.ts";
 import { copyToClipboard } from "./clipboard.ts";
@@ -60,7 +60,15 @@ export interface TuiHost {
   newSession(): Promise<void>;
   fork(index: number): Promise<void>;
   shutdown(): Promise<void>;
+  /** Keep the interface language for the next start (the `lang` setting in config.json). */
+  saveLang?(lang: Lang): void;
 }
+
+const LANGUAGES: SelectOption[] = [
+  { value: "ja", label: "日本語" },
+  { value: "en", label: "English" },
+];
+const LANGUAGE_NAMES: Record<string, Lang> = { ja: "ja", jp: "ja", japanese: "ja", 日本語: "ja", en: "en", english: "en", 英語: "en" };
 
 /** `terminal`: the real one, or a stand-in (tests drive the app through it). */
 export async function runTui(host: TuiHost, initialPrompt = "", terminal: Terminal = new ProcessTerminal()): Promise<number> {
@@ -75,7 +83,8 @@ class App {
   private inputSlot = new Container();
   private footer = new Line();
   private editor: Editor;
-  private loader?: Loader;
+  private activity?: Activity;
+  private header!: Notice;
   /** Tool calls of the last reply that have not started yet (their permission checks are running). */
   private checking: ToolCall[] = [];
   private current?: AssistantView;
@@ -114,7 +123,7 @@ class App {
     this.editor.onSubmit = (text) => this.submit(text);
     for (const h of this.loadHistory()) this.editor.addToHistory(h);
 
-    const header = new Notice(`${c.bold("sasacode")} ${c.gray(host.agent.cwd)}\n${c.gray(t("/help でコマンド一覧 · esc で中断 · ctrl+o で詳細表示 · shift+tab で権限モード切替"))}`);
+    const header = (this.header = new Notice(this.headerText()));
     for (const w of host.warnings) this.chat.addChild(new Notice(t("警告: {warning}", { warning: w }), c.yellow));
     const body = new Container();
     body.addChild(header);
@@ -289,12 +298,12 @@ class App {
     switch (e.type) {
       case "agent_start":
         this.runStarted = Date.now();
-        this.loader = new Loader(this.tui, c.cyan, c.gray, t("考え中… (esc で中断)"));
-        this.loader.start();
+        this.activity = new Activity(this.tui, c.cyan, c.gray);
         this.renderStatus();
         break;
       case "message_start":
         this.checking = [];
+        this.activity?.newReply();
         this.current = new AssistantView((call, view) => this.trackTool(call, view));
         this.currentSpacer = new Spacer(1);
         this.chat.addChild(this.currentSpacer);
@@ -304,6 +313,7 @@ class App {
         // A plugin asked for this response to be generated again.
         if (this.current) this.chat.removeChild(this.current);
         if (this.currentSpacer) this.chat.removeChild(this.currentSpacer);
+        this.activity?.discardReply();
         this.current = undefined;
         if (e.message.stopReason === "error") this.notify(t("接続が応答の途中で切れたため、やり直します"), c.yellow);
         break;
@@ -315,6 +325,7 @@ class App {
       case "message_update":
         this.current?.update(e.message);
         if (e.event.type === "toolcall_delta") this.current?.receiving(e.event.index, e.event.delta.length);
+        if (e.event.type === "text_delta" || e.event.type === "thinking_delta" || e.event.type === "toolcall_delta") this.activity?.streamed(e.event.delta);
         break;
       case "message_end": {
         const m = e.message;
@@ -331,6 +342,7 @@ class App {
           // Until each call starts, permission checks run unseen: an agent-mode judge or jev-guard asks a model.
           this.checking = m.stopReason === "tool_use" ? m.content.flatMap((b) => (b.type === "tool_call" ? [b] : [])) : [];
           this.showChecking();
+          this.activity?.replyDone(m.usage.output);
           this.totalCost += m.usage.cost;
           this.usage.add(m);
           const ctx = m.usage.input + m.usage.cacheRead + m.usage.cacheWrite + m.usage.output;
@@ -364,7 +376,7 @@ class App {
           if (e.summary) v.summary = e.summary;
         }
         this.checking = this.checking.filter((b) => b.id !== e.call.id);
-        this.loader?.setMessage(t("{tool} を実行中… (esc で中断)", { tool: e.call.name }));
+        this.activity?.setDetail(t("{tool} を実行中…", { tool: e.call.name }));
         break;
       }
       case "tool_update": {
@@ -398,8 +410,8 @@ class App {
         this.resetView();
         break;
       case "agent_end":
-        this.loader?.stop();
-        this.loader = undefined;
+        this.activity?.stop();
+        this.activity = undefined;
         // A run long enough to switch windows ends with the terminal bell (a badge or sound, per terminal).
         if (this.host.config.tui?.bell !== false && e.cause !== "aborted" && Date.now() - this.runStarted >= BELL_AFTER_MS) process.stdout.write("\x07");
         if (e.cause === "aborted") this.chat.addChild(new Notice(t("中断しました"), c.yellow));
@@ -428,7 +440,7 @@ class App {
   /** What the run waits for: the next call's permission check, or the model. */
   private showChecking(): void {
     const next = this.checking[0];
-    this.loader?.setMessage(next ? t("{tool} の実行前の確認中… (esc で中断)", { tool: next.name }) : t("考え中… (esc で中断)"));
+    this.activity?.setDetail(next ? t("{tool} の実行前の確認中…", { tool: next.name }) : undefined);
   }
 
   private trackTool(call: ToolCall, view: ToolView): void {
@@ -502,6 +514,14 @@ class App {
       { name: "permission", description: t("権限モードを切り替える"), argumentHint: PERMISSION_MODES.join("|"), run: ({ args }) => this.permissionCommand(args) },
       { name: "fork", description: t("過去のメッセージから会話を分岐する"), run: () => this.forkCommand() },
       { name: "session", description: t("このセッションの ID と保存先"), run: () => this.sessionCommand() },
+      {
+        name: "language",
+        description: t("表示言語を切り替える（日本語 / English）"),
+        argumentHint: "ja|en",
+        run: ({ args }) => this.languageCommand(args),
+        // Nothing left to complete once it is typed out: enter then runs the command, not the completion.
+        complete: (prefix) => LANGUAGES.filter((o) => o.value.startsWith(prefix) && o.value !== prefix),
+      },
       { name: "exit", description: t("終了する"), run: () => this.exit?.(0) },
       { name: "quit", description: t("終了する（/exit と同じ）"), run: () => this.exit?.(0) },
     ];
@@ -540,6 +560,37 @@ class App {
       ].join("\n"),
       (s) => s,
     );
+  }
+
+  private headerText(): string {
+    return `${c.bold("sasacode")} ${c.gray(this.host.agent.cwd)}\n${c.gray(t("/help でコマンド一覧 · esc で中断 · ctrl+o で詳細表示 · shift+tab で権限モード切替"))}`;
+  }
+
+  /** Switches everything that reads the language now; text already in the transcript stays as it was. */
+  private async languageCommand(args: string): Promise<void> {
+    const named = args.trim().toLowerCase();
+    const lang = named ? LANGUAGE_NAMES[named] : ((await this.pick(t("表示言語"), LANGUAGES)) as Lang | undefined);
+    if (!lang) {
+      if (named) this.notify(t("使い方: /language ja|en"), c.yellow);
+      return;
+    }
+    setLang(lang);
+    this.host.host.opts.lang = lang;
+    for (const cmd of this.host.host.commands) cmd.description = retranslate(cmd.description);
+    this.refreshCommands();
+    this.header.setText(this.headerText());
+    this.updateFooter();
+    let saved = true;
+    try {
+      this.host.saveLang?.(lang);
+    } catch (e) {
+      saved = false;
+      this.notify(t("設定に保存できませんでした: {error}", { error: (e as Error).message }), c.yellow);
+    }
+    this.notify(t("表示言語: {name}", { name: LANGUAGES.find((o) => o.value === lang)!.label }));
+    // SASACODE_LANG wins over the setting at the next start.
+    const env = (process.env.SASACODE_LANG ?? "").toLowerCase();
+    if (saved && (env === "ja" || env === "en") && env !== lang) this.notify(t("次回の起動では環境変数 SASACODE_LANG={env} が優先されます", { env }), c.yellow);
   }
 
   /** Current model, the ones in config, then everything the providers list. */
@@ -772,7 +823,7 @@ class App {
 
   private renderStatus(): void {
     this.status.clear();
-    if (this.loader) this.status.addChild(this.loader);
+    if (this.activity) this.status.addChild(this.activity);
     for (const q of this.queued) this.status.addChild(new Notice(t("↳ 次のターンで送信: {text}", { text: q.split("\n")[0]! })));
     this.tui.requestRender();
   }

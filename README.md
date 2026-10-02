@@ -90,6 +90,7 @@ sasacode -r <id> -p "続き"            # セッション ID を指定して続�
 | `/model` | プロバイダーから取得したモデル一覧から選ぶ。文字を打つと絞り込める。`/model <provider/model>` で直接指定、`/model --refresh` で取り直す |
 | `/resume` `/clear` `/fork` `/session` | 過去のセッション / 新しいセッション / 過去のメッセージから分岐 / ID と保存先 |
 | `/effort` | 推論の深さ（`off` / `low` / `medium` / `high` / `xhigh` / `max`）を切り替える。引数なしなら一覧から選ぶ。現在の値はフッターに出る。OpenAI 形式のサーバーには `reasoning_effort` として送り、`off` は `none` として送る（vLLM などは送らないと推論する）。サーバーが受け付けない値なら近い値に替えて送り直し、以後はその値を使う（例：Command Code は `none` を受け付けないので `off` は `low` になる） |
+| `/language` | 画面の言語を切り替える（`ja` / `en`。引数なしなら一覧から選ぶ）。その場で切り替わり、`~/.sasacode/config.json` の `lang` にも保存する。切り替え前に表示された文はそのまま |
 | `/copy` | 直前の応答をクリップボードにコピー（pbcopy / wl-copy / xclip、なければ端末経由） |
 | `/permission` `/help` `/exit`（`/quit`） | 権限モード / ヘルプ / 終了 |
 | `/usage` `/goal` `/bg` `/reconnect` `/compact` `/mcp` `/skills` `/skill:<name>` `/presets` `/browsr` `/undo` | 同梱プラグインのコマンド |
@@ -157,7 +158,7 @@ sasacode -m llama/<モデル名>
 }
 ```
 
-`models` は `/model` の一覧の先頭に出す。`providers` で OpenAI 互換や Anthropic 互換のエンドポイントを足せる。`lang` は画面の言語（TUI・CLI・同梱プラグインの表示を同じ言語にする。`"ja"` / `"en"`）。環境変数 `SASACODE_LANG` があればそちらが優先し、どちらもなければシステムのロケールで決まる。モデルに渡す文（ツールの説明や結果）は訳さない。`updateCheck` は起動時の新版の知らせ（既定 true）。
+`models` は `/model` の一覧の先頭に出す。`providers` で OpenAI 互換や Anthropic 互換のエンドポイントを足せる。`lang` は画面の言語（TUI・CLI・同梱プラグインの表示を同じ言語にする。`"ja"` / `"en"`。`/language` でも切り替えられる）。環境変数 `SASACODE_LANG` があればそちらが優先し、どちらもなければシステムのロケールで決まる。モデルに渡す文（ツールの説明や結果）は訳さない。`updateCheck` は起動時の新版の知らせ（既定 true）。
 
 **料金**：フッターや終了時の要約に出る料金は、組み込みのモデル表の価格（100万トークンあたりの米ドル）からの概算で、請求額そのものではない。OpenRouter はリクエストごとの実際の料金を返すので、それがあるときは実額を使う。価格は `modelOverrides` でモデルごとに設定・修正できる。
 

@@ -108,7 +108,7 @@ export class PluginHost {
       get interactive() {
         return host.ui.interactive;
       },
-      lang: this.opts.lang ?? "ja",
+      get lang() { return host.opts.lang ?? "ja"; }, // read live: /language switches it
       notify: (m, level = "info") => host.notify(m, level),
       async showText(options) {
         if (typeof options.title !== "string" || typeof options.text !== "string" || (options.format !== undefined && !["text", "markdown"].includes(options.format)))

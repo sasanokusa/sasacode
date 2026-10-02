@@ -99,7 +99,7 @@ sasa-code-harness は TypeScript (Bun) で作るターミナル向けコーデ�
 | --- | --- | --- |
 | FR-U01 | 複数行入力・入力履歴・貼り付けに対応したエディタ | Must |
 | FR-U02 | ストリーミング表示、ツール呼び出しと結果の折りたたみ表示 | Must |
-| FR-U03 | スラッシュコマンド（コアは /model /effort /resume /clear /fork /session /copy /permission /help /exit のみ、他はプラグインが追加） | Must |
+| FR-U03 | スラッシュコマンド（コアは /model /effort /language /resume /clear /fork /session /copy /permission /help /exit のみ、他はプラグインが追加） | Must |
 | FR-U04 | ヘッドレス実行（`sasacode -p "..."`、テキスト / JSONLイベント出力） | Must |
 | FR-U05 | プラグインがツール結果の描画・ステータス行・ダイアログを差し込める | Should |
 | FR-U06 | SDKとしてライブラリ利用できる（TUIなしでループを埋め込む） | Should |

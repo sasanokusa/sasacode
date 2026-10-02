@@ -90,6 +90,7 @@ At start it asks the terminal how many cells it draws East Asian Ambiguous chara
 | `/model` | Pick from the models your providers list; type to filter. `/model <provider/model>` sets one directly, `/model --refresh` fetches the lists again |
 | `/resume` `/clear` `/fork` `/session` | Earlier sessions / a new session / branch from an earlier message / id and file |
 | `/effort` | Reasoning effort (`off` / `low` / `medium` / `high` / `xhigh` / `max`); without an argument, pick from a list. Shown in the footer. OpenAI-style servers receive it as `reasoning_effort`, and `off` is sent as `none` (servers such as vLLM think unless told so). A value a server refuses is replaced with the closest one it takes and remembered (Command Code refuses `none`, so `off` becomes `low` there) |
+| `/language` | Switch the interface language (`ja` / `en`; without an argument, pick from a list). It switches at once and is saved as `lang` in `~/.sasacode/config.json`. Text already on screen stays as it was |
 | `/copy` | Copy the last answer (pbcopy / wl-copy / xclip, else through the terminal) |
 | `/permission` `/help` `/exit` (`/quit`) | Permission mode / help / quit |
 | `/usage` `/goal` `/bg` `/reconnect` `/compact` `/mcp` `/skills` `/skill:<name>` `/presets` `/browsr` `/undo` | Commands of bundled plugins |
@@ -157,7 +158,7 @@ Endpoints in a project's `.sasacode/config.json` are not used until you trust th
 }
 ```
 
-`models` go to the top of the `/model` list. `providers` adds OpenAI- or Anthropic-compatible endpoints. `lang` is the language of the interface (the TUI, the CLI and the bundled plugins alike; `"ja"` or `"en"`). `SASACODE_LANG` wins over it, and without either the system locale decides. Text for the model (tool descriptions and results) is not translated. `updateCheck` controls the new-version notice at startup (default true).
+`models` go to the top of the `/model` list. `providers` adds OpenAI- or Anthropic-compatible endpoints. `lang` is the language of the interface (the TUI, the CLI and the bundled plugins alike; `"ja"` or `"en"`; `/language` switches it too). `SASACODE_LANG` wins over it, and without either the system locale decides. Text for the model (tool descriptions and results) is not translated. `updateCheck` controls the new-version notice at startup (default true).
 
 **Cost**: the footer and the end-of-run summary show an estimate from the built-in model table (USD per 1M tokens), not a bill. OpenRouter reports the actual cost of a request, and that is used when it does. `modelOverrides` can set the price of any model.
 

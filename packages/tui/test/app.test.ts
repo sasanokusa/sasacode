@@ -5,9 +5,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Terminal } from "@earendil-works/pi-tui";
 import { Agent, PermissionPolicy, PluginHost } from "@sasacode/agent";
-import { setLang } from "@sasacode/host";
+import { currentLang, setLang } from "@sasacode/host";
 import { type AssistantContent, type AssistantMessage, emptyUsage, type ModelInfo, registerApi } from "@sasacode/ai";
 import { replayProvider } from "@sasacode/testing";
+import { PHRASES } from "../src/activity.ts";
 import { runTui, type TuiHost } from "../src/app.ts";
 
 class FakeTerminal implements Terminal {
@@ -83,6 +84,7 @@ async function start(script: AssistantMessage[], mode: "edits" | "auto" = "edits
     },
     fork: async () => void calls.push("fork"),
     shutdown: async () => void calls.push("shutdown"),
+    saveLang: (lang) => void calls.push(`saveLang:${lang}`),
   };
   const term = new FakeTerminal();
   const exited = runTui(tuiHost, "", term);
@@ -243,4 +245,82 @@ test("a long tool call shows its arguments arriving, then that its permission ch
   for (let i = 0; i < 40 && !term.text().includes("written"); i++) await Bun.sleep(50);
   expect(term.text()).toContain("written");
   expect(agent.messages.some((m) => m.role === "tool" && !m.isError)).toBe(true);
+});
+
+test("while the model streams, the activity line counts its tokens up, then shows the real count", async () => {
+  let resume!: () => void;
+  const midStream = new Promise<void>((r) => (resume = r));
+  let finish!: () => void;
+  const secondReply = new Promise<void>((r) => (finish = r));
+  const { term } = await start([]);
+  let requests = 0;
+  registerApi("replay", {
+    api: "replay",
+    async *stream() {
+      const partial = reply([]);
+      yield { type: "start", partial };
+      if (requests++) {
+        await secondReply;
+        return yield { type: "done", message: reply([{ type: "text", text: "the end" }]) };
+      }
+      const thinking = { type: "thinking" as const, thinking: "a".repeat(2000) }; // about 500 tokens
+      partial.content.push({ ...thinking, thinking: "" });
+      yield { type: "thinking_delta", index: 0, delta: thinking.thinking, partial };
+      await midStream;
+      const call = { type: "tool_call" as const, id: "r1", name: "read", input: { path: "notes.txt" } };
+      yield { type: "done", message: reply([thinking, call], { usage: { ...emptyUsage(), output: 1234 } }) };
+    },
+  });
+  await term.type("go");
+  await term.send("\r");
+  const counts = () => [...term.text().matchAll(/↓ ([\d.]+k?) トークン/g)].map((m) => (m[1]!.endsWith("k") ? parseFloat(m[1]!) * 1000 : Number(m[1])));
+  await Bun.sleep(1500);
+  const seen = counts();
+  expect(seen.length).toBeGreaterThan(3);
+  expect(seen[0]!).toBeLessThan(500); // it climbs, not jumps
+  expect(Math.max(...seen)).toBe(500);
+  expect(seen).toEqual([...seen].sort((x, y) => x - y));
+  // The line names something to be doing, from the list for the current language.
+  expect(PHRASES.ja.some((p) => term.text().includes(p))).toBe(true);
+  expect(term.text()).toMatch(/\d+秒 · ↓ [\d.]+k? トークン · esc で中断/);
+  // The reply ends: the provider's own count (1,234) replaces the estimate, and the next reply adds to it.
+  resume();
+  await Bun.sleep(1500);
+  expect(term.text()).toContain("↓ 1.2k トークン");
+  finish();
+  await Bun.sleep(200);
+  expect(term.text()).toContain("the end");
+});
+
+test("/language en switches the interface at once and saves it; /language ja switches back", async () => {
+  try {
+    const { term, host, calls } = await start([]);
+    const plugin = host.api("probe");
+    expect(plugin.ui.lang).toBe("ja");
+    await term.type("/language en");
+    await term.send("\r");
+    await Bun.sleep(100);
+    expect(currentLang()).toBe("en");
+    expect(plugin.ui.lang).toBe("en"); // plugins read it live
+    expect(calls).toContain("saveLang:en");
+    expect(term.text()).toContain("Interface language: English");
+    expect(term.text()).toContain("permissions: reads and edits only"); // the footer
+    expect(host.commands.find((c) => c.name === "clear")?.description).toBe("start a new session");
+    await term.type("/help");
+    await term.send("\r");
+    await Bun.sleep(100);
+    expect(term.text()).toContain("switch the interface language");
+    await term.type("/language ja");
+    await term.send("\r");
+    await Bun.sleep(100);
+    expect(currentLang()).toBe("ja");
+    expect(host.commands.find((c) => c.name === "clear")?.description).toBe("新しいセッションを始める");
+    expect(calls).toContain("saveLang:ja");
+    await term.type("/language klingon");
+    await term.send("\r");
+    await Bun.sleep(50);
+    expect(term.text()).toContain("使い方: /language ja|en");
+  } finally {
+    setLang("ja");
+  }
 });

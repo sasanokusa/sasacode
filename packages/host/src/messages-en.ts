@@ -28,10 +28,8 @@ export const TO_EN: Record<string, string> = {
   "このセッションの ID と保存先": "this session's id and where it is saved",
   "終了する": "exit",
   "終了する（/exit と同じ）": "exit (same as /exit)",
-  "考え中… (esc で中断)": "Thinking… (esc to interrupt)",
   "モデルが応答を拒否しました": "The model refused to respond",
   "出力が max_tokens に達しました": "The output reached max_tokens",
-  "{tool} を実行中… (esc で中断)": "Running {tool}… (esc to interrupt)",
   "エラー: {error}": "Error: {error}",
   "プラグイン {plugin} の {hook} ハンドラでエラー: {error}": "Error in plugin {plugin}'s {hook} handler: {error}",
   "中断しました": "Interrupted",
@@ -244,5 +242,15 @@ export const TO_EN: Record<string, string> = {
   "画像 {n} 枚を次のメッセージに添付します": "{n} image(s) will go with your next message",
   // ── tool calls in progress ─────────────────────────────────────────
   "受信中… {n} 字": "receiving… {n} chars",
-  "{tool} の実行前の確認中… (esc で中断)": "checking {tool} before it runs… (esc to interrupt)",
+  "{tool} を実行中…": "Running {tool}…",
+  "{tool} の実行前の確認中…": "Checking {tool} before it runs…",
+  // ── the activity line and /language ───────────────────────────────
+  "↓ {n} トークン": "↓ {n} tokens",
+  "esc で中断": "esc to interrupt",
+  "表示言語を切り替える（日本語 / English）": "switch the interface language (日本語 / English)",
+  "表示言語": "Interface language",
+  "使い方: /language ja|en": "usage: /language ja|en",
+  "設定に保存できませんでした: {error}": "could not save it to config.json: {error}",
+  "表示言語: {name}": "Interface language: {name}",
+  "次回の起動では環境変数 SASACODE_LANG={env} が優先されます": "At the next start, the SASACODE_LANG={env} environment variable takes precedence",
 };
