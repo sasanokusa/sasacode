@@ -126,6 +126,8 @@
   .install code { flex: 1; min-width: 0; overflow-x: auto; white-space: nowrap; background: none; padding: 0; font-size: 13.5px; scrollbar-width: none; }
   .install code::-webkit-scrollbar { display: none; }
   .install code::before { content: "$ "; color: var(--ink-2); }
+  .install.ps { margin-top: 10px; }
+  .install.ps code::before { content: "PS> "; }
   .install button { flex: none; font: 500 13px/1 var(--f-body); padding: 10px 15px; border: 0; border-radius: 3px; background: var(--take); color: #f4f1e6; cursor: pointer; transition: transform .15s, background .2s; }
   .install button:hover { background: #245f3b; }
   .install button:active { transform: scale(.96); }
@@ -235,7 +237,7 @@
           <code id="cmd1">curl -fsSL https://sasanokusa.com/sasacode/install.sh | sh</code>
           <button type="button" data-copy="cmd1">コピー</button>
         </div>
-        <p class="meta">macOS・Linux の<wbr>単一バイナリ　／　Windows は<wbr> WSL から　／　Apache-2.0</p>
+        <p class="meta">macOS・Linux・Windows の<wbr>単一バイナリ　／　Windows は<wbr> PowerShell で <code>irm https://sasanokusa.com/sasacode/install.ps1 | iex</code>　／　Apache-2.0</p>
         <button class="play" type="button" data-play aria-pressed="false">
           <svg class="i-play" viewBox="0 0 12 12" aria-hidden="true"><path d="M2 1l9 5-9 5z"/></svg><svg class="i-pause" viewBox="0 0 12 12" aria-hidden="true"><path d="M2 1h3v10H2zM7 1h3v10H7z"/></svg>
           <span class="lbl" data-on="自動で再生（約1分半）" data-off="一時停止">自動で再生（約1分半）</span>
@@ -323,6 +325,11 @@
         <code id="cmd2">curl -fsSL https://sasanokusa.com/sasacode/install.sh | sh</code>
         <button type="button" data-copy="cmd2">コピー</button>
       </div>
+      <div class="install ps">
+        <code id="cmd3">irm https://sasanokusa.com/sasacode/install.ps1 | iex</code>
+        <button type="button" data-copy="cmd3">コピー</button>
+      </div>
+      <p class="meta">上は macOS・Linux、下は Windows の PowerShell。Windows では Git for Windows（Git Bash）も入れておく</p>
       <ol class="steps">
         <li><span>初回起動で <code>~/.sasacode/.env</code> ができる</span></li>
         <li><span>使うプロバイダーのキーを書く</span></li>

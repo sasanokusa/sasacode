@@ -191,7 +191,10 @@
 
       <h3 id="install">インストール</h3>
       <pre><code>curl -fsSL https://sasanokusa.com/sasacode/install.sh | sh</code></pre>
-      <p>macOS（Apple Silicon / Intel）と Linux（x64 / arm64、glibc / musl、AVX2 のない CPU 向けの baseline 版）の単一バイナリが <code>~/.local/bin/sasacode</code> に入る。Bun も Node.js も要らない。Windows は WSL から使う。</p>
+      <p>macOS（Apple Silicon / Intel）と Linux（x64 / arm64、glibc / musl、AVX2 のない CPU 向けの baseline 版）の単一バイナリが <code>~/.local/bin/sasacode</code> に入る。Bun も Node.js も要らない。</p>
+      <p>Windows（x64 / arm64、AVX2 のない CPU 向けの x64 baseline 版）は PowerShell から。<code>%LOCALAPPDATA%\Programs\sasacode\sasacode.exe</code> に入り、PATH に追加される。WSL は要らない。</p>
+      <pre><code>irm https://sasanokusa.com/sasacode/install.ps1 | iex</code></pre>
+      <p><code>bash</code> ツールは <a href="https://git-scm.com/download/win">Git for Windows</a> の Git Bash でコマンドを実行するので、Windows ではそれも入れておく（<code>winget install --id Git.Git -e</code>）。標準以外の場所なら <code>SASACODE_GIT_BASH_PATH</code> に bash.exe のパスを設定する。</p>
       <ul>
         <li>インストーラーとバイナリは GitHub Releases の最新版から取り、SHA256 を確かめてから置く。</li>
         <li>版を固定する：<code>SASACODE_VERSION={{VERSION}}</code>。置き場所を変える：<code>SASACODE_INSTALL_DIR=/usr/local/bin</code>。</li>
@@ -553,7 +556,7 @@ sasacode -m pgx/&lt;モデル名&gt;</code></pre>
       </table></div>
 
       <h3 id="p-bg">バックグラウンド実行（<code>background-sessions</code>）</h3>
-      <p>モデルが <code>bg_start</code> で長いコマンドを裏で動かし、終わったら終了コードと出力の末尾が会話に届く（待機中なら続きを自動で始める）。bash と同じ権限ルールで判定する。sasacode を終了してもジョブは続き、次の起動で結果を知らせる。<code>/bg</code> で一覧、<code>/bg &lt;id&gt;</code> で詳細、<code>/bg kill &lt;id&gt;</code> で停止。POSIX のみ。</p>
+      <p>モデルが <code>bg_start</code> で長いコマンドを裏で動かし、終わったら終了コードと出力の末尾が会話に届く（待機中なら続きを自動で始める）。bash と同じ権限ルールで判定する。sasacode を終了してもジョブは続き、次の起動で結果を知らせる。<code>/bg</code> で一覧、<code>/bg &lt;id&gt;</code> で詳細、<code>/bg kill &lt;id&gt;</code> で停止。Windows では Git Bash で動かす。</p>
       <div class="tbl"><table>
         <tr><th>設定</th><th>既定</th><th>内容</th></tr>
         <tr><td><code>dir</code></td><td><code>~/.sasacode/background-sessions</code></td><td>出力と状態の置き場所</td></tr>
