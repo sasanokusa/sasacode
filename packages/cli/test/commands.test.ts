@@ -92,5 +92,7 @@ test("keys read from ~/.sasacode/.env stay out of commands the agent runs", () =
   expect(String(process.env.SASACODE_TEST_SECRET)).toBe("abc");
   expect(childEnv().SASACODE_TEST_SECRET).toBeUndefined();
   expect(childEnv({ X: "1" }).X).toBe("1");
-  expect(childEnv().PATH).toBe(process.env.PATH!);
+  // The name as the OS spells it: Windows says Path (and matches it without case).
+  const pathKey = Object.keys(childEnv()).find((k) => k.toUpperCase() === "PATH")!;
+  expect(childEnv()[pathKey]).toBe(process.env.PATH!);
 });

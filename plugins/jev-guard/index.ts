@@ -248,7 +248,8 @@ function real(p: string): string {
     head = dirname(head);
   }
   try {
-    head = realpathSync(head);
+    // .native on Windows: it also spells out 8.3 names (RUNNER~1), which git never prints.
+    head = WINDOWS ? realpathSync.native(head) : realpathSync(head);
   } catch {}
   return rest.length ? join(head, ...rest) : head;
 }
@@ -310,7 +311,8 @@ export function buildState(f: CallFacts): Record<string, unknown> {
   if (command !== undefined) call.command = clip(redact(command), 4000);
   else call.arguments = clip(redact(JSON.stringify(f.args)), 4000);
   const written = f.tool.paths?.(f.args, f.cwd) ?? (command !== undefined ? pathArgs(command) : []);
-  const root = git(f.cwd, ["rev-parse", "--show-toplevel"])?.trim() || undefined;
+  const top = git(f.cwd, ["rev-parse", "--show-toplevel"])?.trim();
+  const root = top ? real(resolve(top)) : undefined; // spelled like the targets (C:/x from git on Windows)
   const workspace = real(f.cwd);
   const targets = written.slice(0, 12).map((p) => {
     const where = real(expand(p, f.cwd));

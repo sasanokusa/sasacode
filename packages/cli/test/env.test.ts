@@ -38,7 +38,10 @@ test("blank entries mean not configured", () => {
     expect(process.env.CMD_API_KEY as string | undefined).toBe("abc");
     expect(defaultModelFor(BUILTIN_PROVIDERS)).toBe("commandcode/deepseek/deepseek-v4-flash");
   } finally {
-    process.env = saved;
+    // Restored in place: a plain object in place of process.env would lose Windows' case-insensitive
+    // names (Path is not PATH), and children started later would get no PATH.
+    for (const k of Object.keys(process.env)) if (!(k in saved)) delete process.env[k];
+    Object.assign(process.env, saved);
   }
 });
 
