@@ -115,7 +115,8 @@ function processStartMs(pid: number): number | undefined {
     if (process.platform === "win32") {
       const r = Bun.spawnSync(
         ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", `(Get-Process -Id ${pid}).StartTime.ToUniversalTime().ToString('o')`],
-        { stderr: "ignore", windowsHide: true },
+        // Bounded: PowerShell can be slow to start, or hang where its environment is incomplete.
+        { stdin: "ignore", stderr: "ignore", windowsHide: true, timeout: 10_000 },
       );
       const t = Date.parse(r.stdout.toString().trim());
       return Number.isFinite(t) ? t : undefined;
@@ -141,9 +142,19 @@ function processStartMs(pid: number): number | undefined {
  */
 function jobAlive(m: Meta, exitPath: string): boolean {
   if (existsSync(exitPath) || !isAlive(m.pid)) return false;
-  const started = processStartMs(m.pid);
-  return started === undefined || Math.abs(started - m.startedAt) < 10_000;
+  // A process's start time does not change: asked once per job, not on every poll (on Windows
+  // each ask starts PowerShell, which would hold up the event loop each time).
+  const key = `${m.pid}@${m.startedAt}`;
+  let same = sameProcess.get(key);
+  if (same === undefined) {
+    const started = processStartMs(m.pid);
+    same = started === undefined || Math.abs(started - m.startedAt) < 10_000;
+    sameProcess.set(key, same);
+  }
+  return same;
 }
+/** jobAlive's verdicts on whether a job's pid is still the job, by pid and start. */
+const sameProcess = new Map<string, boolean>();
 
 function mtimeOf(path: string): number | undefined {
   try {

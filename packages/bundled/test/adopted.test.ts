@@ -144,7 +144,7 @@ test("background-sessions: a job from an earlier run is judged by its exit file 
     stranger.kill();
     delete process.env.SASACODE_HOME;
   }
-});
+}, 20_000); // on Windows the pid check starts PowerShell: seconds on a cold machine
 
 test("auto-reconnect: without a baseUrl it checks the provider's own API, not a third party", async () => {
   const real = globalThis.fetch;
