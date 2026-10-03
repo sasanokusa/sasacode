@@ -10,38 +10,38 @@ sasacode plugin install sasacode-plugin-jev-guard
 
 ## 日本語
 
-ルールと権限モードの判定の後に、Jev の判定を重ねる。Jev は文章を返さず、型付きの質問に確率で答えるモデルで、1回あたり数百ミリ秒で済む。
+ルールと権限モードの判定の後に、Jevの判定を重ねる。Jevは文章を返さず、型付きの質問に確率で答えるモデルで、1回あたり数百ミリ秒で済む。
 
-TUI で `/jev on` と打てば、そのセッションで有効になる（`/jev off` で無効。`/resume` した後も保たれる）。いつも使うなら設定に書く：
+TUIで `/jev on` と打てば、そのセッションで有効になる（`/jev off` で無効。`/resume` した後も保たれる）。いつも使うなら、設定に次のとおり書く。
 
 ```json
 { "plugins": { "settings": { "jev-guard": { "enabled": true } } } }
 ```
 
-- Jev への接続先は `backend` で選ぶ。指定がなければ、`CMD_API_KEY` か `TYPESAFE_API_KEY` のある方を使う（どちらもキーチェーンの `commandcode` / `typesafe` でもよい）。
+- Jevへの接続先は `backend` で選ぶ。指定がなければ、`CMD_API_KEY` か `TYPESAFE_API_KEY` のある方を使う（どちらもキーチェーンの `commandcode` / `typesafe` でもよい）。
 
   | `backend` | 接続先 | キー | 既定の `model` |
   | --- | --- | --- | --- |
-  | `commandcode` | Command Code の Provider API（GOAT 以上のプラン） | `CMD_API_KEY` | `typesafe/jev` |
-  | `typesafe` | TypeSafe の API | `TYPESAFE_API_KEY` | `jev-latest` |
-  | `openrouter` | OpenRouter の Decisions API（alpha） | `OPENROUTER_API_KEY` | `typesafe/jev-latest` |
+  | `commandcode` | Command CodeのProvider API（GOAT以上のプラン） | `CMD_API_KEY` | `typesafe/jev` |
+  | `typesafe` | TypeSafeのAPI | `TYPESAFE_API_KEY` | `jev-latest` |
+  | `openrouter` | OpenRouterのDecisions API（alpha） | `OPENROUTER_API_KEY` | `typesafe/jev-latest` |
   | `vercel` | Vercel AI Gateway | `AI_GATEWAY_API_KEY` | `typesafe-ai/jev` |
-  | `chat` | sasacode の任意のモデル（`model` に `"<provider>/<model>"`、省略で現在のモデル） | そのプロバイダーのキー | — |
+  | `chat` | sasacodeの任意のモデル（`model` に `"<provider>/<model>"`、省略で現在のモデル） | そのプロバイダーのキー | — |
 
-  OpenRouter と Vercel は、チャット用にキーを持っているだけの人に判定を送らないよう、名前を指定したときだけ使う。`endpoint` と `apiKeyEnv` で接続先の URL とキーの変数を変えられる（プロキシなど）。動作を実際の API で確かめたのは `commandcode` と `chat` だけで、`typesafe` / `openrouter` / `vercel` は公開されている仕様どおりの形で送る（テストは模擬サーバー）。
-- `chat` は Jev の代わりにチャットモデルへ同じ質問をし、JSON で答えさせる。確率が較正されていない代用品で、遅い。実際のコマンドで比べると、DeepSeek V4.1 Flash は止めるべき呼び出しを Jev より多く通した（[docs/benchmarks.md](https://github.com/sasanokusa/sasacode/blob/main/docs/benchmarks.md)）。ローカルモデルは1回に数十秒かかり実用的でない。Jev に接続できない環境で、判定の仕組みだけ使いたいとき向け。
-- 有効にすると、ツール呼び出しの内容（コマンド、変更されうるパスとその git の状態、ユーザーの直近の依頼）が接続先に送られる。API キーやトークンらしき文字列は、送る前に伏せる（ベストエフォート）。
+  OpenRouterとVercelは、チャット用にキーを持っているだけの人に判定を送らないよう、名前を指定したときだけ使う。`endpoint` と `apiKeyEnv` で接続先のURLとキーの変数を変えられる（プロキシなど）。動作を実際のAPIで確かめたのは `commandcode` と `chat` だけで、`typesafe` / `openrouter` / `vercel` は公開されている仕様どおりの形で送る（テストは模擬サーバー）。
+- `chat` はJevの代わりにチャットモデルへ同じ質問をし、JSONで答えさせる。確率が較正されていない代用品で、遅い。実際のコマンドで比べると、DeepSeek V4.1 Flashは止めるべき呼び出しをJevより多く通した（[docs/benchmarks.md](https://github.com/sasanokusa/sasacode/blob/main/docs/benchmarks.md)）。ローカルモデルは1回に数十秒かかり実用的でない。Jevに接続できない環境で、判定の仕組みだけ使いたいとき向け。
+- 有効にすると、ツール呼び出しの内容（コマンド、変更されうるパスとそのgitの状態、ユーザーの直近の依頼）が接続先に送られる。APIキーやトークンらしき文字列は、送る前に伏せる（ベストエフォート）。
 - 判定を変えるのは次の場合だけ。
-  - 確認なしで実行されるはずだった呼び出し（allow ルール、`auto` モード）: 危険なら拒否、要確認なら確認に回す。
-  - `agent` モードで確認に回るはずだった呼び出し: 安全なら確認なしで実行する（モデルによる判定の代わり）。Jev が判断を保留したときは、従来どおりモデルが判定する。
-  - softDeny の呼び出し: 安全なら、拒否せずユーザーに確認する。
-- ユーザーに確認するはずの呼び出しを、Jev が拒否に変えることはない（確認ダイアログに Jev の判定を添える）。deny ルールの呼び出しは Jev に送らない。
-- Jev に渡すのは、ハーネスが集めた事実とユーザー自身の依頼だけで、ツールの出力やファイルの中身は渡さない（Jev は状態に紛れ込んだ誘導文に影響されうるため）。
-- 読み取りと、作業ディレクトリ内の編集は判定しない。Jev に届かないとき（キーがない、通信エラー、タイムアウト 5 秒）は、Jev なしの判定のまま続ける。
+  - 確認なしで実行されるはずだった呼び出し（allowルール、`auto` モード）: 危険なら拒否、要確認なら確認に回す。
+  - `agent` モードで確認に回るはずだった呼び出し: 安全なら確認なしで実行する（モデルによる判定の代わり）。Jevが判断を保留したときは、従来どおりモデルが判定する。
+  - softDenyの呼び出し: 安全なら、拒否せずユーザーに確認する。
+- ユーザーに確認するはずの呼び出しを、Jevが拒否に変えることはない（確認ダイアログにJevの判定を添える）。denyルールの呼び出しはJevに送らない。
+- Jevに渡すのは、ハーネスが集めた事実とユーザー自身の依頼だけで、ツールの出力やファイルの中身は渡さない（Jevは状態に紛れ込んだ誘導文に影響されうるため）。
+- 読み取りと、作業ディレクトリ内の編集は判定しない。Jevに届かないとき（キーがない、通信エラー、タイムアウト 5 秒）は、Jevなしの判定のまま続ける。
 - 閾値は `thresholds`（`allow` 0.8、ヘッドレスでの `headlessAllow` 0.9、`deny` 0.85、`confidence` 0.6、`risk` 0.6、`flag` 0.7、`clear` 0.3）で変えられる。ほかの設定は `timeoutMs`（既定 5 秒、`chat` は 60 秒）、`skip`（判定しないツール。既定 `todo_write`、`task`）。
 - `/jev` で状態と直近の判定を見られる。`/jev on` / `/jev off` でこのセッションの有効・無効を切り替える（キーがなければ有効にせず理由を示す）。判定はセッションにも記録する。
-- Jev はコマンドの文字列から判断するので、`ssh host 'ps aux'` のような他のマシンでの読み取りは安全と見る。また `bun run clean` のようにスクリプトの中身が見えない呼び出しは、中身が危険でも気づけない。他のマシンへの操作は `guard` プリセットが常に確認に回す。スクリプト経由の呼び出しも必ず確認したいなら、ルールで決める（例: `"permissions": { "ask": ["bash(bun run *)", "bash(make *)"] }`）。
-- 実際のセッションログ 5,135 件での結果: 安全な呼び出しの 92% が auto で止められず、agent モードでは 71% が確認なしで通る。要確認のものが agent で確認なしに通ったのは 1%（ローカル）。詳細は [docs/benchmarks.md](https://github.com/sasanokusa/sasacode/blob/main/docs/benchmarks.md)。
+- Jevはコマンドの文字列から判断するので、`ssh host 'ps aux'` のような他のマシンでの読み取りは安全と見る。また `bun run clean` のようにスクリプトの中身が見えない呼び出しは、中身が危険でも気づけない。他のマシンへの操作は `guard` プリセットが常に確認に回す。スクリプト経由の呼び出しも必ず確認したいなら、ルールで決める（例: `"permissions": { "ask": ["bash(bun run *)", "bash(make *)"] }`）。
+- 実際のセッションログ 5,135 件での結果: 安全な呼び出しの 92% がautoで止められず、agentモードでは 71% が確認なしで通る。要確認のものがagentで確認なしに通ったのは 1%（ローカル）。詳細は [docs/benchmarks.md](https://github.com/sasanokusa/sasacode/blob/main/docs/benchmarks.md)。
 
 ## English
 

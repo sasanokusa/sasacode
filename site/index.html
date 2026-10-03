@@ -237,7 +237,7 @@
           <code id="cmd1">curl -fsSL https://sasanokusa.com/sasacode/install.sh | sh</code>
           <button type="button" data-copy="cmd1">コピー</button>
         </div>
-        <p class="meta">macOS・Linux・Windows の<wbr>単一バイナリ　／　Windows は<wbr> PowerShell で <code>irm https://sasanokusa.com/sasacode/install.ps1 | iex</code>　／　Apache-2.0</p>
+        <p class="meta">macOS・Linux・Windowsの<wbr>単一バイナリ　／　Windowsは<wbr> PowerShellで <code>irm https://sasanokusa.com/sasacode/install.ps1 | iex</code>　／　Apache-2.0</p>
         <button class="play" type="button" data-play aria-pressed="false">
           <svg class="i-play" viewBox="0 0 12 12" aria-hidden="true"><path d="M2 1l9 5-9 5z"/></svg><svg class="i-pause" viewBox="0 0 12 12" aria-hidden="true"><path d="M2 1h3v10H2zM7 1h3v10H7z"/></svg>
           <span class="lbl" data-on="自動で再生（約1分半）" data-off="一時停止">自動で再生（約1分半）</span>
@@ -255,7 +255,7 @@
       <ul class="chips" aria-label="組み込みツール">
         <li data-stage="0">read</li><li data-stage="1">write</li><li data-stage="2">edit</li><li data-stage="3">bash</li>
       </ul>
-      <p class="more fine">コアは約 3,600 行で、4,000 行を超えないように保っている。組み込みの4ツールも、プラグインと同じ公開 API で登録している。</p>
+      <p class="more fine">コアは約 3,600 行で、4,000 行を超えないように保っている。組み込みの4ツールも、プラグインと同じ公開APIで登録している。</p>
     </article></div></div>
   </section>
 
@@ -263,8 +263,8 @@
     <div class="stick"><div class="card-wrap"><article class="card">
       <p class="kicker"><span class="seal">二</span>プラグイン</p>
       <h2><span class="ph">吊るして、</span><span class="ph">組み替える</span></h2>
-      <p>コアの外の振る舞いは、すべて公開のプラグイン API で足す。<code>~/.sasacode/plugins/</code> に TypeScript のファイルを置けば、ビルドなしで読み込む。</p>
-      <p class="more">MCP サーバーと Agent Skills（<code>SKILL.md</code>）はそのまま使える。使用量のグラフ（<code>/usage</code>）、ゴール（<code>/goal</code>）、長いコマンドのバックグラウンド実行なども同梱のプラグインで、<code>plugins.disabled</code> で外せる。</p>
+      <p>コアの外の振る舞いは、すべて公開のプラグインAPIで足す。<code>~/.sasacode/plugins/</code> にTypeScriptのファイルを置けば、ビルドなしで読み込む。</p>
+      <p class="more">MCPサーバーとAgent Skills（<code>SKILL.md</code>）はそのまま使える。使用量のグラフ（<code>/usage</code>）、ゴール（<code>/goal</code>）、長いコマンドのバックグラウンド実行なども同梱のプラグインで、<code>plugins.disabled</code> で外せる。</p>
       <p class="fine">Plugin API 1.7.0 · <code>npm i -D @sasacode/plugin-api</code></p>
     </article></div></div>
   </section>
@@ -278,9 +278,9 @@
         <li>anthropic/claude-opus-5<span>Messages</span></li>
         <li>openai/gpt-5.5<span>Responses</span></li>
         <li>ollama/gemma4:e4b<span>ローカル</span></li>
-        <li>openai-codex/gpt-5.5<span>ChatGPT プラン</span></li>
+        <li>openai-codex/gpt-5.5<span>ChatGPTプラン</span></li>
       </ul>
-      <p class="more fine">llama.cpp、vLLM、LM Studio などの自前のサーバーは <code>sasacode endpoint add</code> で足す。OpenAI 形式か Anthropic 形式かは自動で見分ける。</p>
+      <p class="more fine">llama.cpp、vLLM、LM Studioなどの自前のサーバーは <code>sasacode endpoint add</code> で足す。OpenAI形式かAnthropic形式かは自動で見分ける。</p>
     </article></div></div>
   </section>
 
@@ -288,7 +288,7 @@
     <div class="stick"><div class="card-wrap"><article class="card">
       <p class="kicker"><span class="seal">四</span>修復</p>
       <h2><span class="ph">破れても、</span><span class="ph">繕う</span></h2>
-      <p>小さなモデルが崩したツール呼び出しは、検証の前に直す。末尾のカンマ、<code>True</code>、キー名（<code>file</code> → <code>path</code>）、型（<code>"20"</code> → <code>20</code>）、ツール名の typo。</p>
+      <p>小さなモデルが崩したツール呼び出しは、検証の前に直す。末尾のカンマ、<code>True</code>、キー名（<code>file</code> → <code>path</code>）、型（<code>"20"</code> → <code>20</code>）、ツール名のtypo。</p>
       <p class="more">候補が1つに絞れるときだけ直し、直したことはモデルに短く伝える。同じ文の繰り返しや、同じ操作の堂々巡りも止める。</p>
     </article></div></div>
   </section>
@@ -299,12 +299,12 @@
       <h2><span class="ph">判を押してから</span></h2>
       <p>ツールは実行する前に判定する。順番は <code>deny</code> → <code>ask</code> → <code>allow</code> → モード。</p>
       <dl class="modes">
-        <dt>edits</dt><dd>作業ディレクトリ内の編集は通し、bash は確認（既定）</dd>
+        <dt>edits</dt><dd>作業ディレクトリ内の編集は通し、bashは確認（既定）</dd>
         <dt>ask</dt><dd>読み取りも含めて、すべて確認</dd>
         <dt>agent</dt><dd>危険かどうかをモデルに判定させる</dd>
-        <dt>auto</dt><dd>すべて許可。deny と ask のルールは効く</dd>
+        <dt>auto</dt><dd>すべて許可。denyとaskのルールは効く</dd>
       </dl>
-      <p class="more fine">判断専用モデル Jev の判定を重ねることもできる（既定は無効）。パスはシンボリックリンクをたどった先で見る。クローンしたリポジトリのプラグインや接続先は、信頼すると答えるまで使わない。</p>
+      <p class="more fine">判断専用モデルJevの判定を重ねることもできる（既定は無効）。パスはシンボリックリンクをたどった先で見る。クローンしたリポジトリのプラグインや接続先は、信頼すると答えるまで使わない。</p>
     </article></div></div>
   </section>
 
@@ -313,7 +313,7 @@
       <p class="kicker"><span class="seal">六</span>使い方</p>
       <h2>任せてみる</h2>
 <div class="term" aria-label="実行例"><span class="ln"><span class="p">~/app $</span> sasacode -p "テストが落ちてる。直して"</span><span class="ln d">● read(src/stats.ts)</span><span class="ln d">● bash(bun test)</span><span class="ln d">● edit(src/stats.ts)</span><span class="ln d">● bash(bun test)</span><span class="ln t">平均の計算で要素数から 1 を引いていたのを直しました。</span><span class="ln ok">✓ 12 pass · 0 fail</span><span class="ln"><span class="p">~/app $</span> <span class="caret"></span></span></div>
-      <p class="fine">esc で中断、実行中の enter で次の指示を予約。終わると、使ったトークンと料金、再開用の <code>sasacode -r &lt;id&gt;</code> が残る。</p>
+      <p class="fine">escで中断、実行中のenterで次の指示を予約。終わると、使ったトークンと料金、再開用の <code>sasacode -r &lt;id&gt;</code> が残る。</p>
     </article></div></div>
   </section>
 
@@ -329,13 +329,13 @@
         <code id="cmd3">irm https://sasanokusa.com/sasacode/install.ps1 | iex</code>
         <button type="button" data-copy="cmd3">コピー</button>
       </div>
-      <p class="meta">上は macOS・Linux、下は Windows の PowerShell。Windows では Git for Windows（Git Bash）も入れておく</p>
+      <p class="meta">上はmacOS・Linux、下はWindowsのPowerShell。WindowsではGit for Windows（Git Bash）も入れておく</p>
       <ol class="steps">
         <li><span>初回起動で <code>~/.sasacode/.env</code> ができる</span></li>
         <li><span>使うプロバイダーのキーを書く</span></li>
         <li><span><code>sasacode</code> で始める</span></li>
       </ol>
-      <p class="more fine">バイナリは GitHub Releases の最新版から取得し、SHA256 を検証する。版を固定するには <code>SASACODE_VERSION={{VERSION}}</code>、置き場所を変えるには <code>SASACODE_INSTALL_DIR=…</code> を付ける。</p>
+      <p class="more fine">バイナリはGitHub Releasesの最新版から取得し、SHA256を検証する。版を固定するには <code>SASACODE_VERSION={{VERSION}}</code>、置き場所を変えるには <code>SASACODE_INSTALL_DIR=…</code> を付ける。</p>
       <nav class="links" aria-label="関連リンク">
         <a href="docs/">ドキュメント</a>
         <a href="https://github.com/sasanokusa/sasacode">GitHub</a>

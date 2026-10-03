@@ -1,122 +1,122 @@
 # マイルストーン進捗
 
-M0〜M4 のすべてで完了条件を満たした。各段階の検証方法と結果を以下にまとめる。実モデルでの検証には主に Command Code の `deepseek/deepseek-v4-flash` と、ローカルの `ollama/gemma4:e4b` を使った。
+M0〜M4のすべてで完了条件を満たした。各段階の検証方法と結果を以下にまとめる。実モデルでの検証には主にCommand Codeの`deepseek/deepseek-v4-flash`と、ローカルの`ollama/gemma4:e4b`を使った。
 
-## M0 骨格 — 完了
+## M0 骨格（完了）
 
-完了条件「`sasacode -p` で小さなバグ修正が完了できる」。題材は、`mean()` の off-by-one で `bun test` が落ちる小さなプロジェクト。
+完了条件「`sasacode -p`で小さなバグ修正が完了できる」。題材は、`mean()`のoff-by-oneで`bun test`が落ちる小さなプロジェクト。
 
-| モデル（API 形式） | 指示 | 結果 |
+| モデル（API形式） | 指示 | 結果 |
 | --- | --- | --- |
-| commandcode/deepseek-v4-flash（Chat Completions） | 「bun test が失敗しています。原因を調べて直してください。」 | 自分で調査・修正・再テストして成功 |
+| commandcode/deepseek-v4-flash（Chat Completions） | 「bun testが失敗しています。原因を調べて直してください。」 | 自分で調査・修正・再テストして成功 |
 | commandcode-responses/deepseek-v4-flash（Responses） | 同上 | 成功 |
 | ollama/gemma4:e4b（Chat Completions） | 手順を具体的に指示 | 成功（曖昧な指示だとツールを使わずに聞き返してきた。モデル性能の問題） |
-| ollama/gemma4:e4b（Anthropic Messages 互換） | ツール呼び出しの往復 | 成功（thinking を含む） |
+| ollama/gemma4:e4b（Anthropic Messages互換） | ツール呼び出しの往復 | 成功（thinkingを含む） |
 
-## M1 日常利用 — 完了
+## M1 日常利用（完了）
 
-完了条件「作者がこのハーネス自身の開発に使える」。このリポジトリの `.sasacode/config.json` で Command Code のモデルを既定にし、リポジトリ内でソースを読んで説明させる操作と、`.env` を deny ルールでブロックする動作を確認した。
+完了条件「作者がこのハーネス自身の開発に使える」。このリポジトリの`.sasacode/config.json`でCommand Codeのモデルを既定にし、リポジトリ内でソースを読んで説明させる操作と、`.env`をdenyルールでブロックする動作を確認した。
 
 | 要件 | 確認方法 |
 | --- | --- |
 | FR-U01〜U04（エディタ、ストリーミング表示、コアコマンド、ヘッドレス） | 擬似端末（100×40）での実モデル操作と、テスト |
-| FR-S01（JSONL 追記保存、クラッシュ後の復元） | テスト（書きかけの行と、結果の揃っていないツール呼び出しを切り捨てる）、`-c` での再開 |
+| FR-S01（JSONL追記保存、クラッシュ後の復元） | テスト（書きかけの行と、結果の揃っていないツール呼び出しを切り捨てる）、`-c`での再開 |
 | FR-C01・C02（2階層設定、環境変数 / .env / キーチェーン） | テスト、実機 |
-| FR-A01〜A04（4つの権限モード、ルール、承認 UI、切替） | テストと実機（agent モードで `ls` は自動許可、`rm -rf ~/…` は確認に回る） |
-| FR-L01〜L07（ループ） | テスト（並行実行、中断、キュー、コンテキスト上限、エラー、再試行は SDK の `maxRetries`） |
+| FR-A01〜A04（4つの権限モード、ルール、承認UI、切替） | テストと実機（agentモードで`ls`は自動許可、`rm -rf ~/…`は確認に回る） |
+| FR-L01〜L07（ループ） | テスト（並行実行、中断、キュー、コンテキスト上限、エラー、再試行はSDKの`maxRetries`） |
 
-## M2 プラグインAPI — 完了
+## M2 プラグインAPI（完了）
 
-完了条件「コアが特権 API なしで動く」。
+完了条件「コアが特権APIなしで動く」。
 
-- 組み込み4ツールは `builtin-tools` プラグインとして、`PluginHost` が発行する公開 `PluginAPI` の `registerTool` で登録している。TUI のコアコマンド（`/model` `/resume` `/clear` `/help` `/permission` `/fork`）も、`core-commands` プラグインとして `registerCommand` で登録している。
-- 公開 API は 5.2 の表をすべて実装した：`registerTool`、`registerCommand`、`on`、`registerProvider`、`ui.*`、`session.*`、`agent.*`。加えて `permissions.addRules` と `settings`。
-- フックは 5.3 の表をすべて実装した。ハンドラは登録順に直列で実行し、例外は `plugin_error` として表示してループは続ける。
-- P3：同名で登録すれば組み込みツールも置き換わる。`tools.disabled` と `plugins.disabled` で外せる（テストあり）。
-- プラグインのパッケージ（5.1）：`plugin.json` または `package.json` の `sasacode` フィールドに書く。npm と git URL からのインストール、ビルド不要の TS 読み込み、`apiVersion` による semver 互換チェック、`@sasacode/plugin-api` の import 解決に対応。
-- FR-S02（分岐）は `/fork`、FR-S03（プラグインの状態の保存）は `session.append` / `entries`。
+- 組み込み4ツールは`builtin-tools`プラグインとして、`PluginHost`が発行する公開`PluginAPI`の`registerTool`で登録している。TUIのコアコマンド（`/model` `/resume` `/clear` `/help` `/permission` `/fork`）も、`core-commands`プラグインとして`registerCommand`で登録している。
+- 公開APIは5.2の表をすべて実装した：`registerTool`、`registerCommand`、`on`、`registerProvider`、`ui.*`、`session.*`、`agent.*`。加えて`permissions.addRules`と`settings`。
+- フックは5.3の表をすべて実装した。ハンドラは登録順に直列で実行し、例外は`plugin_error`として表示してループは続ける。
+- P3：同名で登録すれば組み込みツールも置き換わる。`tools.disabled`と`plugins.disabled`で外せる（テストあり）。
+- プラグインのパッケージ（5.1）：`plugin.json`または`package.json`の`sasacode`フィールドに書く。npmとgit URLからのインストール、ビルド不要のTS読み込み、`apiVersion`によるsemver互換チェック、`@sasacode/plugin-api`のimport解決に対応。
+- FR-S02（分岐）は`/fork`、FR-S03（プラグインの状態の保存）は`session.append` / `entries`。
 
-## M3 エコシステム — 完了
+## M3 エコシステム（完了）
 
-完了条件「既存の MCP サーバーと SKILL.md がそのまま動く」。
+完了条件「既存のMCPサーバーとSKILL.mdがそのまま動く」。
 
 | 項目 | 確認方法 |
 | --- | --- |
-| MCP stdio | 公式 SDK で書いたテスト用サーバー：ツールの一覧取得と呼び出し、エラー、大きい出力の切り詰め（ファイルに退避）、prompts のコマンド化。単一バイナリからも実モデル経由で呼び出せた |
-| MCP Streamable HTTP | 同じサーバーを HTTP で公開し、`${VAR}` で展開した Authorization ヘッダーで接続 |
+| MCP stdio | 公式SDKで書いたテスト用サーバー：ツールの一覧取得と呼び出し、エラー、大きい出力の切り詰め（ファイルに退避）、promptsのコマンド化。単一バイナリからも実モデル経由で呼び出せた |
+| MCP Streamable HTTP | 同じサーバーをHTTPで公開し、`${VAR}`で展開したAuthorizationヘッダーで接続 |
 | 起動できないサーバー | 通知を出すだけで、他は止まらない |
-| Skills | 標準の frontmatter（折り返しや引用符を含む）、グローバルとプロジェクトの優先順、システムプロンプトには一覧だけ載せる段階的開示、`/skill:<name>`、SKILL.md の読み取り許可 |
-| ツール遅延ロード | テスト：31 個で遅延に切り替わり、検索で読み込むと以後の定義に含まれる。閾値の設定、`never` / `always`。実モデル：40 個のツールから、`tool_search` で `svc_pagerduty` を選んで呼び出した |
+| Skills | 標準のfrontmatter（折り返しや引用符を含む）、グローバルとプロジェクトの優先順、システムプロンプトには一覧だけ載せる段階的開示、`/skill:<name>`、SKILL.mdの読み取り許可 |
+| ツール遅延ロード | テスト：31個で遅延に切り替わり、検索で読み込むと以後の定義に含まれる。閾値の設定、`never` / `always`。実モデル：40個のツールから、`tool_search`で`svc_pagerduty`を選んで呼び出した |
 
-Anthropic ネイティブの tool search（Should）は未対応で、全プロバイダーでハーネス側の `tool_search` を使う。
+Anthropicネイティブのtool search（Should）は未対応で、全プロバイダーでハーネス側の`tool_search`を使う。
 
-## M4 同梱プラグイン — 完了
+## M4 同梱プラグイン（完了）
 
 完了条件「単一バイナリで配布できる」。
 
-- `bun run build` で `dist/sasacode`（約 65MB）ができる。`node_modules` のない場所で次の点を確認した：ヘッドレス実行、`~/.sasacode/plugins` の TS プラグイン（`@sasacode/plugin-api` の import を含む）、MCP stdio サーバー、パイプ入力、TUI の起動。
-- `.github/workflows/release.yml`：`v*` タグを push すると、7 種類のバイナリ（darwin-arm64 / darwin-x64 / linux-x64 / linux-x64-baseline / linux-arm64 / linux-x64-musl / linux-arm64-musl）をビルドして GitHub Release に添付する。macOS 版は macOS のランナーでビルドし、起動を確認する。
-- npm 向け：各パッケージに公開用のメタデータを入れ、`bun pm pack` での梱包を確認した。まだ公開はしていない。
-- 同梱プラグイン：`agents-md`、`compaction`、`subagent`、`todo`、`web-fetch`、`permission-presets`。どれもテストがあり、TUI で実モデルを使って確認した（TODO の表示とステータス行、サブエージェント、`/compact` の後も内容を覚えていること）。
+- `bun run build`で`dist/sasacode`（約65MB）ができる。`node_modules`のない場所で次の点を確認した：ヘッドレス実行、`~/.sasacode/plugins`のTSプラグイン（`@sasacode/plugin-api`のimportを含む）、MCP stdioサーバー、パイプ入力、TUIの起動。
+- `.github/workflows/release.yml`：`v*`タグをpushすると、7種類のバイナリ（darwin-arm64 / darwin-x64 / linux-x64 / linux-x64-baseline / linux-arm64 / linux-x64-musl / linux-arm64-musl）をビルドしてGitHub Releaseに添付する。macOS版はmacOSのランナーでビルドし、起動を確認する。
+- npm向け：各パッケージに公開用のメタデータを入れ、`bun pm pack`での梱包を確認した。まだ公開はしていない。
+- 同梱プラグイン：`agents-md`、`compaction`、`subagent`、`todo`、`web-fetch`、`permission-presets`。どれもテストがあり、TUIで実モデルを使って確認した（TODOの表示とステータス行、サブエージェント、`/compact`の後も内容を覚えていること）。
 
 ### M4 以降の追加
 
-- **配布**：`curl -fsSL https://sasanokusa.com/sasacode/install.sh | sh` の1コマンドでインストールできる。インストーラーは OS・CPU・libc・AVX2 の有無を見て 7 種類のバイナリから選び、SHA256 を検証して配置し、起動できるかも確かめる。インストーラーとバイナリは GitHub Releases の最新版から取得する。sasanokusa.com/sasacode/install.sh は最新リリースの install.sh へのリダイレクト（Cloudflare Tunnel → Apache の .htaccess）なので、タグを打つだけで配布も最新になる。
-- **browsr プラグイン**：browsr-4-agent の manifest v1 を読んで互換性を確かめ、`browsr-agent serve` を MCP サーバーとして起動する。`search` / `open` を元の名前のまま公開する。実モデルで、検索 → ページを開く → 出典付きで回答、という流れを確認した。
-- **組み込み Skill `tool-authoring`**：実モデルで `/skill:tool-authoring` から `now` ツールのプラグインを作らせ、テストを通し、作ったツールを sasacode から呼び出せることを確認した。
-- **プラグイン API 1.1.0**：`api.ready()` を追加した（既存を壊さない変更）。ヘッドレス実行では、MCP サーバーなどの起動処理を待ってから最初のリクエストを送る。
+- 配布：`curl -fsSL https://sasanokusa.com/sasacode/install.sh | sh`の1コマンドでインストールできる。インストーラーはOS・CPU・libc・AVX2の有無を見て7種類のバイナリから選び、SHA256を検証して配置し、起動できるかも確かめる。インストーラーとバイナリはGitHub Releasesの最新版から取得する。sasanokusa.com/sasacode/install.shは最新リリースのinstall.shへのリダイレクト（Cloudflare Tunnel → Apacheの.htaccess）なので、タグを打つだけで配布も最新になる。
+- browsrプラグイン：browsr-4-agentのmanifest v1を読んで互換性を確かめ、`browsr-agent serve`をMCPサーバーとして起動する。`search` / `open`を元の名前のまま公開する。実モデルで、検索 → ページを開く → 出典付きで回答、という流れを確認した。
+- 組み込みSkill `tool-authoring`：実モデルで`/skill:tool-authoring`から`now`ツールのプラグインを作らせ、テストを通し、作ったツールをsasacodeから呼び出せることを確認した。
+- プラグインAPI 1.1.0：`api.ready()`を追加した（既存を壊さない変更）。ヘッドレス実行では、MCPサーバーなどの起動処理を待ってから最初のリクエストを送る。
 
 ### 小型モデル向けの強化（プラグイン API 1.2.0）
 
-- **tool-call の修復**：`tool_call_raw` フック（検証の前）と、同梱の `tool-repair` プラグイン。修復した呼び出しは、会話履歴には修復後の形で残し、モデルには tool_result の先頭で短く伝える。元の出力はセッションに `tool_repair` として記録する。署名付きの thinking を含む応答は、API が履歴の書き換えを拒否するので、実行時だけ直し、履歴はそのまま残す。`max_tokens` で途切れた呼び出しは修復しない。
-- **生成中のフック**：`stream_delta`（同期のみ、途中停止）、`assistant_message`（書き換え、再生成、継続）、`before_request` でのサンプリング設定の変更。同梱の `repetition-guard` がこれらを使う。プラグインが止めた応答は `stopped` として扱い、「ユーザーが中断した」とはモデルに伝えない。
-- **セッション ID と終了**：`/exit`・`/quit`・`/session` を追加し、ID をフッター、終了時、ヘッドレスの出力に出すようにした。`-r <id> -p` で続けられることを E2E テストで確認した。
-- コアからツール実行の部分を `tool-exec.ts` に切り出した。コアの行数の上限は、要件定義書で 4,000 行に改訂した。
+- tool-callの修復：`tool_call_raw`フック（検証の前）と、同梱の`tool-repair`プラグイン。修復した呼び出しは、会話履歴には修復後の形で残し、モデルにはtool_resultの先頭で短く伝える。元の出力はセッションに`tool_repair`として記録する。署名付きのthinkingを含む応答は、APIが履歴の書き換えを拒否するので、実行時だけ直し、履歴はそのまま残す。`max_tokens`で途切れた呼び出しは修復しない。
+- 生成中のフック：`stream_delta`（同期のみ、途中停止）、`assistant_message`（書き換え、再生成、継続）、`before_request`でのサンプリング設定の変更。同梱の`repetition-guard`がこれらを使う。プラグインが止めた応答は`stopped`として扱い、「ユーザーが中断した」とはモデルに伝えない。
+- セッションIDと終了：`/exit`・`/quit`・`/session`を追加し、IDをフッター、終了時、ヘッドレスの出力に出すようにした。`-r <id> -p`で続けられることをE2Eテストで確認した。
+- コアからツール実行の部分を`tool-exec.ts`に切り出した。コアの行数の上限は、要件定義書で4,000行に改訂した。
 
 ### モデル一覧とプラグイン API 1.3.0
 
-- `/model` は、キーのあるプロバイダーの Models API（`GET /v1/models`）から取得した一覧を出す。取得したコンテキスト長はモデル情報にも使う。1つのキーで複数の API 形式を提供するサービスでは、モデルごとに対応する形式のプロバイダーへ振り分ける。
-- コマンドの引数の補完（`complete`）を API に追加した。
-- `~/.sasacode/.env` を初回起動時に作る。空欄のキーは未設定として扱う。
-- 配布は GitHub Releases に一本化した。sasanokusa.com の `install.sh` は最新リリースへのリダイレクト。
+- `/model`は、キーのあるプロバイダーのModels API（`GET /v1/models`）から取得した一覧を出す。取得したコンテキスト長はモデル情報にも使う。1つのキーで複数のAPI形式を提供するサービスでは、モデルごとに対応する形式のプロバイダーへ振り分ける。
+- コマンドの引数の補完（`complete`）をAPIに追加した。
+- `~/.sasacode/.env`を初回起動時に作る。空欄のキーは未設定として扱う。
+- 配布はGitHub Releasesに一本化した。sasanokusa.comの`install.sh`は最新リリースへのリダイレクト。
 
 ### v0.6.3 のレビューを受けた修正
 
 外部レビューの指摘と、確認中に見つけた問題を直した。どれも回帰テストを付けている。
 
-- **作業ディレクトリの `bunfig.toml` と `.env` を読まない**：`bunfig.toml` の `preload` で、起動時に任意のコードが実行されていた。`.env` の `ANTHROPIC_BASE_URL` / `OPENAI_BASE_URL` で、API キーの送り先を差し替えられた。単一バイナリはビルドのオプションで、ソースから起動する場合はシェバン行で止めた。
-- **プロジェクト設定は許可リスト方式にした**：信頼なしで使えるのは、制限を強める設定と無害な設定だけ。エンドポイント、`modelOverrides`、プラグインの無効化と設定（`browsr.command` による任意のコマンド実行を含む）、MCP サーバー、allow ルール、緩い権限モードは、信頼が必要。信頼の確認は、プロジェクトのプラグインと合わせて1回にまとめた。値の型を検査し、`deny: null` のような値で全体設定のルールを消せないようにした。
-- **シンボリックリンク**：パスを実パスで判定し、作業ディレクトリ内のリンク経由で外を読み書きできないようにした。ルールの照合でも、リンクによるすり替えを防ぐ。
-- **中断**：承認済みでも、中断後にはツールを始めない。write / edit は、書き込む直前にも確認する。
-- **セッション復元**：履歴全体で、結果のないツール呼び出しに「実行されなかった」という結果を補い、その修復をログに記録する。2回目以降の復元でも同じ履歴になる。
-- **修復**：変更系のツールでは、スキーマにない引数を捨てず、モデルに作り直させる。
-- **反復**：短い単位の繰り返しも、長く続けば止める。同じツール呼び出しの繰り返しは、新しい `loop-guard` で検出する。
-- **テスト**：記録した差分（delta）をそのまま再生できるようにし、分割の仕方や途中での中断も試せるようにした。
+- 作業ディレクトリの`bunfig.toml`と`.env`を読まない：`bunfig.toml`の`preload`で、起動時に任意のコードが実行されていた。`.env`の`ANTHROPIC_BASE_URL` / `OPENAI_BASE_URL`で、APIキーの送り先を差し替えられた。単一バイナリはビルドのオプションで、ソースから起動する場合はシェバン行で止めた。
+- プロジェクト設定は許可リスト方式にした：信頼なしで使えるのは、制限を強める設定と無害な設定だけ。エンドポイント、`modelOverrides`、プラグインの無効化と設定（`browsr.command`による任意のコマンド実行を含む）、MCPサーバー、allowルール、緩い権限モードは、信頼が必要。信頼の確認は、プロジェクトのプラグインと合わせて1回にまとめた。値の型を検査し、`deny: null`のような値で全体設定のルールを消せないようにした。
+- シンボリックリンク：パスを実パスで判定し、作業ディレクトリ内のリンク経由で外を読み書きできないようにした。ルールの照合でも、リンクによるすり替えを防ぐ。
+- 中断：承認済みでも、中断後にはツールを始めない。write / editは、書き込む直前にも確認する。
+- セッション復元：履歴全体で、結果のないツール呼び出しに「実行されなかった」という結果を補い、その修復をログに記録する。2回目以降の復元でも同じ履歴になる。
+- 修復：変更系のツールでは、スキーマにない引数を捨てず、モデルに作り直させる。
+- 反復：短い単位の繰り返しも、長く続けば止める。同じツール呼び出しの繰り返しは、新しい`loop-guard`で検出する。
+- テスト：記録した差分（delta）をそのまま再生できるようにし、分割の仕方や途中での中断も試せるようにした。
 
 ### v0.7〜v0.9（プラグイン API 1.4.0〜1.7.0）
 
-- **API の締め切り**：プラグイン API は 1.4.0 で締め切り、以後 1.x の間は追加だけにした。1.4.0 で `turn_end` の `stop`（進捗のない実行をプラグインが止める）を入れ、1.5.0〜1.7.0 では、プロバイダーの `listModels` と `Request.fetch`（別のプロバイダーを包む）、ツールの `permissionsAs`（別のツールの権限ルールを当てる）、`permission` フックと `softDeny` ルールを足した。`@sasacode/plugin-api` は npm で公開した。
-- **全画面の TUI**：会話は上でスクロールし、入力欄とフッターは下に固定する。終了すると端末は元に戻り、使用量と再開コマンドの要約だけが残る。検索、自分の入力への移動、ドラッグでのコピー（OSC 52 に対応しない端末でも、pbcopy などで確実にコピーする）、30 秒以上の実行が終わったときのベル。余白は端末のブロック表示に合わせて左右 2 桁・上下 1 行。改行などカーソルを動かす文字は、描画の前に取り除く（複数行のコマンドで画面が崩れないように）。
-- **ChatGPT プラン**：`sasacode login` で ChatGPT アカウントにログインし、`openai-codex/…` のモデルを API キーなしで使う（Codex CLI と同じ公開クライアントと PKCE）。
-- **推論の深さ**：`/effort` で切り替える。OpenAI 形式のサーバーには `reasoning_effort` を送り、`off` は `none` として送る。受け付けない値は近い値に替えて送り直し、その結果を覚える。vLLM（受け付けない値をストリームの最初のイベントで返す）、Command Code、Ollama、ChatGPT プランで確認した。
-- **Jev による実行前判断**：同梱の `jev-guard`（既定は無効。0.9.6 で配布プラグイン `sasacode-plugin-jev-guard` に分けた）。実際のセッションログ 5,135 件で質問と閾値を調整した（[benchmarks.md](benchmarks.md)）。`guard` プリセットは、ほかのマシンへの ssh / scp / sftp / rsync を `auto` モードでも確認に回す。
-- **利用者のプラグインから同梱へ**：`usage`（使用量、ChatGPT プランの残り、Contributions Graph 風の日別グラフ）、`goal`（セッションのゴール）、`background-sessions`（長いコマンドのバックグラウンド実行と終了通知）、`auto-reconnect`（接続が切れたら復旧を待って再開）。後の3つは、sasacode 自身の上で他のモデルに書かせたプラグインを見直して取り込んだ。同じ名前のユーザー・プロジェクトのプラグインがあれば、同梱版の代わりにそちらを読み込む。
-- **圧縮**：`/compact` の実行中はフッターに表示し、要約が空で返ってきたら履歴を置き換えない。
+- APIの締め切り：プラグインAPIは1.4.0で締め切り、以後1.xの間は追加だけにした。1.4.0で`turn_end`の`stop`（進捗のない実行をプラグインが止める）を入れ、1.5.0〜1.7.0では、プロバイダーの`listModels`と`Request.fetch`（別のプロバイダーを包む）、ツールの`permissionsAs`（別のツールの権限ルールを当てる）、`permission`フックと`softDeny`ルールを足した。`@sasacode/plugin-api`はnpmで公開した。
+- 全画面のTUI：会話は上でスクロールし、入力欄とフッターは下に固定する。終了すると端末は元に戻り、使用量と再開コマンドの要約だけが残る。検索、自分の入力への移動、ドラッグでのコピー（OSC 52に対応しない端末でも、pbcopyなどで確実にコピーする）、30秒以上の実行が終わったときのベル。余白は端末のブロック表示に合わせて左右2桁・上下1行。改行などカーソルを動かす文字は、描画の前に取り除く（複数行のコマンドで画面が崩れないように）。
+- ChatGPTプラン：`sasacode login`でChatGPTアカウントにログインし、`openai-codex/…`のモデルをAPIキーなしで使う（Codex CLIと同じ公開クライアントとPKCE）。
+- 推論の深さ：`/effort`で切り替える。OpenAI形式のサーバーには`reasoning_effort`を送り、`off`は`none`として送る。受け付けない値は近い値に替えて送り直し、その結果を覚える。vLLM（受け付けない値をストリームの最初のイベントで返す）、Command Code、Ollama、ChatGPTプランで確認した。
+- Jevによる実行前判断：同梱の`jev-guard`（既定は無効。0.9.6で配布プラグイン`sasacode-plugin-jev-guard`に分けた）。実際のセッションログ5,135件で質問と閾値を調整した（[benchmarks.md](benchmarks.md)）。`guard`プリセットは、ほかのマシンへのssh / scp / sftp / rsyncを`auto`モードでも確認に回す。
+- 利用者のプラグインから同梱へ：`usage`（使用量、ChatGPTプランの残り、Contributions Graph風の日別グラフ）、`goal`（セッションのゴール）、`background-sessions`（長いコマンドのバックグラウンド実行と終了通知）、`auto-reconnect`（接続が切れたら復旧を待って再開）。後の3つは、sasacode自身の上で他のモデルに書かせたプラグインを見直して取り込んだ。同じ名前のユーザー・プロジェクトのプラグインがあれば、同梱版の代わりにそちらを読み込む。
+- 圧縮：`/compact`の実行中はフッターに表示し、要約が空で返ってきたら履歴を置き換えない。
 
 ## 非機能要件の実測（M4 時点。行数とテストは v0.9.3）
 
 | 項目 | 目標 | 実測 |
 | --- | --- | --- |
-| 起動から入力可能まで（プラグイン 0 個） | 300 ms 以内 | 単一バイナリで 86 ms、ソースから `bun` で約 100 ms |
-| 同上（プラグイン＋MCP サーバーあり） | 入力をブロックしない | 95 ms（読み込みは起動後にバックグラウンドで行う） |
-| コアの行数（ai + agent + plugin-api + tools） | 約 4,000 行（当初 3,000 行から改訂） | 3,609 行（v0.9.3。v0.7.0 では 3,306 行） |
-| テスト | LLM なしで E2E | 157 テスト（26 ファイル）。replayProvider と、テスト用の MCP サーバー、偽の browsr-agent、偽の Models API を使う。組み込み Skill `tool-authoring` のコード例も抜き出して実行する |
+| 起動から入力可能まで（プラグイン0個） | 300 ms以内 | 単一バイナリで86 ms、ソースから`bun`で約100 ms |
+| 同上（プラグイン＋MCPサーバーあり） | 入力をブロックしない | 95 ms（読み込みは起動後にバックグラウンドで行う） |
+| コアの行数（ai + agent + plugin-api + tools） | 約4,000行（当初3,000行から改訂） | 3,609行（v0.9.3。v0.7.0では3,306行） |
+| テスト | LLMなしでE2E | 157テスト（26ファイル）。replayProviderと、テスト用のMCPサーバー、偽のbrowsr-agent、偽のModels APIを使う。組み込みSkill `tool-authoring`のコード例も抜き出して実行する |
 
 ## 未検証・既知の制限
 
-- **実際の Anthropic API**：Command Code の現在のプランでは Claude 系のモデルが 403 になる。Anthropic アダプタは Ollama の Messages 互換エンドポイントでしか確認していない。prompt caching、adaptive thinking、署名付き thinking の再送は、本物の API での確認が必要。
-- **IME の候補ウィンドウの位置**：実端末での手動確認が必要。
-- **OAuth が必要なリモート MCP サーバー**：未対応。ヘッダーでトークンを渡す方式だけ使える。
-- **MCP の resources**（Could）：一覧取得と参照は未実装。ツール結果に含まれる resource は扱える。
-- **クロスコンパイル**：ローカルではこのマシン向けのビルドだけを確認した。他ターゲットのビルドは release ワークフローで行う。
-- **権限の承認フロー**：1ターンに複数のツール呼び出しがあるときは、全部の承認を先に取ってから実行する。
+- 実際のAnthropic API：Command Codeの現在のプランではClaude系のモデルが403になる。AnthropicアダプタはOllamaのMessages互換エンドポイントでしか確認していない。prompt caching、adaptive thinking、署名付きthinkingの再送は、本物のAPIでの確認が必要。
+- IMEの候補ウィンドウの位置：実端末での手動確認が必要。
+- OAuthが必要なリモートMCPサーバー：未対応。ヘッダーでトークンを渡す方式だけ使える。
+- MCPのresources（Could）：一覧取得と参照は未実装。ツール結果に含まれるresourceは扱える。
+- クロスコンパイル：ローカルではこのマシン向けのビルドだけを確認した。他ターゲットのビルドはreleaseワークフローで行う。
+- 権限の承認フロー：1ターンに複数のツール呼び出しがあるときは、全部の承認を先に取ってから実行する。
