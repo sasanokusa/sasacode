@@ -1,0 +1,3 @@
+# Empty on purpose: `bun --config=scripts/no-bunfig.toml` keeps Bun from loading the bunfig.toml of the
+# directory sasacode runs in (an untrusted repository whose preload scripts would run as sasacode).
+# It replaces --config=/dev/null, which Bun cannot open on Windows.

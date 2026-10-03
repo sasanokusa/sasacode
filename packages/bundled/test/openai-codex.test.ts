@@ -36,10 +36,11 @@ const json = (body: unknown, status = 200) => new Response(JSON.stringify(body),
 // ── credentials ─────────────────────────────────────────────────────────────
 
 test("credentials live in the sasacode home, readable only by the user", () => {
-  expect(codexAuthPath("/h")).toBe("/h/codex-auth.json");
+  expect(codexAuthPath("/h")).toBe(join("/h", "codex-auth.json"));
   const path = file();
   writeCodexAuth(tokens(), path);
-  expect(statSync(path).mode & 0o777).toBe(0o600);
+  // Unix permission bits; on Windows the file is private through the ACL of the user profile it is in.
+  if (process.platform !== "win32") expect(statSync(path).mode & 0o777).toBe(0o600);
   expect(readCodexAuth(path)).toMatchObject({ refresh: "rt-old", accountId: "acct-1" });
   expect(planType(readCodexAuth(path)!.idToken)).toBe("pro");
   expect(clearCodexAuth(path)).toBe(true);

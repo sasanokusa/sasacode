@@ -99,7 +99,7 @@ test("trust follows a plugin folder that is a link, and never vouches for code i
   const elsewhere = join(proj, "..", "linked-plugin");
   write(join(elsewhere, "plugin.json"), JSON.stringify({ apiVersion: "^1.0.0", extensions: ["main.ts"] }));
   write(join(elsewhere, "main.ts"), PLUGIN("linked"));
-  symlinkSync(elsewhere, join(proj, ".sasacode", "plugins", "linked"));
+  symlinkSync(elsewhere, join(proj, ".sasacode", "plugins", "linked"), "junction"); // junction: no admin needed on Windows
   saveTrust(proj, assessProject(proj));
   expect(isTrusted(proj, assessProject(proj))).toBe(true);
   write(join(elsewhere, "main.ts"), PLUGIN("linked_changed")); // same name, same manifest
@@ -110,7 +110,7 @@ test("trust follows a plugin folder that is a link, and never vouches for code i
   expect(t.complete).toBe(false);
   saveTrust(proj, t);
   expect(isTrusted(proj, assessProject(proj))).toBe(false);
-});
+}, 30_000); // 5001 files: slow to write on Windows (and under a virus scanner)
 
 test("plugins.disabled and tools.disabled switch things off (P3)", async () => {
   write(join(proj, ".sasacode", "config.json"), JSON.stringify({ plugins: { disabled: ["todo", "global-hi"] }, tools: { disabled: ["bash", "web_fetch"] } }));

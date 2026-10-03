@@ -1,5 +1,5 @@
 import { lstatSync, readlinkSync } from "node:fs";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, parse, relative, resolve } from "node:path";
 import type { ToolDefinition } from "@sasacode/plugin-api";
 
 /**
@@ -118,7 +118,7 @@ export class PermissionPolicy {
     const target = c.tool.matchTarget?.(c.args);
     if (target !== undefined) return [`${c.tool.name}(${target.replace(/\\/g, "\\\\").replace(/\*/g, "\\*")})`];
     const paths = pathsOf(c);
-    if (paths.length) return [...new Set(paths)].map((p) => `${c.tool.name}(${p.replace(/[\\*?[\]{}!]/g, "\\$&")})`);
+    if (paths.length) return [...new Set(paths)].map((p) => `${c.tool.name}(${slashes(p).replace(/[\\*?[\]{}!]/g, "\\$&")})`);
     return [c.tool.name];
   }
 
@@ -190,12 +190,41 @@ function ruleMatches(rule: ParsedRule, c: PermissionCheck, forAllow = false): bo
   // Compare like with like. A relative pattern is anchored at the working directory's real path,
   // but links inside the project are not followed (a repo could point `src` at ~/.ssh). An
   // absolute pattern is the user's own path: its fixed part is resolved (/var → /private/var).
-  const pattern = rule.pattern;
+  const pattern = pathPattern(rule.pattern, c.cwd);
   const variants = isAbsolute(pattern) ? [pattern, realPattern(pattern)] : [resolve(c.cwd, pattern), resolve(tryRealPath(c.cwd) ?? c.cwd, pattern)];
-  const globs = [...new Set(variants)].map((g) => new Bun.Glob(g));
-  const hit = (p: string) => globs.some((g) => g.match(p));
+  const globs = [...new Set(variants)].map((g) => new Bun.Glob(globPath(g)));
+  const hit = (p: string) => globs.some((g) => g.match(globPath(p)));
   const spellings = paths.flatMap((p) => [p, tryRealPath(p) ?? p]);
   return forAllow ? spellings.every(hit) : spellings.some(hit);
+}
+
+const WINDOWS = process.platform === "win32";
+/** Path separators: on Windows both, elsewhere `\` is an ordinary character of a name. */
+const SEP = WINDOWS ? /[\\/]/ : "/";
+
+/** On Windows, `\` as `/`: rules are globs, where `\` escapes (and no Windows name holds `*` or `?`). */
+function slashes(p: string): string {
+  return WINDOWS ? p.replace(/\\/g, "/") : p;
+}
+
+/** A path rule's pattern; on Windows `/x` (no drive) is on the working directory's drive. */
+function pathPattern(pattern: string, cwd: string): string {
+  if (!WINDOWS) return pattern;
+  const p = slashes(pattern);
+  return /^\/(?!\/)/.test(p) ? resolve(cwd).slice(0, 2) + p : p;
+}
+
+/** A path or glob as compared: on Windows with `/` and in one case, as the file system sees names. */
+function globPath(p: string): string {
+  return WINDOWS ? slashes(p).toLowerCase() : p;
+}
+
+/** The root `p` starts from: on Windows a drive (C:\) or share; a bare `\` is the current drive's. */
+function rootOf(p: string): string {
+  const root = parse(p).root;
+  if (!WINDOWS) return root || "/";
+  if (/^[a-z]:/i.test(root)) return `${root.slice(0, 2)}\\`; // C: alone would be relative to that drive's cwd
+  return /^[\\/]{2}/.test(root) ? root : resolve("\\").slice(0, 3);
 }
 
 /** A glob with the directories before its first wildcard resolved through symlinks. */
@@ -216,8 +245,8 @@ function realPattern(glob: string): string {
  * permission, ".." below a part that does not exist).
  */
 export function realPath(p: string): string {
-  const todo = p.split("/").filter(Boolean);
-  let done = "/";
+  const todo = p.slice(parse(p).root.length).split(SEP).filter(Boolean);
+  let done = rootOf(p);
   let absent = false;
   let hops = 0;
   while (todo.length) {
@@ -241,8 +270,8 @@ export function realPath(p: string): string {
       }
       if (link !== undefined) {
         if (++hops > 40) throw new Error(`too many symlinks: ${p}`);
-        todo.unshift(...link.split("/").filter(Boolean));
-        if (isAbsolute(link)) done = "/";
+        todo.unshift(...link.slice(parse(link).root.length).split(SEP).filter(Boolean));
+        if (isAbsolute(link)) done = rootOf(link);
         continue;
       }
     }

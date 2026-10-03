@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setLang } from "@sasacode/host";
 import { hideFromChildren, childEnv } from "@sasacode/plugin-api";
+import { bashPath } from "@sasacode/tools";
 import { endpointCommand } from "../src/endpoints.ts";
 import { loadEnvFile } from "../src/env.ts";
 import { discoverPlugins, pluginCommand } from "../src/loader.ts";
@@ -48,7 +49,7 @@ test("plugin flags may come before the name", async () => {
 });
 
 test("a broken link in a plugins folder is skipped with a warning, not a crash", () => {
-  symlinkSync(join(base, "missing"), join(proj, ".sasacode", "plugins", "dangling"));
+  symlinkSync(join(base, "missing"), join(proj, ".sasacode", "plugins", "dangling"), "junction"); // junction: no admin needed on Windows
   const warnings: string[] = [];
   expect(discoverPlugins(proj, warnings)).toEqual([]);
   expect(warnings[0]).toContain("dangling");
@@ -73,8 +74,11 @@ test("piped input that arrives after a second is still read; a file is read whol
   const fd = openSync(file, "r");
   expect(await readPipedStdin(false, fd)).toBe("from a file");
   closeSync(fd);
+  // Quoted for bash, and written with / (Windows takes C:/x too): \ would not survive the trip.
+  const stdin = join(import.meta.dir, "../src/stdin.ts").replace(/\\/g, "/");
+  const script = `import { readPipedStdin } from "${stdin}"; console.log(JSON.stringify(await readPipedStdin()))`;
   const child = Bun.spawn(
-    ["bash", "-c", `(sleep 1; echo LATE) | ${process.execPath} -e 'import { readPipedStdin } from "${join(import.meta.dir, "../src/stdin.ts")}"; console.log(JSON.stringify(await readPipedStdin()))'`],
+    [bashPath(), "-c", `(sleep 1; echo LATE) | '${process.execPath}' -e '${script}'`],
     { stdout: "pipe" },
   );
   expect((await new Response(child.stdout).text()).trim()).toBe(JSON.stringify("LATE\n"));
@@ -88,5 +92,7 @@ test("keys read from ~/.sasacode/.env stay out of commands the agent runs", () =
   expect(String(process.env.SASACODE_TEST_SECRET)).toBe("abc");
   expect(childEnv().SASACODE_TEST_SECRET).toBeUndefined();
   expect(childEnv({ X: "1" }).X).toBe("1");
-  expect(childEnv().PATH).toBe(process.env.PATH!);
+  // The name as the OS spells it: Windows says Path (and matches it without case).
+  const pathKey = Object.keys(childEnv()).find((k) => k.toUpperCase() === "PATH")!;
+  expect(childEnv()[pathKey]).toBe(process.env.PATH!);
 });

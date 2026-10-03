@@ -1,14 +1,14 @@
 name: release
 # Push a tag like v0.4.0: check that the tag matches the version, build single-file binaries (macOS
-# ones on macOS, so they are natively signed), start every one of them on a machine that can run
-# it, then attach them to a GitHub release with build provenance.
+# ones on macOS, so they are natively signed; Windows ones cross-compiled, as .zip), start every one
+# of them on a machine that can run it, then attach them to a GitHub release with build provenance.
 # Actions are pinned to commits (Dependabot keeps them current); Bun comes from package.json.
 # A pull request that changes this workflow or the build runs everything but the release itself.
 on:
   push:
     tags: ["v*"]
   pull_request:
-    paths: [.github/workflows/release.yml, scripts/build.ts, package.json, npm/**]
+    paths: [.github/workflows/release.yml, scripts/build.ts, scripts/install.ps1, package.json, npm/**]
   workflow_dispatch:
 permissions:
   contents: read
@@ -41,6 +41,8 @@ jobs:
             targets: darwin
           - os: ubuntu-latest
             targets: linux
+          - os: ubuntu-latest
+            targets: windows
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -52,12 +54,18 @@ jobs:
         run: |
           cd dist
           for f in sasacode-*; do
-            case "$f" in *.map) ;; *) tar czf "$f.tar.gz" "$f" ;; esac
+            case "$f" in
+              *.map) ;;
+              *.exe) zip -q -j "${f%.exe}.zip" "$f" ;; # Windows: a .zip, which Explorer and Expand-Archive open
+              *) tar czf "$f.tar.gz" "$f" ;;
+            esac
           done
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: dist-${{ matrix.targets }}
-          path: dist/*.tar.gz
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
   smoke:
     # Every binary is started once: --version must be the tag, --help and a subcommand must run.
     needs: [check, build]
@@ -72,6 +80,9 @@ jobs:
           - { target: linux-arm64, os: ubuntu-24.04-arm, run: "" }
           - { target: linux-x64-musl, os: ubuntu-latest, run: alpine }
           - { target: linux-arm64-musl, os: ubuntu-24.04-arm, run: alpine }
+          - { target: windows-x64, os: windows-latest, run: "" }
+          - { target: windows-x64-baseline, os: windows-latest, run: "" }
+          - { target: windows-arm64, os: windows-11-arm, run: "" }
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -79,13 +90,19 @@ jobs:
           path: dist
           merge-multiple: true
       - name: Start sasacode-${{ matrix.target }}
+        shell: bash # Git Bash on Windows
         env:
           BIN: sasacode-${{ matrix.target }}
           RUNNER: ${{ matrix.run }}
           VERSION: ${{ needs.check.outputs.version }}
         run: |
           cd dist
-          tar xzf "$BIN.tar.gz"
+          if [ -f "$BIN.zip" ]; then
+            pwsh -NoProfile -Command "Expand-Archive -Path '$BIN.zip' -DestinationPath ."
+            BIN="$BIN.exe"
+          else
+            tar xzf "$BIN.tar.gz"
+          fi
           cat > smoke.sh <<'EOF'
           set -eu
           export SASACODE_HOME="$(mktemp -d)"
@@ -114,17 +131,19 @@ jobs:
         with:
           path: dist
           merge-multiple: true
-      - run: cp scripts/install.sh dist/ && cd dist && sha256sum *.tar.gz > SHA256SUMS
+      - run: cp scripts/install.sh scripts/install.ps1 dist/ && cd dist && sha256sum *.tar.gz *.zip > SHA256SUMS
       # Signed provenance: `gh attestation verify <file> --repo sasanokusa/sasacode` proves a file
       # was built by this workflow from this repository, which a matching checksum alone cannot.
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: |
             dist/*.tar.gz
+            dist/*.zip
             dist/install.sh
+            dist/install.ps1
       - name: Create release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           cd dist
-          gh release create "$GITHUB_REF_NAME" --generate-notes *.tar.gz SHA256SUMS install.sh
+          gh release create "$GITHUB_REF_NAME" --generate-notes *.tar.gz *.zip SHA256SUMS install.sh install.ps1

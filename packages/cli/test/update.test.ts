@@ -49,6 +49,6 @@ test("a newer version is reported, and asked about once a day", async () => {
 
 test("update in a source checkout points back at the checkout", async () => {
   expect(currentVersion()).toBeTruthy();
-  expect(releaseTarget()).toMatch(/^(darwin|linux)-(arm64|x64)/);
+  expect(releaseTarget()).toMatch(/^(darwin|linux|windows)-(arm64|x64)/);
   await expect(updateCommand([])).rejects.toThrow("runs from source");
 });

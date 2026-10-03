@@ -15,7 +15,17 @@ const outside = join(root, "outside");
 mkdirSync(proj);
 mkdirSync(outside);
 writeFileSync(join(outside, "secret.txt"), "SECRET");
-symlinkSync(outside, join(proj, "linked"));
+// "junction": a directory link Windows lets anyone make (symlinks need admin or Developer Mode); ignored elsewhere.
+symlinkSync(outside, join(proj, "linked"), "junction");
+// Links to files, relative or dangling ones, need real symlinks: on Windows only with Developer Mode or admin.
+const canSymlink = (() => {
+  try {
+    symlinkSync("x", join(root, "probe"));
+    return true;
+  } catch {
+    return false;
+  }
+})();
 
 test("paths through a symlink are judged by where they really go", async () => {
   const p = new PermissionPolicy("edits");
@@ -34,7 +44,7 @@ test("paths through a symlink are judged by where they really go", async () => {
   expect((await abs.check({ tool: readTool, args: { path: `${outside}/secret.txt` }, cwd: proj })).decision).toBe("allow");
 });
 
-test("a link to a file that does not exist yet is judged by its target", async () => {
+test.skipIf(!canSymlink)("a link to a file that does not exist yet is judged by its target", async () => {
   symlinkSync("../outside/new.txt", join(proj, "dangling.txt"));
   symlinkSync("../outside/newdir", join(proj, "dangling-dir"));
   const p = new PermissionPolicy("edits");
@@ -49,7 +59,7 @@ test("a link to a file that does not exist yet is judged by its target", async (
   expect((await auto.check({ tool: writeTool, args: { path: "loop-a", content: "x" }, cwd: proj })).decision).toBe("ask");
 });
 
-test("a link whose target goes up through another link is followed as the OS does", async () => {
+test.skipIf(!canSymlink)("a link whose target goes up through another link is followed as the OS does", async () => {
   mkdirSync(join(outside, "child"));
   symlinkSync("../outside/child", join(proj, "pivot"));
   symlinkSync("pivot/../new-through-pivot.txt", join(proj, "entry"));

@@ -31,7 +31,7 @@ fetch() { # url [outfile]
 case "$(uname -s)" in
   Darwin) os=darwin ;;
   Linux) os=linux ;;
-  MINGW* | MSYS* | CYGWIN*) die "Windows is supported through WSL: run this inside a WSL shell" ;;
+  MINGW* | MSYS* | CYGWIN*) die "on Windows, install from PowerShell: irm https://sasanokusa.com/sasacode/install.ps1 | iex" ;;
   *) die "unsupported OS: $(uname -s)" ;;
 esac
 

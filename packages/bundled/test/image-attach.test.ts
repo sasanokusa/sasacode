@@ -1,7 +1,8 @@
 import { afterAll, expect, test } from "bun:test";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
+import { pathToFileURL } from "node:url";
 import plugin, { clipboardImage, findRefs, sniff, words } from "../src/image-attach.ts";
 import { loadPlugin } from "../../../plugins/test-support.ts";
 
@@ -48,7 +49,9 @@ test("sniff and words", () => {
 test("@path and a dropped absolute path become images after the text", async () => {
   const cwd = fixture(); const h = await loadPlugin("image-attach", plugin, cwd);
   const abs = join(cwd, "my dir", "a b.png");
-  const c = await prompt(h, `これ @shot.pngと ${abs.replace(/ /g, "\\ ")} を比べて`);
+  // What a drop pastes: `\ ` for a space, or on Windows the path in quotes.
+  const dropped = process.platform === "win32" ? `"${abs}"` : abs.replace(/ /g, "\\ ");
+  const c = await prompt(h, `これ @shot.pngと ${dropped} を比べて`);
   expect(kinds(c)).toEqual(["text", "image", "image"]);
   expect(c[0].text).toBe(`これ [Image 1: ${join(cwd, "shot.png")}]と [Image 2: ${abs}] を比べて`);
   expect(c[1]).toEqual({ type: "image", mediaType: "image/png", data: B64 });
@@ -56,11 +59,11 @@ test("@path and a dropped absolute path become images after the text", async () 
 
 test("~ and file:// are resolved; a bare relative name is left as text", async () => {
   const cwd = fixture(); const h = await loadPlugin("image-attach", plugin, cwd);
-  expect(kinds(await prompt(h, `file://${cwd}/shot.png`))).toEqual(["text", "image"]);
+  expect(kinds(await prompt(h, pathToFileURL(join(cwd, "shot.png")).href))).toEqual(["text", "image"]);
   expect(kinds(await prompt(h, "shot.png はどう？"))).toEqual(["text"]);
   const home = join(homedir(), `.image-attach-test-${process.pid}.png`);
   writeFileSync(home, PNG);
-  try { expect(kinds(await prompt(h, `~/${home.split("/").pop()}`))).toEqual(["text", "image"]); } finally { rmSync(home); }
+  try { expect(kinds(await prompt(h, `~/${basename(home)}`))).toEqual(["text", "image"]); } finally { rmSync(home); }
 });
 
 test("a failed @ is reported and stays text; a dropped non-file is silent; fake images are refused", async () => {
@@ -125,5 +128,11 @@ test("clipboard: Linux reads stdout; macOS goes through a file the script writes
   });
   expect(mac.mediaType).toBe("image/png");
   await expect(clipboardImage("darwin", async () => { throw new Error("Command failed: osascript"); })).rejects.toThrow("no image");
-  await expect(clipboardImage("win32")).rejects.toThrow("not supported");
+  const win = await clipboardImage("win32", async (cmd, args) => {
+    expect(cmd).toBe("powershell.exe");
+    writeFileSync(/Save\('([^']+)'/.exec(args.join(" "))![1]!.replace(/''/g, "'"), PNG); return Buffer.alloc(0);
+  });
+  expect(win.mediaType).toBe("image/png");
+  await expect(clipboardImage("win32", async () => { throw new Error("Command failed: powershell.exe"); })).rejects.toThrow("no image");
+  await expect(clipboardImage("freebsd")).rejects.toThrow("not supported");
 });

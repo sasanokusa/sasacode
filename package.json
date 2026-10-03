@@ -7,7 +7,7 @@
     "packages/*"
   ],
   "scripts": {
-    "sasacode": "bun --no-env-file --config=/dev/null packages/cli/src/main.ts",
+    "sasacode": "bun --no-env-file --config=scripts/no-bunfig.toml packages/cli/src/main.ts",
     "test": "bun test",
     "typecheck": "tsc --noEmit -p .",
     "build": "bun scripts/build.ts",

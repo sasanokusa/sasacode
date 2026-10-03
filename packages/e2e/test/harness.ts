@@ -5,6 +5,8 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
 const MAIN = resolve(import.meta.dir, "../../cli/src/main.ts");
+// An empty bunfig, not /dev/null: Bun cannot open /dev/null (or NUL) on Windows.
+const NO_BUNFIG = resolve(import.meta.dir, "../../../scripts/no-bunfig.toml");
 
 export interface Sandbox {
   home: string;
@@ -26,8 +28,8 @@ export function sandbox(config: Record<string, unknown>): Sandbox {
   writeFileSync(join(home, ".env"), ""); // no keys from the developer's machine
 
   const run: Sandbox["run"] = async (args, opts = {}) => {
-    const env: Record<string, string> = { PATH: process.env.PATH ?? "", HOME: root, SASACODE_HOME: home, SASACODE_LANG: "en", NO_COLOR: "1", ...opts.env };
-    const child = Bun.spawn([process.execPath, "--no-env-file", "--config=/dev/null", MAIN, ...args], {
+    const env: Record<string, string> = { PATH: process.env.PATH ?? "", HOME: root, USERPROFILE: root, SASACODE_HOME: home, SASACODE_LANG: "en", NO_COLOR: "1", ...opts.env };
+    const child = Bun.spawn([process.execPath, "--no-env-file", `--config=${NO_BUNFIG}`, MAIN, ...args], {
       cwd: project,
       env,
       stdin: opts.stdin !== undefined ? new TextEncoder().encode(opts.stdin) : "ignore",

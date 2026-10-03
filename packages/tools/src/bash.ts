@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { appendFileSync } from "node:fs";
 import { childEnv, saveOutput, text, type ToolDefinition } from "@sasacode/plugin-api";
+import { bashPath, killTree } from "./shell.ts";
 
 const DEFAULT_TIMEOUT_S = 120;
 const MAX_OUTPUT = 30_000;
@@ -12,7 +13,11 @@ interface Args {
 
 export const bashTool: ToolDefinition<Args> = {
   name: "bash",
-  description: `Run a shell command with bash in the working directory. Returns combined stdout/stderr and the exit code. Output over ${MAX_OUTPUT} characters is cut to the tail and saved to a file whose path is returned. Use ripgrep (rg) for searching.`,
+  description:
+    `Run a shell command with bash in the working directory. Returns combined stdout/stderr and the exit code. Output over ${MAX_OUTPUT} characters is cut to the tail and saved to a file whose path is returned. Use ripgrep (rg) for searching.` +
+    (process.platform === "win32"
+      ? " On Windows this is Git Bash: write paths as C:/x or /c/x and quote Windows paths with \\ in them; Windows programs (cmd /c, powershell -Command, *.exe) run from it too."
+      : ""),
   parameters: {
     type: "object",
     properties: {
@@ -29,11 +34,19 @@ export const bashTool: ToolDefinition<Args> = {
   execute(args, ctx) {
     if (ctx.signal.aborted) return Promise.resolve({ content: [text("[Command was interrupted before execution]")], isError: true });
     const timeoutS = args.timeout && args.timeout > 0 ? args.timeout : DEFAULT_TIMEOUT_S;
+    let bash: string;
+    try {
+      bash = bashPath();
+    } catch (e) {
+      return Promise.resolve({ content: [text(String((e as Error).message))], isError: true });
+    }
     return new Promise((resolve) => {
-      // detached: the command gets its own process group so we can kill everything it spawned.
-      const child = spawn("bash", ["-c", args.command], {
+      // detached: the command gets its own process group so we can kill everything it spawned
+      // (Windows has no process groups: killTree ends the process tree instead).
+      const child = spawn(bash, ["-c", args.command], {
         cwd: ctx.cwd,
-        detached: true,
+        detached: process.platform !== "win32",
+        windowsHide: true,
         stdio: ["ignore", "pipe", "pipe"],
         // Without the keys sasacode read from ~/.sasacode/.env for itself.
         env: childEnv({ PAGER: "cat", GIT_PAGER: "cat", SASACODE: "1" }),
@@ -56,7 +69,7 @@ export const bashTool: ToolDefinition<Args> = {
       let killedBy: "timeout" | "abort" | undefined;
       let escalation: ReturnType<typeof setTimeout> | undefined;
       const signalGroup = (s: NodeJS.Signals) => {
-        if (child.pid) try { process.kill(-child.pid, s); } catch {}
+        if (child.pid) killTree(child.pid, s);
       };
       const kill = (why: "timeout" | "abort") => {
         if (killedBy || child.exitCode !== null) return;

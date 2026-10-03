@@ -66,6 +66,9 @@ test("resolveLang: SASACODE_LANG, then the setting, then the locale", () => {
     process.env.LANG = "ja_JP.UTF-8";
     expect(resolveLang()).toBe("ja");
   } finally {
-    process.env = saved;
+    // Restored in place: a plain object in place of process.env would lose Windows' case-insensitive
+    // names (Path is not PATH), and children started later would get no PATH.
+    for (const k of Object.keys(process.env)) if (!(k in saved)) delete process.env[k];
+    Object.assign(process.env, saved);
   }
 });

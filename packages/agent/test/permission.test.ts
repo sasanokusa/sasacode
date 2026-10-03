@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { resolve } from "node:path";
 import { bashTool, editTool, readTool, writeTool } from "@sasacode/tools";
 import { PermissionPolicy } from "../src/permission.ts";
 
@@ -75,7 +76,9 @@ test("always allow adds a rule no wider than the call: a command's * is literal,
 
   const outside = { tool: writeTool, args: { path: "/tmp/sasacode-x/out.txt", content: "" }, cwd };
   const w = new PermissionPolicy("edits", { allow: PermissionPolicy.rulesFor(outside) });
-  expect(PermissionPolicy.rulesFor(outside)).toEqual(["write(/tmp/sasacode-x/out.txt)"]);
+  // On Windows the rule is the absolute path with its drive, written with / (rules are globs).
+  const written = process.platform === "win32" ? resolve("/tmp/sasacode-x/out.txt").replace(/\\/g, "/") : "/tmp/sasacode-x/out.txt";
+  expect(PermissionPolicy.rulesFor(outside)).toEqual([`write(${written})`]);
   expect((await w.check(outside)).decision).toBe("allow");
   expect((await w.check({ tool: writeTool, args: { path: "/tmp/sasacode-x/.zshrc", content: "" }, cwd })).decision).toBe("ask");
 });

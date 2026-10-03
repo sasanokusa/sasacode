@@ -14,7 +14,8 @@ test("the generated .env lists every provider key, blank, readable only by the o
   const text = readFileSync(path, "utf8");
   for (const name of ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY", "CMD_API_KEY"]) expect(text).toContain(`\n${name}=\n`);
   expect(text.match(/OPENAI_API_KEY=/g)).toHaveLength(1); // openai and openai-chat share one key
-  expect(statSync(path).mode & 0o777).toBe(0o600);
+  // Unix permission bits; on Windows the file is private through the ACL of the user profile it is in.
+  if (process.platform !== "win32") expect(statSync(path).mode & 0o777).toBe(0o600);
   writeFileSync(path, "CMD_API_KEY=mine\n");
   expect(ensureEnvFile(path, BUILTIN_PROVIDERS)).toBe(false); // never overwritten
   expect(keyVariables(BUILTIN_PROVIDERS).map((k) => k.name)).toEqual(["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY", "CMD_API_KEY"]);
@@ -37,7 +38,10 @@ test("blank entries mean not configured", () => {
     expect(process.env.CMD_API_KEY as string | undefined).toBe("abc");
     expect(defaultModelFor(BUILTIN_PROVIDERS)).toBe("commandcode/deepseek/deepseek-v4-flash");
   } finally {
-    process.env = saved;
+    // Restored in place: a plain object in place of process.env would lose Windows' case-insensitive
+    // names (Path is not PATH), and children started later would get no PATH.
+    for (const k of Object.keys(process.env)) if (!(k in saved)) delete process.env[k];
+    Object.assign(process.env, saved);
   }
 });
 

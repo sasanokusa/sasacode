@@ -11,8 +11,9 @@ export async function copyToClipboard(text: string, write: (data: string) => voi
       try {
         // pbcopy decodes its input by the locale and drops non-ASCII text when none is set.
         const env = process.platform === "darwin" ? { ...process.env, LC_ALL: "en_US.UTF-8" } : process.env;
-        const p = Bun.spawn(cmd, { stdin: "pipe", stdout: "ignore", stderr: "ignore", env });
-        p.stdin.write(text);
+        const p = Bun.spawn(cmd, { stdin: "pipe", stdout: "ignore", stderr: "ignore", env, windowsHide: true });
+        // clip.exe reads UTF-8 only where that is the system code page; UTF-16 with a BOM, anywhere.
+        p.stdin.write(process.platform === "win32" ? Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(text, "utf16le")]) : text);
         await p.stdin.end();
         if ((await p.exited) === 0) return "native";
       } catch {}
