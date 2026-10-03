@@ -21,19 +21,14 @@ function die(message) {
 
 const windows = process.platform === "win32";
 
-/** Whether this Windows CPU has AVX2 (kernel32's PF_AVX2_INSTRUCTIONS_AVAILABLE); true when that cannot be told. */
-function windowsHasAvx2() {
-  const kernel32 = `[DllImport("kernel32.dll")] public static extern bool IsProcessorFeaturePresent(int f);`;
-  const script = `(Add-Type -MemberDefinition '${kernel32}' -Name K -Namespace SasacodeCpu -PassThru)::IsProcessorFeaturePresent(40)`;
-  return spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], { encoding: "utf8", windowsHide: true }).stdout?.trim() !== "False";
-}
-
 function target() {
   const os = { darwin: "darwin", linux: "linux", win32: "windows" }[process.platform];
   if (!os) die(`unsupported OS: ${process.platform}`);
   let arch = { x64: "x64", arm64: "arm64" }[process.arch];
   if (!arch) die(`unsupported CPU: ${process.arch}`);
-  if (os === "windows") return arch === "x64" && !windowsHasAvx2() ? "windows-x64-baseline" : `windows-${arch}`;
+  // Windows has no cheap CPU check (PowerShell is slow, and can hang without a full environment):
+  // the x64 build is tried first and the baseline one taken when it does not run (no AVX2).
+  if (os === "windows") return `windows-${arch}`;
   // An x64 Node under Rosetta on Apple Silicon should still get the native build.
   if (os === "darwin" && arch === "x64" && spawnSync("sysctl", ["-n", "sysctl.proc_translated"], { encoding: "utf8" }).stdout?.trim() === "1") arch = "arm64";
   if (os === "linux") {
@@ -66,7 +61,8 @@ async function download(url) {
   return Buffer.from(await res.arrayBuffer());
 }
 
-async function install(name, dest) {
+/** Download, check and keep the binary `name` at `dest`. With `mayNotRun`, false when it does not run here. */
+async function install(name, dest, mayNotRun = false) {
   const url = `${base}/download/v${version}`;
   // Windows releases are a .zip holding an .exe; the rest a .tar.gz.
   const file = windows ? `${name}.zip` : `${name}.tar.gz`;
@@ -83,16 +79,19 @@ async function install(name, dest) {
     const tar = windows ? join(process.env.SystemRoot ?? "C:\\Windows", "System32", "tar.exe") : "tar";
     if (spawnSync(tar, [windows ? "-xf" : "-xzf", file], { cwd: tmp, windowsHide: true }).status !== 0) die(`could not unpack ${file}`);
     chmodSync(join(tmp, binary), 0o755);
-    if (!spawnSync(join(tmp, binary), ["--version"], { encoding: "utf8", windowsHide: true }).stdout?.trim()) die("the downloaded binary does not run on this system");
+    if (!spawnSync(join(tmp, binary), ["--version"], { encoding: "utf8", windowsHide: true }).stdout?.trim()) {
+      if (mayNotRun) return false;
+      die("the downloaded binary does not run on this system");
+    }
     renameSync(join(tmp, binary), dest); // atomic: a second run at the same time finds a whole file or none
+    return true;
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }
 }
 
 const dir = join(process.env.SASACODE_HOME ?? join(homedir(), ".sasacode"), "npm-bin", `v${version}`);
-// On Windows the CPU check starts PowerShell (seconds when cold): only before the first download,
-// later runs start the binary already kept for this version.
+// On Windows the build kept for this version is whichever one ran here (x64 or its baseline).
 const kept = windows ? readdirSafe(dir).find((f) => /^sasacode-windows-[\w-]+\.exe$/.test(f)) : undefined;
 let bin = kept && join(dir, kept);
 if (!bin) {
@@ -100,7 +99,10 @@ if (!bin) {
   bin = join(dir, windows ? `${name}.exe` : name);
   if (!existsSync(bin)) {
     mkdirSync(dir, { recursive: true });
-    await install(name, bin);
+    if (!(await install(name, bin, name === "sasacode-windows-x64"))) {
+      bin = join(dir, "sasacode-windows-x64-baseline.exe"); // a CPU without AVX2
+      await install("sasacode-windows-x64-baseline", bin);
+    }
   }
 }
 // `sasacode update` would replace this cached binary; with npm, npm does the updating.

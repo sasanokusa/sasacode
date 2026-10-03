@@ -34,7 +34,8 @@ beforeAll(() => {
   if (windows) {
     // Windows runs no #! scripts: the stand-in is a small compiled .exe, zipped like a release.
     const src = join(root, "fake.ts");
-    writeFileSync(src, `const a = process.argv.slice(2);\nif (a[0] === "--version") { console.log("9.9.9"); process.exit(0); }\nconsole.log(\`args:\${a.join(" ")} by:\${process.env.SASACODE_INSTALLED_BY}\`);\nprocess.exit(a[0] === "fail" ? 3 : 0);\n`);
+    // FAKE_NO_AVX2 plays a CPU without AVX2: the x64 build does not run there, the baseline one does.
+    writeFileSync(src, `const a = process.argv.slice(2);\nif (process.env.FAKE_NO_AVX2 && /windows-x64\\.exe$/i.test(process.execPath)) process.exit(1);\nif (a[0] === "--version") { console.log("9.9.9"); process.exit(0); }\nconsole.log(\`args:\${a.join(" ")} by:\${process.env.SASACODE_INSTALLED_BY}\`);\nprocess.exit(a[0] === "fail" ? 3 : 0);\n`);
     const exe = join(root, "fake.exe");
     Bun.spawnSync([process.execPath, "build", src, "--compile", "--outfile", exe]);
     const tar = join(process.env.SystemRoot ?? "C:\\Windows", "System32", "tar.exe");
@@ -64,10 +65,10 @@ afterAll(() => {
 });
 
 // Asynchronous: the fake server runs in this process and must keep answering.
-async function launch(home: string, args: string[]) {
+async function launch(home: string, args: string[], extraEnv: Record<string, string> = {}) {
   const child = Bun.spawn(["node", join(pkg, "bin", "sasacode.js"), ...args], {
     // SystemRoot: Windows needs it to start anything (PowerShell, tar).
-    env: { PATH: process.env.PATH ?? "", HOME: root, USERPROFILE: root, SystemRoot: process.env.SystemRoot ?? process.env.SYSTEMROOT ?? "C:\\Windows", SASACODE_HOME: home, SASACODE_DOWNLOAD_BASE: `http://127.0.0.1:${server.port}` },
+    env: { PATH: process.env.PATH ?? "", HOME: root, USERPROFILE: root, SystemRoot: process.env.SystemRoot ?? process.env.SYSTEMROOT ?? "C:\\Windows", SASACODE_HOME: home, SASACODE_DOWNLOAD_BASE: `http://127.0.0.1:${server.port}`, ...extraEnv },
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -101,4 +102,15 @@ test("a download whose checksum does not match is refused and nothing is kept", 
   } finally {
     corrupt = false;
   }
+}, 30_000);
+
+test.skipIf(!windows)("on Windows, a CPU the x64 build does not run on gets the baseline build", async () => {
+  const home = join(root, "home-c");
+  const r = await launch(home, ["hi"], { FAKE_NO_AVX2: "1" });
+  expect(r.stderr).toContain("(windows-x64)");
+  expect(r.stderr).toContain("(windows-x64-baseline)");
+  expect(r.stdout.trim()).toBe("args:hi by:npm");
+  expect(readdirSync(join(home, "npm-bin", "v9.9.9"))).toEqual(["sasacode-windows-x64-baseline.exe"]);
+  const again = await launch(home, ["hi"], { FAKE_NO_AVX2: "1" });
+  expect(again.stderr).not.toContain("downloading"); // the kept baseline build starts directly
 }, 30_000);

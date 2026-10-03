@@ -70,7 +70,8 @@ export function windowsHasAvx2(): boolean {
   const r = spawnSync(
     "powershell.exe",
     ["-NoProfile", "-NonInteractive", "-Command", `(Add-Type -MemberDefinition '${kernel32}' -Name K -Namespace SasacodeCpu -PassThru)::IsProcessorFeaturePresent(40)`],
-    { encoding: "utf8", windowsHide: true },
+    // Bounded: PowerShell can hang where its environment is incomplete; unknown counts as AVX2.
+    { encoding: "utf8", windowsHide: true, stdio: ["ignore", "pipe", "ignore"], timeout: 20_000 },
   );
   return r.stdout?.trim() !== "False";
 }
