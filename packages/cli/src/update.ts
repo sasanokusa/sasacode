@@ -64,12 +64,36 @@ export async function notifyIfNewer(notify: (message: string, level?: "info" | "
   } catch {}
 }
 
-/** The archive name for this machine, with the platform choices scripts/install.sh makes. */
+/** Whether this Windows CPU has AVX2 (kernel32's PF_AVX2_INSTRUCTIONS_AVAILABLE); true when that cannot be told. */
+export function windowsHasAvx2(): boolean {
+  const kernel32 = `[DllImport("kernel32.dll")] public static extern bool IsProcessorFeaturePresent(int f);`;
+  const r = spawnSync(
+    "powershell.exe",
+    ["-NoProfile", "-NonInteractive", "-Command", `(Add-Type -MemberDefinition '${kernel32}' -Name K -Namespace SasacodeCpu -PassThru)::IsProcessorFeaturePresent(40)`],
+    { encoding: "utf8", windowsHide: true },
+  );
+  return r.stdout?.trim() !== "False";
+}
+
+/** The release files of a target: a .zip holding an .exe for Windows, a .tar.gz elsewhere. */
+export function releaseFiles(target: string): { archive: string; binary: string } {
+  const name = `sasacode-${target}`;
+  return target.startsWith("windows-") ? { archive: `${name}.zip`, binary: `${name}.exe` } : { archive: `${name}.tar.gz`, binary: name };
+}
+
+/** Unpack a release archive into `dir`. Windows' own tar (bsdtar) reads .zip; Git's GNU tar would not. */
+export function unpack(archive: string, dir: string): boolean {
+  const tar = process.platform === "win32" ? join(process.env.SystemRoot ?? "C:\\Windows", "System32", "tar.exe") : "tar";
+  return spawnSync(tar, [archive.endsWith(".zip") ? "-xf" : "-xzf", archive], { cwd: dir, windowsHide: true }).status === 0;
+}
+
+/** The archive name for this machine, with the platform choices scripts/install.sh (install.ps1) makes. */
 export function releaseTarget(): string {
-  const os = { darwin: "darwin", linux: "linux" }[process.platform as string];
-  if (!os) throw new Error(t("unsupported OS: {platform} (Windows is supported through WSL)", { platform: process.platform }));
+  const os = { darwin: "darwin", linux: "linux", win32: "windows" }[process.platform as string];
+  if (!os) throw new Error(t("unsupported OS: {platform}", { platform: process.platform }));
   let arch = { x64: "x64", arm64: "arm64" }[process.arch as string];
   if (!arch) throw new Error(t("unsupported CPU: {arch}", { arch: process.arch }));
+  if (os === "windows") return arch === "x64" && !windowsHasAvx2() ? "windows-x64-baseline" : `windows-${arch}`;
   // An x64 shell under Rosetta on Apple Silicon should still get the native build.
   if (os === "darwin" && arch === "x64") {
     const translated = spawnSync("sysctl", ["-n", "sysctl.proc_translated"], { encoding: "utf8" }).stdout?.trim();
@@ -109,26 +133,33 @@ export async function updateCommand(args: string[]): Promise<number> {
     console.log(t("sasacode is up to date ({version})", { version: VERSION }));
     return 0;
   }
-  const name = `sasacode-${releaseTarget()}`;
+  const { archive, binary } = releaseFiles(releaseTarget());
   const url = `${base}/download/${wanted}`;
   const dir = mkdtempSync(join(tmpdir(), "sasacode-update-"));
   try {
-    console.log(t("downloading {url} …", { url: `${url}/${name}.tar.gz` }));
+    console.log(t("downloading {url} …", { url: `${url}/${archive}` }));
     const sums = await (await fetch(`${url}/SHA256SUMS`)).text();
-    const body = Buffer.from(await (await fetch(`${url}/${name}.tar.gz`)).arrayBuffer());
-    const expected = sums.split("\n").find((l) => l.endsWith(` ${name}.tar.gz`))?.split(/\s+/)[0];
-    if (!expected) throw new Error(t("{file} is not listed in SHA256SUMS", { file: `${name}.tar.gz` }));
+    const body = Buffer.from(await (await fetch(`${url}/${archive}`)).arrayBuffer());
+    const expected = sums.split(/\r?\n/).find((l) => l.endsWith(` ${archive}`))?.split(/\s+/)[0];
+    if (!expected) throw new Error(t("{file} is not listed in SHA256SUMS", { file: archive }));
     const actual = createHash("sha256").update(body).digest("hex");
-    if (actual !== expected) throw new Error(t("checksum mismatch for {file}", { file: `${name}.tar.gz` }));
-    writeFileSync(join(dir, `${name}.tar.gz`), body);
-    if (spawnSync("tar", ["-xzf", join(dir, `${name}.tar.gz`), "-C", dir]).status !== 0) throw new Error(t("could not unpack {file}", { file: `${name}.tar.gz` }));
+    if (actual !== expected) throw new Error(t("checksum mismatch for {file}", { file: archive }));
+    writeFileSync(join(dir, archive), body);
+    if (!unpack(archive, dir)) throw new Error(t("could not unpack {file}", { file: archive }));
     // The same check the installer does: a binary that does not run here must not become the binary.
-    const fresh = join(dir, name);
-    const version = spawnSync(fresh, ["--version"], { encoding: "utf8" }).stdout?.trim();
+    const fresh = join(dir, binary);
+    const version = spawnSync(fresh, ["--version"], { encoding: "utf8", windowsHide: true }).stdout?.trim();
     if (!version) throw new Error(t("the downloaded binary does not run on this system"));
     const staging = `${target}.new`;
     copyFileSync(fresh, staging);
     chmodSync(staging, 0o755);
+    if (process.platform === "win32") {
+      // Windows will not replace a running .exe, but lets it be renamed: move it aside first
+      // (the next update removes it).
+      const old = `${target}.old`;
+      rmSync(old, { force: true });
+      renameSync(target, old);
+    }
     renameSync(staging, target); // the running process keeps its own file until it exits
     console.log(t("updated {from} → {to}: {target} (restart sasacode to use it)", { from: VERSION, to: version, target }));
     return 0;

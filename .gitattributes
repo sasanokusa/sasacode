@@ -1,0 +1,4 @@
+# LF everywhere, also in Windows checkouts (core.autocrlf): the sources, tests and fixtures
+# compare text byte for byte, and scripts run under bash.
+* text=auto eol=lf
+*.ps1 text eol=crlf

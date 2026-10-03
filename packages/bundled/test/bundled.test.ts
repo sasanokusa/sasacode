@@ -183,8 +183,25 @@ test("web-fetch: html to text, paging, and non-http URLs rejected", async () => 
   server.stop(true);
 });
 
-test("browsr: wraps browsr-agent's MCP server with plain tool names and a data-not-instructions note", async () => {
+/**
+ * fake-browsr.ts as a command: the script itself (its #! line), or on Windows, which has no #!, a
+ * .cmd that runs it with this Bun.
+ */
+function fakeBrowsr(name: string, env = ""): string {
   const fake = join(import.meta.dir, "fake-browsr.ts");
+  if (process.platform === "win32") {
+    const cmd = join(root, `${name}.cmd`);
+    writeFileSync(cmd, `@echo off\r\n${env ? `set ${env}\r\n` : ""}"${process.execPath}" "${fake}" %*\r\n`);
+    return cmd;
+  }
+  if (!env) return fake;
+  const wrapper = join(root, name);
+  writeFileSync(wrapper, `#!/bin/sh\n${env} exec ${fake} "$@"\n`, { mode: 0o755 });
+  return wrapper;
+}
+
+test("browsr: wraps browsr-agent's MCP server with plain tool names and a data-not-instructions note", async () => {
+  const fake = fakeBrowsr("browsr");
   const { agent, host } = await setup([], ["browsr"], { settings: { browsr: { command: fake } } });
   await host.settle(10_000);
   const names = agent.getTools().map((t) => t.name);
@@ -200,8 +217,7 @@ test("browsr: wraps browsr-agent's MCP server with plain tool names and a data-n
 });
 
 test("browsr: an unsupported manifest version registers nothing; a missing binary only warns", async () => {
-  const wrapper = join(root, "browsr-v2");
-  writeFileSync(wrapper, `#!/bin/sh\nFAKE_SCHEMA=2 exec ${join(import.meta.dir, "fake-browsr.ts")} "$@"\n`, { mode: 0o755 });
+  const wrapper = fakeBrowsr("browsr-v2", "FAKE_SCHEMA=2");
   const notes: string[] = [];
   const ui = { interactive: false, notify: (m: string) => notes.push(m), confirm: async () => false, select: async () => undefined };
   const { agent } = await setup([], []);

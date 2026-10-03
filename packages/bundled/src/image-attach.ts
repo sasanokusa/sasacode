@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { t } from "@sasacode/host";
 import { text, type Plugin, type UserContent } from "@sasacode/plugin-api";
 
@@ -11,6 +12,15 @@ const MAX_BYTES = 5_000_000;
 const EXT = "png|jpe?g|gif|webp";
 // `@path`, a quoted path, or a bare word; a bare word may carry `\ `-escaped spaces (what terminals paste on a drop).
 const TOKEN = /(@)?(?:"([^"\n]+)"|'([^'\n]+)'|((?:\\.|[^\s"'\\])+))/g;
+
+const WINDOWS = process.platform === "win32";
+/** A Windows absolute path (C:\x, C:/x, \\server\share): its `\` are separators, not escapes. */
+const WINDOWS_ABS = /^(?:[A-Za-z]:[\\/]|\\\\[^\\])/;
+/** What a dropped file pastes: an absolute path, `~/` or a file:// URL (on Windows also C:\… and ~\). */
+const DROPPED = WINDOWS ? /^(\/|~[\\/]|file:\/\/|[A-Za-z]:[\\/]|\\\\)/ : /^(\/|~\/|file:\/\/)/;
+
+/** `\ ` and the like unescaped, except in a Windows path (terminals there quote a path with spaces instead). */
+const unescape = (w: string) => (WINDOWS && WINDOWS_ABS.test(w) ? w : w.replace(/\\(.)/g, "$1"));
 
 export interface Ref { start: number; end: number; path: string; explicit: boolean }
 
@@ -31,20 +41,20 @@ export function findRefs(s: string): Ref[] {
       // Japanese text often has no space after a path: stop at the extension.
       const e = new RegExp(`^(.*?\\.(?:${EXT}))(?![A-Za-z0-9_])`, "i").exec(m[4]!);
       if (e) {
-        raw = e[1]!.replace(/\\(.)/g, "$1");
+        raw = unescape(e[1]!);
         end = m.index + (explicit ? 1 : 0) + e[1]!.length;
       }
     }
     if (raw === undefined) continue;
-    if (!explicit && !/^(\/|~\/|file:\/\/)/.test(raw)) continue;
+    if (!explicit && !DROPPED.test(raw)) continue;
     refs.push({ start: m.index, end, path: raw, explicit });
   }
   return refs;
 }
 
 export function resolvePath(p: string, cwd: string): string {
-  if (p.startsWith("file://")) p = decodeURIComponent(new URL(p).pathname);
-  if (p === "~" || p.startsWith("~/")) p = join(homedir(), p.slice(1));
+  if (p.startsWith("file://")) p = fileURLToPath(p);
+  if (p === "~" || p.startsWith("~/") || (WINDOWS && p.startsWith("~\\"))) p = join(homedir(), p.slice(1));
   return resolve(cwd, p);
 }
 
@@ -77,7 +87,7 @@ export type Run = (cmd: string, args: string[]) => Promise<Buffer>;
 const run: Run = (cmd, args) =>
   new Promise((ok, fail) => execFile(cmd, args, { encoding: "buffer", maxBuffer: 32 * 1024 * 1024, timeout: 10_000 }, (e, out) => (e ? fail(e) : ok(out))));
 
-/** The image on the system clipboard: macOS via osascript, Linux via wl-paste or xclip. */
+/** The image on the system clipboard: macOS via osascript, Windows via PowerShell, Linux via wl-paste or xclip. */
 export async function clipboardImage(platform = process.platform, exec: Run = run): Promise<Image> {
   if (platform === "darwin") {
     const dir = await mkdtemp(join(tmpdir(), "sasacode-clip-"));
@@ -98,6 +108,26 @@ export async function clipboardImage(platform = process.platform, exec: Run = ru
       await rm(dir, { recursive: true, force: true });
     }
   }
+  if (platform === "win32") {
+    const dir = await mkdtemp(join(tmpdir(), "sasacode-clip-"));
+    const file = join(dir, "clip.png");
+    // The clipboard needs a single-threaded apartment (-STA); '' is a ' inside a PowerShell string.
+    const script = [
+      "Add-Type -AssemblyName System.Windows.Forms, System.Drawing",
+      "$i = [System.Windows.Forms.Clipboard]::GetImage()",
+      "if ($i -eq $null) { [Console]::Error.WriteLine('no image'); exit 1 }",
+      `$i.Save('${file.replace(/'/g, "''")}', [System.Drawing.Imaging.ImageFormat]::Png)`,
+    ].join("; ");
+    try {
+      await exec("powershell.exe", ["-NoProfile", "-NonInteractive", "-STA", "-Command", script]);
+      return await loadImage(file);
+    } catch (e) {
+      if (e instanceof Error && !/no image|Command failed|ENOENT/.test(e.message)) throw e;
+      throw new Error("the clipboard has no image");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  }
   if (platform === "linux") {
     for (const [cmd, args] of [["wl-paste", ["--type", "image/png"]], ["xclip", ["-selection", "clipboard", "-t", "image/png", "-o"]]] as const) {
       const out = await exec(cmd, [...args]).catch(() => undefined);
@@ -110,7 +140,7 @@ export async function clipboardImage(platform = process.platform, exec: Run = ru
 
 /** Words of a command line, honoring quotes and `\ `. */
 export function words(s: string): string[] {
-  return [...s.matchAll(/"([^"]*)"|'([^']*)'|((?:\\.|\S)+)/g)].map((m) => m[1] ?? m[2] ?? m[3]!.replace(/\\(.)/g, "$1"));
+  return [...s.matchAll(/"([^"]*)"|'([^']*)'|((?:\\.|\S)+)/g)].map((m) => m[1] ?? m[2] ?? unescape(m[3]!));
 }
 
 const plugin: Plugin = (api) => {

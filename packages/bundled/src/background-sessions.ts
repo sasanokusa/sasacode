@@ -20,13 +20,15 @@
 // foreignGraceMs (how long the session that started a job gets to claim its completion notice
 // before another session reports it).
 //
-// POSIX only (bash, kill(-pid)). Tool descriptions and results are English; the system-prompt
+// Runs jobs with bash: Git Bash on Windows, where a job is stopped by ending its process tree
+// (taskkill) instead of signalling its process group. Tool descriptions and results are English; the system-prompt
 // addition and the completion notice injected into the session are Japanese (both are read by the
 // model); notices shown to the user go through t() from @sasacode/host.
 
 import { childEnv, errorResult, sasacodeHome, text, type Plugin, type ToolDefinition } from "@sasacode/plugin-api";
 import { spawn } from "node:child_process";
 import { t } from "@sasacode/host";
+import { bashPath, killTree } from "@sasacode/tools";
 import {
   closeSync,
   existsSync,
@@ -39,7 +41,7 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 
 type Status = "running" | "done" | "killed";
 
@@ -107,9 +109,17 @@ function isAlive(pid: number): boolean {
   }
 }
 
-/** When a process started (ms since the epoch): /proc on Linux, ps elsewhere. Undefined if unknown. */
+/** When a process started (ms since the epoch): /proc on Linux, PowerShell on Windows, ps elsewhere. Undefined if unknown. */
 function processStartMs(pid: number): number | undefined {
   try {
+    if (process.platform === "win32") {
+      const r = Bun.spawnSync(
+        ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", `(Get-Process -Id ${pid}).StartTime.ToUniversalTime().ToString('o')`],
+        { stderr: "ignore", windowsHide: true },
+      );
+      const t = Date.parse(r.stdout.toString().trim());
+      return Number.isFinite(t) ? t : undefined;
+    }
     if (process.platform === "linux") {
       const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
       const ticks = Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[19]);
@@ -426,6 +436,7 @@ const plugin: Plugin = (api) => {
       return false;
     }
     const signal = (sig: NodeJS.Signals) => {
+      if (process.platform === "win32") return killTree(m.pid); // no signals: the whole tree ends now
       try {
         process.kill(-m.pid, sig); // the job's own process group (spawned detached)
         return true;
@@ -491,7 +502,7 @@ const plugin: Plugin = (api) => {
     summary: (a) => a.command,
     async execute(args, ctx) {
       if (!args.command.trim()) return errorResult("command is empty; pass the shell command to run");
-      const runCwd = args.cwd ? (args.cwd.startsWith("/") ? args.cwd : join(ctx.cwd, args.cwd)) : ctx.cwd;
+      const runCwd = args.cwd ? (isAbsolute(args.cwd) ? args.cwd : join(ctx.cwd, args.cwd)) : ctx.cwd;
       try {
         if (!statSync(runCwd).isDirectory()) return errorResult(`${runCwd} is not a directory; pass a valid cwd`);
       } catch {
@@ -543,9 +554,11 @@ const plugin: Plugin = (api) => {
       let child: ReturnType<typeof spawn>;
       const fd = openSync(job.logPath, "a");
       try {
-        child = spawn("bash", ["-c", script, "bg-job", job.exitPath, args.command], {
+        // On Windows too: a child that is not detached is ended with sasacode (a kill-on-close job object).
+        child = spawn(bashPath(), ["-c", script, "bg-job", job.exitPath, args.command], {
           cwd: runCwd,
           detached: true,
+          windowsHide: true,
           stdio: ["ignore", fd, fd],
           env: childEnv({ PAGER: "cat", GIT_PAGER: "cat", SASACODE: "1" }),
         });

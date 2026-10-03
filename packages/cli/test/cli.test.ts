@@ -185,7 +185,8 @@ test("a project picking a model is announced; a router's models need trust", () 
   expect(loadConfig(proj).elevated.model).toBe("openrouter/some-lab/model");
 });
 
-test("~/.sasacode is private to the user", async () => {
+// Unix permission bits; on Windows the user profile's ACL keeps ~/.sasacode private.
+test.skipIf(process.platform === "win32")("~/.sasacode is private to the user", async () => {
   const { chmodSync, statSync } = await import("node:fs");
   writeConfigs({ providers: { test: { api: "replay" } }, model: "test/m" }, {});
   chmodSync(home, 0o755);

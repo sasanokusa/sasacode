@@ -99,7 +99,7 @@ test("trust follows a plugin folder that is a link, and never vouches for code i
   const elsewhere = join(proj, "..", "linked-plugin");
   write(join(elsewhere, "plugin.json"), JSON.stringify({ apiVersion: "^1.0.0", extensions: ["main.ts"] }));
   write(join(elsewhere, "main.ts"), PLUGIN("linked"));
-  symlinkSync(elsewhere, join(proj, ".sasacode", "plugins", "linked"));
+  symlinkSync(elsewhere, join(proj, ".sasacode", "plugins", "linked"), "junction"); // junction: no admin needed on Windows
   saveTrust(proj, assessProject(proj));
   expect(isTrusted(proj, assessProject(proj))).toBe(true);
   write(join(elsewhere, "main.ts"), PLUGIN("linked_changed")); // same name, same manifest

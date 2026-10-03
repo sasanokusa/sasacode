@@ -25,11 +25,18 @@ sasacode
 curl -fsSL https://sasanokusa.com/sasacode/install.sh | sh
 ```
 
+Windows では PowerShell から（`%LOCALAPPDATA%\Programs\sasacode\sasacode.exe` に入り、PATH に追加される）：
+
+```powershell
+irm https://sasanokusa.com/sasacode/install.ps1 | iex
+```
+
+- Windows では [Git for Windows](https://git-scm.com/download/win) が必要。`bash` ツールはその Git Bash でコマンドを実行する（`winget install --id Git.Git -e`）。標準以外の場所に入れた場合は `SASACODE_GIT_BASH_PATH` に `bash.exe` のパスを指定する。キーは `%USERPROFILE%\.sasacode\.env` に書く（OS のキーチェーンからの読み出しは macOS / Linux のみ）。
 - npm からも入れられる：`npm install -g sasacode`。npm のパッケージは起動用の小さなスクリプトで、初回の実行時に同じ版のバイナリを GitHub Releases から取得して SHA256 を検証し、`~/.sasacode/npm-bin` に置く。更新は `npm install -g sasacode@latest`。
-- macOS（arm64 / x64）と Linux（x64 / arm64、glibc / musl、AVX2 のない CPU 向けの baseline 版）の単一バイナリ。Bun は不要。
-- インストーラーもバイナリも、[GitHub Releases](https://github.com/sasanokusa/sasacode/releases) の最新版から取得して SHA256 を検証する。sasanokusa.com の URL は、最新リリースの `install.sh` へのリダイレクト。
+- macOS（arm64 / x64）、Linux（x64 / arm64、glibc / musl、AVX2 のない CPU 向けの baseline 版）、Windows（x64 / arm64、x64 の baseline 版）の単一バイナリ。Bun は不要。
+- インストーラーもバイナリも、[GitHub Releases](https://github.com/sasanokusa/sasacode/releases) の最新版から取得して SHA256 を検証する。sasanokusa.com の URL は、最新リリースの `install.sh` / `install.ps1` へのリダイレクト。
 - SHA256 が防ぐのは壊れたダウンロードまで。ファイルがこのリポジトリの GitHub Actions でビルドされたものかは、v0.9.8 以降のリリースに付けた署名つきの来歴で確かめられる：`gh attestation verify sasacode-darwin-arm64.tar.gz --repo sasanokusa/sasacode`（リリースから落としたファイルに対して。`install.sh` も同じ）。
-- `SASACODE_VERSION=v0.10.0` で版を固定でき、`SASACODE_INSTALL_DIR` で置き場所を変えられる。Windows は WSL から使う。
+- `SASACODE_VERSION=v0.10.0` で版を固定でき、`SASACODE_INSTALL_DIR` で置き場所を変えられる（どちらのインストーラーでも）。
 - 更新は `sasacode update`（インストーラーと同じ検証つき。`--check` で確認だけ）。新しい版が出ていると起動時に一度だけ静かに知らせる（`"updateCheck": false` で止める）。ソースから動かしている場合は `git pull` と `bun install`。
 
 ソースから使う場合（[Bun](https://bun.sh) 1.4 以上）：

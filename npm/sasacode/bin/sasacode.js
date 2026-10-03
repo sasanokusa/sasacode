@@ -19,11 +19,21 @@ function die(message) {
   process.exit(1);
 }
 
+const windows = process.platform === "win32";
+
+/** Whether this Windows CPU has AVX2 (kernel32's PF_AVX2_INSTRUCTIONS_AVAILABLE); true when that cannot be told. */
+function windowsHasAvx2() {
+  const kernel32 = `[DllImport("kernel32.dll")] public static extern bool IsProcessorFeaturePresent(int f);`;
+  const script = `(Add-Type -MemberDefinition '${kernel32}' -Name K -Namespace SasacodeCpu -PassThru)::IsProcessorFeaturePresent(40)`;
+  return spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], { encoding: "utf8", windowsHide: true }).stdout?.trim() !== "False";
+}
+
 function target() {
-  const os = { darwin: "darwin", linux: "linux" }[process.platform];
-  if (!os) die(process.platform === "win32" ? "Windows is supported through WSL: install sasacode inside a WSL shell" : `unsupported OS: ${process.platform}`);
+  const os = { darwin: "darwin", linux: "linux", win32: "windows" }[process.platform];
+  if (!os) die(`unsupported OS: ${process.platform}`);
   let arch = { x64: "x64", arm64: "arm64" }[process.arch];
   if (!arch) die(`unsupported CPU: ${process.arch}`);
+  if (os === "windows") return arch === "x64" && !windowsHasAvx2() ? "windows-x64-baseline" : `windows-${arch}`;
   // An x64 Node under Rosetta on Apple Silicon should still get the native build.
   if (os === "darwin" && arch === "x64" && spawnSync("sysctl", ["-n", "sysctl.proc_translated"], { encoding: "utf8" }).stdout?.trim() === "1") arch = "arm64";
   if (os === "linux") {
@@ -50,18 +60,23 @@ async function download(url) {
 
 async function install(name, dest) {
   const url = `${base}/download/v${version}`;
+  // Windows releases are a .zip holding an .exe; the rest a .tar.gz.
+  const file = windows ? `${name}.zip` : `${name}.tar.gz`;
+  const binary = windows ? `${name}.exe` : name;
   process.stderr.write(`sasacode (npm): downloading sasacode v${version} (${name.replace(/^sasacode-/, "")}) from ${url}\n`);
-  const [archive, sums] = await Promise.all([download(`${url}/${name}.tar.gz`), download(`${url}/SHA256SUMS`)]);
-  const expected = sums.toString("utf8").split("\n").find((l) => l.endsWith(` ${name}.tar.gz`))?.split(/\s+/)[0];
-  if (!expected) die(`${name}.tar.gz is not listed in SHA256SUMS`);
-  if (createHash("sha256").update(archive).digest("hex") !== expected) die(`checksum mismatch for ${name}.tar.gz`);
+  const [archive, sums] = await Promise.all([download(`${url}/${file}`), download(`${url}/SHA256SUMS`)]);
+  const expected = sums.toString("utf8").split(/\r?\n/).find((l) => l.endsWith(` ${file}`))?.split(/\s+/)[0];
+  if (!expected) die(`${file} is not listed in SHA256SUMS`);
+  if (createHash("sha256").update(archive).digest("hex") !== expected) die(`checksum mismatch for ${file}`);
   const tmp = mkdtempSync(join(dirname(dest), ".download-"));
   try {
-    writeFileSync(join(tmp, `${name}.tar.gz`), archive);
-    if (spawnSync("tar", ["-xzf", `${name}.tar.gz`], { cwd: tmp }).status !== 0) die(`could not unpack ${name}.tar.gz`);
-    chmodSync(join(tmp, name), 0o755);
-    if (!spawnSync(join(tmp, name), ["--version"], { encoding: "utf8" }).stdout?.trim()) die("the downloaded binary does not run on this system");
-    renameSync(join(tmp, name), dest); // atomic: a second run at the same time finds a whole file or none
+    writeFileSync(join(tmp, file), archive);
+    // Windows' own tar (bsdtar) reads .zip; a GNU tar earlier on the PATH (Git's) would not.
+    const tar = windows ? join(process.env.SystemRoot ?? "C:\\Windows", "System32", "tar.exe") : "tar";
+    if (spawnSync(tar, [windows ? "-xf" : "-xzf", file], { cwd: tmp, windowsHide: true }).status !== 0) die(`could not unpack ${file}`);
+    chmodSync(join(tmp, binary), 0o755);
+    if (!spawnSync(join(tmp, binary), ["--version"], { encoding: "utf8", windowsHide: true }).stdout?.trim()) die("the downloaded binary does not run on this system");
+    renameSync(join(tmp, binary), dest); // atomic: a second run at the same time finds a whole file or none
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }
@@ -69,7 +84,7 @@ async function install(name, dest) {
 
 const name = `sasacode-${target()}`;
 const dir = join(process.env.SASACODE_HOME ?? join(homedir(), ".sasacode"), "npm-bin", `v${version}`);
-const bin = join(dir, name);
+const bin = join(dir, windows ? `${name}.exe` : name);
 if (!existsSync(bin)) {
   mkdirSync(dir, { recursive: true });
   await install(name, bin);

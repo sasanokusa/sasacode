@@ -193,7 +193,7 @@ export const TO_JA: Record<string, string> = {
   "cannot tell the latest version ({status} from {base})": "最新版がわからない（{base} から {status}）",
   "a newer version is available: {latest} (this is {version}) — run `{how}`":
     "新しい版がある: {latest}（いまは {version}）— `{how}` を実行",
-  "unsupported OS: {platform} (Windows is supported through WSL)": "未対応の OS: {platform}（Windows は WSL 経由で使う）",
+  "unsupported OS: {platform}": "未対応の OS: {platform}",
   "unsupported CPU: {arch}": "未対応の CPU: {arch}",
   "this sasacode runs from source: update the checkout (git pull && bun install) instead of `sasacode update`":
     "この sasacode はソースから動いている。`sasacode update` の代わりにチェックアウトを更新（git pull && bun install）",

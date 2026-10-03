@@ -1,6 +1,6 @@
 import { existsSync, realpathSync, statSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { Decision, HookMap, Plugin, ToolDefinition } from "@sasacode/plugin-api";
 import { type Backend, type BackendName, type BackendSettings, detectService, makeBackend, parseNative, type Question, type RawAnswers } from "./backends.ts";
 import { L, setLang } from "./lang.ts";
@@ -226,17 +226,22 @@ export function pathArgs(command: string): string[] {
   return [...new Set(out)].slice(0, 12);
 }
 
+const WINDOWS = process.platform === "win32";
+
 function expand(p: string, cwd: string): string {
   const home = homedir();
-  const e = p.replace(/^(~|\$HOME|\$\{HOME\})(?=\/|$)/, home);
+  let e = p.replace(/^(~|\$HOME|\$\{HOME\})(?=[\\/]|$)/, home);
+  // Git Bash, which runs the commands on Windows, spells C:\x as /c/x.
+  if (WINDOWS) e = e.replace(/^\/([A-Za-z])(?=\/|$)/, "$1:");
   return resolve(cwd, e);
 }
 
 /** Where a path really goes: the deepest existing ancestor through symlinks, plus the rest as written. */
 function real(p: string): string {
-  const parts = p.split("/");
+  const parts = p.split(WINDOWS ? /[\\/]/ : "/");
   const wild = parts.findIndex((s) => /[*?[{]/.test(s));
-  let head = wild > 0 ? parts.slice(0, wild).join("/") || "/" : p;
+  let head = wild > 0 ? parts.slice(0, wild).join(sep) || sep : p;
+  if (/^[A-Za-z]:$/.test(head)) head += sep; // C: alone is that drive's working directory
   const rest = wild > 0 ? parts.slice(wild) : [];
   while (!existsSync(head) && dirname(head) !== head) {
     rest.unshift(basename(head));
@@ -275,7 +280,7 @@ function gitState(path: string, root: string | undefined): string {
 /** Scratch space: changes there do not touch the user's files. */
 const TEMP_DIRS = () => [...new Set([tmpdir(), "/tmp", "/private/tmp", "/var/folders", "/private/var/folders"].map((d) => real(d)))];
 
-const tildify = (p: string) => (p === homedir() || p.startsWith(`${homedir()}/`) ? `~${p.slice(homedir().length)}` : p);
+const tildify = (p: string) => (p === homedir() || p.startsWith(`${homedir()}${sep}`) ? `~${p.slice(homedir().length)}` : p);
 
 /** Best-effort removal of secrets before anything leaves the machine. */
 export function redact(s: string): string {

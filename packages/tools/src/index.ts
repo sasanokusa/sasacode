@@ -6,6 +6,7 @@ import { writeTool } from "./write.ts";
 
 export { bashTool, editTool, readTool, writeTool };
 export { lineDiff } from "./util.ts";
+export { bashPath, gitBashCandidates, killTree } from "./shell.ts";
 
 /** The built-in tools, registered through the same API as any plugin (P2). */
 const builtinTools: Plugin = (api) => {

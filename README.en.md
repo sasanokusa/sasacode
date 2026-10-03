@@ -25,11 +25,18 @@ sasacode
 curl -fsSL https://sasanokusa.com/sasacode/install.sh | sh
 ```
 
+On Windows, from PowerShell (installs `%LOCALAPPDATA%\Programs\sasacode\sasacode.exe` and puts it on your PATH):
+
+```powershell
+irm https://sasanokusa.com/sasacode/install.ps1 | iex
+```
+
+- Windows needs [Git for Windows](https://git-scm.com/download/win): the `bash` tool runs commands with its Git Bash (`winget install --id Git.Git -e`). If it is somewhere unusual, set `SASACODE_GIT_BASH_PATH` to its `bash.exe`. Keys go in `%USERPROFILE%\.sasacode\.env` (the OS keychain lookup is macOS / Linux only).
 - Also on npm: `npm install -g sasacode`. The npm package is a small launcher: its first run downloads the binary of the same version from GitHub Releases, checks its SHA256 and keeps it in `~/.sasacode/npm-bin`. Update with `npm install -g sasacode@latest`.
-- Single binaries for macOS (arm64 / x64) and Linux (x64 / arm64, glibc / musl, and a baseline build for CPUs without AVX2). Bun is not needed.
-- The installer and the binary come from the latest [GitHub release](https://github.com/sasanokusa/sasacode/releases) and are checked against SHA256. The sasanokusa.com URL redirects to the latest release's `install.sh`.
+- Single binaries for macOS (arm64 / x64), Linux (x64 / arm64, glibc / musl, and a baseline build for CPUs without AVX2) and Windows (x64 / arm64, and an x64 baseline build). Bun is not needed.
+- The installer and the binary come from the latest [GitHub release](https://github.com/sasanokusa/sasacode/releases) and are checked against SHA256. The sasanokusa.com URLs redirect to the latest release's `install.sh` / `install.ps1`.
 - SHA256 only catches a broken download. That a file was built by this repository's GitHub Actions is proved by the signed provenance attached to releases from v0.9.8: `gh attestation verify sasacode-darwin-arm64.tar.gz --repo sasanokusa/sasacode` (on a file downloaded from the release; `install.sh` too).
-- `SASACODE_VERSION=v0.10.0` pins a version and `SASACODE_INSTALL_DIR` changes where it goes. On Windows, use WSL.
+- `SASACODE_VERSION=v0.10.0` pins a version and `SASACODE_INSTALL_DIR` changes where it goes (both installers).
 - `sasacode update` updates in place (the same checks as the installer; `--check` only reports). A newer version is mentioned quietly once at startup (`"updateCheck": false` turns it off). From a source checkout, use `git pull` and `bun install`.
 
 From source ([Bun](https://bun.sh) 1.4 or later):

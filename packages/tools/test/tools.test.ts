@@ -81,12 +81,16 @@ test("bash: a flood of output is kept to its tail in memory and saved whole, pri
   expect(readFileSync(file, "utf8").split("\n")[0]).toBe("line-1");
   expect(text).toContain("line-20000");
   const { statSync } = await import("node:fs");
-  expect(statSync(file).mode & 0o777).toBe(0o600);
+  // Unix permission bits; on Windows the file is private through the ACL of the user profile it is in.
+  if (process.platform !== "win32") expect(statSync(file).mode & 0o777).toBe(0o600);
 });
 
 test("read: pipes and devices are refused, big images too, big files read only as far as shown", async () => {
-  Bun.spawnSync(["mkfifo", join(dir, "fifo")]);
-  expect(out(await readTool.execute({ path: "fifo" }, ctx()))).toContain("not a regular file");
+  if (process.platform !== "win32") {
+    // Windows has no named pipes in the file system.
+    Bun.spawnSync(["mkfifo", join(dir, "fifo")]);
+    expect(out(await readTool.execute({ path: "fifo" }, ctx()))).toContain("not a regular file");
+  }
   writeFileSync(join(dir, "huge.png"), Buffer.alloc(5_000_001));
   expect(out(await readTool.execute({ path: "huge.png" }, ctx()))).toContain("over the 5000000 bytes");
   writeFileSync(join(dir, "big.log"), `${"x".repeat(99)}\n`.repeat(120_000)); // 12 MB

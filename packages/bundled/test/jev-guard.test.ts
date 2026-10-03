@@ -113,7 +113,8 @@ test("state: targets resolved, placed and described by git; the user's request i
   const dir = repo();
   // Outside the workspace and any git repository, and there on every machine (CI has no ~/.ssh).
   const outside = mkdtempSync(join(root, "outside-"));
-  const command = `rm -rf build && rm src/a.ts notes.txt ${outside}`;
+  // Quoted on Windows, as bash needs it: unquoted, the \ of C:\Users are escapes.
+  const command = `rm -rf build && rm src/a.ts notes.txt ${process.platform === "win32" ? `'${outside}'` : outside}`;
   const state = jevState({ tool: bashTool, args: { command }, cwd: dir, userRequest: "clean the build" });
   expect(state.call).toEqual({ tool: "bash", command });
   expect(state.steps).toBeUndefined(); // the command is already there; repeating it only distracts
@@ -130,7 +131,7 @@ test("state: targets resolved, placed and described by git; the user's request i
   const home = jevState({ tool: bashTool, args: { command: "rm -rf ~/" }, cwd: dir });
   expect((home.targets as { location: string; resolves_to: string }[])[0]).toMatchObject({ location: "the home directory itself", resolves_to: "~" });
   const temp = mkdtempSync(join(tmpdir(), "jev-t-"));
-  const scratch = jevState({ tool: bashTool, args: { command: `rm -rf ${temp}` }, cwd: dir });
+  const scratch = jevState({ tool: bashTool, args: { command: `rm -rf '${temp}'` }, cwd: dir });
   expect((scratch.targets as { location: string }[])[0]!.location).toBe("a temporary directory");
 });
 
