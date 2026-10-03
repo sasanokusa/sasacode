@@ -52,6 +52,7 @@
         "sasacode": "src/main.ts",
       },
       "dependencies": {
+        "@anthropic-ai/sdk": "^0.128.0",
         "@sasacode/agent": "workspace:*",
         "@sasacode/ai": "workspace:*",
         "@sasacode/bundled": "workspace:*",
@@ -61,6 +62,7 @@
         "@sasacode/skills": "workspace:*",
         "@sasacode/tools": "workspace:*",
         "@sasacode/tui": "workspace:*",
+        "openai": "^7.23.0",
       },
       "devDependencies": {
         "@sasacode/testing": "workspace:*",

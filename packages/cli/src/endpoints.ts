@@ -3,7 +3,8 @@
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 import { t } from "@sasacode/host";
-import { BUILTIN_PROVIDERS, listModels, type ProviderConfig } from "@sasacode/ai";
+import { BUILTIN_PROVIDERS, type ProviderConfig } from "@sasacode/ai";
+import { listModels } from "./list-models.ts";
 import { applyDetected, type DetectedEndpoint, detectEndpoint } from "./detect.ts";
 import { loadConfig, sasacodeHome } from "./config.ts";
 import { readJson, readJsonOr, writeJson } from "./json.ts";

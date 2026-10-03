@@ -1,7 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import OpenAI from "openai";
-import type { ProviderConfig } from "./models.ts";
-import type { ModelInfo } from "./types.ts";
+import type { ModelInfo, ProviderConfig } from "@sasacode/ai";
 
 export interface ListedModel {
   id: string;
