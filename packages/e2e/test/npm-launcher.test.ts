@@ -88,7 +88,7 @@ test("the first run fetches the binary for this machine; later runs start it wit
   expect(downloads).toBe(before);
   expect(again.stderr).not.toContain("downloading");
   expect(again.code).toBe(3); // the binary's exit code comes through
-});
+}, 30_000); // a first run on Windows starts PowerShell for the CPU check: seconds on a cold machine
 
 test("a download whose checksum does not match is refused and nothing is kept", async () => {
   corrupt = true;
@@ -101,4 +101,4 @@ test("a download whose checksum does not match is refused and nothing is kept", 
   } finally {
     corrupt = false;
   }
-});
+}, 30_000);

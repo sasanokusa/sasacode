@@ -5,7 +5,7 @@
 // are the ones scripts/install.sh uses.
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { constants, homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -42,6 +42,14 @@ function target() {
     if (arch === "x64" && !/\bavx2\b/.test(readSafe("/proc/cpuinfo"))) return `${os}-${arch}-baseline`; // CPUs without AVX2
   }
   return `${os}-${arch}`;
+}
+
+function readdirSafe(path) {
+  try {
+    return readdirSync(path);
+  } catch {
+    return [];
+  }
 }
 
 function readSafe(path) {
@@ -82,12 +90,18 @@ async function install(name, dest) {
   }
 }
 
-const name = `sasacode-${target()}`;
 const dir = join(process.env.SASACODE_HOME ?? join(homedir(), ".sasacode"), "npm-bin", `v${version}`);
-const bin = join(dir, windows ? `${name}.exe` : name);
-if (!existsSync(bin)) {
-  mkdirSync(dir, { recursive: true });
-  await install(name, bin);
+// On Windows the CPU check starts PowerShell (seconds when cold): only before the first download,
+// later runs start the binary already kept for this version.
+const kept = windows ? readdirSafe(dir).find((f) => /^sasacode-windows-[\w-]+\.exe$/.test(f)) : undefined;
+let bin = kept && join(dir, kept);
+if (!bin) {
+  const name = `sasacode-${target()}`;
+  bin = join(dir, windows ? `${name}.exe` : name);
+  if (!existsSync(bin)) {
+    mkdirSync(dir, { recursive: true });
+    await install(name, bin);
+  }
 }
 // `sasacode update` would replace this cached binary; with npm, npm does the updating.
 const run = spawnSync(bin, process.argv.slice(2), { stdio: "inherit", env: { ...process.env, SASACODE_INSTALLED_BY: "npm" } });
