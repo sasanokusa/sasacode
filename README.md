@@ -53,6 +53,7 @@ ln -s "$PWD/packages/cli/src/main.ts" ~/.local/bin/sasacode
 sasacode                            # 対話モード（TUI）
 sasacode -p "テストを直して"           # ヘッドレス：答えを stdout に、進捗を stderr に
 sasacode -p "…" --output jsonl       # 全イベントを JSONL で
+sasacode -p "…" --output jsonl --control stdio   # 親プロセスが stdin で承認に答え、中断できる（[ヘッドレスの制御](#ヘッドレスの制御)）
 echo "$LOG" | sasacode -p "原因は？"   # パイプした入力は -p の後ろに付く（5 秒何も来なければ読まない。--stdin で終わりまで待つ）
 sasacode -c                         # このディレクトリの直近のセッションを再開
 sasacode -r <id> -p "続き"            # セッション ID を指定して続ける（tmux がなくても会話を続けられる）
@@ -64,11 +65,40 @@ sasacode -r <id> -p "続き"            # セッション ID を指定して続�
 | `--permission <edits\|ask\|agent\|auto>` | 権限モード（既定 `edits`） |
 | `--thinking <off\|low\|medium\|high\|xhigh\|max>` | 推論の深さ |
 | `--max-turns <n>` | 1回の実行のターン数の上限（既定 200、0 で無制限） |
+| `--control stdio` | `-p --output jsonl` と併用。親プロセスがstdinで承認に答え、実行を中断できる（[ヘッドレスの制御](#ヘッドレスの制御)） |
+| `--append-system-prompt-file <path>` | ファイルの中身（UTF-8）を、設定の `instructions` の後ろにシステムプロンプトとして足す。読めないファイルはエラーで終わり、空のファイルは何も足さない。TUIでも使える |
 | `-c` / `-r <id>` / `--no-session` | 再開 / IDを指定して再開 / 保存しない |
 | `--trust-project` | プロジェクトを確認なしで信頼する（ヘッドレス向け。[プロジェクトの信頼](#プロジェクトの信頼)） |
 | `sasacode plugin search\|install\|update\|remove\|list\|publish` | プラグインを探す・入れる（npmかgit URL）・更新する・npmに公開する（[共有](#プラグインを共有する)） |
 | `sasacode endpoint add\|remove\|list` | 自前のサーバーの追加（形式は自動判別） |
 | `sasacode login [status\|logout]` | ChatGPTプランでログイン（`openai-codex/…` のモデル用） |
+
+### ヘッドレスの制御
+
+ほかのプログラムが `sasacode -p "…" --output jsonl` を子プロセスとして動かすときは、`--control stdio` を付けると、確認が必要な呼び出しにstdinで答えたり、実行を中断したりできる。`-p` と `--output jsonl` の両方が必要で、欠けているとエラーで終わる。stdinは制御に使うので、パイプした入力はプロンプトに付かない。
+
+stdoutには、これまでのJSONLのイベントに混ざって、次の行が1件ずつ出る。
+
+```jsonc
+{"type":"approval_request","id":"approval-1","callId":"call_1","tool":"bash","args":{"command":"touch x"},"reason":"…","cwd":"/path/to/project"}
+{"type":"approval_cancelled","id":"approval-1"}
+{"type":"control_error","error":"not valid JSON"}
+```
+
+stdinは1行1件のJSON（JSON Lines）で読む。
+
+```jsonc
+{"type":"approval","id":"approval-1","decision":"allow"}           // "allow" | "always" | "deny"
+{"type":"approval","id":"approval-1","decision":"deny","feedback":"理由"}
+{"type":"abort"}
+```
+
+- `approval_request` は、確認が必要な呼び出しごとに1行出る。呼び出しは答えが届くまで実行しない。`id` は答えに付ける。`callId` は会話の中のtool_callのid、`tool` と `args` は呼び出しの中身、`reason` は確認が必要な理由。
+- `approval` の `decision` は、`allow` が今回だけ許可、`always` が許可に加えて同じ呼び出しを許すルールの追加（TUIの「常に許可」と同じで、プロセスの終了まで有効）、`deny` が拒否。`feedback` は `deny` のときモデルに渡る。
+- `abort` はCtrl+Cと同じで、実行を中断する（`agent_end` の `cause` は `aborted`、終了コードは1）。
+- 実行が中断されたとき、答えが届いていない要求には `approval_cancelled` を出す。そのidへの答えは `control_error` になる。
+- 読めない行（JSONでない、不明な `type`、不明な `id`、不正な値）は `control_error` を出して読み続ける。
+- stdinが閉じられたら、答えを待っている要求と、以降の要求をすべて拒否する。`feedback` は `the controlling process closed stdin`。実行は中断しない。
 
 ### TUI
 
@@ -188,7 +218,7 @@ sasacode -m llama/<モデル名>
 - 確認の「常に許可」で足すルールは、見たものより広くならない。コマンドはそのまま（中の `*` はワイルドカードにしない）、ファイルを触るツールはそのパスだけを許可する。ルールはsasacodeを終了するまで残る（`/clear` をまたぐ）。
 - 判定の順番はdeny → softDeny → ask → allow → モード → `permission` フック（プラグイン）。`softDeny` はdenyと同じく拒否するが、`jev-guard` などのプラグインが「ユーザーに確認」まで下げられる（確認なしに実行されることはない）。広すぎて正当な操作も巻き込むパターン向け。allowルールで通るのは、`&&` `;` `|` でつないだコマンドの**すべて**が許可されている場合だけ。`$(…)`、バッククォート、`>` を含むコマンドは、allowルールでは通らない。
 - 同梱の `permission-presets` が、既定で `guard`（sudo、`rm -rf /`、ディスク操作、`| sh` などを常に拒否。ホーム配下の `rm -rf ~…` とforce pushはsoftDeny。`ssh`、`scp`、`sftp`、リモートへの `rsync` は `auto` モードでも常に確認）を有効にしている。
-- ヘッドレスでは確認できる人がいないので、確認が必要な呼び出しは実行せず、その理由をモデルに返す。
+- ヘッドレスでは確認できる人がいないので、確認が必要な呼び出しは実行せず、その理由をモデルに返す。`--control stdio` を付けると、親プロセスがstdinとstdoutで答える（[ヘッドレスの制御](#ヘッドレスの制御)）。
 - パスは、シンボリックリンクをたどった先（実パス）で判定する。作業ディレクトリ内のリンクが外を指していれば、リンク先がまだ存在しなくても外への操作として扱う。プロジェクト内のリンクで、ルールの対象をすり替えることもできない。リンクの循環などで行き先が決まらないパスは、モードによらず確認する。
 - 権限は、ツールを呼ぶ前の判定であって隔離（サンドボックス）ではない。判定から実行までの間にリンクを差し替えるような操作や、許可したbashコマンドの中身までは防げない。信頼できないコードを扱うときは、コンテナなどOS側で隔離すること。
 - 中断（esc）した後は、承認済みでもまだ始まっていないツールは実行しない。

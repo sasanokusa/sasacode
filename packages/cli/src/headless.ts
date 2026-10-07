@@ -2,10 +2,14 @@ import { existsSync } from "node:fs";
 import { type AgentEvent, type StopCause } from "@sasacode/agent";
 import { t } from "@sasacode/host";
 import { textOf } from "@sasacode/ai";
+import { type ControlInput, startControl } from "./control.ts";
 import type { Harness } from "./setup.ts";
 
-/** `sasacode -p`: run one prompt to completion. Text mode streams the answer to stdout; jsonl emits every event. */
-export async function runHeadless(h: Harness, prompt: string, output: "text" | "jsonl"): Promise<number> {
+/**
+ * `sasacode -p`: run one prompt to completion. Text mode streams the answer to stdout; jsonl emits every event.
+ * With `control` (`--control stdio`, jsonl only), the process that reads this output answers approvals and can abort.
+ */
+export async function runHeadless(h: Harness, prompt: string, output: "text" | "jsonl", control?: ControlInput): Promise<number> {
   const { agent } = h;
   // Model and tool text reaching a terminal must not carry escape sequences it would act on.
   const tty = process.stdout.isTTY;
@@ -38,6 +42,8 @@ export async function runHeadless(h: Harness, prompt: string, output: "text" | "
   });
   const session = agent.session;
   if (output === "jsonl") write(`${JSON.stringify({ type: "session", id: session?.id ?? null, path: session?.path ?? null })}\n`);
+  // Through the writer above, so a control line never lands in the middle of an event.
+  const controller = control && startControl(agent, control, (m) => write(`${JSON.stringify(m)}\n`));
   await h.loadPlugins();
   // Unlike the TUI, a one-shot run should start with MCP servers and similar tools connected.
   await h.host.settle();
@@ -51,6 +57,7 @@ export async function runHeadless(h: Harness, prompt: string, output: "text" | "
   // Plugins may inject follow-ups (agent_end); wait for everything to settle.
   await agent.waitForIdle();
   process.off("SIGINT", onSigint);
+  controller?.stop();
   await h.shutdown();
   const hint = stoppedBy ? ` — ${stoppedBy}` : STOP_HINT[cause] ? ` — ${t(STOP_HINT[cause]!)}` : "";
   if (output === "text" && cause !== "done") status(t("[stopped: {cause}{hint}]", { cause, hint }));

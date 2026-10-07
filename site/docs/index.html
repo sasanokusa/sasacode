@@ -383,7 +383,7 @@ sasacode -m pgx/&lt;モデル名&gt;</code></pre>
           <div class="st"><div><b>権限モードの既定</b>下の表。<div class="out"><span class="pill allow">許可</span><span class="pill ask">確認</span></div></div></div>
           <div class="st hook"><div><b><code>permission</code> フック（プラグイン）</b>ここまでの判定を変える。厳しくするのは自由、緩めるのは下限まで（モードの既定は許可まで、softDenyは確認まで、ルールは緩められない）。<code>jev-guard</code> はここで働く。</div></div>
           <div class="st"><div><b>agentモードの判定</b>どのプラグインも判定しなかった「確認」を、現在のモデルが安全か判定する。<div class="out"><span class="pill allow">許可</span><span class="pill ask">確認</span></div></div></div>
-          <div class="st"><div><b>ユーザーに確認</b>許可 / 常に許可（ルールに追加） / 拒否（理由を添えられる）。ヘッドレスでは確認できないので実行せず、理由をモデルに返す。</div></div>
+          <div class="st"><div><b>ユーザーに確認</b>許可 / 常に許可（ルールに追加） / 拒否（理由を添えられる）。ヘッドレスでは確認できないので実行せず、理由をモデルに返す（<code>--control stdio</code> なら親プロセスが答える。<a href="#control">ヘッドレスの制御</a>）。</div></div>
         </div>
         <figcaption>実線はコア、点線の丸はプラグインが関われる段階。</figcaption>
       </figure>
@@ -479,7 +479,7 @@ sasacode -m pgx/&lt;モデル名&gt;</code></pre>
         <tr><td><code>providers.&lt;name&gt;</code></td><td>オブジェクト</td><td class="brk"><code>api</code>（<code>openai-chat</code> / <code>openai-responses</code> / <code>anthropic</code>、省略で判別）、<code>baseUrl</code>、<code>apiKeyEnv</code>、<code>headers</code>、<code>defaultModel</code></td></tr>
         <tr><td><code>modelOverrides.&lt;provider/model&gt;</code></td><td>オブジェクト</td><td class="brk"><code>contextWindow</code>、<code>maxOutput</code>、<code>price</code>（100 万トークンあたりのUSDで、<code>input</code>・<code>output</code>・<code>cacheRead</code>・<code>cacheWrite</code>）、<code>reasoning</code>、<code>images</code></td></tr>
         <tr><td><code>permissions</code></td><td>オブジェクト</td><td><code>mode</code>、<code>allow</code>、<code>ask</code>、<code>deny</code>、<code>softDeny</code></td></tr>
-        <tr><td><code>instructions</code></td><td>文字列</td><td>システムプロンプトに足す文</td></tr>
+        <tr><td><code>instructions</code></td><td>文字列</td><td>システムプロンプトに足す文。実行ごとに足したいときは <code>--append-system-prompt-file &lt;path&gt;</code>（ファイルの中身を、この後ろに足す）</td></tr>
         <tr><td><code>maxTurns</code></td><td><code>200</code></td><td>1回の依頼でモデルに送るリクエストの上限（0 で無制限）</td></tr>
         <tr><td><code>maxRetries</code></td><td><code>8</code></td><td>APIエラー（429・5xx）の再試行の回数（最大 20）</td></tr>
         <tr><td><code>plugins.disabled</code></td><td>配列</td><td>読み込まないプラグイン（同梱も含む）</td></tr>
@@ -751,11 +751,12 @@ sasacode plugin publish my-tool.ts --license MIT             <span class="c"># �
       <h2><span class="no">10</span>ヘッドレスと自動化</h2>
       <pre><code>sasacode -p "テストを直して"                         <span class="c"># 答えは stdout、進捗は stderr</span>
 sasacode -p "…" --output jsonl                      <span class="c"># 全イベントを1行ずつ JSON で</span>
+sasacode -p "…" --output jsonl --control stdio      <span class="c"># 親プロセスが stdin で承認に答え、中断できる</span>
 git diff | sasacode -p "このdiffをレビューして"          <span class="c"># パイプした入力は -p の後ろに付く</span>
 sasacode -p "…" --permission auto --trust-project   <span class="c"># CI など確認できない環境で</span></code></pre>
       <ul>
         <li><b>終了コード</b>：最後まで終われば 0、それ以外（中断、エラー、上限、プラグインによる停止）は 1。止まった理由はstderrに <code>[stopped: …]</code> で出る。</li>
-        <li><b>確認が必要な呼び出し</b>は実行せず、理由をモデルに返す。何を許すかはルールで決めておく（<code>--permission auto</code> でもdenyとaskのルールは効く）。</li>
+        <li><b>確認が必要な呼び出し</b>は実行せず、理由をモデルに返す。何を許すかはルールで決めておく（<code>--permission auto</code> でもdenyとaskのルールは効く）。<code>--control stdio</code> を付けると、親プロセスが答えられる（<a href="#control">ヘッドレスの制御</a>）。</li>
         <li><b>MCPサーバー</b>などの起動処理は、最初のリクエストの前に待つ。</li>
         <li>テキストモードでは最後に <code>session &lt;id&gt; · continue: sasacode -r &lt;id&gt; -p "…"</code> がstderrに出る。</li>
       </ul>
@@ -772,6 +773,27 @@ sasacode -p "…" --permission auto --trust-project   <span class="c"># CI な�
         <tr><td><code>messages_replaced</code></td><td>履歴が差し替えられた（要約など）</td></tr>
         <tr><td><code>context_limit</code> / <code>error</code> / <code>plugin_error</code></td><td>コンテキストの上限 / エラー / プラグインのエラー</td></tr>
       </table></div>
+      <h3 id="control">ヘッドレスの制御（<code>--control stdio</code>）</h3>
+      <p>ほかのプログラムが <code>sasacode -p "…" --output jsonl</code> を子プロセスとして動かすときに <code>--control stdio</code> を付けると、確認が必要な呼び出しへの答えと実行の中断を、stdinで受け付ける。<code>-p</code> と <code>--output jsonl</code> の両方が必要で、欠けていればエラーで終わる。stdinは制御に使うので、パイプした入力はプロンプトに付かない。stdinは1行1件のJSON（JSON Lines）で読み、stdoutには、JSONLのイベントに混ざって1行1件で出す。</p>
+      <pre><code><span class="c"># sasacode から親へ（stdout）</span>
+{"type":"approval_request","id":"approval-1","callId":"call_1","tool":"bash","args":{"command":"touch x"},"reason":"…","cwd":"/path/to/project"}
+<span class="c"># 親から sasacode へ（stdin）</span>
+{"type":"approval","id":"approval-1","decision":"allow"}
+{"type":"approval","id":"approval-1","decision":"deny","feedback":"理由"}
+{"type":"abort"}</code></pre>
+      <div class="tbl"><table>
+        <tr><th>向き</th><th>type</th><th>内容</th></tr>
+        <tr><td>stdout</td><td><code>approval_request</code></td><td class="brk">確認が必要な呼び出しごとに1行。答えが届くまで、呼び出しは実行しない。<code>id</code>（答えに付ける）、<code>callId</code>（会話の中のtool_callのid）、<code>tool</code>、<code>args</code>、<code>reason</code>（確認が必要な理由）、<code>cwd</code></td></tr>
+        <tr><td>stdout</td><td><code>approval_cancelled</code></td><td>答えが届く前に実行が中断され、取り消された要求（<code>id</code>）。そのidへの答えは <code>control_error</code> になる</td></tr>
+        <tr><td>stdout</td><td><code>control_error</code></td><td>使えない行を受け取った（<code>error</code> に理由）。読み取りは続く</td></tr>
+        <tr><td>stdin</td><td><code>approval</code></td><td class="brk"><code>id</code> の要求に答える。<code>decision</code> は <code>allow</code>（今回だけ許可）、<code>always</code>（許可に加えて、同じ呼び出しを許すルールを足す。TUIの「常に許可」と同じで、プロセスの終了まで有効）、<code>deny</code>（拒否。<code>feedback</code> はモデルに渡る）</td></tr>
+        <tr><td>stdin</td><td><code>abort</code></td><td>実行を中断する。Ctrl+Cと同じで、<code>agent_end</code> の <code>cause</code> は <code>aborted</code>、終了コードは 1</td></tr>
+      </table></div>
+      <ul>
+        <li><code>id</code> は要求ごとに変わる。形式に頼らず、届いた値をそのまま返す。</li>
+        <li>読めない行（JSONでない、不明な <code>type</code>、不明な <code>id</code>、不正な値）は <code>control_error</code> を出して読み続ける。</li>
+        <li>stdinが閉じられたら、答えを待っている要求と、以降の要求をすべて拒否する。<code>feedback</code> は <code>the controlling process closed stdin</code>。実行は中断しない。</li>
+      </ul>
     </section>
 
     <!-- ─────────────────────────────────────────────── -->

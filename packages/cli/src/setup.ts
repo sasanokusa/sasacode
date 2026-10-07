@@ -1,4 +1,4 @@
-import { chmodSync, mkdirSync, statSync } from "node:fs";
+import { chmodSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { join, resolve as resolvePath } from "node:path";
 import { Agent, buildSystemPrompt, headlessUI, isInside, PERMISSION_MODES, type PermissionMode, PermissionPolicy, PluginHost, restore, SessionFile, sessionDir, type UIBridge } from "@sasacode/agent";
 import { currentLang, findSession, type Lang, listSessions, t } from "@sasacode/host";
@@ -32,10 +32,21 @@ export interface SetupOptions {
   /** "last" = most recent session in cwd, otherwise a session id or path. */
   resume?: string;
   noSession?: boolean;
+  /** Text added to the system prompt after `config.instructions` (--append-system-prompt-file). */
+  appendSystemPrompt?: string;
   /** The project is trusted: its plugins and the elevated part of its config are used. */
   trustProject?: boolean;
   /** Config files and plugins already read for the trust check (see assessProject). */
   preloaded?: { files: ConfigFiles; plugins: FoundPlugin[]; warnings: string[] };
+}
+
+/** --append-system-prompt-file: the file's text as UTF-8; a file that cannot be read is an error, not a silent skip. */
+export function readPromptFile(path: string): string {
+  try {
+    return readFileSync(path, "utf8");
+  } catch (e) {
+    throw new Error(t("failed to read {path}: {error}", { path, error: e instanceof Error ? e.message : String(e) }));
+  }
 }
 
 export interface Harness {
@@ -93,7 +104,7 @@ export async function setup(opts: SetupOptions): Promise<Harness> {
   const agent = new Agent({
     model: resolve(opts.model ?? config.model ?? defaultModel(providers, !config.plugins?.disabled?.includes("openai-codex"))),
     cwd: opts.cwd,
-    systemPrompt: buildSystemPrompt({ cwd: opts.cwd, append: config.instructions ? [config.instructions] : [] }),
+    systemPrompt: buildSystemPrompt({ cwd: opts.cwd, append: [config.instructions, opts.appendSystemPrompt].filter((s): s is string => !!s) }),
     thinking: (opts.thinking ?? config.thinking ?? "high") as ThinkingLevel,
     permissions: new PermissionPolicy(mode, config.permissions),
     getApiKey: (p) => resolveApiKey(p, providers[p]),

@@ -9,13 +9,14 @@ import { hideFromChildren } from "@sasacode/plugin-api";
 import { codexLogin, codexLogout, codexStatus } from "@sasacode/bundled";
 import { loadConfig, sasacodeHome } from "./config.ts";
 import { dropBlankKeys, ensureEnvFile, loadEnvFile } from "./env.ts";
+import { controlMode } from "./control.ts";
 import { runHeadless } from "./headless.ts";
 import { readPipedStdin } from "./stdin.ts";
 import { notifyIfNewer, updateCommand } from "./update.ts";
 import { endpointCommand } from "./endpoints.ts";
 import { pluginCommand } from "./loader.ts";
 import { askTrust, assessProject, isTrusted, saveTrust } from "./trust.ts";
-import { setup } from "./setup.ts";
+import { readPromptFile, setup } from "./setup.ts";
 
 const HELP_TEXT = `sasacode — a small, pluggable coding agent
 
@@ -27,6 +28,8 @@ Options:
   -p, --print <prompt>           headless mode (stdin is appended when piped)
       --stdin                    with -p: wait for piped input however long it takes
       --output <text|jsonl>      headless output format (default text)
+      --control stdio            with -p --output jsonl: the parent answers approvals and can abort
+                                 over stdin as JSON Lines (stdin is then not appended to the prompt)
   -m, --model <provider/model>   e.g. anthropic/claude-opus-5, openai/gpt-5.5, ollama/gemma4:e4b
                                  (the TUI's /model lists what your providers offer)
       --permission <mode>        {modes} (default edits)
@@ -35,6 +38,8 @@ Options:
   -c, --continue                 resume the most recent session in this directory
   -r, --resume <id>              resume a session by id
       --no-session               do not save this session
+      --append-system-prompt-file <path>
+                                 add the file's text to the system prompt, after the config's instructions
       --trust-project            trust this project's plugins, endpoints, MCP servers and
                                  permission settings without asking
 
@@ -76,6 +81,8 @@ async function main(): Promise<number> {
     options: {
       print: { type: "string", short: "p" },
       output: { type: "string", default: "text" },
+      control: { type: "string" },
+      "append-system-prompt-file": { type: "string" },
       model: { type: "string", short: "m" },
       permission: { type: "string" },
       thinking: { type: "string" },
@@ -97,6 +104,9 @@ async function main(): Promise<number> {
     console.log((await import("../package.json")).version);
     return 0;
   }
+  // Checked before anything is loaded: a wrong combination should fail at once, not after the setup.
+  const control = controlMode(values.control, values.print, values.output);
+  const appendSystemPrompt = values["append-system-prompt-file"] !== undefined ? readPromptFile(values["append-system-prompt-file"]) : undefined;
   // One trust decision covers project plugins and the parts of .sasacode/config.json that could
   // run code or send data elsewhere. Asked here, before anything from the project is used.
   const project = assessProject(process.cwd());
@@ -114,6 +124,7 @@ async function main(): Promise<number> {
     maxTurns: values["max-turns"] ? turnsArg(values["max-turns"]) : undefined,
     resume: values.continue ? "last" : values.resume,
     noSession: values["no-session"],
+    appendSystemPrompt,
     trustProject: trusted,
     preloaded: project,
   });
@@ -121,10 +132,11 @@ async function main(): Promise<number> {
 
   if (values.print !== undefined) {
     let prompt = [values.print, ...positionals].join(" ");
-    const piped = await readPipedStdin(!!values.stdin);
+    // With --control, stdin is the control channel: it is not part of the prompt.
+    const piped = control ? "" : await readPipedStdin(!!values.stdin);
     if (piped.trim()) prompt = `${prompt}\n\n${piped}`;
     if (values.output !== "text" && values.output !== "jsonl") throw new Error(t("--output must be text or jsonl"));
-    return runHeadless(harness, prompt, values.output);
+    return runHeadless(harness, prompt, values.output, control ? Bun.stdin.stream() : undefined);
   }
   const { runTui } = await import("@sasacode/tui");
   // A quiet heads-up when a newer release is out; "updateCheck": false in config turns it off.
