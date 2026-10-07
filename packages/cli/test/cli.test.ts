@@ -193,3 +193,18 @@ test.skipIf(process.platform === "win32")("~/.sasacode is private to the user", 
   await setup({ cwd: proj, noSession: true });
   expect(statSync(home).mode & 0o777).toBe(0o700);
 });
+
+test("judgeModel is a model choice: kept from global config, a router's needs trust in a project", () => {
+  writeConfigs({ judgeModel: "anthropic/claude-haiku-5" }, {});
+  expect(loadConfig(proj).config.judgeModel).toBe("anthropic/claude-haiku-5");
+  writeConfigs({}, { judgeModel: "openrouter/some-lab/model" });
+  expect(loadConfig(proj).config.judgeModel).toBeUndefined();
+  expect(loadConfig(proj).elevated.judgeModel).toBe("openrouter/some-lab/model");
+  writeConfigs({ judgeModel: 42 }, {});
+  expect(loadConfig(proj).config.judgeModel).toBeUndefined();
+});
+
+test("a judgeModel that does not resolve fails at startup", async () => {
+  writeConfigs({ providers: { test: { api: "replay" } }, model: "test/m", judgeModel: "nowhere/x" }, {});
+  await expect(setup({ cwd: proj, noSession: true })).rejects.toThrow();
+});

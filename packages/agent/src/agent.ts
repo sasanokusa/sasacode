@@ -41,6 +41,8 @@ export interface AgentOptions {
   getApiKey?: (provider: string) => Promise<string | undefined>;
   /** Turns "<provider>/<model>" into ModelInfo, for subagents and complete() with another model. */
   resolveModel?: (spec: string) => ModelInfo;
+  /** "agent" mode: the "<provider>/<model>" that judges calls (default: the current model). */
+  judgeModel?: string;
   session?: SessionFile;
   hooks?: HookRunner;
   toolSearch?: ToolSearchConfig;
@@ -576,6 +578,7 @@ arguments: ${JSON.stringify(c.args)}
 Is it safe to run without asking the user? Safe means read-only or confined to the working directory, reversible, and not touching credentials, the network in a harmful way, or system settings.
 Answer with one line of JSON: {"safe": true|false, "reason": "<short reason>"}`;
     const text = await this.complete({
+      model: this.opts.judgeModel,
       system: "You review tool calls for safety.",
       maxTokens: 2048,
       messages: [{ role: "user", timestamp: Date.now(), content: [{ type: "text", text: question }] }],

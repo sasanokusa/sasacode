@@ -117,3 +117,21 @@ test("a tool_call decision cannot be loosened by a permission hook", async () =>
   expect(lowest).toBe("deny");
   expect(JSON.stringify(agent.messages.find((m) => m.role === "tool")?.content)).toContain("tool_call says no");
 });
+
+test("agent mode: judgeModel picks the model that judges; the run keeps its own", async () => {
+  const provider = replayProvider([bash("echo j"), reply([{ type: "text", text: '{"safe": true, "reason": "echo"}' }]), done]);
+  registerApi("replay", provider);
+  const agent = new Agent({
+    model,
+    cwd: dir,
+    systemPrompt: "s",
+    permissions: new PermissionPolicy("agent"),
+    judgeModel: "t/judge",
+    resolveModel: (spec) => ({ ...model, id: spec.slice(spec.indexOf("/") + 1) }),
+  });
+  const host = new PluginHost({ agent, cwd: dir });
+  await host.load("builtin-tools", builtinTools);
+  await agent.prompt("go");
+  expect(provider.requests.map((r) => r.model.id)).toEqual(["m", "judge", "m"]);
+  expect(JSON.stringify(agent.messages.find((m) => m.role === "tool")?.content)).toContain("j");
+});

@@ -7,6 +7,8 @@ import { readJson } from "./json.ts";
 
 export interface Config {
   model?: string;
+  /** The model that judges tool calls in the "agent" permission mode (default: the current model). */
+  judgeModel?: string;
   /** The language the interface speaks: "ja" or "en" (default: SASACODE_LANG, else the system locale). */
   lang?: "ja" | "en";
   /** Models offered by /model. */
@@ -61,6 +63,7 @@ const THINKING = ["off", "low", "medium", "high", "xhigh", "max"];
 /** Shape checks per key; a value that fails is dropped with a warning instead of silently merging. */
 const CHECKS: Record<keyof Config, (v: unknown) => boolean> = {
   model: isString,
+  judgeModel: isString,
   lang: (v) => v === "ja" || v === "en",
   models: isStrings,
   thinking: (v) => THINKING.includes(v as string),
@@ -152,6 +155,7 @@ export function splitProjectConfig(project: Config, global: Config): { safe: Con
   if (project.maxRetries !== undefined)
     (project.maxRetries <= (global.maxRetries ?? DEFAULT_RETRIES) ? safe : elevated).maxRetries = project.maxRetries;
   if (project.model !== undefined) (knownProvider(project.model) ? safe : elevated).model = project.model;
+  if (project.judgeModel !== undefined) (knownProvider(project.judgeModel) ? safe : elevated).judgeModel = project.judgeModel;
   if (project.models) {
     const [ok, rest] = [project.models.filter(knownProvider), project.models.filter((m) => !knownProvider(m))];
     if (ok.length) safe.models = ok;

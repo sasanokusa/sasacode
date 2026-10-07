@@ -396,7 +396,7 @@ sasacode -m pgx/&lt;モデル名&gt;</code></pre>
         <tr><td><code>agent</code></td><td class="yes">許可</td><td colspan="2">モデルが判定（安全なら許可、それ以外は確認）</td></tr>
         <tr><td><code>auto</code></td><td class="yes">許可</td><td class="yes">許可</td><td class="yes">許可（denyルールとaskルールは効く）</td></tr>
       </table></div>
-      <p><code>agent</code> モードで判定するのは呼び出しを作ったのと同じモデルで、呼び出しの引数も読むため、モデルを誘導する文が判定も誘導しうる。利便のための機能で、プロンプトインジェクションへの防御ではない（それにはdeny / askルールと <code>guard</code> プリセットを使う）。</p>
+      <p><code>agent</code> モードで判定するのは、既定では呼び出しを作ったのと同じモデル。設定の <code>judgeModel</code>（<code>"provider/model"</code>）で別のモデルにできる。判定するモデルは呼び出しの引数も読むため、モデルを誘導する文が判定も誘導しうる。利便のための機能で、プロンプトインジェクションへの防御ではない（それにはdeny / askルールと <code>guard</code> プリセットを使う）。</p>
       <p>切り替えは <kbd>shift+tab</kbd>、<code>/permission &lt;mode&gt;</code>、<code>--permission</code>、設定の <code>permissions.mode</code>。</p>
 
       <h3 id="rules">ルールの書き方</h3>

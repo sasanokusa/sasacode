@@ -109,6 +109,8 @@ export async function setup(opts: SetupOptions): Promise<Harness> {
     permissions: new PermissionPolicy(mode, config.permissions),
     getApiKey: (p) => resolveApiKey(p, providers[p]),
     resolveModel: resolve,
+    // Resolved now so a typo fails at startup, not at the first judged call.
+    judgeModel: config.judgeModel && (resolve(config.judgeModel), config.judgeModel),
     maxTurns: opts.maxTurns ?? config.maxTurns ?? DEFAULT_MAX_TURNS,
     maxRetries: config.maxRetries,
     toolSearch: config.toolSearch,
