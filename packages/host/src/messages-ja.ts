@@ -5,7 +5,7 @@
  */
 export const TO_JA: Record<string, string> = {
   // ── main.ts: help and top-level errors ─────────────────────────────
-  "sasacode — a small, pluggable coding agent\n\nUsage:\n  sasacode [prompt]              interactive session (optional first prompt)\n  sasacode -p \"<prompt>\"         run headless and print the answer\n\nOptions:\n  -p, --print <prompt>           headless mode (stdin is appended when piped)\n      --stdin                    with -p: wait for piped input however long it takes\n      --output <text|jsonl>      headless output format (default text)\n  -m, --model <provider/model>   e.g. anthropic/claude-opus-5, openai/gpt-5.5, ollama/gemma4:e4b\n                                 (the TUI's /model lists what your providers offer)\n      --permission <mode>        {modes} (default edits)\n      --thinking <level>         off | low | medium | high | xhigh | max\n      --max-turns <n>            turns per run before stopping (default 200; 0 = no limit)\n  -c, --continue                 resume the most recent session in this directory\n  -r, --resume <id>              resume a session by id\n      --no-session               do not save this session\n      --trust-project            trust this project's plugins, endpoints, MCP servers and\n                                 permission settings without asking\n\nSubcommands:\n  sasacode plugin search [words]              find plugins (sasanokusa.com's list and npm)\n  sasacode plugin install <npm-spec|git-url> [--project] [--yes]\n  sasacode plugin update [name] | remove <name> | list   (flags may go anywhere)\n  sasacode plugin publish <file.ts|dir> [--name <pkg>] [--license <id>] [--dry-run]\n  sasacode endpoint add <name> <url> [--key-env VAR] [--project]   add a server (format detected)\n  sasacode endpoint remove <name> [--project]\n  sasacode endpoint list\n  sasacode login [status|logout]    use a ChatGPT plan instead of an API key (openai-codex/… models)\n  sasacode update [--check] [tag]   download and install the newest release (checksum-verified)\n  -h, --help\n  -v, --version":
+  "sasacode — a small, pluggable coding agent\n\nUsage:\n  sasacode [prompt]              interactive session (optional first prompt)\n  sasacode -p \"<prompt>\"         run headless and print the answer\n\nOptions:\n  -p, --print <prompt>           headless mode (stdin is appended when piped)\n      --stdin                    with -p: wait for piped input however long it takes\n      --output <text|jsonl>      headless output format (default text)\n      --control stdio            with -p --output jsonl: the parent answers approvals and can abort\n                                 over stdin as JSON Lines (stdin is then not appended to the prompt)\n  -m, --model <provider/model>   e.g. anthropic/claude-opus-5, openai/gpt-5.5, ollama/gemma4:e4b\n                                 (the TUI's /model lists what your providers offer)\n      --permission <mode>        {modes} (default edits)\n      --thinking <level>         off | low | medium | high | xhigh | max\n      --max-turns <n>            turns per run before stopping (default 200; 0 = no limit)\n  -c, --continue                 resume the most recent session in this directory\n  -r, --resume <id>              resume a session by id\n      --no-session               do not save this session\n      --append-system-prompt-file <path>\n                                 add the file's text to the system prompt, after the config's instructions\n      --trust-project            trust this project's plugins, endpoints, MCP servers and\n                                 permission settings without asking\n\nSubcommands:\n  sasacode plugin search [words]              find plugins (sasanokusa.com's list and npm)\n  sasacode plugin install <npm-spec|git-url> [--project] [--yes]\n  sasacode plugin update [name] | remove <name> | list   (flags may go anywhere)\n  sasacode plugin publish <file.ts|dir> [--name <pkg>] [--license <id>] [--dry-run]\n  sasacode endpoint add <name> <url> [--key-env VAR] [--project]   add a server (format detected)\n  sasacode endpoint remove <name> [--project]\n  sasacode endpoint list\n  sasacode login [status|logout]    use a ChatGPT plan instead of an API key (openai-codex/… models)\n  sasacode update [--check] [tag]   download and install the newest release (checksum-verified)\n  -h, --help\n  -v, --version":
     `sasacode — 小さく、プラグインで組み替えられるコーディングエージェント
 
 使い方:
@@ -16,6 +16,8 @@ export const TO_JA: Record<string, string> = {
   -p, --print <prompt>           ヘッドレスモード（パイプした stdin は後ろに付く）
       --stdin                    -p と併用: パイプ入力をどれだけ待っても読む
       --output <text|jsonl>      ヘッドレス出力の形式（既定 text）
+      --control stdio            -p --output jsonl と併用: 親プロセスが stdin に JSON Lines を送り、
+                                 承認への答えと中断を伝える（stdin はプロンプトに付かない）
   -m, --model <provider/model>   例 anthropic/claude-opus-5, openai/gpt-5.5, ollama/gemma4:e4b
                                  （TUI の /model がプロバイダーの提供一覧を表示）
       --permission <mode>        {modes}（既定 edits）
@@ -24,6 +26,8 @@ export const TO_JA: Record<string, string> = {
   -c, --continue                 このディレクトリの直近のセッションを再開
   -r, --resume <id>              セッション ID を指定して再開
       --no-session               このセッションを保存しない
+      --append-system-prompt-file <path>
+                                 ファイルの中身を、config の instructions の後ろにシステムプロンプトとして足す
       --trust-project            このプロジェクトのプラグイン、エンドポイント、MCP サーバー、
                                  権限設定を確認なしで信頼する
 
@@ -42,6 +46,8 @@ export const TO_JA: Record<string, string> = {
   "created {path}: add your API key there": "{path} を作成。ここに API キーを書く",
   "warning: {warning}": "警告: {warning}",
   "--output must be text or jsonl": "--output は text か jsonl",
+  "--control must be stdio": "--control は stdio だけ",
+  "--control stdio needs -p and --output jsonl": "--control stdio は -p と --output jsonl が必要",
   "sasacode: {error}": "sasacode: {error}",
   '--max-turns needs a whole number (0 = no limit), got "{value}"': '--max-turns は整数で指定（0 で無制限）: "{value}"',
   'unknown login subcommand "{sub}" (status, logout)': '不明な login サブコマンド "{sub}"（status, logout）',

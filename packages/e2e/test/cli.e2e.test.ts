@@ -5,11 +5,14 @@ import { afterEach, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { type FakeServer, fakeServer } from "./fake-server.ts";
-import { answer, fakeConfig, roles, type Sandbox, sandbox } from "./harness.ts";
+import { answer, fakeConfig, type Live, roles, type Sandbox, sandbox } from "./harness.ts";
 
 let server: FakeServer | undefined;
 let box: Sandbox | undefined;
+let lives: Live[] = [];
 afterEach(() => {
+  for (const l of lives) l.kill();
+  lives = [];
   server?.stop();
   box?.cleanup();
   server = box = undefined;
@@ -122,4 +125,106 @@ test("jsonl output carries the whole run, and a saved session is a file that -c 
   expect(sessions.length).toBe(1);
   const again = await box.run(["-c", "-p", "two"]);
   expect(again.stdout).toContain("second");
+});
+
+const control = ["--output", "jsonl", "--control", "stdio"];
+
+test("--control stdio: the parent answers an approval request over stdin and the call runs", async () => {
+  const { server, box } = setup([{ toolCalls: [{ name: "bash", args: { command: "touch made-by-bash" } }] }, { text: "done" }], { permissions: { mode: "ask" } });
+  const run = box.start(["-p", "run it", ...control]);
+  lives.push(run);
+  const before = await run.until("approval_request");
+  expect(before[0].type).toBe("session");
+  const request = before.at(-1);
+  expect(request).toEqual({ type: "approval_request", id: request.id, callId: expect.any(String), tool: "bash", args: { command: "touch made-by-bash" }, reason: expect.any(String), cwd: expect.any(String) });
+  expect(existsSync(join(box.project, "made-by-bash"))).toBe(false); // nothing ran before the answer
+  run.send({ type: "approval", id: request.id, decision: "allow" });
+  const rest = await run.until("agent_end");
+  expect(rest.at(-1)).toEqual({ type: "agent_end", cause: "done" });
+  run.end();
+  expect(await run.exited).toBe(0);
+  expect(existsSync(join(box.project, "made-by-bash"))).toBe(true);
+  expect(JSON.stringify(server.requests[1].messages.at(-1))).not.toContain("denied");
+});
+
+test("--control stdio: a deny reaches the model with its feedback; a bad line is reported and the run goes on", async () => {
+  const { server, box } = setup([{ toolCalls: [{ name: "bash", args: { command: "touch made-by-bash" } }] }, { text: "ok" }], { permissions: { mode: "ask" } });
+  const run = box.start(["-p", "run it", ...control]);
+  lives.push(run);
+  const { id } = (await run.until("approval_request")).at(-1);
+  run.send("not a control message");
+  run.send({ type: "approval", id, decision: "deny", feedback: "use the editor instead" });
+  const rest = await run.until("agent_end");
+  expect(rest.filter((e) => e.type === "control_error")).toHaveLength(1);
+  expect(await run.exited).toBe(0);
+  expect(existsSync(join(box.project, "made-by-bash"))).toBe(false);
+  expect(JSON.stringify(server.requests[1].messages.at(-1))).toContain("User feedback: use the editor instead");
+});
+
+test("--control stdio: abort cancels the open request and ends the run as aborted", async () => {
+  const { box } = setup([{ toolCalls: [{ name: "bash", args: { command: "touch made-by-bash" } }] }, { text: "unreachable" }], { permissions: { mode: "ask" } });
+  const run = box.start(["-p", "run it", ...control]);
+  lives.push(run);
+  const { id } = (await run.until("approval_request")).at(-1);
+  run.send({ type: "abort" });
+  const rest = await run.until("agent_end");
+  expect(rest.find((e) => e.type === "approval_cancelled")).toEqual({ type: "approval_cancelled", id });
+  expect(rest.at(-1)).toEqual({ type: "agent_end", cause: "aborted" });
+  expect(await run.exited).toBe(1);
+  expect(existsSync(join(box.project, "made-by-bash"))).toBe(false);
+});
+
+test("--control stdio: a closed stdin denies approvals, and what is piped is not added to the prompt", async () => {
+  const { server, box } = setup([{ toolCalls: [{ name: "bash", args: { command: "touch made-by-bash" } }] }, { text: "ok" }], { permissions: { mode: "ask" } });
+  const r = await box.run(["-p", "run it", ...control], { stdin: "SECRET-LOG-LINE\n" });
+  expect(r.code).toBe(0);
+  const events = r.stdout.split("\n").filter((l) => l.trim()).map((l) => JSON.parse(l));
+  expect(events.filter((e) => e.type === "control_error")).toEqual([{ type: "control_error", error: "not valid JSON" }]);
+  expect(JSON.stringify(server.requests[0].messages)).not.toContain("SECRET-LOG-LINE");
+  expect(existsSync(join(box.project, "made-by-bash"))).toBe(false);
+  expect(JSON.stringify(server.requests[1].messages.at(-1))).toContain("the controlling process closed stdin");
+});
+
+test("--control needs stdio, -p and --output jsonl, and says so before anything runs", async () => {
+  const { server, box } = setup([{ text: "never asked" }]);
+  for (const [args, message] of [
+    [["-p", "hi", "--control", "stdio"], "--control stdio needs -p and --output jsonl"],
+    [["-p", "hi", "--output", "text", "--control", "stdio"], "--control stdio needs -p and --output jsonl"],
+    [["--output", "jsonl", "--control", "stdio"], "--control stdio needs -p and --output jsonl"],
+    [["-p", "hi", "--output", "jsonl", "--control", "tcp"], "--control must be stdio"],
+  ] as const) {
+    const r = await box.run([...args]);
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain(message);
+    expect(r.stdout).toBe("");
+  }
+  expect(server.requests).toHaveLength(0);
+});
+
+test("--append-system-prompt-file adds the file's text after the config's instructions", async () => {
+  const { server, box } = setup([{ text: "ok" }, { text: "ok" }], { instructions: "FROM-CONFIG" });
+  const file = join(box.project, "..", "extra.txt");
+  writeFileSync(file, "FROM-FILE persona: ひとこと\n");
+  expect((await box.run(["-p", "hi", "--append-system-prompt-file", file])).code).toBe(0);
+  const system = server.requests[0].messages[0];
+  expect(system.role).toBe("system");
+  const text = typeof system.content === "string" ? system.content : JSON.stringify(system.content);
+  expect(text).toContain("FROM-CONFIG");
+  expect(text.indexOf("FROM-CONFIG")).toBeLessThan(text.indexOf("FROM-FILE persona: ひとこと"));
+  expect(text.indexOf("FROM-FILE")).toBeLessThan(text.indexOf("Environment:"));
+  // An empty file adds nothing.
+  const empty = join(box.project, "..", "empty.txt");
+  writeFileSync(empty, "");
+  expect((await box.run(["-p", "hi", "--append-system-prompt-file", empty])).code).toBe(0);
+  expect(JSON.stringify(server.requests[1].messages[0])).not.toContain("FROM-FILE");
+});
+
+test("--append-system-prompt-file with a file that cannot be read fails before the run", async () => {
+  const { server, box } = setup([{ text: "never asked" }]);
+  for (const path of [join(box.project, "missing.txt"), box.project]) {
+    const r = await box.run(["-p", "hi", "--append-system-prompt-file", path]);
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain(`failed to read ${path}`);
+  }
+  expect(server.requests).toHaveLength(0);
 });

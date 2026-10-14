@@ -8,11 +8,27 @@ const MAIN = resolve(import.meta.dir, "../../cli/src/main.ts");
 // An empty bunfig, not /dev/null: Bun cannot open /dev/null (or NUL) on Windows.
 const NO_BUNFIG = resolve(import.meta.dir, "../../../scripts/no-bunfig.toml");
 
+/** A sasacode child process that keeps running: read its stdout line by line, write to its stdin. */
+export interface Live {
+  /** The next stdout line, parsed; undefined once stdout has closed. */
+  next(): Promise<any | undefined>;
+  /** Lines up to and including the first of this type. */
+  until(type: string): Promise<any[]>;
+  send(message: unknown): void;
+  /** Close its stdin. */
+  end(): void;
+  exited: Promise<number>;
+  stderr: Promise<string>;
+  kill(): void;
+}
+
 export interface Sandbox {
   home: string;
   project: string;
   /** `sasacode <args>`; resolves when it exits. */
   run(args: string[], opts?: { stdin?: string; env?: Record<string, string> }): Promise<{ code: number; stdout: string; stderr: string }>;
+  /** `sasacode <args>` with its stdin and stdout left open, for a parent that answers while it runs. */
+  start(args: string[], opts?: { env?: Record<string, string> }): Live;
   /** `sasacode -p <prompt> --output jsonl`: the events, parsed. */
   jsonl(prompt: string, extra?: string[]): Promise<{ code: number; events: any[]; stderr: string }>;
   cleanup(): void;
@@ -27,15 +43,17 @@ export function sandbox(config: Record<string, unknown>): Sandbox {
   writeFileSync(join(home, "config.json"), JSON.stringify(config, null, 2));
   writeFileSync(join(home, ".env"), ""); // no keys from the developer's machine
 
-  const run: Sandbox["run"] = async (args, opts = {}) => {
-    const env: Record<string, string> = { PATH: process.env.PATH ?? "", HOME: root, USERPROFILE: root, SASACODE_HOME: home, SASACODE_LANG: "en", NO_COLOR: "1", ...opts.env };
-    const child = Bun.spawn([process.execPath, "--no-env-file", `--config=${NO_BUNFIG}`, MAIN, ...args], {
+  const spawn = (args: string[], stdin: "ignore" | "pipe" | Uint8Array, extraEnv?: Record<string, string>) =>
+    Bun.spawn([process.execPath, "--no-env-file", `--config=${NO_BUNFIG}`, MAIN, ...args], {
       cwd: project,
-      env,
-      stdin: opts.stdin !== undefined ? new TextEncoder().encode(opts.stdin) : "ignore",
+      env: { PATH: process.env.PATH ?? "", HOME: root, USERPROFILE: root, SASACODE_HOME: home, SASACODE_LANG: "en", NO_COLOR: "1", ...extraEnv },
+      stdin,
       stdout: "pipe",
       stderr: "pipe",
     });
+
+  const run: Sandbox["run"] = async (args, opts = {}) => {
+    const child = spawn(args, opts.stdin !== undefined ? new TextEncoder().encode(opts.stdin) : "ignore", opts.env);
     const [stdout, stderr, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
     return { code, stdout, stderr };
   };
@@ -44,6 +62,46 @@ export function sandbox(config: Record<string, unknown>): Sandbox {
     home,
     project,
     run,
+    start(args, opts = {}) {
+      const child = spawn(args, "pipe", opts.env);
+      const stdin = child.stdin as Bun.FileSink; // "pipe" was asked for
+      const reader = child.stdout.getReader();
+      const decoder = new TextDecoder();
+      let buffered = "";
+      const next = async () => {
+        for (;;) {
+          const nl = buffered.indexOf("\n");
+          if (nl >= 0) {
+            const line = buffered.slice(0, nl);
+            buffered = buffered.slice(nl + 1);
+            if (line.trim()) return JSON.parse(line);
+            continue;
+          }
+          const r = await reader.read();
+          if (r.done) return undefined;
+          buffered += decoder.decode(r.value, { stream: true });
+        }
+      };
+      return {
+        next,
+        async until(type) {
+          const seen: any[] = [];
+          for (let e = await next(); e !== undefined; e = await next()) {
+            seen.push(e);
+            if (e.type === type) break;
+          }
+          return seen;
+        },
+        send(message) {
+          stdin.write(`${JSON.stringify(message)}\n`);
+          stdin.flush();
+        },
+        end: () => void stdin.end(),
+        exited: child.exited,
+        stderr: new Response(child.stderr).text(),
+        kill: () => child.kill(),
+      };
+    },
     async jsonl(prompt, extra = []) {
       const r = await run(["-p", prompt, "--output", "jsonl", ...extra]);
       const events = r.stdout.split("\n").filter((l) => l.trim()).map((l) => JSON.parse(l));

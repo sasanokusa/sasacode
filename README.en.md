@@ -53,6 +53,7 @@ ln -s "$PWD/packages/cli/src/main.ts" ~/.local/bin/sasacode
 sasacode                            # interactive (TUI)
 sasacode -p "fix the tests"          # headless: the answer on stdout, progress on stderr
 sasacode -p "…" --output jsonl       # every event as JSONL
+sasacode -p "…" --output jsonl --control stdio   # a parent process answers approvals on stdin and can abort ([Headless control](#headless-control))
 echo "$LOG" | sasacode -p "why?"     # piped input is appended to the -p prompt (skipped if nothing comes for 5 s; --stdin waits to the end)
 sasacode -c                         # resume the latest session in this directory
 sasacode -r <id> -p "go on"          # continue a session by id (a conversation without tmux)
@@ -64,11 +65,40 @@ sasacode -r <id> -p "go on"          # continue a session by id (a conversation 
 | `--permission <edits\|ask\|agent\|auto>` | Permission mode (default `edits`) |
 | `--thinking <off\|low\|medium\|high\|xhigh\|max>` | Reasoning effort |
 | `--max-turns <n>` | Limit on requests per run (default 200, 0 = no limit) |
+| `--control stdio` | With `-p --output jsonl`: a parent process answers approvals on stdin and can abort the run ([Headless control](#headless-control)) |
+| `--append-system-prompt-file <path>` | Add the file's text (UTF-8) to the system prompt, after the config's `instructions`. A file that cannot be read is an error; an empty file adds nothing. Works in the TUI too |
 | `-c` / `-r <id>` / `--no-session` | Resume / resume by id / do not save |
 | `--trust-project` | Trust the project without asking (for headless runs; see [Project trust](#project-trust)) |
 | `sasacode plugin search\|install\|update\|remove\|list\|publish` | Find, install (npm or git URL), update and publish plugins ([Sharing](#sharing-plugins)) |
 | `sasacode endpoint add\|remove\|list` | Add your own server (the format is detected) |
 | `sasacode login [status\|logout]` | Sign in with a ChatGPT plan (for `openai-codex/…` models) |
+
+### Headless control
+
+When another program runs `sasacode -p "…" --output jsonl` as a child process, `--control stdio` lets it answer the calls that need approval over stdin and abort the run. Both `-p` and `--output jsonl` are required; without them sasacode prints an error and exits non-zero. stdin is the control channel, so piped input is not appended to the prompt.
+
+On stdout, these lines appear among the usual JSONL events, one per line.
+
+```jsonc
+{"type":"approval_request","id":"approval-1","callId":"call_1","tool":"bash","args":{"command":"touch x"},"reason":"…","cwd":"/path/to/project"}
+{"type":"approval_cancelled","id":"approval-1"}
+{"type":"control_error","error":"not valid JSON"}
+```
+
+stdin is read as JSON Lines.
+
+```jsonc
+{"type":"approval","id":"approval-1","decision":"allow"}           // "allow" | "always" | "deny"
+{"type":"approval","id":"approval-1","decision":"deny","feedback":"why"}
+{"type":"abort"}
+```
+
+- `approval_request` is written once for each call that needs approval, and the call does not run until an answer arrives. `id` goes back in the answer. `callId` is the id of the tool call in the conversation, `tool` and `args` are the call itself, and `reason` is why it needs approval.
+- In `approval`, `decision` is `allow` (this once), `always` (allow, and add a rule that allows the same call, as "always allow" does in the TUI, until the process exits) or `deny`. `feedback` reaches the model with a `deny`.
+- `abort` is the same as Ctrl+C: the run is interrupted (`cause` in `agent_end` is `aborted`, the exit code 1).
+- When the run is interrupted, each request still waiting gets an `approval_cancelled`; an answer to that id then draws a `control_error`.
+- A line that cannot be used (not JSON, an unknown `type`, an unknown `id`, a bad value) draws a `control_error`, and reading goes on.
+- When stdin is closed, every request waiting and every later one is denied, with the feedback `the controlling process closed stdin`. The run is not aborted.
 
 ### TUI
 
@@ -181,14 +211,14 @@ Endpoints in a project's `.sasacode/config.json` are not used until you trust th
 | --- | --- |
 | `edits` (default) | read / write / edit inside the working directory run without asking; bash and anything outside ask |
 | `ask` | Every tool call asks, reads included |
-| `agent` | Reads inside the working directory run; everything else is judged by the current model: safe runs, anything else asks. The judge is the same model that made the call and it reads the call's arguments, so text written to steer the model can steer the judgment too; this is a convenience, not protection against prompt injection (use deny / ask rules and the `guard` preset for that) |
+| `agent` | Reads inside the working directory run; everything else is judged by the current model: safe runs, anything else asks. `judgeModel` in the config (`"provider/model"`) picks another model to judge, e.g. a fast, cheap one to cut the wait and the cost. The judge reads the call's arguments, so text written to steer the model can steer the judgment too; this is a convenience, not protection against prompt injection (use deny / ask rules and the `guard` preset for that) |
 | `auto` | Everything runs (deny and ask rules still apply). Shown in red in the TUI footer |
 
 - A rule is `tool` or `tool(pattern)`. bash matches the command string with `*` wildcards; read / write / edit match paths with globs. Write `\*` for a literal `*`. A path rule only applies to the tool it names, so to protect `.env` list read, edit and write, and add `**/` to include subdirectories (`edit(.env)` only stops edits of the `.env` directly in the working directory). Command rules match the text of the command, so reordered options or a full path to the binary slip past them: they are a guard against mistakes, not a complete defense.
 - "Always allow" in the approval prompt adds a rule no wider than what was shown: the command as written (its `*` are not wildcards), or, for a file tool, just that path. The rule lasts until sasacode exits (across `/clear`).
 - The order is deny → softDeny → ask → allow → mode → the `permission` hook (plugins). `softDeny` refuses like deny, but a plugin such as `jev-guard` may lower it to "ask the user" (never to running without asking); it is meant for broad patterns that also catch legitimate calls. An allow rule only lets a command through when **every** part joined with `&&`, `;` or `|` is allowed. Commands with `$(…)`, backticks or `>` never pass by an allow rule.
 - The bundled `permission-presets` enables `guard` by default: sudo, `rm -rf /`, disk operations, `| sh` and the like are always denied; `rm -rf ~…` under home and force pushes are softDeny; `ssh`, `scp`, `sftp` and `rsync` to another machine always ask, in `auto` mode too.
-- Headless runs have nobody to ask, so a call that needs approval is not run, and the model is told why.
+- Headless runs have nobody to ask, so a call that needs approval is not run, and the model is told why. With `--control stdio` a parent process answers over stdin and stdout ([Headless control](#headless-control)).
 - Paths are judged by where symbolic links lead (the real path). A link inside the working directory that points outside counts as outside, even before its target exists, and links inside a project cannot swap what a rule applies to. A path whose target cannot be determined (a link loop, for example) always asks.
 - Permissions are a check before a tool runs, not isolation (a sandbox). Swapping a link between the check and the run, or what an allowed bash command does, is not prevented. For code you do not trust, isolate at the OS level (a container, for example).
 - After an interrupt (esc), tools that were approved but not yet started do not run.
