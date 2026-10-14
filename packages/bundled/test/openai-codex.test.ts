@@ -14,7 +14,10 @@ import {
   writeCodexAuth,
 } from "../src/openai-codex/auth.ts";
 import { authorizeUrl, codexLogin, parseCallback } from "../src/openai-codex/login.ts";
-import { codexProvider, FALLBACK_MODELS } from "../src/openai-codex/provider.ts";
+import { CODEX_CLIENT_VERSION, codexProvider, FALLBACK_MODELS, latestCodexVersion } from "../src/openai-codex/provider.ts";
+
+// Providers made without a version look up npm: point that at a closed port so tests stay offline.
+process.env.SASACODE_NPM_REGISTRY = "http://127.0.0.1:9";
 
 const dir = mkdtempSync(join(tmpdir(), "sasacode-codex-"));
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
@@ -151,6 +154,24 @@ test("models come from the backend when signed in; none are offered when signed 
   const down = codexProvider(() => "s", { tokens: async () => tokens(), fetch: (async () => json({}, 503)) as unknown as typeof fetch });
   expect((await down.listModels!(model as never, undefined)).map((m) => m.id)).toEqual(FALLBACK_MODELS);
   expect(await codexProvider(() => "s", { tokens: async () => undefined }).listModels!(model as never, undefined)).toEqual([]);
+});
+
+test("the client version is npm's latest Codex release, else the last one seen there, else the built-in one", async () => {
+  const tags = (body: unknown, status = 200) => (async (url: string) => (String(url).endsWith("/-/package/@openai/codex/dist-tags") ? json(body, status) : json({}, 404))) as unknown as typeof fetch;
+  const offline = (async () => { throw new Error("offline"); }) as unknown as typeof fetch;
+  const saved = join(dir, "codex-version");
+  expect(await latestCodexVersion(offline, saved)).toBe(CODEX_CLIENT_VERSION); // never answered yet
+  expect(await latestCodexVersion(tags({ latest: "9.0.0", alpha: "9.1.0-alpha.1" }), saved)).toBe("9.0.0");
+  expect(await latestCodexVersion(offline, saved)).toBe("9.0.0"); // remembered
+  expect(await latestCodexVersion(tags({}, 500), saved)).toBe("9.0.0");
+  expect(await latestCodexVersion(tags({ latest: "1.0.0-beta" }), saved)).toBe("9.0.0"); // not a release
+  expect(await latestCodexVersion(tags({ latest: "9.0.1" }), saved)).toBe("9.0.1");
+  expect(await latestCodexVersion(offline, saved)).toBe("9.0.1");
+
+  const urls: string[] = [];
+  const listing = (async (url: string) => (urls.push(String(url)), json({ models: [] }))) as unknown as typeof fetch;
+  await codexProvider(() => "s", { tokens: async () => tokens(), fetch: listing, version: async () => "9.0.0" }).listModels!(model as never, undefined);
+  expect(urls[0]).toEndWith("/models?client_version=9.0.0");
 });
 
 // ── login ───────────────────────────────────────────────────────────────────
