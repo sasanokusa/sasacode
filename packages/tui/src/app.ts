@@ -96,6 +96,8 @@ class App {
   private usage = new UsageTally();
   private runStarted = 0;
   private lastCtrlC = 0;
+  /** A bracketed paste still arriving (onKey). */
+  private pasted?: string;
   private warnedContext = new Set<string>();
   private exit?: (code: number) => void;
   private ready?: Promise<void>;
@@ -234,6 +236,29 @@ class App {
 
   private onKey(data: string): { consume: boolean } | undefined {
     const agent = this.host.agent;
+    if (this.inputSlot.children[0] === this.editor && this.host.host.pasteHandlers.length) {
+      const start = data.indexOf("\x1b[200~");
+      if (this.pasted !== undefined || start >= 0) {
+        // A bracketed paste may come in several chunks: gather it, then let the plugins look first.
+        if (this.pasted === undefined) {
+          if (start > 0) this.editor.handleInput(data.slice(0, start));
+          data = data.slice(start + 6);
+        }
+        this.pasted = (this.pasted ?? "") + data;
+        const end = this.pasted.indexOf("\x1b[201~");
+        if (end < 0) return { consume: true };
+        const text = this.pasted.slice(0, end);
+        const rest = this.pasted.slice(end + 6);
+        this.pasted = undefined;
+        void this.paste(text).then(() => rest && this.editor.handleInput(rest));
+        return { consume: true };
+      }
+      // An image on the clipboard pastes nothing in most terminals; ctrl+v asks for it.
+      if (matchesKey(data, "ctrl+v")) {
+        void this.paste("");
+        return { consume: true };
+      }
+    }
     // The pager owns its navigation keys, including Esc; it must not stop an active agent.
     if (this.inputSlot.children[0] instanceof TextViewer && !matchesKey(data, "ctrl+c")) return undefined;
     if (
@@ -271,6 +296,18 @@ class App {
       return { consume: true };
     }
     return undefined;
+  }
+
+  /** Pasted text (or "" for ctrl+v) offered to the plugins; unclaimed text goes to the editor as a paste. */
+  private async paste(text: string): Promise<void> {
+    for (const handle of this.host.host.pasteHandlers) {
+      const out = await Promise.resolve(handle(text)).catch(() => undefined);
+      if (out !== undefined) {
+        this.editor.insertTextAtCursor(out);
+        return;
+      }
+    }
+    if (text) this.editor.handleInput(`\x1b[200~${text}\x1b[201~`);
   }
 
   /** The editor hands over text with paste markers already expanded, and clears itself. */

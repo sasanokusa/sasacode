@@ -46,7 +46,7 @@ npmのパッケージは`bun run pack:plugin-api`で`dist/plugin-api`に作る�
 }
 ```
 
-- `apiVersion`がホストのAPI（現在1.11.0）と互換でなければ、警告を出して読み込まない。
+- `apiVersion`がホストのAPI（現在1.12.0）と互換でなければ、警告を出して読み込まない。
 - `skills`は`SKILL.md`を含むフォルダが並ぶディレクトリ。
 - `mcpServers`は設定ファイルの`mcpServers`と同じ形式。`${VAR}`は環境変数から展開される。
 
@@ -82,7 +82,7 @@ sasacode plugin publish my-tool.ts --license MIT             # npm publish（npm
 - `package.json`には、`sasacode`フィールド（マニフェスト）、検索用のキーワード`sasacode-plugin`、ピア依存の`@sasacode/plugin-api`を入れる。READMEはファイル先頭のコメントから作る。
 - 版は、npmに出ている最新版の次のパッチ（初回は0.1.0）。`--version`で指定できる。
 - 説明文は、ファイルの最初のコメントから取る（`--description`で指定できる）。
-- `apiVersion`は、使っている機能から決める（`before_request.fetch`なら ^1.11.0、`ui.input`・`ui.selectMany`なら ^1.10.0、`callTool`・`showText`・`defineSettings`なら ^1.9.0、フックの`ctx`や`session_end`の`reason`なら ^1.8.0、`permission`フックや`softDeny`なら ^1.7.0、`permissionsAs`なら ^1.6.0、など）。`--api`で指定できる。
+- `apiVersion`は、使っている機能から決める（`ui.onPaste`なら ^1.12.0、`before_request.fetch`なら ^1.11.0、`ui.input`・`ui.selectMany`なら ^1.10.0、`callTool`・`showText`・`defineSettings`なら ^1.9.0、フックの`ctx`や`session_end`の`reason`なら ^1.8.0、`permission`フックや`softDeny`なら ^1.7.0、`permissionsAs`なら ^1.6.0、など）。`--api`で指定できる。
 - 同じフォルダのほかのファイルをimportしていると、それは含まれない（注意を出す）。そういうプラグインは、`package.json`に`sasacode`フィールドを書いたディレクトリごと`sasacode plugin publish <ディレクトリ>`で出す（キーワードがなければ足す）。
 - ライセンスを付けないと、ほかの人は再利用できない。`--license MIT`のように付ける。
 
@@ -96,7 +96,7 @@ sasanokusa.comのおすすめ一覧に載せたいときは、[リポジトリ](
 
 ## API リファレンス
 
-公開APIは`@sasacode/plugin-api`の`PluginAPI`で、現在の版は1.11.0。変更の履歴は[最後の表](#api-の版)にある。
+公開APIは`@sasacode/plugin-api`の`PluginAPI`で、現在の版は1.12.0。変更の履歴は[最後の表](#api-の版)にある。
 
 ### PluginAPI
 
@@ -120,6 +120,7 @@ sasanokusa.comのおすすめ一覧に載せたいときは、[リポジトリ](
 | `ui.showText({title, text, format?})` | 長文の閲覧パネル。スクロール・検索・ユーザー操作によるコピー。閉じるまで待つ。ヘッドレスはstderrに表示（1.9.0〜） |
 | `ui.setStatus(key, text)` | フッターのステータス行に出す（`undefined`で消す） |
 | `ui.registerToolRenderer(tool, fn)` | ツール結果の表示を差し替える。`fn(call, result, {expanded, width})`が行の配列を返す |
+| `ui.onPaste(fn)` | 貼り付け・ドロップされた文字列が入力欄に入る前に`fn(text)`を呼ぶ。ctrl+vや文字のない貼り付け（クリップボードが画像だけのとき）は`""`。文字列を返すとそれを代わりに入れ、undefinedなら次のプラグインに回す。ヘッドレスでは呼ばれない（1.12.0〜） |
 | `session.id` | セッションID（`--no-session`ならundefined） |
 | `session.append(kind, data)` / `session.entries(kind)` | セッションに独自の状態を保存し、再開時に読み戻す |
 | `session.messages()` / `session.replaceMessages(msgs)` | 会話を読む / 差し替える（圧縮など。差し替えもセッションに記録される） |
@@ -255,6 +256,7 @@ before_request → stream_delta（生成中、差分ごと） → assistant_mess
 | 1.9.0 | `ToolContext.callTool`（権限・フック・中断を共有するツール呼び出し）、`PluginAPI.defineSettings`、`PluginUI.showText`、型`SettingsDefinition` / `ShowTextOptions`。引数の制約検証と`tool_call`書き換え後の再検証も強化 |
 | 1.10.0 | `PluginUI.input`（1行の自由入力）、`PluginUI.selectMany`（複数選択）、型`InputOptions` / `SelectManyOptions` |
 | 1.11.0 | `before_request.fetch`の受け渡し。従来のイベントと結果にoptionalフィールドを追加 |
+| 1.12.0 | `PluginUI.onPaste`（貼り付け・ドロップの差し替え）、型`PasteHandler` |
 
 どれも既存のプラグインを壊さない追加。ただし1.4.0から、`tool_result`を「実行された」合図として数えているプラグインは`ran`を見る必要がある。
 

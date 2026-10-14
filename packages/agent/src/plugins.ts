@@ -8,6 +8,7 @@ import {
   type Provider,
   type ProviderConfig,
   type InputOptions,
+  type PasteHandler,
   type SelectManyOptions,
   type SelectOption,
   type ShowTextOptions,
@@ -56,6 +57,7 @@ export interface LoadedPlugin {
 export class PluginHost {
   readonly commands: (CommandDefinition & { owner: string })[] = [];
   readonly renderers = new Map<string, ToolRenderer>();
+  readonly pasteHandlers: PasteHandler[] = [];
   readonly status = new Map<string, string>();
   readonly plugins: LoadedPlugin[] = [];
   readonly toolOwners = new Map<string, string>();
@@ -145,6 +147,7 @@ export class PluginHost {
       registerToolRenderer(tool, r) {
         host.renderers.set(tool, r);
       },
+      onPaste: (h) => void host.pasteHandlers.push(h),
     };
     return {
       version: PLUGIN_API_VERSION,

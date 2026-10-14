@@ -266,7 +266,7 @@ sasacode plugin install sasacode-plugin-jev-guard
 | `background-sessions` | `bg_start` ツール。ビルドやテストなど長いコマンドをバックグラウンドで動かし、終わったら終了コードと出力の末尾を会話に届ける（待機中なら自動で続きを始める）。bashと同じ権限ルールで判定する（`permissionsAs`）。sasacodeを終了してもジョブは続き、次の起動で結果を知らせる。`/bg` で一覧・詳細・停止。WindowsではGit Bashで動かす |
 | `auto-reconnect` | 実行がエラーで終わったとき、使用中のエンドポイントに届かなければ、復旧を待って作業を自動で再開する（既定は最大10分）。`/reconnect` で手動でも同じことをする |
 | `checkpoints` | write / editが変えたファイルの直前の内容をセッションに退避する。`/undo` で直近の1件から1つずつ戻せる（`/undo list` で一覧、`/undo <path>` で対象を絞る。bashの変更は対象外） |
-| `image-attach` | 画像対応モデルにメッセージと画像を送る。`@パス`、ターミナルへのドラッグ&ドロップ（貼られた絶対パス）、`/image パス…`、`/image` だけならクリップボード（macOS、Linuxは `wl-paste` か `xclip`）。形式は中身で判定（PNG / JPEG / GIF / WebP）、1枚 5 MB・1メッセージ 8 枚まで。`plugins.settings.image-attach` の `dropPaths: false` で `@` なしのパスを無視 |
+| `image-attach` | 画像対応モデルにメッセージと画像を送る。スクリーンショットは ⌘V（届かないターミナルでは ctrl+v）、ファイルはターミナルへドラッグ&ドロップすると、その場で読み込んで入力欄に `[Image #1]` と出る。続けてメッセージを書いて送れば一緒に届く。ほかに `@パス`、`/image パス…`、`/image` だけならクリップボード（macOS、Windows、Linuxは `wl-paste` か `xclip`）。形式は中身で判定（PNG / JPEG / GIF / WebP）、1枚 5 MB・1メッセージ 8 枚まで。`plugins.settings.image-attach` の `dropPaths: false` で `@` なしのパスを無視 |
 | `diagnostics` | APIの診断（既定で無効）。`/diagnostics on` で、リクエストの成否・停止理由・トークン数などのメタデータだけを記録し、`show` で直近100件を見る。本文や秘密値は記録しない |
 | `skills` / `mcp` | Agent SkillsとMCPのアダプタ |
 

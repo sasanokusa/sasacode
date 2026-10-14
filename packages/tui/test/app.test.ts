@@ -324,3 +324,23 @@ test("/language en switches the interface at once and saves it; /language ja swi
     setLang("ja");
   }
 });
+
+test("pastes go to the plugins first: a split bracketed paste, ctrl+v, and text no plugin claims", async () => {
+  const { term, agent, host, exited } = await start([reply([{ type: "text", text: "seen" }])]);
+  const offered: string[] = [];
+  await host.load("paste", (api) => api.ui.onPaste(async (text) => {
+    offered.push(text);
+    return text === "" ? "[Image #1] " : text.endsWith(".png") ? "[Image #2] " : undefined;
+  }));
+  await term.send("\x16"); // ctrl+v
+  await term.send("\x1b[200~/tmp/sh");
+  await term.send("ot.png\x1b[201~");
+  await term.send("\x1b[200~plain\x1b[201~");
+  await term.type(" ok");
+  await term.send("\r");
+  await Bun.sleep(100);
+  expect(offered).toEqual(["", "/tmp/shot.png", "plain"]);
+  const sent = agent.messages.find((m) => m.role === "user")!;
+  expect(JSON.stringify(sent.content)).toContain("[Image #1] [Image #2] plain ok");
+  await term.type("/exit"); await term.send("\r"); expect(await exited).toBe(0);
+});

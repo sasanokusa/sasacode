@@ -29,7 +29,7 @@ export type {
   UserContent,
 } from "@sasacode/ai";
 
-export const PLUGIN_API_VERSION = "1.11.0";
+export const PLUGIN_API_VERSION = "1.12.0";
 
 // ── tools ────────────────────────────────────────────────────────────
 
@@ -227,6 +227,8 @@ export interface SettingsDefinition<T extends Record<string, unknown> = Record<s
   defaults?: Partial<T>;
 }
 
+export type PasteHandler = (text: string) => string | undefined | Promise<string | undefined>;
+
 export interface PluginUI {
   /** False in headless runs: confirm resolves false and select undefined. */
   readonly interactive: boolean;
@@ -244,6 +246,8 @@ export interface PluginUI {
   /** Show (or clear with undefined) a status line item. */
   setStatus(key: string, text: string | undefined): void;
   registerToolRenderer(toolName: string, renderer: ToolRenderer): void;
+  /** Pasted or dropped text before it reaches the input; "" for ctrl+v or a paste without text. Return what to insert instead (since 1.12.0). */
+  onPaste(handler: PasteHandler): void;
 }
 
 export interface PluginSession {

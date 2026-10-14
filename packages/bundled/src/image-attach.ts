@@ -11,7 +11,8 @@ type Image = Extract<UserContent, { type: "image" }>;
 const MAX_BYTES = 5_000_000;
 const EXT = "png|jpe?g|gif|webp";
 // `@path`, a quoted path, or a bare word; a bare word may carry `\ `-escaped spaces (what terminals paste on a drop).
-const TOKEN = /(@)?(?:"([^"\n]+)"|'([^'\n]+)'|((?:\\.|[^\s"'\\])+))/g;
+// Only ASCII whitespace ends a word: macOS names screenshots "… 12.34.56\u202fPM.png".
+const TOKEN = /(@)?(?:"([^"\n]+)"|'([^'\n]+)'|((?:\\.|[^ \t\r\n"'\\])+))/g;
 
 const WINDOWS = process.platform === "win32";
 /** A Windows absolute path (C:\x, C:/x, \\server\share): its `\` are separators, not escapes. */
@@ -140,10 +141,11 @@ export async function clipboardImage(platform = process.platform, exec: Run = ru
 
 /** Words of a command line, honoring quotes and `\ `. */
 export function words(s: string): string[] {
-  return [...s.matchAll(/"([^"]*)"|'([^']*)'|((?:\\.|\S)+)/g)].map((m) => m[1] ?? m[2] ?? unescape(m[3]!));
+  return [...s.matchAll(/"([^"]*)"|'([^']*)'|((?:\\.|[^ \t\r\n])+)/g)].map((m) => m[1] ?? m[2] ?? unescape(m[3]!));
 }
 
-const plugin: Plugin = (api) => {
+/** The plugin; `clipboard` reads the clipboard image (replaced in tests). */
+export const imageAttach = (clipboard: () => Promise<Image> = clipboardImage): Plugin => (api) => {
   const settings = api.defineSettings<{ dropPaths: boolean; maxImages: number }>({
     schema: {
       type: "object",
@@ -153,6 +155,42 @@ const plugin: Plugin = (api) => {
     defaults: { dropPaths: true, maxImages: 8 },
   });
   let pending: { name: string; image: Image }[] = [];
+  /** Images pasted or dropped into the input, shown there as [Image #n] until the message is sent. */
+  const inline = new Map<number, { name: string; image: Image }>();
+  let pasted = 0;
+  const MARKER = /\[Image #(\d+)\]/;
+  const full = () => inline.size + pending.length >= settings.maxImages;
+
+  // ⌘V of a screenshot or ctrl+v ("") reads the clipboard; a drop is read now, before a
+  // screenshot's temporary file is gone, and stands in the input as [Image #n].
+  api.ui.onPaste(async (text) => {
+    const add = (name: string, image: Image) => (inline.set(++pasted, { name, image }), `[Image #${pasted}]`);
+    if (!text) {
+      if (full()) return void api.ui.notify(t("画像は{n}枚までです", { n: settings.maxImages }), "warning");
+      try {
+        return `${add("clipboard", await clipboard())} `;
+      } catch (e) {
+        api.ui.notify(t("画像を付けられません: {name}: {error}", { name: "clipboard", error: (e as Error).message }), "warning");
+        return undefined;
+      }
+    }
+    if (!settings.dropPaths) return undefined;
+    const refs = findRefs(text.trim());
+    // Only a paste that is nothing but image paths; anything else is text to keep.
+    if (!refs.length || refs.reduce((s, r) => s.slice(0, r.start) + " ".repeat(r.end - r.start) + s.slice(r.end), text.trim()).trim()) return undefined;
+    const loaded: { name: string; image: Image }[] = [];
+    for (const r of refs) {
+      if (inline.size + loaded.length + pending.length >= settings.maxImages) return undefined;
+      const path = resolvePath(r.path, api.cwd);
+      try {
+        loaded.push({ name: path, image: await loadImage(path) });
+      } catch (e) {
+        if ((e as Error).message.includes("bytes")) api.ui.notify(t("画像を付けられません: {name}: {error}", { name: r.path, error: (e as Error).message }), "warning");
+        return undefined;
+      }
+    }
+    return `${loaded.map((l) => add(l.name, l.image)).join(" ")} `;
+  });
   const status = () => api.ui.setStatus("image-attach", pending.length ? `📎 ${pending.length}` : undefined);
 
   api.on("user_prompt", async ({ content }) => {
@@ -161,24 +199,37 @@ const plugin: Plugin = (api) => {
     const fail = (name: string, e: unknown) => api.ui.notify(t("画像を付けられません: {name}: {error}", { name, error: (e as Error).message }), "warning");
     for (const block of content) {
       if (block.type !== "text") { out.push(block); continue; }
+      // Split at [Image #n]: the text between is searched for paths, the markers are images already read.
+      const parts = block.text.split(MARKER);
       let result = "";
-      let pos = 0;
-      for (const r of findRefs(block.text)) {
-        if (!r.explicit && !settings.dropPaths) continue;
-        if (attached.length + pending.length >= settings.maxImages) break;
-        const path = resolvePath(r.path, api.cwd);
-        try {
-          attached.push({ name: path, image: await loadImage(path) });
-        } catch (e) {
-          // A dropped path that is not a file is just text; a typed `@` or an oversize file is worth saying.
-          if (r.explicit || (e as Error).message.includes("bytes")) fail(r.path, e);
+      for (let i = 0; i < parts.length; i++) {
+        const part = parts[i]!;
+        if (i % 2) {
+          const a = inline.get(Number(part));
+          if (a) attached.push(a);
+          result += a ? `[Image ${attached.length}: ${a.name}]` : `[Image #${part}]`;
           continue;
         }
-        result += block.text.slice(pos, r.start) + `[Image ${attached.length}: ${path}]`;
-        pos = r.end;
+        let pos = 0;
+        for (const r of findRefs(part)) {
+          if (!r.explicit && !settings.dropPaths) continue;
+          if (attached.length + pending.length >= settings.maxImages) break;
+          const path = resolvePath(r.path, api.cwd);
+          try {
+            attached.push({ name: path, image: await loadImage(path) });
+          } catch (e) {
+            // A dropped path that is not a file is just text; a typed `@` or an oversize file is worth saying.
+            if (r.explicit || (e as Error).message.includes("bytes")) fail(r.path, e);
+            continue;
+          }
+          result += part.slice(pos, r.start) + `[Image ${attached.length}: ${path}]`;
+          pos = r.end;
+        }
+        result += part.slice(pos);
       }
-      out.push(text(result + block.text.slice(pos)));
+      out.push(text(result));
     }
+    inline.clear();
     for (const p of pending.splice(0)) {
       attached.push(p);
       out.push(text(`[Image ${attached.length}: ${p.name}]`));
@@ -204,7 +255,7 @@ const plugin: Plugin = (api) => {
         if (pending.length >= settings.maxImages) { api.ui.notify(t("画像は{n}枚までです", { n: settings.maxImages }), "warning"); break; }
         const name = w === undefined ? "clipboard" : resolvePath(w, api.cwd);
         try {
-          pending.push({ name, image: w === undefined ? await clipboardImage() : await loadImage(name) });
+          pending.push({ name, image: w === undefined ? await clipboard() : await loadImage(name) });
         } catch (e) {
           api.ui.notify(t("画像を付けられません: {name}: {error}", { name, error: (e as Error).message }), "error");
         }
@@ -214,6 +265,6 @@ const plugin: Plugin = (api) => {
     },
   });
 
-  api.on("session_end", () => { pending = []; status(); });
+  api.on("session_end", () => { pending = []; inline.clear(); status(); });
 };
-export default plugin;
+export default imageAttach();

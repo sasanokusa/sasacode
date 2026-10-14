@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { pathToFileURL } from "node:url";
-import plugin, { clipboardImage, findRefs, sniff, words } from "../src/image-attach.ts";
+import plugin, { clipboardImage, findRefs, imageAttach, sniff, words } from "../src/image-attach.ts";
 import { loadPlugin } from "../../../plugins/test-support.ts";
 
 const root = mkdtempSync(join(tmpdir(), "image-attach-"));
@@ -116,6 +116,36 @@ test("/image queues an image for the next message only; clear drops it", async (
   expect(kinds(await prompt(h, "x"))).toEqual(["text"]);
   await cmd.run({ args: "fake.png" });
   expect(h.notices.at(-1)).toContain("not a PNG");
+});
+
+test("a macOS screenshot name with a narrow no-break space before PM is one path", () => {
+  const name = "/Users/me/Desktop/Screenshot\\ 2026-10-14\\ at\\ 12.34.56\u202fPM.png";
+  expect(findRefs(`${name} これ`).map((r) => r.path)).toEqual(["/Users/me/Desktop/Screenshot 2026-10-14 at 12.34.56\u202fPM.png"]);
+});
+
+test("a pasted clipboard image or dropped image stands in the input as [Image #n] and goes with the message", async () => {
+  const cwd = fixture();
+  let clip = true;
+  const h = await loadPlugin("image-attach", imageAttach(async () => { if (!clip) throw new Error("the clipboard has no image"); return { type: "image", mediaType: "image/png", data: "CLIP" }; }), cwd);
+  const paste = (s: string) => h.host.pasteHandlers[0]!(s);
+  const abs = join(cwd, "my dir", "a b.png");
+  expect(await paste("")).toBe("[Image #1] "); // ⌘V of a screenshot, or ctrl+v
+  expect(await paste(` ${abs.replace(/ /g, "\\ ")} `)).toBe("[Image #2] "); // a drop
+  expect(await paste(`${join(cwd, "shot.png")} ${join(cwd, "shot.png")}`)).toBe("[Image #3] [Image #4] ");
+  expect(await paste("just some text")).toBeUndefined();
+  expect(await paste(`look at ${abs}`)).toBeUndefined(); // not only paths: left to the editor
+  expect(await paste(join(cwd, "fake.png"))).toBeUndefined();
+  clip = false;
+  expect(await paste("")).toBeUndefined();
+  expect(h.notices.at(-1)).toContain("no image");
+
+  // The marker for #3 was deleted from the input, so that image is not sent.
+  const c = await prompt(h, "[Image #1] と [Image #2] の違いは？ [Image #4] [Image #9]");
+  expect(kinds(c)).toEqual(["text", "image", "image", "image"]);
+  expect(c[0].text).toBe(`[Image 1: clipboard] と [Image 2: ${abs}] の違いは？ [Image 3: ${join(cwd, "shot.png")}] [Image #9]`);
+  expect(c[1].data).toBe("CLIP");
+  // Sent once: the same marker later is just text.
+  expect(kinds(await prompt(h, "[Image #1]"))).toEqual(["text"]);
 });
 
 test("clipboard: Linux reads stdout; macOS goes through a file the script writes; empty is a clear error", async () => {
