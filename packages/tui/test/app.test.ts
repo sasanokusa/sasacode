@@ -332,7 +332,9 @@ test("pastes go to the plugins first: a split bracketed paste, ctrl+v, and text 
     offered.push(text);
     return text === "" ? "[Image #1] " : text.endsWith(".png") ? "[Image #2] " : undefined;
   }));
+  const before = term.out.length;
   await term.send("\x16"); // ctrl+v
+  expect(term.text(before)).toContain("[Image #1]"); // shown at once, not on the next key
   await term.send("\x1b[200~/tmp/sh");
   await term.send("ot.png\x1b[201~");
   await term.send("\x1b[200~plain\x1b[201~");

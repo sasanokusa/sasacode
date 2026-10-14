@@ -157,14 +157,21 @@ export const imageAttach = (clipboard: () => Promise<Image> = clipboardImage): P
   let pending: { name: string; image: Image }[] = [];
   /** Images pasted or dropped into the input, shown there as [Image #n] until the message is sent. */
   const inline = new Map<number, { name: string; image: Image }>();
-  let pasted = 0;
   const MARKER = /\[Image #(\d+)\]/;
   const full = () => inline.size + pending.length >= settings.maxImages;
 
   // ⌘V of a screenshot or ctrl+v ("") reads the clipboard; a drop is read now, before a
   // screenshot's temporary file is gone, and stands in the input as [Image #n].
-  api.ui.onPaste(async (text) => {
-    const add = (name: string, image: Image) => (inline.set(++pasted, { name, image }), `[Image #${pasted}]`);
+  api.ui.onPaste(async (text, input) => {
+    // Images whose marker was deleted from the input are dropped; a new one takes the lowest free number.
+    const shown = new Set([...input.matchAll(/\[Image #(\d+)\]/g)].map((m) => Number(m[1])));
+    for (const n of inline.keys()) if (!shown.has(n)) inline.delete(n);
+    const add = (name: string, image: Image) => {
+      let n = 1;
+      while (inline.has(n) || shown.has(n)) n++;
+      inline.set(n, { name, image });
+      return `[Image #${n}]`;
+    };
     if (!text) {
       if (full()) return void api.ui.notify(t("画像は{n}枚までです", { n: settings.maxImages }), "warning");
       try {

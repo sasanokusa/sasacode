@@ -301,9 +301,10 @@ class App {
   /** Pasted text (or "" for ctrl+v) offered to the plugins; unclaimed text goes to the editor as a paste. */
   private async paste(text: string): Promise<void> {
     for (const handle of this.host.host.pasteHandlers) {
-      const out = await Promise.resolve(handle(text)).catch(() => undefined);
+      const out = await Promise.resolve(handle(text, this.editor.getText())).catch(() => undefined);
       if (out !== undefined) {
         this.editor.insertTextAtCursor(out);
+        this.tui.requestRender();
         return;
       }
     }

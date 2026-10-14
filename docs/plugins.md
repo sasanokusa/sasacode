@@ -120,7 +120,7 @@ sasanokusa.comのおすすめ一覧に載せたいときは、[リポジトリ](
 | `ui.showText({title, text, format?})` | 長文の閲覧パネル。スクロール・検索・ユーザー操作によるコピー。閉じるまで待つ。ヘッドレスはstderrに表示（1.9.0〜） |
 | `ui.setStatus(key, text)` | フッターのステータス行に出す（`undefined`で消す） |
 | `ui.registerToolRenderer(tool, fn)` | ツール結果の表示を差し替える。`fn(call, result, {expanded, width})`が行の配列を返す |
-| `ui.onPaste(fn)` | 貼り付け・ドロップされた文字列が入力欄に入る前に`fn(text)`を呼ぶ。ctrl+vや文字のない貼り付け（クリップボードが画像だけのとき）は`""`。文字列を返すとそれを代わりに入れ、undefinedなら次のプラグインに回す。ヘッドレスでは呼ばれない（1.12.0〜） |
+| `ui.onPaste(fn)` | 貼り付け・ドロップされた文字列が入力欄に入る前に`fn(text, input)`を呼ぶ（`input`はその時点の入力欄の中身）。ctrl+vや文字のない貼り付け（クリップボードが画像だけのとき）は`""`。文字列を返すとそれを代わりに入れ、undefinedなら次のプラグインに回す。ヘッドレスでは呼ばれない（1.12.0〜） |
 | `session.id` | セッションID（`--no-session`ならundefined） |
 | `session.append(kind, data)` / `session.entries(kind)` | セッションに独自の状態を保存し、再開時に読み戻す |
 | `session.messages()` / `session.replaceMessages(msgs)` | 会話を読む / 差し替える（圧縮など。差し替えもセッションに記録される） |

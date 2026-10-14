@@ -227,7 +227,8 @@ export interface SettingsDefinition<T extends Record<string, unknown> = Record<s
   defaults?: Partial<T>;
 }
 
-export type PasteHandler = (text: string) => string | undefined | Promise<string | undefined>;
+/** `input`: what the input line holds now (markers a plugin inserted earlier may have been deleted). */
+export type PasteHandler = (text: string, input: string) => string | undefined | Promise<string | undefined>;
 
 export interface PluginUI {
   /** False in headless runs: confirm resolves false and select undefined. */

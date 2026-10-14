@@ -127,7 +127,13 @@ test("a pasted clipboard image or dropped image stands in the input as [Image #n
   const cwd = fixture();
   let clip = true;
   const h = await loadPlugin("image-attach", imageAttach(async () => { if (!clip) throw new Error("the clipboard has no image"); return { type: "image", mediaType: "image/png", data: "CLIP" }; }), cwd);
-  const paste = (s: string) => h.host.pasteHandlers[0]!(s);
+  // What the input holds: each claimed paste is added to it, as the TUI does.
+  let input = "";
+  const paste = async (s: string) => {
+    const out = await h.host.pasteHandlers[0]!(s, input);
+    if (out !== undefined) input += out;
+    return out;
+  };
   const abs = join(cwd, "my dir", "a b.png");
   expect(await paste("")).toBe("[Image #1] "); // ⌘V of a screenshot, or ctrl+v
   expect(await paste(` ${abs.replace(/ /g, "\\ ")} `)).toBe("[Image #2] "); // a drop
@@ -139,7 +145,12 @@ test("a pasted clipboard image or dropped image stands in the input as [Image #n
   expect(await paste("")).toBeUndefined();
   expect(h.notices.at(-1)).toContain("no image");
 
-  // The marker for #3 was deleted from the input, so that image is not sent.
+  // #3 deleted from the input: it is forgotten and the next image takes its number.
+  input = input.replace("[Image #3] ", "");
+  expect(await (clip = true, paste(""))).toBe("[Image #3] ");
+  input = input.replace("[Image #3] ", "");
+
+  // The marker for #3 was deleted from the input again, so that image is not sent.
   const c = await prompt(h, "[Image #1] と [Image #2] の違いは？ [Image #4] [Image #9]");
   expect(kinds(c)).toEqual(["text", "image", "image", "image"]);
   expect(c[0].text).toBe(`[Image 1: clipboard] と [Image 2: ${abs}] の違いは？ [Image 3: ${join(cwd, "shot.png")}] [Image #9]`);
