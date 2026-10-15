@@ -36,17 +36,20 @@
 | `dependency-record` | 実行時の依存パッケージはすべて [docs/dependencies.md](dependencies.md) に理由つきで載っている（[docs/requirements.md](requirements.md) の非機能要件） |
 | `readme-cli` | CLIのオプションは両方のREADMEに書いてある |
 | `readme-plugins` | 同梱プラグインの一覧とREADMEの表が一致する |
+| `readme-shape` | 日英のREADMEは同じ形（見出しの階層とコードブロックの並び）を保つ |
 | `docs-links` | markdownの相対リンクが解決する |
 | `docs-reachable` | `docs/*.md` は両方のREADMEから辿れる |
 
 ## 記録
 
-| 日付 | 何を | どう確かめたか |
-| --- | --- | --- |
-| 2026-10-15 | 約束を検査にする：コアの行数上限、実行時依存の記録、READMEのオプションと同梱プラグイン、相対リンク、docsの到達性（`scripts/checks.ts`） | このリポジトリで6つの検査が通ること、壊れた入力を渡すと落ちることを `scripts/checks.test.ts` のfixtureで確認。`bun test`（403件）に組み込まれた |
-| 2026-10-15 | 検査が見つけたずれの修正：両READMEに `-h, --help` / `-v, --version` の行、`docs/api-compatibility.md` と `docs/benchmarks.md` への導線、コアの行数の書き方を検査に合わせる | 修正前に落ちた4件が `bun run improve` で消えること。READMEの日英の行数が揃っていること |
-| 2026-10-15 | `bun run improve` で1周の計測を1コマンドに（検査・コアの行数・規模・次の一手） | 検査が通るときに終了コード0と余白（4,000行まで残り）を出し、わざと壊すと終了コード1になること |
-| 2026-10-15 | 改善ループをハーネス自身が回せるようにする（`.sasacode/skills/harness-improve`、この文書） | スキルとして発見され、`/skills` とシステムプロンプトの一覧に出ること |
+| 日付 | 何を | どう確かめたか | コミット |
+| --- | --- | --- | --- |
+| 2026-10-15 | 約束を検査にする：コアの行数上限、実行時依存の記録、READMEのオプションと同梱プラグイン、相対リンク、docsの到達性（`scripts/checks.ts`） | このリポジトリで6つの検査が通ること、壊れた入力を渡すと落ちることを `scripts/checks.test.ts` のfixtureで確認。`bun test` に組み込まれ、414件が通る | 693fe60 |
+| 2026-10-15 | 検査が見つけたずれの修正：両READMEに `-h, --help` / `-v, --version` の行、`docs/api-compatibility.md` と `docs/benchmarks.md` への導線、コアの行数の書き方を検査に合わせる | 修正前に落ちていた4件が消えること。日英のREADMEがどちらも363行で揃うこと | 4d55e28 |
+| 2026-10-15 | `bun run improve` で1周の計測を1コマンドに（検査・コアの行数・規模・次の一手） | 検査が通るときに終了コード0と余白（4,000行まで残り9行）を出し、READMEにずれを作ると1になること | 8c1290b |
+| 2026-10-15 | 改善ループをハーネス自身が回せるようにする（`.sasacode/skills/harness-improve`、この文書） | CLIがスキルの一覧を作るのと同じ `discoverSkills` が name と description を読めること。この文書が両READMEから辿れること（`docs-reachable`） | ca3e054 |
+| 2026-10-15 | 日英のREADMEの形（見出しの階層とコードブロックの並び）が揃っていることを検査に追加（`readme-shape`） | `README.en.md` から見出しを1つ消すと「36 ... 35」を報告して終了コード1、戻すと0。fixtureでも確認 | c7fd99d |
+| 2026-10-15 | プラグインAPIの版の記述を実装に合わせる（両READMEが1.10.0のまま、コードとdocs/plugins.mdは1.13.0）＋検査 `api-version` | 修正前に `bun run improve` が両READMEについて「1.13.0を書いていない」と落ち、直すと通ること。`1.10.0` と `1.2.0` の比較をfixtureで確認 | 438f305 |
 
 ## 次の候補
 
@@ -54,7 +57,7 @@
 
 - 起動から入力可能まで300ms以内という目標は、手元の体感だけで測っていない
 - CIはubuntuとwindowsのみ。macOSはリリースのワークフローでしか起動していない
-- `README.md` と `README.en.md` の本文の対応は目視。見出しと表は揃っているが、片方にしかない説明は検査していない
+- 日英のREADMEの本文の対応は目視。見出しとコードブロックの並びは検査しているが、段落や表の行が片方にしかないことは検査していない
 - `plugins/*` のREADMEと実装のずれは検査していない
 - `npm/sasacode` のランチャーはテストがあるが、公開後の更新は手作業
 - 単一バイナリ（`bun run build`）での起動確認は手元とリリース時のみ
