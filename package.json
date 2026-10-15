@@ -12,7 +12,7 @@
     "typecheck": "tsc --noEmit -p .",
     "build": "bun scripts/build.ts",
     "pack:plugin-api": "bun scripts/pack-plugin-api.ts",
-    "loc": "cat packages/{ai,agent,plugin-api,tools}/src/*.ts | wc -l",
+    "improve": "bun scripts/improve.ts",
     "pack:plugins": "bun scripts/pack-plugins.ts"
   },
   "devDependencies": {
