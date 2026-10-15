@@ -261,7 +261,7 @@ sasacode plugin install sasacode-plugin-jev-guard
 | `browsr` | [browsr-4-agent](https://github.com/sasanokusa/browsr-4-agent) によるWeb検索（`search`）と本文の閲覧（`open`）。`browsr-agent` がPATHにあれば自動で起動する |
 | `permission-presets` | 権限ルールのプリセット（`guard`、`read-only-shell`、`tests`） |
 | `openai-codex` | ChatGPTプランのモデル（`openai-codex/…`）。`sasacode login` の認証情報を使う |
-| `usage` | `/usage` コマンド。この起動の使用量、今日・直近7日・30日・全期間の合計、ChatGPTプランの残り（5時間・週の枠と、リセットまでの時間）を出す。`/usage graph` は日ごとの使用量をGitHubのContributions Graphのように、`/usage history [日数]` は日別の記録を、`/usage models` はモデル別の合計を、`/usage plan` はプランの残りだけを出す。記録は `~/.sasacode/sessions` のセッションログから読む（圧縮とサブエージェントの分は含まない） |
+| `usage` | `/usage` コマンド。この起動の使用量、今日・直近7日・30日・全期間の合計、ChatGPTプランの残り（5時間・週の枠と、リセットまでの時間）を出す。`/usage graph` は日ごとの使用量をGitHubのContributions Graphのように、`/usage history [日数]` は日別の記録を、`/usage models` はモデル別の合計を、`/usage plan` はプランの残りだけを出す。記録は `~/.sasacode/sessions` のセッションログから読む（サブエージェント、圧縮の要約、agent モードの判定、やり直しで捨てた応答の分も含む。それより前の版のログには残っていない） |
 | `goal` | セッションのゴール（最終目的）。`/goal <目的>` で設定し、`done` / `pause` / `resume` / `clear` で状態を変える。「これをゴールにして」と頼めば、モデルが `set_goal` ツールで会話から要約して設定する。作業中のゴールはシステムプロンプトとフッターに出る |
 | `background-sessions` | `bg_start` ツール。ビルドやテストなど長いコマンドをバックグラウンドで動かし、終わったら終了コードと出力の末尾を会話に届ける（待機中なら自動で続きを始める）。bashと同じ権限ルールで判定する（`permissionsAs`）。sasacodeを終了してもジョブは続き、次の起動で結果を知らせる。`/bg` で一覧・詳細・停止。WindowsではGit Bashで動かす |
 | `auto-reconnect` | 実行がエラーで終わったとき、使用中のエンドポイントに届かなければ、復旧を待って作業を自動で再開する（既定は最大10分）。`/reconnect` で手動でも同じことをする |

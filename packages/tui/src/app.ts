@@ -347,6 +347,12 @@ class App {
         this.chat.addChild(this.currentSpacer);
         this.chat.addChild(this.current);
         break;
+      case "usage":
+        // Subagents and side requests: in the cost and the summary, not in the context size.
+        this.totalCost += e.usage.cost;
+        this.usage.addUsage(e.model, e.usage, true);
+        this.updateFooter();
+        break;
       case "message_discarded":
         // A plugin asked for this response to be generated again.
         if (this.current) this.chat.removeChild(this.current);

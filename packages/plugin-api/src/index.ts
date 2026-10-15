@@ -29,7 +29,7 @@ export type {
   UserContent,
 } from "@sasacode/ai";
 
-export const PLUGIN_API_VERSION = "1.12.0";
+export const PLUGIN_API_VERSION = "1.13.0";
 
 // ── tools ────────────────────────────────────────────────────────────
 
@@ -106,6 +106,13 @@ export type StopCause = "done" | "aborted" | "error" | "refusal" | "context_limi
 export type DeltaKind = "text" | "thinking" | "toolcall";
 
 /** Hooks run in registration order; lifecycle and contracts are documented in docs/plugins.md. */
+export interface Spend {
+  t: number;
+  model: string;
+  usage: AssistantMessage["usage"];
+  source: "subagent" | "side" | "discarded";
+}
+
 export interface HookMap {
   session_start: { event: { sessionId?: string; resumed: boolean }; result: void };
   /** Session ends for "switch" or "exit"; undefined from older hosts means "exit" (since 1.8.0). */
@@ -163,6 +170,8 @@ export interface HookMap {
   tool_result: { event: { call: ToolCall; result: ToolResult; ran: boolean }; result: { result?: ToolResult } };
   /** Continue via inject or stop the run with a reason (since 1.4.0; see docs/plugins.md). */
   turn_end: { event: { turn: number; message: AssistantMessage }; result: { inject?: string; stop?: string } };
+  /** A response outside the conversation (subagent, complete(), a discarded reply) and what it used (since 1.13.0). */
+  usage: { event: Spend; result: void };
   /** `stopped` is set when cause is "stopped" (since 1.4.0). */
   agent_end: { event: { cause: StopCause; stopped?: { plugin: string; reason: string } }; result: { inject?: string } };
   /** Free up context (e.g. session.replaceMessages) and return `retry` to continue. */

@@ -1,11 +1,13 @@
 import { visibleWidth } from "@earendil-works/pi-tui";
-import { type AssistantMessage, fmtTokens } from "@sasacode/ai";
+import { type AssistantMessage, fmtTokens, type Usage } from "@sasacode/ai";
 import { t } from "@sasacode/host";
 import { c } from "./theme.ts";
 
 /** Tokens and cost of everything sent since sasacode started, across /clear and /resume. */
 export class UsageTally {
   requests = 0;
+  /** Of the requests, those outside the conversation: subagents, side requests, discarded replies. */
+  side = 0;
   input = 0;
   output = 0;
   cacheRead = 0;
@@ -15,13 +17,18 @@ export class UsageTally {
   readonly startedAt = Date.now();
 
   add(m: AssistantMessage): void {
+    this.addUsage(`${m.provider}/${m.model}`, m.usage);
+  }
+
+  addUsage(model: string, u: Usage, side = false): void {
     this.requests++;
-    this.input += m.usage.input;
-    this.output += m.usage.output;
-    this.cacheRead += m.usage.cacheRead;
-    this.cacheWrite += m.usage.cacheWrite;
-    this.cost += m.usage.cost;
-    this.models.add(`${m.provider}/${m.model}`);
+    if (side) this.side++;
+    this.input += u.input;
+    this.output += u.output;
+    this.cacheRead += u.cacheRead;
+    this.cacheWrite += u.cacheWrite;
+    this.cost += u.cost;
+    this.models.add(model);
   }
 
   /** Share of prompt tokens served from the cache. */
@@ -51,7 +58,7 @@ export function usageLines(u: UsageTally): string[] {
     ...(u.cacheWrite ? [t("キャッシュ書込 {n}", { n: fmtTokens(u.cacheWrite) })] : []),
   ].join(c.gray(" · "));
   const lines = [`${label(t("トークン"))}${tokens}`];
-  lines.push(`${label(t("リクエスト"))}${t("{n} 回", { n: u.requests })}${u.cost > 0 ? c.gray(" · ") + `$${u.cost.toFixed(3)}` : ""}`);
+  lines.push(`${label(t("リクエスト"))}${t("{n} 回", { n: u.requests })}${u.side ? c.gray(t("（うちサブエージェントなど {n} 回）", { n: u.side })) : ""}${u.cost > 0 ? c.gray(" · ") + `$${u.cost.toFixed(3)}` : ""}`);
   if (u.models.size) lines.push(`${label(t("モデル"))}${[...u.models].join(", ")}`);
   return lines;
 }

@@ -27,10 +27,15 @@ function writeLog(name: string, lines: string[]): string {
 const stamp = new Date(1_758_000_000_000);
 
 test("the index summarizes a log: id, cwd, first prompt, message count and usage", () => {
-  const path = writeLog("a/one.jsonl", [header("aaaa1111", "/work/a"), user("first prompt", 1), assistant(2), user("more", 3)]);
+  // A subagent's response is logged as a "usage" entry: counted, not a message.
+  const sub = JSON.stringify({ type: "usage", t: 4, model: "p/s", source: "subagent", usage: { input: 7, output: 3, cacheRead: 100, cacheWrite: 20, cost: 0.5 } });
+  const path = writeLog("a/one.jsonl", [header("aaaa1111", "/work/a"), user("first prompt", 1), assistant(2), user("more", 3), sub]);
   const s = loadSessionIndex(root).get(path)!;
   expect(s).toMatchObject({ id: "aaaa1111", cwd: "/work/a", createdAt: "2026-09-24T00:00:00.000Z", firstPrompt: "first prompt", messageCount: 3 });
-  expect(s.usage).toEqual([{ t: 2, model: "p/m", input: 10, output: 5, cacheRead: 0, cacheWrite: 0, cost: 0.01 }]);
+  expect(s.usage).toEqual([
+    { t: 2, model: "p/m", input: 10, output: 5, cacheRead: 0, cacheWrite: 0, cost: 0.01 },
+    { t: 4, model: "p/s", input: 7, output: 3, cacheRead: 100, cacheWrite: 20, cost: 0.5 },
+  ]);
   // The written index is what later listings read.
   const file = JSON.parse(readFileSync(join(root, ".index.json"), "utf8")) as { version: number; sessions: Record<string, { id: string }> };
   expect(file.version).toBe(1);

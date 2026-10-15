@@ -281,3 +281,28 @@ test("a reply whose stream was cut is thrown away and asked for again, not taken
   const answers = agent.messages.filter((m) => m.role === "assistant");
   expect(answers.map((m) => JSON.stringify(m.content))).toEqual([JSON.stringify([say("the answer")])]);
 });
+
+test("what subagents, side requests and discarded replies use is logged and reported once each", async () => {
+  const session = SessionFile.create(join(dir, "sessions"), dir);
+  const cost = (n: number) => ({ ...emptyUsage(), input: n, cost: n / 100 });
+  const { agent, events } = setup([reply([say("main")], { usage: cost(1) })], { session });
+  const hooked: string[] = [];
+  agent.hooks.on("usage", (s) => void hooked.push(`${s.source}:${s.usage.input}`));
+  let retried = false;
+  agent.hooks.on("assistant_message", () => (retried ? undefined : ((retried = true), { retry: true })));
+  registerApi("replay", replayProvider([reply([say("thrown away")], { usage: cost(2) }), reply([say("main")], { usage: cost(1) })]));
+  await agent.prompt("go");
+  // A subagent with two turns; a hook inside it cannot see "usage" (only the parent reports it).
+  registerApi("replay", replayProvider([reply([call("1", "read", { path: "nope" })], { usage: cost(3) }), reply([say("sub")], { usage: cost(4) })]));
+  await agent.runSubagent({ prompt: "x" });
+  registerApi("replay", replayProvider([reply([say("summary")], { usage: cost(5) })]));
+  await agent.complete({ system: "s", messages: [{ role: "user", timestamp: 0, content: [{ type: "text", text: "sum up" }] }] });
+
+  const expected = ["discarded:2", "subagent:3", "subagent:4", "side:5"];
+  expect(hooked).toEqual(expected);
+  expect(events.flatMap((e) => (e.type === "usage" ? [`${e.source}:${e.usage.input}`] : []))).toEqual(expected);
+  const logged = SessionFile.open(session.path).entries.flatMap((e) => (e.type === "usage" ? [`${e.source}:${e.usage.input}`] : []));
+  expect(logged).toEqual(expected);
+  // They never enter the conversation.
+  expect(restore(SessionFile.open(session.path).entries).messages.map((m) => m.role)).toEqual(["user", "assistant"]);
+});

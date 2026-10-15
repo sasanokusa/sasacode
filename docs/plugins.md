@@ -46,7 +46,7 @@ npmのパッケージは`bun run pack:plugin-api`で`dist/plugin-api`に作る�
 }
 ```
 
-- `apiVersion`がホストのAPI（現在1.12.0）と互換でなければ、警告を出して読み込まない。
+- `apiVersion`がホストのAPI（現在1.13.0）と互換でなければ、警告を出して読み込まない。
 - `skills`は`SKILL.md`を含むフォルダが並ぶディレクトリ。
 - `mcpServers`は設定ファイルの`mcpServers`と同じ形式。`${VAR}`は環境変数から展開される。
 
@@ -82,7 +82,7 @@ sasacode plugin publish my-tool.ts --license MIT             # npm publish（npm
 - `package.json`には、`sasacode`フィールド（マニフェスト）、検索用のキーワード`sasacode-plugin`、ピア依存の`@sasacode/plugin-api`を入れる。READMEはファイル先頭のコメントから作る。
 - 版は、npmに出ている最新版の次のパッチ（初回は0.1.0）。`--version`で指定できる。
 - 説明文は、ファイルの最初のコメントから取る（`--description`で指定できる）。
-- `apiVersion`は、使っている機能から決める（`ui.onPaste`なら ^1.12.0、`before_request.fetch`なら ^1.11.0、`ui.input`・`ui.selectMany`なら ^1.10.0、`callTool`・`showText`・`defineSettings`なら ^1.9.0、フックの`ctx`や`session_end`の`reason`なら ^1.8.0、`permission`フックや`softDeny`なら ^1.7.0、`permissionsAs`なら ^1.6.0、など）。`--api`で指定できる。
+- `apiVersion`は、使っている機能から決める（`usage`フックなら ^1.13.0、`ui.onPaste`なら ^1.12.0、`before_request.fetch`なら ^1.11.0、`ui.input`・`ui.selectMany`なら ^1.10.0、`callTool`・`showText`・`defineSettings`なら ^1.9.0、フックの`ctx`や`session_end`の`reason`なら ^1.8.0、`permission`フックや`softDeny`なら ^1.7.0、`permissionsAs`なら ^1.6.0、など）。`--api`で指定できる。
 - 同じフォルダのほかのファイルをimportしていると、それは含まれない（注意を出す）。そういうプラグインは、`package.json`に`sasacode`フィールドを書いたディレクトリごと`sasacode plugin publish <ディレクトリ>`で出す（キーワードがなければ足す）。
 - ライセンスを付けないと、ほかの人は再利用できない。`--license MIT`のように付ける。
 
@@ -96,7 +96,7 @@ sasanokusa.comのおすすめ一覧に載せたいときは、[リポジトリ](
 
 ## API リファレンス
 
-公開APIは`@sasacode/plugin-api`の`PluginAPI`で、現在の版は1.12.0。変更の履歴は[最後の表](#api-の版)にある。
+公開APIは`@sasacode/plugin-api`の`PluginAPI`で、現在の版は1.13.0。変更の履歴は[最後の表](#api-の版)にある。
 
 ### PluginAPI
 
@@ -235,6 +235,7 @@ before_request → stream_delta（生成中、差分ごと） → assistant_mess
 | `permission` | ルール・権限モード・`tool_call`の判定の後、ユーザーに確認する前 | `{call, tool, args, cwd, mode, verdict: {decision, reason, source}, lowest}`。`source`は`rule`（ユーザーやプラグインのallow / ask / denyルール）、`soft`（softDenyルール）、`mode`（権限モードの既定）、`plugin`（`tool_call`の判定）。`lowest`は変えられる下限 | `{decision, reason}`で判定を変える。厳しくするのはいつでもできるが、緩められるのは`lowest`まで（モードの既定はallowまで、softDenyはaskまで、ルールと`tool_call`の判定は緩められない）。`reason`は確認ダイアログとモデルへの拒否理由に出る。agentモードでどのハンドラも判定しなかった呼び出しは、この後モデルが判定する（1.7.0〜） |
 | `tool_result` | 呼び出しごとの結果が決まったとき | `{call, result, ran}`。`ran: false`は実行されなかった呼び出し（未知のツール、引数の不備、拒否、中断）。1.4.0より前は、実行された呼び出しでしか呼ばれなかった | `{result}`で結果を書き換える・追記する |
 | `turn_end` | 1ターン（応答とツールの実行）の後 | `{turn, message}` | `{inject}`でユーザーメッセージを足してループを続ける。`{stop: 理由}`で実行を終える（1.4.0〜）。コアは権限・中断・コンテキスト上限でしか止まらないので、それ以外の理由で止めるのはプラグインの役割 |
+| `usage` | 会話に残らない応答が返った後（サブエージェント、`agent.complete`、捨てられた応答） | `{t, model, usage, source}`（`source`は`"subagent"` / `"side"` / `"discarded"`） | なし。使用量の集計用。メインのエージェントでだけ呼ばれ、サブエージェントの分もここに来る（1.13.0〜） |
 | `agent_end` | ループが止まったとき | `{cause}`（`done` / `aborted` / `error` / `refusal` / `context_limit` / `max_turns` / `stopped`）。`stopped`のときは`stopped: {plugin, reason}`も付く | `{inject}`で次の実行を始める |
 | `context_limit` | コンテキストが上限に達したとき | `{tokens, contextWindow}` | `session.replaceMessages`で空けてから`{retry: true}`で続ける（連続2回まで） |
 
@@ -257,6 +258,7 @@ before_request → stream_delta（生成中、差分ごと） → assistant_mess
 | 1.10.0 | `PluginUI.input`（1行の自由入力）、`PluginUI.selectMany`（複数選択）、型`InputOptions` / `SelectManyOptions` |
 | 1.11.0 | `before_request.fetch`の受け渡し。従来のイベントと結果にoptionalフィールドを追加 |
 | 1.12.0 | `PluginUI.onPaste`（貼り付け・ドロップの差し替え）、型`PasteHandler` |
+| 1.13.0 | `usage`フック（サブエージェント・`agent.complete`・捨てられた応答の使用量）、型`Spend` |
 
 どれも既存のプラグインを壊さない追加。ただし1.4.0から、`tool_result`を「実行された」合図として数えているプラグインは`ran`を見る必要がある。
 

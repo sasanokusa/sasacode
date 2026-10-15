@@ -10,6 +10,7 @@ import { type AssistantContent, type AssistantMessage, emptyUsage, type ModelInf
 import { replayProvider } from "@sasacode/testing";
 import { PHRASES } from "../src/activity.ts";
 import { runTui, type TuiHost } from "../src/app.ts";
+import { UsageTally, usageLines } from "../src/summary.ts";
 
 class FakeTerminal implements Terminal {
   out = "";
@@ -344,5 +345,20 @@ test("pastes go to the plugins first: a split bracketed paste, ctrl+v, and text 
   expect(offered).toEqual(["", "/tmp/shot.png", "plain"]);
   const sent = agent.messages.find((m) => m.role === "user")!;
   expect(JSON.stringify(sent.content)).toContain("[Image #1] [Image #2] plain ok");
+  await term.type("/exit"); await term.send("\r"); expect(await exited).toBe(0);
+});
+
+test("a subagent's spending shows in the footer's cost and the summary, counted apart", async () => {
+  const { term, agent, exited } = await start([]);
+  const before = term.out.length;
+  registerApi("replay", replayProvider([reply([{ type: "text", text: "sub" }], { usage: { ...emptyUsage(), input: 50, cost: 1.25 } })]));
+  await agent.runSubagent({ prompt: "x" });
+  await Bun.sleep(50);
+  expect(term.text(before)).toContain("$1.250");
+  const tally = new UsageTally();
+  tally.add(reply([{ type: "text", text: "main" }], { usage: { ...emptyUsage(), input: 10, cost: 0.5 } }));
+  tally.addUsage("t/m", { ...emptyUsage(), input: 50, cost: 1.25 }, true);
+  const lines = usageLines(tally).join("\n").replace(/\x1b\[[0-9;]*m/g, "");
+  expect(lines).toContain("2 回（うちサブエージェントなど 1 回） · $1.750");
   await term.type("/exit"); await term.send("\r"); expect(await exited).toBe(0);
 });

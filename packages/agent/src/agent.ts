@@ -11,7 +11,7 @@ import {
   type UserContent,
   type UserMessage,
 } from "@sasacode/ai";
-import type { CompleteOptions, HookName, StopCause, SubagentOptions, ToolDefinition } from "@sasacode/plugin-api";
+import type { CompleteOptions, HookName, Spend, StopCause, SubagentOptions, ToolDefinition } from "@sasacode/plugin-api";
 import { type AgentEvent, EventBus } from "./events.ts";
 import { HookRunner } from "./hooks.ts";
 import { type PermissionCheck, PermissionPolicy } from "./permission.ts";
@@ -99,7 +99,7 @@ export function responseRoom(model: ModelInfo): number {
 }
 
 /** Hooks that belong to the user's session, not to subagents. */
-const SESSION_HOOKS: HookName[] = ["session_start", "session_end", "user_prompt", "turn_end", "agent_end", "context_limit"];
+const SESSION_HOOKS: HookName[] = ["session_start", "session_end", "user_prompt", "turn_end", "agent_end", "context_limit", "usage"];
 
 export class Agent {
   readonly events = new EventBus<AgentEvent>();
@@ -241,6 +241,24 @@ export class Agent {
     this.events.emit({ type: "message_end", message: m });
   }
 
+  /** A response that is not in the conversation still cost tokens: logged, and (`emit`) reported to the UI and plugins. */
+  private spend(s: Spend, emit = true): void {
+    this.session?.append({ type: "usage", ...s });
+    if (!emit) return;
+    this.events.emit({ type: "usage", ...s });
+    void this.hooks.run("usage", s);
+  }
+
+  private spent(m: AssistantMessage, source: Spend["source"], emit = true): void {
+    this.spend({ t: m.timestamp, model: `${m.provider}/${m.model}`, usage: m.usage, source }, emit);
+  }
+
+  /** A reply with nothing to keep: not in the conversation, but the UI counts it from message_end. */
+  private endEmpty(m: AssistantMessage): void {
+    this.spent(m, "discarded", false);
+    this.events.emit({ type: "message_end", message: m });
+  }
+
   private drainQueue(): boolean {
     if (!this.queued.length) return false;
     for (const c of this.queued.splice(0)) this.pushUser(c);
@@ -371,6 +389,7 @@ export class Agent {
       // The connection dropped mid-reply: ask again (after 1, 2, 4 s) rather than take a fragment as the answer.
       if (message.stopReason === "error" && !signal.aborted) {
         if (cut >= 3) throw new Error(message.errorMessage ?? "the reply failed");
+        this.spent(message, "discarded");
         this.events.emit({ type: "message_discarded", message });
         await Promise.race([Bun.sleep(1000 * 2 ** cut++), new Promise((r) => signal.addEventListener("abort", r, { once: true }))]);
         attempt--;
@@ -384,7 +403,7 @@ export class Agent {
       if (userAborted) {
         this.interrupted = true;
         if (message.content.length) this.pushMessage(message);
-        else this.events.emit({ type: "message_end", message });
+        else this.endEmpty(message);
         return { message, repairs: new Map() };
       }
       let final = message;
@@ -396,12 +415,13 @@ export class Agent {
         if (r.inject) inject = r.inject;
       });
       if (retry && attempt < 2 && !signal.aborted) {
+        this.spent(final, "discarded");
         this.events.emit({ type: "message_discarded", message: final });
         continue;
       }
       const repairs = await repairCalls(this.toolContext(), final);
       if (final.content.length) this.pushMessage(final);
-      else this.events.emit({ type: "message_end", message: final });
+      else this.endEmpty(final);
       if (inject) this.queued.push([{ type: "text", text: inject }]);
       return { message: final, repairs };
     }
@@ -515,6 +535,7 @@ export class Agent {
       signal: o.signal,
     })) {
       if (ev.type === "done") {
+        this.spent(ev.message, "side");
         if (ev.message.stopReason === "aborted") throw new Error("aborted");
         text = textOf(ev.message.content);
       }
@@ -546,6 +567,9 @@ export class Agent {
       if (e.type === "tool_start") o.onProgress?.(`${e.call.name}(${e.summary})`);
       if (e.type === "plugin_error") this.events.emit(e);
       if (e.type === "error") error = e.error;
+      // The child keeps no log: what it used is the parent's.
+      if (e.type === "message_end" && e.message.role === "assistant") this.spent(e.message, "subagent");
+      if (e.type === "usage") this.spend({ t: e.t, model: e.model, usage: e.usage, source: "subagent" });
     });
     const onAbort = () => child.abort();
     o.signal?.addEventListener("abort", onAbort, { once: true });

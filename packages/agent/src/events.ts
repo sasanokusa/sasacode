@@ -1,5 +1,5 @@
 import type { AssistantMessage, Message, StreamEvent, ToolCall } from "@sasacode/ai";
-import type { StopCause, ToolResult } from "@sasacode/plugin-api";
+import type { Spend, StopCause, ToolResult } from "@sasacode/plugin-api";
 
 export type { StopCause };
 
@@ -13,6 +13,7 @@ export type AgentEvent =
   | { type: "tool_update"; call: ToolCall; text: string; parentCallId?: string }
   | { type: "tool_end"; call: ToolCall; result: ToolResult; parentCallId?: string }
   | { type: "turn_end"; turn: number }
+  | ({ type: "usage" } & Spend)
   | { type: "context_limit"; tokens: number; contextWindow: number }
   | { type: "error"; error: string }
   | { type: "plugin_error"; plugin: string; hook: string; error: string }

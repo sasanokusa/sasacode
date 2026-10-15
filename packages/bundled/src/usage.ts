@@ -27,8 +27,8 @@ function record(m: AssistantMessage): UsageRecord {
 /**
  * Every model response recorded in the session logs under `home`, sorted by time. Served from the
  * session index, so this costs one stat per log and re-parses only logs that changed, not every
- * log in full. Summaries written by compaction and subagent runs are not in the logs, so they are
- * not counted; a log whose header was torn away still is.
+ * log in full. Subagent runs, side requests (compaction summaries, the agent-mode judge) and
+ * discarded replies count too; a log whose header was torn away still does.
  */
 export function readRecords(home = sasacodeHome()): UsageRecord[] {
   const out: UsageRecord[] = [];
@@ -240,6 +240,10 @@ const usage: Plugin = (api) => {
   api.on("turn_end", ({ message }) => {
     add(run.sum, record(message));
     run.models.add(`${message.provider}/${message.model}`);
+  });
+  api.on("usage", (s) => {
+    add(run.sum, { t: s.t, model: s.model, ...s.usage });
+    run.models.add(s.model);
   });
   const width = () => Math.max(40, (process.stdout.columns || 80) - 5);
   const show = (lines: string[]) => api.ui.notify(lines.join("\n"));

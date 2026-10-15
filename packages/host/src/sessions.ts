@@ -64,6 +64,8 @@ function summarize(path: string): SessionSummary | undefined {
     const firstUser = entries.find((e) => e.type === "message" && e.message.role === "user");
     const usage: SessionUsage[] = [];
     for (const e of entries) {
+      // Subagents, side requests and discarded replies are logged as "usage" entries.
+      if (e.type === "usage") usage.push({ t: e.t, model: e.model, input: e.usage.input, output: e.usage.output, cacheRead: e.usage.cacheRead, cacheWrite: e.usage.cacheWrite, cost: e.usage.cost });
       // Only "message" entries: a "replace" (compaction) lists earlier messages again.
       if (e.type !== "message" || e.message.role !== "assistant") continue;
       const m = e.message;

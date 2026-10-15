@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { appendFileSync, mkdirSync, readFileSync, realpathSync, truncateSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { Message } from "@sasacode/ai";
+import type { Spend } from "@sasacode/plugin-api";
 
 export const SESSION_VERSION = 1;
 
@@ -13,6 +14,8 @@ export type SessionEntry =
   | { type: "replace"; messages: Message[] }
   /** What the model actually produced for a call that a tool_call_raw hook repaired. */
   | { type: "tool_repair"; callId: string; original: { name: string; input: unknown; rawInput?: string }; repaired: { name: string; input: unknown }; note: string }
+  /** What a response outside the conversation used (subagent, side request, discarded reply). */
+  | ({ type: "usage" } & Spend)
   | { type: "custom"; plugin: string; kind: string; data: unknown };
 
 export function normalizeCwd(cwd: string): string {

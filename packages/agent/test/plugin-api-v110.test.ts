@@ -12,9 +12,9 @@ async function api(ui?: Partial<UIBridge>): Promise<PluginAPI> {
 }
 const opts = [{ value: "a", label: "A" }, { value: "b", label: "B" }, { value: "c", label: "C" }];
 
-test("the host reports API 1.12.0", async () => {
-  expect(PLUGIN_API_VERSION).toBe("1.12.0");
-  expect((await api()).version).toBe("1.12.0");
+test("the host reports API 1.13.0", async () => {
+  expect(PLUGIN_API_VERSION).toBe("1.13.0");
+  expect((await api()).version).toBe("1.13.0");
 });
 
 test("headless input and selectMany resolve undefined without asking", async () => {

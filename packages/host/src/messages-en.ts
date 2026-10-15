@@ -141,6 +141,7 @@ export const TO_EN: Record<string, string> = {
   "出力 {output} · {n} 回": "{output} output · {n} requests",
   "合計": "total",
   "{n} 回": "{n} requests",
+  "（うちサブエージェントなど {n} 回）": " (incl. {n} by subagents and side requests)",
   "最終 {day}": "last {day}",
   "モデル別（全期間）": "By model (all time)",
   "記録がありません": "Nothing recorded",
