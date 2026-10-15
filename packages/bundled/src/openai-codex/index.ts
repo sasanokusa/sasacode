@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { BUILTIN_PROVIDERS } from "@sasacode/ai";
+import { BUILTIN_PROVIDERS } from "@sasacode/host";
 import type { Plugin } from "@sasacode/plugin-api";
 import { codexProvider } from "./provider.ts";
 

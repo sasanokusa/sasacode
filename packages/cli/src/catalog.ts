@@ -1,4 +1,5 @@
-import { getProvider, KNOWN_MODELS, type ModelInfo, type Provider, type ProviderConfig } from "@sasacode/ai";
+import { getProvider, type ModelInfo, type Provider, type ProviderConfig } from "@sasacode/ai";
+import { KNOWN_MODELS } from "@sasacode/host";
 import { API_ENDPOINT, type ListedModel, listModels } from "./list-models.ts";
 
 export interface ModelChoice {

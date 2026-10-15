@@ -1,6 +1,4 @@
-import type { ModelInfo, ProviderConfig } from "./types.ts";
-
-export type { ProviderConfig } from "./types.ts";
+import type { ModelInfo, ProviderConfig } from "@sasacode/ai";
 
 /** Order matters: with no model configured, the first provider whose key is set supplies the default. */
 export const BUILTIN_PROVIDERS: Record<string, ProviderConfig> = {

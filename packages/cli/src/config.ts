@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { PERMISSION_MODES, type PermissionMode, type PermissionRules, type ToolSearchConfig } from "@sasacode/agent";
-import { t } from "@sasacode/host";
-import { BUILTIN_PROVIDERS, type ModelInfo, type ProviderConfig, type ThinkingLevel } from "@sasacode/ai";
+import { BUILTIN_PROVIDERS, t } from "@sasacode/host";
+import { type ModelInfo, type ProviderConfig, type ThinkingLevel } from "@sasacode/ai";
 import { sasacodeHome } from "@sasacode/plugin-api";
 import { readJson } from "./json.ts";
 

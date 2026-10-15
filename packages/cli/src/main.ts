@@ -3,8 +3,7 @@
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 import { PERMISSION_MODES } from "@sasacode/agent";
-import { resolveLang, setLang, t } from "@sasacode/host";
-import { BUILTIN_PROVIDERS } from "@sasacode/ai";
+import { BUILTIN_PROVIDERS, resolveLang, setLang, t } from "@sasacode/host";
 import { hideFromChildren } from "@sasacode/plugin-api";
 import { codexLogin, codexLogout, codexStatus } from "@sasacode/bundled";
 import { loadConfig, sasacodeHome } from "./config.ts";

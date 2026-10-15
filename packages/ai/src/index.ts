@@ -5,7 +5,6 @@ import type { Provider } from "./types.ts";
 
 export * from "./types.ts";
 export * from "./format.ts";
-export * from "./models.ts";
 export * from "./replay.ts";
 
 const providers = new Map<string, Provider>([

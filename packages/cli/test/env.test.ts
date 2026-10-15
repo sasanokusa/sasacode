@@ -2,7 +2,7 @@ import { afterAll, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { BUILTIN_PROVIDERS, defaultModelFor } from "@sasacode/ai";
+import { BUILTIN_PROVIDERS, defaultModelFor } from "@sasacode/host";
 import { dropBlankKeys, ensureEnvFile, keyVariables, loadEnvFile } from "../src/env.ts";
 
 const dir = mkdtempSync(join(tmpdir(), "sasacode-env-"));

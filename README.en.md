@@ -350,14 +350,14 @@ bun run build       # dist/sasacode for this machine; --all for every target
 
 | Package | Role |
 | --- | --- |
-| `@sasacode/ai` | Normalized message types, Anthropic / OpenAI Chat / OpenAI Responses adapters, Models API, recording and replaying responses |
+| `@sasacode/ai` | Normalized message types, Anthropic / OpenAI Chat / OpenAI Responses adapters, cost computation |
 | `@sasacode/agent` | Loop, hooks, tool execution (repair, validation, permissions), deferred tool loading, sessions, plugin host |
 | `@sasacode/plugin-api` | The only public API plugins depend on (published on npm) |
 | `@sasacode/tools` | read / write / edit / bash (registered through the plugin API) |
 | `@sasacode/tui` | The interactive UI, built on pi-tui |
 | `@sasacode/cli` | Arguments, configuration, keys, model lists, finding, loading and trusting plugins, headless runs |
 | `@sasacode/mcp` / `@sasacode/skills` / `@sasacode/bundled` | MCP and Skills adapters, bundled plugins |
-| `@sasacode/host` | What the TUI, the CLI and the bundled plugins share: the interface language (the translation tables) and the session index |
+| `@sasacode/host` | What the TUI, the CLI and the bundled plugins share: the interface language (the translation tables), the built-in providers and known models (prices, context windows), and the session index |
 
 The core (ai, agent, plugin-api, tools) has a ceiling of 4,000 lines: `bun test` fails above it, and `bun run improve` prints what it is now.
 

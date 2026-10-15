@@ -4,7 +4,7 @@
 //
 //   SASACODE_LIVE=1 ANTHROPIC_API_KEY=… OPENAI_API_KEY=… bun test packages/ai/test/live.test.ts
 import { expect, test } from "bun:test";
-import { type AssistantMessage, getProvider, type Message, resolveModel, BUILTIN_PROVIDERS, type ThinkingLevel } from "../src/index.ts";
+import { type AssistantMessage, getProvider, type Message, type ModelInfo, type ThinkingLevel } from "../src/index.ts";
 
 const live = process.env.SASACODE_LIVE === "1";
 const cases = [
@@ -14,7 +14,8 @@ const cases = [
 const tools = [{ name: "add", description: "Add two numbers", parameters: { type: "object", properties: { a: { type: "number" }, b: { type: "number" } }, required: ["a", "b"] } }];
 
 async function send(spec: string, key: string, messages: Message[], thinking: ThinkingLevel): Promise<AssistantMessage> {
-  const model = resolveModel(spec, BUILTIN_PROVIDERS, {});
+  const [provider, id] = spec.split("/") as [string, string];
+  const model: ModelInfo = { id, provider, api: provider === "anthropic" ? "anthropic" : "openai-responses", contextWindow: 200_000, maxOutput: 32_000, reasoning: true };
   let done: AssistantMessage | undefined;
   for await (const e of getProvider(model.api).stream({ model, apiKey: process.env[key], system: "Use the add tool for arithmetic.", messages, tools, thinking, maxTokens: 2048 }))
     if (e.type === "done") done = e.message;

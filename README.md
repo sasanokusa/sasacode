@@ -350,14 +350,14 @@ bun run build       # dist/sasacode（このマシン向け）。--all で全タ
 
 | パッケージ | 役割 |
 | --- | --- |
-| `@sasacode/ai` | 正規化したメッセージ型、Anthropic / OpenAI Chat / OpenAI Responsesのアダプタ、Models API、応答の録画・再生 |
+| `@sasacode/ai` | 正規化したメッセージ型、Anthropic / OpenAI Chat / OpenAI Responsesのアダプタ、料金の計算 |
 | `@sasacode/agent` | ループ、フック、ツール実行（修復・検証・権限）、ツールの遅延ロード、セッション、プラグインのホスト |
 | `@sasacode/plugin-api` | プラグインが依存する唯一の公開API（npmで公開） |
 | `@sasacode/tools` | read / write / edit / bash（プラグインAPIで登録） |
 | `@sasacode/tui` | pi-tuiの上に作った対話UI |
 | `@sasacode/cli` | 引数、設定、キー、モデル一覧、プラグインの検出・読み込み・信頼確認、ヘッドレス実行 |
 | `@sasacode/mcp` / `@sasacode/skills` / `@sasacode/bundled` | MCPとSkillsのアダプタ、同梱プラグイン |
-| `@sasacode/host` | TUI・CLI・同梱プラグインが共有するもの：画面の言語（訳の表）とセッションの索引 |
+| `@sasacode/host` | TUI・CLI・同梱プラグインが共有するもの：画面の言語（訳の表）、組み込みのプロバイダーと既知のモデル（価格・コンテキスト長）、セッションの索引 |
 
 コア（ai・agent・plugin-api・tools）の行数の上限は 4,000 行で、超えるとテストが落ちる。いまの行数は `bun run improve` が出す。
 
