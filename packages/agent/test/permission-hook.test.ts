@@ -88,15 +88,15 @@ test("softDeny: denied like deny; a permission hook can only hand it to the user
   expect(both.result).toContain("rule deny");
 });
 
-test("agent mode: a hook's decision replaces the model judge; without one the judge still runs", async () => {
+test("agent mode: a hook's decision is final; without one the core asks (the judge is a plugin)", async () => {
   const decided = await run("echo a", { mode: "agent", decide: () => ({ decision: "allow" }) });
   expect(decided.seen[0]).toMatchObject({ mode: "agent", verdict: { decision: "ask", source: "mode" } });
   expect(decided.result).toContain("a");
   expect(decided.requests).toBe(2); // the call and the final answer: no judge request
 
-  const judged = await run("echo b", { mode: "agent", judge: '{"safe": true, "reason": "echo"}' });
-  expect(judged.requests).toBe(3);
-  expect(judged.result).not.toContain("denied");
+  const asked = await run("echo b", { mode: "agent", approve: false });
+  expect(asked.requests).toBe(2); // no judging request from the core
+  expect(asked.asked).toHaveLength(1);
 });
 
 test("a tool_call decision cannot be loosened by a permission hook", async () => {
@@ -116,22 +116,4 @@ test("a tool_call decision cannot be loosened by a permission hook", async () =>
   await agent.prompt("go");
   expect(lowest).toBe("deny");
   expect(JSON.stringify(agent.messages.find((m) => m.role === "tool")?.content)).toContain("tool_call says no");
-});
-
-test("agent mode: judgeModel picks the model that judges; the run keeps its own", async () => {
-  const provider = replayProvider([bash("echo j"), reply([{ type: "text", text: '{"safe": true, "reason": "echo"}' }]), done]);
-  registerApi("replay", provider);
-  const agent = new Agent({
-    model,
-    cwd: dir,
-    systemPrompt: "s",
-    permissions: new PermissionPolicy("agent"),
-    judgeModel: "t/judge",
-    resolveModel: (spec) => ({ ...model, id: spec.slice(spec.indexOf("/") + 1) }),
-  });
-  const host = new PluginHost({ agent, cwd: dir });
-  await host.load("builtin-tools", builtinTools);
-  await agent.prompt("go");
-  expect(provider.requests.map((r) => r.model.id)).toEqual(["m", "judge", "m"]);
-  expect(JSON.stringify(agent.messages.find((m) => m.role === "tool")?.content)).toContain("j");
 });

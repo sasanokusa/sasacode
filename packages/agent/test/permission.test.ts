@@ -37,13 +37,11 @@ test("deny beats allow and auto; path globs; tool wildcards", async () => {
   expect((await w.check({ tool: readTool, args: { path: "a" }, cwd })).decision).toBe("allow");
 });
 
-test("agent mode uses the judge for non-read calls", async () => {
+test("agent mode: reads inside the working directory run; the rest is left to the judge (a permission hook)", async () => {
   const p = new PermissionPolicy("agent");
-  const safe = async () => ({ safe: true, reason: "ls is read-only" });
-  const risky = async () => ({ safe: false, reason: "deletes" });
-  expect((await p.check(bash("ls"), safe)).decision).toBe("allow");
-  expect((await p.check(bash("rm -rf x"), risky)).decision).toBe("ask");
-  expect((await p.check({ tool: readTool, args: { path: "a" }, cwd }, risky)).decision).toBe("allow");
+  expect(await p.check(bash("ls"))).toEqual({ decision: "ask", reason: "mode agent: not judged", source: "mode" });
+  expect((await p.check({ tool: readTool, args: { path: "a" }, cwd })).decision).toBe("allow");
+  expect((await p.check({ tool: readTool, args: { path: "/etc/passwd" }, cwd })).decision).toBe("ask");
 });
 
 test("a tool with permissionsAs is judged by that tool's rules too, plus its own", async () => {

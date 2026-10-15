@@ -261,6 +261,7 @@ A plugin of the same name in `~/.sasacode/plugins` or the project is loaded inst
 | `web-fetch` | The `web_fetch` tool: fetches a URL as text |
 | `browsr` | Web search (`search`) and reading pages (`open`) through [browsr-4-agent](https://github.com/sasanokusa/browsr-4-agent); started automatically when `browsr-agent` is on PATH |
 | `permission-presets` | Rule presets (`guard`, `read-only-shell`, `tests`) |
+| `agent-judge` | The `agent` mode's judge: a model (`judgeModel`, else the current one) decides the calls the mode would ask about. Never loosens a rule. Disabled, `agent` mode asks |
 | `openai-codex` | ChatGPT-plan models (`openai-codex/…`) with the credentials from `sasacode login` |
 | `usage` | `/usage`: this run's usage, totals for today, the last 7 and 30 days and all time, and what the ChatGPT plan has left (5-hour and weekly windows, time to reset). `/usage graph` draws daily use like GitHub's contributions graph, `/usage history [days]` lists days, `/usage models` totals by model, `/usage plan` shows only the plan. Read from the session logs in `~/.sasacode/sessions` (including subagents, compaction summaries, the agent-mode judge and replies discarded for a retry; logs from earlier versions do not have them) |
 | `goal` | The session's goal. `/goal <goal>` sets it; `done` / `pause` / `resume` / `clear` change it. Ask "make this the goal" and the model sets one with the `set_goal` tool, summarized from the conversation. An active goal is shown in the system prompt and the footer |

@@ -41,8 +41,6 @@ export interface AgentOptions {
   getApiKey?: (provider: string) => Promise<string | undefined>;
   /** Turns "<provider>/<model>" into ModelInfo, for subagents and complete() with another model. */
   resolveModel?: (spec: string) => ModelInfo;
-  /** "agent" mode: the "<provider>/<model>" that judges calls (default: the current model). */
-  judgeModel?: string;
   session?: SessionFile;
   hooks?: HookRunner;
   toolSearch?: ToolSearchConfig;
@@ -510,7 +508,6 @@ export class Agent {
       events: this.events,
       permissions: this.permissions,
       approve: this.approve,
-      judge: (c) => this.judge(c),
       session: this.session,
       findTool: (n) => this.findTool(n),
       allTools: () => [...this.getTools(), this.searchTool],
@@ -591,25 +588,5 @@ export class Agent {
   private resolve(spec: string): ModelInfo {
     if (!this.opts.resolveModel) throw new Error("model resolution is not available");
     return this.opts.resolveModel(spec);
-  }
-
-  /** "agent" permission mode: ask the current model whether a call is safe. */
-  private async judge(c: PermissionCheck): Promise<{ safe: boolean; reason: string }> {
-    const question = `A coding agent working in ${c.cwd} wants to run this tool call:
-tool: ${c.tool.name}
-arguments: ${JSON.stringify(c.args)}
-
-Is it safe to run without asking the user? Safe means read-only or confined to the working directory, reversible, and not touching credentials, the network in a harmful way, or system settings.
-Answer with one line of JSON: {"safe": true|false, "reason": "<short reason>"}`;
-    const text = await this.complete({
-      model: this.opts.judgeModel,
-      system: "You review tool calls for safety.",
-      maxTokens: 2048,
-      messages: [{ role: "user", timestamp: Date.now(), content: [{ type: "text", text: question }] }],
-    });
-    const m = /\{[\s\S]*\}/.exec(text);
-    if (!m) throw new Error("judge gave no verdict");
-    const v = JSON.parse(m[0]);
-    return { safe: v.safe === true, reason: String(v.reason ?? "") };
   }
 }

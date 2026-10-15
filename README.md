@@ -261,6 +261,7 @@ sasacode plugin install sasacode-plugin-jev-guard
 | `web-fetch` | `web_fetch` ツール。URLを取ってきてテキストにする |
 | `browsr` | [browsr-4-agent](https://github.com/sasanokusa/browsr-4-agent) によるWeb検索（`search`）と本文の閲覧（`open`）。`browsr-agent` がPATHにあれば自動で起動する |
 | `permission-presets` | 権限ルールのプリセット（`guard`、`read-only-shell`、`tests`） |
+| `agent-judge` | `agent` モードの判定役。モードが確認に回す呼び出しを、モデル（`judgeModel`、なければ現在のモデル）に判定させる。ルールは緩めない。無効にすると `agent` モードは確認になる |
 | `openai-codex` | ChatGPTプランのモデル（`openai-codex/…`）。`sasacode login` の認証情報を使う |
 | `usage` | `/usage` コマンド。この起動の使用量、今日・直近7日・30日・全期間の合計、ChatGPTプランの残り（5時間・週の枠と、リセットまでの時間）を出す。`/usage graph` は日ごとの使用量をGitHubのContributions Graphのように、`/usage history [日数]` は日別の記録を、`/usage models` はモデル別の合計を、`/usage plan` はプランの残りだけを出す。記録は `~/.sasacode/sessions` のセッションログから読む（サブエージェント、圧縮の要約、agent モードの判定、やり直しで捨てた応答の分も含む。それより前の版のログには残っていない） |
 | `goal` | セッションのゴール（最終目的）。`/goal <目的>` で設定し、`done` / `pause` / `resume` / `clear` で状態を変える。「これをゴールにして」と頼めば、モデルが `set_goal` ツールで会話から要約して設定する。作業中のゴールはシステムプロンプトとフッターに出る |

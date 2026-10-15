@@ -101,6 +101,8 @@ export async function setup(opts: SetupOptions): Promise<Harness> {
     if (statSync(home).mode & 0o077) chmodSync(home, 0o700);
   } catch {}
 
+  // Resolved now so a typo fails at startup, not at the first judged call.
+  if (config.judgeModel) resolve(config.judgeModel);
   const agent = new Agent({
     model: resolve(opts.model ?? config.model ?? defaultModel(providers, !config.plugins?.disabled?.includes("openai-codex"))),
     cwd: opts.cwd,
@@ -109,8 +111,6 @@ export async function setup(opts: SetupOptions): Promise<Harness> {
     permissions: new PermissionPolicy(mode, config.permissions),
     getApiKey: (p) => resolveApiKey(p, providers[p]),
     resolveModel: resolve,
-    // Resolved now so a typo fails at startup, not at the first judged call.
-    judgeModel: config.judgeModel && (resolve(config.judgeModel), config.judgeModel),
     maxTurns: opts.maxTurns ?? config.maxTurns ?? DEFAULT_MAX_TURNS,
     maxRetries: config.maxRetries,
     toolSearch: config.toolSearch,
@@ -127,7 +127,9 @@ export async function setup(opts: SetupOptions): Promise<Harness> {
     lang: currentLang(),
     agent,
     cwd: opts.cwd,
-    settings: (name) => config.plugins?.settings?.[name] ?? {},
+    // judgeModel is the agent-judge plugin's model.
+    settings: (name) =>
+      name === "agent-judge" && config.judgeModel ? { model: config.judgeModel, ...config.plugins?.settings?.[name] } : (config.plugins?.settings?.[name] ?? {}),
     disabledTools: config.tools?.disabled,
     registerProvider(name, cfg, impl) {
       providers[name] = cfg;

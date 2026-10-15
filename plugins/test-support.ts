@@ -12,7 +12,7 @@ export async function loadPlugin(name: string, plugin: Plugin, cwd: string, sett
   return { agent, host, notices, context, async invoke(name: string, input: Record<string, unknown>, signal = context.signal) {
     let result!: ToolResult;
     await executeTools({ cwd, hooks: agent.hooks, events: agent.events, permissions: agent.permissions, approve: agent.approve,
-      judge: async () => ({ safe: false, reason: "test" }), findTool: (n) => agent.getTools().find((t) => t.name === n), allTools: () => agent.getTools() },
+      findTool: (n) => agent.getTools().find((t) => t.name === n), allTools: () => agent.getTools() },
       [{ type: "tool_call", id: "test-parent", name, input }], { truncated: false, signal, repairs: new Map(), onResult: () => {}, onToolResult: (r) => { result = r; } });
     return result;
   }, tool: (name: string) => {

@@ -17,7 +17,7 @@ const makeTool = (name: string, execute: ToolDefinition["execute"]): ToolDefinit
 function setup(tools: ToolDefinition[], policy = new PermissionPolicy("auto"), agent?: string) {
   const events: AgentEvent[] = [];
   const ctx: ToolRunContext = { cwd, hooks: new HookRunner({ agent }), events: new EventBus(), permissions: policy,
-    judge: async () => ({ safe: false, reason: "test" }), findTool: (name) => tools.find((t) => t.name === name), allTools: () => tools };
+    findTool: (name) => tools.find((t) => t.name === name), allTools: () => tools };
   ctx.events.on((event) => events.push(event));
   return { ctx, events, async run(name = "wrapper", input: Record<string, unknown> = {}, signal = new AbortController().signal) {
     let output!: ToolResult;

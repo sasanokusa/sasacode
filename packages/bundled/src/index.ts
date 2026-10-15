@@ -1,4 +1,5 @@
 import type { Plugin } from "@sasacode/plugin-api";
+import agentJudge from "./agent-judge.ts";
 import agentsMd from "./agents-md.ts";
 import autoReconnect from "./auto-reconnect.ts";
 import backgroundSessions from "./background-sessions.ts";
@@ -39,6 +40,7 @@ export const bundledPlugins: Record<string, Plugin> = {
   todo,
   "web-fetch": webFetch,
   "permission-presets": permissionPresets,
+  "agent-judge": agentJudge,
   browsr,
   "openai-codex": openaiCodex,
   usage,

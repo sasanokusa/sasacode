@@ -5,7 +5,7 @@ import type { ToolDefinition, ToolResult } from "@sasacode/plugin-api";
 import type { ApprovalAnswer, ApprovalRequest } from "./agent.ts";
 import type { AgentEvent, EventBus } from "./events.ts";
 import type { HookRunner } from "./hooks.ts";
-import { type Decision, type Judge, type PermissionCheck, PermissionPolicy, type Verdict } from "./permission.ts";
+import { type Decision, type PermissionCheck, PermissionPolicy, type Verdict } from "./permission.ts";
 import type { SessionFile } from "./session.ts";
 import { validate } from "./validate.ts";
 
@@ -15,7 +15,6 @@ export interface ToolRunContext {
   events: EventBus<AgentEvent>;
   permissions: PermissionPolicy;
   approve?: (req: ApprovalRequest) => Promise<ApprovalAnswer>;
-  judge: Judge;
   session?: SessionFile;
   findTool(name: string): ToolDefinition<any> | undefined;
   /** Every tool the model could call, deferred ones included (repair candidates). */
@@ -187,7 +186,7 @@ type Current = Omit<Verdict, "source"> & { source: Verdict["source"] | "plugin" 
 /**
  * A tool_call plugin's decision replaces the permission mode's default, but never the user's
  * explicit deny/ask rules: the stricter of the two wins. Then permission hooks may change the
- * verdict within limits (see lowestFor), and an agent-mode call nobody decided goes to the judge.
+ * verdict within limits (see lowestFor).
  */
 async function decide(ctx: ToolRunContext, check: PermissionCheck, call: ToolCall, forced?: { decision: Decision; reason: string }): Promise<Current> {
   const policy = await ctx.permissions.check(check);
@@ -204,7 +203,6 @@ async function decide(ctx: ToolRunContext, check: PermissionCheck, call: ToolCal
       ev.verdict = { decision, reason: v.reason, source };
     });
   }
-  if (v.needsJudge) v = await ctx.permissions.judged(check, ctx.judge);
   return v;
 }
 

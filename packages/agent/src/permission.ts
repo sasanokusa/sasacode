@@ -4,7 +4,7 @@ import type { ToolDefinition } from "@sasacode/plugin-api";
 
 /**
  * auto    — allow everything
- * agent   — the model judges risk; safe calls run, others ask the user
+ * agent   — reads inside the working directory run; the agent-judge plugin has a model judge the rest
  * ask     — ask for every call, reads included
  * edits   — read/write/edit inside the working directory run, everything else asks (default)
  */
@@ -42,12 +42,7 @@ export interface Verdict {
    * "mode": the permission mode's default.
    */
   source: "rule" | "soft" | "mode";
-  /** Agent mode, checked without a judge: the model still has to judge this call (see judged()). */
-  needsJudge?: boolean;
 }
-
-/** Asks the model whether a call is safe. Used by the "agent" mode. */
-export type Judge = (check: PermissionCheck) => Promise<{ safe: boolean; reason: string }>;
 
 interface ParsedRule {
   tool: RegExp;
@@ -68,8 +63,7 @@ export class PermissionPolicy {
     for (const d of ["allow", "ask", "deny", "softDeny"] as const) for (const r of rules[d] ?? []) this.rules[d].push(parseRule(r));
   }
 
-  /** Without a judge, an agent-mode call comes back as "ask" with `needsJudge` set. */
-  async check(c: PermissionCheck, judge?: Judge): Promise<Verdict> {
+  async check(c: PermissionCheck): Promise<Verdict> {
     const denied = this.rules.deny.find((r) => ruleMatches(r, c));
     if (denied) return { decision: "deny", reason: `rule deny: ${denied.source}`, source: "rule" };
     const soft = this.rules.softDeny.find((r) => ruleMatches(r, c));
@@ -80,15 +74,10 @@ export class PermissionPolicy {
     const unclear = pathsOf(c).find((p) => tryRealPath(p) === undefined);
     if (unclear) return { decision: "ask", reason: `cannot resolve ${unclear}`, source: "rule" };
     if (allowedByRules(this.rules.allow, c)) return { decision: "allow", reason: "allow rule", source: "rule" };
-    return { ...(await this.modeDecision(c, judge)), source: "mode" };
+    return { ...this.modeDecision(c), source: "mode" };
   }
 
-  /** The agent-mode judgement that check() left open (`needsJudge`). */
-  async judged(c: PermissionCheck, judge: Judge): Promise<Verdict> {
-    return { ...(await askJudge(c, judge)), source: "mode" };
-  }
-
-  private async modeDecision(c: PermissionCheck, judge?: Judge): Promise<Omit<Verdict, "source">> {
+  private modeDecision(c: PermissionCheck): Omit<Verdict, "source"> {
     // Through a symlink, a path inside the project can point anywhere: judge where it really goes.
     const insideCwd = pathsOf(c).every((p) => isInside(tryRealPath(p) ?? p, tryRealPath(c.cwd) ?? c.cwd));
     const hasPaths = !!c.tool.paths;
@@ -101,11 +90,10 @@ export class PermissionPolicy {
         if ((c.tool.kind === "read" || c.tool.kind === "edit") && hasPaths && insideCwd)
           return { decision: "allow", reason: "mode edits: inside working directory" };
         return { decision: "ask", reason: "mode edits" };
-      case "agent": {
+      case "agent":
         if (c.tool.kind === "read" && hasPaths && insideCwd) return { decision: "allow", reason: "read inside working directory" };
-        if (!judge) return { decision: "ask", reason: "mode agent: not judged yet", needsJudge: true };
-        return askJudge(c, judge);
-      }
+        // The model's judgement is a permission hook (the bundled agent-judge plugin).
+        return { decision: "ask", reason: "mode agent: not judged" };
     }
   }
 
@@ -125,15 +113,6 @@ export class PermissionPolicy {
   /** rulesFor, for display. */
   static ruleFor(c: PermissionCheck): string {
     return PermissionPolicy.rulesFor(c).join(", ");
-  }
-}
-
-async function askJudge(c: PermissionCheck, judge: Judge): Promise<Omit<Verdict, "source">> {
-  try {
-    const j = await judge(c);
-    return { decision: j.safe ? "allow" : "ask", reason: `agent judged ${j.safe ? "safe" : "risky"}: ${j.reason}` };
-  } catch (e) {
-    return { decision: "ask", reason: `judge failed: ${(e as Error).message}` };
   }
 }
 
