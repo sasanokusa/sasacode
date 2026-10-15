@@ -7,7 +7,7 @@ import { type AssistantContent, type AssistantMessage, emptyUsage, type Message,
 import { buildSystemPrompt } from "../../agent/src/system-prompt.ts";
 import { replayProvider } from "@sasacode/testing";
 import builtinTools, { bashTool } from "@sasacode/tools";
-import { agentsFiles, bundledPlugins, htmlToText, splitPoint } from "../src/index.ts";
+import { agentsFiles, bundledPlugins, htmlToText, readCapped, splitPoint } from "../src/index.ts";
 
 const root = mkdtempSync(join(tmpdir(), "sasacode-bundled-"));
 afterAll(() => rmSync(root, { recursive: true, force: true }));
@@ -166,6 +166,14 @@ test("permission presets: guard denies destructive commands even in auto mode; r
   agent.permissions.mode = "edits";
   expect((await bash("git status && rg foo")).decision).toBe("allow");
   expect((await bash("npm install")).decision).toBe("ask");
+});
+
+test("web-fetch: a document that ends at the read limit is not reported as cut", async () => {
+  const body = (text: string) => new Response(text);
+  expect(await readCapped(body("abc"), 4)).toEqual({ text: "abc", cut: false });
+  expect(await readCapped(body("abcd"), 4)).toEqual({ text: "abcd", cut: false }); // exactly the limit
+  expect(await readCapped(body("abcde"), 4)).toEqual({ text: "abcd", cut: true });
+  expect(await readCapped(new Response(null, { status: 204 }), 4)).toEqual({ text: "", cut: false });
 });
 
 test("web-fetch: html to text, paging, and non-http URLs rejected", async () => {

@@ -18,3 +18,6 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun run typecheck
       - run: bun test
+      # The repository's own checks (core line budget, the dependency record, the READMEs staying in
+      # step with the CLI) run inside `bun test` too; this prints them next to the core's headroom.
+      - run: bun run improve
