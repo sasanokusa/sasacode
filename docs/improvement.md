@@ -20,7 +20,7 @@
 | コアの小ささ | その機能はコアに要るか。プラグインで足りないか | `bun run improve` の行数（上限4,000行、超えるとテストが落ちる）。コアに行を足すときは、同程度を削るか、置き場所を変える |
 | テスト | その振る舞いはテストで守られているか。実機でしか見ていない経路はないか | `packages/*/test`。録画再生でループ・プラグイン・権限をモデルなしでE2Eにできる |
 | 約束の検査 | 要求やREADMEが約束しているのに、誰も検査していないことはないか | `scripts/checks.ts`。新しい約束は、先に検査を書いてからREADMEに書く |
-| ドキュメント | README（日英）とdocsは実装と合っているか。書いてあるのに辿れないdocはないか | `bun run improve` の `readme-cli` / `readme-plugins` / `docs-links` / `docs-reachable` |
+| ドキュメント | README（日英）とdocsは実装と合っているか。書いてあるのに辿れないdocはないか | `bun run improve` の `readme-cli` / `readme-plugins` / `readme-shape` / `api-version` / `docs-links` / `docs-reachable` |
 | 開発体験 | よく使う手順は1コマンドで済むか。失敗したときの出力から直し方が分かるか | `bun run improve`、`bun run typecheck`、`bun test`、`bun run build` |
 | 安全性 | 権限の判定、シークレット、プロジェクトの信頼に穴はないか | `packages/agent/test/permission*.test.ts`、`bash` / `read` の実機、[docs/requirements.md](requirements.md) の非機能要件 |
 | 可搬性 | macOS / Linux / Windows の差で壊れるところはないか | CI（ubuntu / windows）、Git Bash まわりのテスト、パスの正規化 |
@@ -37,6 +37,7 @@
 | `readme-cli` | CLIのオプションは両方のREADMEに書いてある |
 | `readme-plugins` | 同梱プラグインの一覧とREADMEの表が一致する |
 | `readme-shape` | 日英のREADMEは同じ形（見出しの階層とコードブロックの並び）を保つ |
+| `api-version` | プラグインAPIの版は、コード・docs/plugins.md・両READMEで一致する |
 | `docs-links` | markdownの相対リンクが解決する |
 | `docs-reachable` | `docs/*.md` は両方のREADMEから辿れる |
 
@@ -44,7 +45,7 @@
 
 | 日付 | 何を | どう確かめたか | コミット |
 | --- | --- | --- | --- |
-| 2026-10-15 | 約束を検査にする：コアの行数上限、実行時依存の記録、READMEのオプションと同梱プラグイン、相対リンク、docsの到達性（`scripts/checks.ts`） | このリポジトリで6つの検査が通ること、壊れた入力を渡すと落ちることを `scripts/checks.test.ts` のfixtureで確認。`bun test` に組み込まれ、414件が通る | 693fe60 |
+| 2026-10-15 | 約束を検査にする：コアの行数上限、実行時依存の記録、READMEのオプションと同梱プラグイン、相対リンク、docsの到達性（`scripts/checks.ts`） | このリポジトリで6つの検査が通ること、壊れた入力を渡すと落ちることを `scripts/checks.test.ts` のfixtureで確認。`bun test` に組み込まれ、当時の全414件が通る | 693fe60 |
 | 2026-10-15 | 検査が見つけたずれの修正：両READMEに `-h, --help` / `-v, --version` の行、`docs/api-compatibility.md` と `docs/benchmarks.md` への導線、コアの行数の書き方を検査に合わせる | 修正前に落ちていた4件が消えること。日英のREADMEがどちらも363行で揃うこと | 4d55e28 |
 | 2026-10-15 | `bun run improve` で1周の計測を1コマンドに（検査・コアの行数・規模・次の一手） | 検査が通るときに終了コード0と余白（4,000行まで残り9行）を出し、READMEにずれを作ると1になること | 8c1290b |
 | 2026-10-15 | 改善ループをハーネス自身が回せるようにする（`.sasacode/skills/harness-improve`、この文書） | CLIがスキルの一覧を作るのと同じ `discoverSkills` が name と description を読めること。この文書が両READMEから辿れること（`docs-reachable`） | ca3e054 |
