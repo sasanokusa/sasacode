@@ -4,11 +4,14 @@ import { expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { PLUGIN_API_VERSION } from "../packages/plugin-api/src/index.ts";
 import {
   brokenLinks,
   cliOptions,
+  compareVersions,
   coreLines,
   countLines,
+  documentedApiVersion,
   readmeShapeProblem,
   readmeStructure,
   documentedDependencies,
@@ -106,6 +109,23 @@ test("a README that drifts shape from the other is reported", () => {
   expect(readmeShapeProblem(fixture({ ...same, "README.en.md": "# A\n### B\n```sh\ny\n```\n" }))).toEqual([
     "the two READMEs part ways at block 2: h2 vs h3",
   ]);
+});
+
+test("the API versions are compared as numbers, not as strings", () => {
+  expect(compareVersions("1.10.0", "1.2.0")).toBeGreaterThan(0);
+  expect(compareVersions("1.9.0", "1.13.0")).toBeLessThan(0);
+  expect(documentedApiVersion(fixture({ "docs/plugins.md": "| 1.2.0 | old |\n| 1.10.0 | newer |\n| 1.9.0 | in between |\n" }))).toBe("1.10.0");
+  expect(documentedApiVersion(fixture({ "docs/plugins.md": "no table here\n" }))).toBe("");
+});
+
+test("a README that never states the API version is reported", () => {
+  const root = fixture({
+    "docs/plugins.md": `| ${PLUGIN_API_VERSION} | now |\n`,
+    "README.md": `public API (now ${PLUGIN_API_VERSION})`,
+    "README.en.md": "the public API (now 1.0.0)",
+  });
+  const problems = runChecks(root).find((check) => check.name === "api-version")!.problems;
+  expect(problems).toEqual([`README.en.md never states the plugin API version ${PLUGIN_API_VERSION}`]);
 });
 
 test("a broken relative link and an unlinked doc are reported", () => {

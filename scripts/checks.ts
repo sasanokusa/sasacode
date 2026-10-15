@@ -6,6 +6,7 @@
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { bundledPlugins } from "../packages/bundled/src/index.ts";
+import { PLUGIN_API_VERSION } from "../packages/plugin-api/src/index.ts";
 
 export const ROOT = resolve(import.meta.dir, "..");
 
@@ -121,6 +122,21 @@ export function tableNames(text: string, heading: string): string[] {
     .map((m) => m[1]!.trim())
     .filter((cell) => cell.length > 0 && !/^-+$/.test(cell) && cell !== "名前" && cell !== "Name")
     .flatMap((cell) => cell.split("/").map((part) => part.replace(/`/g, "").trim()));
+}
+
+/** Newest of two `1.2.3` strings: `1.10.0` beats `1.2.0`, which string order gets wrong. */
+export function compareVersions(a: string, b: string): number {
+  const parts = (version: string) => version.split(".").map((n) => Number.parseInt(n, 10));
+  const [x, y] = [parts(a), parts(b)];
+  return x[0]! - y[0]! || x[1]! - y[1]! || x[2]! - y[2]!;
+}
+
+/** The newest version in the table of API versions in docs/plugins.md. */
+export function documentedApiVersion(root = ROOT): string {
+  const path = join(root, "docs", "plugins.md");
+  if (!existsSync(path)) return "";
+  const versions = [...read(path).matchAll(/^\|\s*(\d+\.\d+\.\d+)\s*\|/gm)].map((m) => m[1]!);
+  return versions.sort(compareVersions).at(-1) ?? "";
 }
 
 /** The skeleton of a README: heading levels and opening code fences, in order. */
@@ -239,6 +255,16 @@ export function runChecks(root = ROOT): CheckResult[] {
       name: "readme-shape",
       promise: "the two READMEs keep the same shape, heading by heading and block by block",
       problems: readmeShapeProblem(root),
+    },
+    {
+      name: "api-version",
+      promise: `the plugin API version (${PLUGIN_API_VERSION}) is the newest one in docs/plugins.md and is stated in both READMEs`,
+      problems: [
+        ...(documentedApiVersion(root) === PLUGIN_API_VERSION
+          ? []
+          : [`the newest API version in docs/plugins.md is ${documentedApiVersion(root) || "none"}, the code says ${PLUGIN_API_VERSION}`]),
+        ...readmes.filter(({ text }) => !text.includes(PLUGIN_API_VERSION)).map(({ name }) => `${name} never states the plugin API version ${PLUGIN_API_VERSION}`),
+      ],
     },
     {
       name: "docs-links",
