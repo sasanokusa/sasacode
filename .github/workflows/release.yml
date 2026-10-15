@@ -147,3 +147,19 @@ jobs:
         run: |
           cd dist
           gh release create "$GITHUB_REF_NAME" --generate-notes *.tar.gz *.zip SHA256SUMS install.sh install.ps1
+      # Tell the Discord channel (secret DISCORD_WEBHOOK_URL; skipped without it). The summary is the
+      # tag's message (`git tag -a vX -m "…"`), else the release commit's subject. A failed post
+      # never fails the release.
+      - name: Announce on Discord
+        continue-on-error: true
+        env:
+          WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: |
+          [ -n "$WEBHOOK" ] || { echo "no DISCORD_WEBHOOK_URL"; exit 0; }
+          git fetch --quiet --force origin "refs/tags/$GITHUB_REF_NAME:refs/tags/$GITHUB_REF_NAME"
+          summary=$(git tag -l --format='%(contents)' "$GITHUB_REF_NAME" | sed '/^-----BEGIN PGP/,$d' | grep -v '^Co-Authored-By:')
+          [ -n "$summary" ] || summary=$(git log -1 --format=%s "$GITHUB_REF_NAME")
+          url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/tag/$GITHUB_REF_NAME"
+          text=$(printf '🎋 **sasacode %s** が出ました！\n\n%s\n\n更新: `sasacode update`\n%s' "$GITHUB_REF_NAME" "$summary" "$url")
+          jq -n --arg c "${text:0:1990}" '{username: "sasacode", content: $c}' |
+            curl -fsS -X POST -H "Content-Type: application/json" --data @- "$WEBHOOK"
