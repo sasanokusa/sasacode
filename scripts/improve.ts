@@ -9,7 +9,7 @@ const checks = runChecks();
 const lines = coreLines();
 const failed = checks.filter((check) => check.problems.length > 0);
 
-/** `  3991 / 4000  ai 1136 · agent 2019 · plugin-api 406 · tools 430`. */
+/** `3991 / 4000 (9 left)   ai 1136 · agent 2019 · plugin-api 406 · tools 430`. */
 function coreLine() {
   const perPackage = Object.entries(lines.byPackage)
     .map(([name, count]) => `${name} ${count}`)
