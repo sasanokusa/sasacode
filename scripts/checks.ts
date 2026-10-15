@@ -110,7 +110,7 @@ export function undocumentedOptions(text: string, options: CliOption[]): string[
     .map((option) => `--${option.name}`);
 }
 
-/** Plugin names in the table under `heading`, reading `` `a` / `b` `` rows as two names. */
+/** Table names in `text` under `heading`, reading `` `a` / `b` `` rows as two names. */
 export function tableNames(text: string, heading: string): string[] {
   const at = text.indexOf(heading);
   if (at < 0) return [];
@@ -121,6 +121,39 @@ export function tableNames(text: string, heading: string): string[] {
     .map((m) => m[1]!.trim())
     .filter((cell) => cell.length > 0 && !/^-+$/.test(cell) && cell !== "名前" && cell !== "Name")
     .flatMap((cell) => cell.split("/").map((part) => part.replace(/`/g, "").trim()));
+}
+
+/** The skeleton of a README: heading levels and opening code fences, in order. */
+export function readmeStructure(text: string): string[] {
+  const out: string[] = [];
+  let open = false;
+  for (const line of text.split("\n")) {
+    const fence = /^```(\S*)\s*$/.exec(line);
+    if (fence) {
+      if (!open) out.push(`code:${fence[1] ?? ""}`);
+      open = !open;
+      continue;
+    }
+    if (open) continue; // a heading-looking line inside a block is an example, not a heading
+    const heading = /^(#{1,6}) /.exec(line);
+    if (heading) out.push(`h${heading[1]!.length}`);
+  }
+  return out;
+}
+
+/** Where the two READMEs stop having the same shape, if they do. */
+export function readmeShapeProblem(root = ROOT): string[] {
+  const texts = READMES.map((name) => {
+    const path = join(root, name);
+    return existsSync(path) ? read(path) : undefined;
+  });
+  const [ja, en] = texts;
+  if (!ja || !en) return [];
+  const a = readmeStructure(ja);
+  const b = readmeStructure(en);
+  if (a.length !== b.length) return [`README.md has ${a.length} headings and code blocks, README.en.md has ${b.length}`];
+  const at = a.findIndex((block, i) => block !== b[i]);
+  return at < 0 ? [] : [`the two READMEs part ways at block ${at + 1}: ${a[at]} vs ${b[at]}`];
 }
 
 /** Relative links in the markdown that point at nothing. */
@@ -201,6 +234,11 @@ export function runChecks(root = ROOT): CheckResult[] {
             .map((plugin) => `${name} lists ${plugin}, which ships with nobody`),
         ];
       }),
+    },
+    {
+      name: "readme-shape",
+      promise: "the two READMEs keep the same shape, heading by heading and block by block",
+      problems: readmeShapeProblem(root),
     },
     {
       name: "docs-links",

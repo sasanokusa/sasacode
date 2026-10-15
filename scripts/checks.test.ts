@@ -9,6 +9,8 @@ import {
   cliOptions,
   coreLines,
   countLines,
+  readmeShapeProblem,
+  readmeStructure,
   documentedDependencies,
   runtimeDependencies,
   runChecks,
@@ -88,6 +90,22 @@ const { values } = parseArgs({ options: {
 test("the bundled-plugin table reads names, including `` `a` / `b` `` rows", () => {
   const text = ["### Bundled plugins", "", "| Name | What |", "| --- | --- |", "| `todo` | plan |", "| `skills` / `mcp` | adapters |", "", "### MCP", "| `other` | x |"].join("\n");
   expect(tableNames(text, "### Bundled plugins")).toEqual(["todo", "skills", "mcp"]);
+});
+
+test("readmeStructure sees headings and opening fences, and ignores both inside a block", () => {
+  const text = ["# Title", "## One", "```bash", "# not a heading", "```", "### Two", "```", "```", "#### Three"].join("\n");
+  expect(readmeStructure(text)).toEqual(["h1", "h2", "code:bash", "h3", "code:", "h4"]);
+});
+
+test("a README that drifts shape from the other is reported", () => {
+  const same = { "README.md": "# a\n## b\n```sh\nx\n```\n", "README.en.md": "# A\n## B\n```sh\ny\n```\n" };
+  expect(readmeShapeProblem(fixture(same))).toEqual([]);
+  expect(readmeShapeProblem(fixture({ ...same, "README.en.md": "# A\n```sh\ny\n```\n" }))).toEqual([
+    "README.md has 3 headings and code blocks, README.en.md has 2",
+  ]);
+  expect(readmeShapeProblem(fixture({ ...same, "README.en.md": "# A\n### B\n```sh\ny\n```\n" }))).toEqual([
+    "the two READMEs part ways at block 2: h2 vs h3",
+  ]);
 });
 
 test("a broken relative link and an unlinked doc are reported", () => {
