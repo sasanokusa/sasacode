@@ -59,5 +59,6 @@
 - CIはubuntuとwindowsのみ。macOSはリリースのワークフローでしか起動していない
 - 日英のREADMEの本文の対応は目視。見出しとコードブロックの並びは検査しているが、段落や表の行が片方にしかないことは検査していない
 - `plugins/*` のREADMEと実装のずれは検査していない
+- `sasacode --help` の `plugin publish` の行は、`sasacode plugin` の使い方より短い（`--version` / `--api` / `--description` / `--otp` を出さない）。要約として意図したものか確かめてから直す
 - `npm/sasacode` のランチャーはテストがあるが、公開後の更新は手作業
 - 単一バイナリ（`bun run build`）での起動確認は手元とリリース時のみ
