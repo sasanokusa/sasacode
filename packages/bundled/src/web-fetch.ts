@@ -4,7 +4,8 @@ const DEFAULT_MAX = 50_000;
 /** Read at most this much of a response: a huge page must not fill memory. */
 const MAX_BYTES = 10_000_000;
 
-async function readCapped(res: Response, limit: number): Promise<{ text: string; cut: boolean }> {
+/** Read at most `limit` bytes of a response, saying whether the document went on past them. */
+export async function readCapped(res: Response, limit: number): Promise<{ text: string; cut: boolean }> {
   if (!res.body) return { text: "", cut: false };
   const reader = res.body.getReader();
   const chunks: Uint8Array[] = [];
@@ -15,8 +16,13 @@ async function readCapped(res: Response, limit: number): Promise<{ text: string;
     chunks.push(value);
     size += value.length;
   }
+  // Two ways the limit can be reached, and only one of them is a cut: a chunk that overran it took
+  // the rest of the document with it, while a document that ends exactly at the limit needs one
+  // more read to tell "it ended here" from "there is more" (the note in the tool would otherwise
+  // claim a 10 MB page was cut when it was read whole).
+  const cut = size > limit || (size === limit && !(await reader.read().then((r) => r.done, () => false)));
   await reader.cancel().catch(() => {});
-  return { text: new TextDecoder().decode(Buffer.concat(chunks).subarray(0, limit)), cut: size >= limit };
+  return { text: new TextDecoder().decode(Buffer.concat(chunks).subarray(0, limit)), cut };
 }
 
 const ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " " };

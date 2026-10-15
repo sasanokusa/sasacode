@@ -23,7 +23,7 @@ export { compact, splitPoint, transcript } from "./compaction.ts";
 export { PRESETS } from "./permission-presets.ts";
 export { detectRepetition } from "./repetition-guard.ts";
 export { closestName, editDistance, fitToSchema, repairJson } from "./tool-repair.ts";
-export { htmlToText } from "./web-fetch.ts";
+export { htmlToText, readCapped } from "./web-fetch.ts";
 export { byDay, graph, planLines, readRecords } from "./usage.ts";
 export { codexLogin, codexLogout, codexStatus, readCodexAuth } from "./openai-codex/index.ts";
 
