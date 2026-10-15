@@ -21,6 +21,7 @@
     "packages/*/src/**/*.ts",
     "packages/*/test/**/*.ts",
     "plugins/*/*.ts",
+    "scripts/**/*.ts",
     "bench/**/*.ts"
   ]
 }
