@@ -72,6 +72,7 @@ sasacode -r <id> -p "go on"          # continue a session by id (a conversation 
 | `sasacode plugin search\|install\|update\|remove\|list\|publish` | Find, install (npm or git URL), update and publish plugins ([Sharing](#sharing-plugins)) |
 | `sasacode endpoint add\|remove\|list` | Add your own server (the format is detected) |
 | `sasacode login [status\|logout]` | Sign in with a ChatGPT plan (for `openai-codex/…` models) |
+| `-h, --help` / `-v, --version` | Print the usage / the version |
 
 ### Headless control
 
@@ -340,6 +341,7 @@ Saved to `~/.sasacode/sessions/<working directory>-<hash>/<date>_<id>.jsonl`, on
 ```bash
 bun test            # all tests, including LLM-free end-to-end tests (replayed responses, a test MCP server)
 bun run typecheck
+bun run improve     # the improvement loop's signals (checks, core lines, repository size)
 bun run build       # dist/sasacode for this machine; --all for every target
 ```
 
@@ -356,4 +358,6 @@ bun run build       # dist/sasacode for this machine; --all for every target
 | `@sasacode/mcp` / `@sasacode/skills` / `@sasacode/bundled` | MCP and Skills adapters, bundled plugins |
 | `@sasacode/host` | What the TUI, the CLI and the bundled plugins share: the interface language (the translation tables) and the session index |
 
-The core (ai, agent, plugin-api, tools) is about 3,950 lines, with a ceiling of 4,000. Runtime dependencies and why they are there are in [docs/dependencies.md](docs/dependencies.md).
+The core (ai, agent, plugin-api, tools) has a ceiling of 4,000 lines: `bun test` fails above it, and `bun run improve` prints what it is now.
+
+Repository docs: [requirements](docs/requirements.md), [milestone checks](docs/milestones.md), [runtime dependencies](docs/dependencies.md), [plugin API](docs/plugins.md), [API compatibility](docs/api-compatibility.md), [benchmarks](docs/benchmarks.md) and [how the improvement loop runs](docs/improvement.md). Improvements are kept small and stacked one round at a time: the procedure, the lenses and the record of what was done are in [docs/improvement.md](docs/improvement.md).

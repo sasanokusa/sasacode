@@ -72,6 +72,7 @@ sasacode -r <id> -p "続き"            # セッション ID を指定して続�
 | `sasacode plugin search\|install\|update\|remove\|list\|publish` | プラグインを探す・入れる（npmかgit URL）・更新する・npmに公開する（[共有](#プラグインを共有する)） |
 | `sasacode endpoint add\|remove\|list` | 自前のサーバーの追加（形式は自動判別） |
 | `sasacode login [status\|logout]` | ChatGPTプランでログイン（`openai-codex/…` のモデル用） |
+| `-h, --help` / `-v, --version` | 使い方 / 版を出す |
 
 ### ヘッドレスの制御
 
@@ -340,6 +341,7 @@ sasacode plugin publish weather.ts --license MIT    # 1ファイルのプラグ�
 ```bash
 bun test            # LLM なしの E2E を含む全テスト（応答の再生と、テスト用の MCP サーバーを使う）
 bun run typecheck
+bun run improve     # 改善ループの信号（検査の合否、コアの行数、リポジトリの規模）
 bun run build       # dist/sasacode（このマシン向け）。--all で全ターゲット
 ```
 
@@ -356,4 +358,6 @@ bun run build       # dist/sasacode（このマシン向け）。--all で全タ
 | `@sasacode/mcp` / `@sasacode/skills` / `@sasacode/bundled` | MCPとSkillsのアダプタ、同梱プラグイン |
 | `@sasacode/host` | TUI・CLI・同梱プラグインが共有するもの：画面の言語（訳の表）とセッションの索引 |
 
-コア（ai・agent・plugin-api・tools）は約 3,950 行で、上限は 4,000 行。実行時に依存するパッケージとその理由は [docs/dependencies.md](docs/dependencies.md) にまとめている。
+コア（ai・agent・plugin-api・tools）の行数の上限は 4,000 行で、超えるとテストが落ちる。いまの行数は `bun run improve` が出す。
+
+リポジトリのドキュメント：[要件](docs/requirements.md)、[マイルストーンの検証](docs/milestones.md)、[実行時依存の記録](docs/dependencies.md)、[プラグインAPI](docs/plugins.md)、[API互換性の確認表](docs/api-compatibility.md)、[ベンチマーク](docs/benchmarks.md)、[改善の回し方](docs/improvement.md)。改善は1周ずつ小さく積む。手順と観点、これまでの記録は [docs/improvement.md](docs/improvement.md) にある。
