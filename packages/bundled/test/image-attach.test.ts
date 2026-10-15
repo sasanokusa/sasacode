@@ -136,7 +136,8 @@ test("a pasted clipboard image or dropped image stands in the input as [Image #n
   };
   const abs = join(cwd, "my dir", "a b.png");
   expect(await paste("")).toBe("[Image #1] "); // ⌘V of a screenshot, or ctrl+v
-  expect(await paste(` ${abs.replace(/ /g, "\\ ")} `)).toBe("[Image #2] "); // a drop
+  // A drop pastes `\ ` for a space, or on Windows the path in quotes.
+  expect(await paste(` ${process.platform === "win32" ? `"${abs}"` : abs.replace(/ /g, "\\ ")} `)).toBe("[Image #2] ");
   expect(await paste(`${join(cwd, "shot.png")} ${join(cwd, "shot.png")}`)).toBe("[Image #3] [Image #4] ");
   expect(await paste("just some text")).toBeUndefined();
   expect(await paste(`look at ${abs}`)).toBeUndefined(); // not only paths: left to the editor
