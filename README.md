@@ -53,7 +53,7 @@ ln -s "$PWD/packages/cli/src/main.ts" ~/.local/bin/sasacode
 sasacode                            # 対話モード（TUI）
 sasacode -p "テストを直して"           # ヘッドレス：答えを stdout に、進捗を stderr に
 sasacode -p "…" --output jsonl       # 全イベントを JSONL で
-sasacode -p "…" --output jsonl --control stdio   # 親プロセスが stdin で承認に答え、中断できる（[ヘッドレスの制御](#ヘッドレスの制御)）
+sasacode -p "…" --output jsonl --control stdio   # 親プロセスが stdin で承認に答え、メッセージを送り、中断できる（[ヘッドレスの制御](#ヘッドレスの制御)）
 echo "$LOG" | sasacode -p "原因は？"   # パイプした入力は -p の後ろに付く（5 秒何も来なければ読まない。--stdin で終わりまで待つ）
 sasacode -c                         # このディレクトリの直近のセッションを再開
 sasacode -r <id> -p "続き"            # セッション ID を指定して続ける（tmux がなくても会話を続けられる）

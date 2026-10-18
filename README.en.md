@@ -53,7 +53,7 @@ ln -s "$PWD/packages/cli/src/main.ts" ~/.local/bin/sasacode
 sasacode                            # interactive (TUI)
 sasacode -p "fix the tests"          # headless: the answer on stdout, progress on stderr
 sasacode -p "…" --output jsonl       # every event as JSONL
-sasacode -p "…" --output jsonl --control stdio   # a parent process answers approvals on stdin and can abort ([Headless control](#headless-control))
+sasacode -p "…" --output jsonl --control stdio   # a parent process answers approvals, sends messages on stdin and can abort ([Headless control](#headless-control))
 echo "$LOG" | sasacode -p "why?"     # piped input is appended to the -p prompt (skipped if nothing comes for 5 s; --stdin waits to the end)
 sasacode -c                         # resume the latest session in this directory
 sasacode -r <id> -p "go on"          # continue a session by id (a conversation without tmux)
@@ -65,7 +65,7 @@ sasacode -r <id> -p "go on"          # continue a session by id (a conversation 
 | `--permission <edits\|ask\|agent\|auto>` | Permission mode (default `edits`) |
 | `--thinking <off\|low\|medium\|high\|xhigh\|max>` | Reasoning effort |
 | `--max-turns <n>` | Limit on requests per run (default 200, 0 = no limit) |
-| `--control stdio` | With `-p --output jsonl`: a parent process answers approvals on stdin and can abort the run ([Headless control](#headless-control)) |
+| `--control stdio` | With `-p --output jsonl`: a parent process answers approvals, sends messages on stdin and can abort the run ([Headless control](#headless-control)) |
 | `--append-system-prompt-file <path>` | Add the file's text (UTF-8) to the system prompt, after the config's `instructions`. A file that cannot be read is an error; an empty file adds nothing. Works in the TUI too |
 | `-c` / `-r <id>` / `--no-session` | Resume / resume by id / do not save |
 | `--trust-project` | Trust the project without asking (for headless runs; see [Project trust](#project-trust)) |

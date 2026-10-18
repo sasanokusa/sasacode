@@ -751,7 +751,7 @@ sasacode plugin publish my-tool.ts --license MIT             <span class="c"># �
       <h2><span class="no">10</span>ヘッドレスと自動化</h2>
       <pre><code>sasacode -p "テストを直して"                         <span class="c"># 答えは stdout、進捗は stderr</span>
 sasacode -p "…" --output jsonl                      <span class="c"># 全イベントを1行ずつ JSON で</span>
-sasacode -p "…" --output jsonl --control stdio      <span class="c"># 親プロセスが stdin で承認に答え、中断できる</span>
+sasacode -p "…" --output jsonl --control stdio      <span class="c"># 親プロセスが stdin で承認に答え、メッセージを送り、中断できる</span>
 git diff | sasacode -p "このdiffをレビューして"          <span class="c"># パイプした入力は -p の後ろに付く</span>
 sasacode -p "…" --permission auto --trust-project   <span class="c"># CI など確認できない環境で</span></code></pre>
       <ul>
