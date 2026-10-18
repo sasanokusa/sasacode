@@ -65,7 +65,7 @@ sasacode -r <id> -p "続き"            # セッション ID を指定して続�
 | `--permission <edits\|ask\|agent\|auto>` | 権限モード（既定 `edits`） |
 | `--thinking <off\|low\|medium\|high\|xhigh\|max>` | 推論の深さ |
 | `--max-turns <n>` | 1回の実行のターン数の上限（既定 200、0 で無制限） |
-| `--control stdio` | `-p --output jsonl` と併用。親プロセスがstdinで承認に答え、実行を中断できる（[ヘッドレスの制御](#ヘッドレスの制御)） |
+| `--control stdio` | `-p --output jsonl` と併用。親プロセスがstdinで承認に答え、メッセージを送り、実行を中断できる（[ヘッドレスの制御](#ヘッドレスの制御)） |
 | `--append-system-prompt-file <path>` | ファイルの中身（UTF-8）を、設定の `instructions` の後ろにシステムプロンプトとして足す。読めないファイルはエラーで終わり、空のファイルは何も足さない。TUIでも使える |
 | `-c` / `-r <id>` / `--no-session` | 再開 / IDを指定して再開 / 保存しない |
 | `--trust-project` | プロジェクトを確認なしで信頼する（ヘッドレス向け。[プロジェクトの信頼](#プロジェクトの信頼)） |
@@ -76,7 +76,7 @@ sasacode -r <id> -p "続き"            # セッション ID を指定して続�
 
 ### ヘッドレスの制御
 
-ほかのプログラムが `sasacode -p "…" --output jsonl` を子プロセスとして動かすときは、`--control stdio` を付けると、確認が必要な呼び出しにstdinで答えたり、実行を中断したりできる。`-p` と `--output jsonl` の両方が必要で、欠けているとエラーで終わる。stdinは制御に使うので、パイプした入力はプロンプトに付かない。
+ほかのプログラムが `sasacode -p "…" --output jsonl` を子プロセスとして動かすときは、`--control stdio` を付けると、確認が必要な呼び出しにstdinで答えたり、実行中のモデルにメッセージを送ったり、実行を中断したりできる。`-p` と `--output jsonl` の両方が必要で、欠けているとエラーで終わる。stdinは制御に使うので、パイプした入力はプロンプトに付かない。
 
 stdoutには、これまでのJSONLのイベントに混ざって、次の行が1件ずつ出る。
 
@@ -91,11 +91,13 @@ stdinは1行1件のJSON（JSON Lines）で読む。
 ```jsonc
 {"type":"approval","id":"approval-1","decision":"allow"}           // "allow" | "always" | "deny"
 {"type":"approval","id":"approval-1","decision":"deny","feedback":"理由"}
+{"type":"message","text":"テストも見て"}
 {"type":"abort"}
 ```
 
 - `approval_request` は、確認が必要な呼び出しごとに1行出る。呼び出しは答えが届くまで実行しない。`id` は答えに付ける。`callId` は会話の中のtool_callのid、`tool` と `args` は呼び出しの中身、`reason` は確認が必要な理由。
 - `approval` の `decision` は、`allow` が今回だけ許可、`always` が許可に加えて同じ呼び出しを許すルールの追加（TUIの「常に許可」と同じで、プロセスの終了まで有効）、`deny` が拒否。`feedback` は `deny` のときモデルに渡る。
+- `message` は、TUIで実行中に打った入力と同じで、モデルの次のターンに届く。実行中の作業に指示を足したり、方向を変えたりするのに使う。`text` は空でない文字列。
 - `abort` はCtrl+Cと同じで、実行を中断する（`agent_end` の `cause` は `aborted`、終了コードは1）。
 - 実行が中断されたとき、答えが届いていない要求には `approval_cancelled` を出す。そのidへの答えは `control_error` になる。
 - 読めない行（JSONでない、不明な `type`、不明な `id`、不正な値）は `control_error` を出して読み続ける。

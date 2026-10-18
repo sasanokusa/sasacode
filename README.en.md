@@ -76,7 +76,7 @@ sasacode -r <id> -p "go on"          # continue a session by id (a conversation 
 
 ### Headless control
 
-When another program runs `sasacode -p "…" --output jsonl` as a child process, `--control stdio` lets it answer the calls that need approval over stdin and abort the run. Both `-p` and `--output jsonl` are required; without them sasacode prints an error and exits non-zero. stdin is the control channel, so piped input is not appended to the prompt.
+When another program runs `sasacode -p "…" --output jsonl` as a child process, `--control stdio` lets it answer the calls that need approval over stdin, send the model messages while it runs, and abort the run. Both `-p` and `--output jsonl` are required; without them sasacode prints an error and exits non-zero. stdin is the control channel, so piped input is not appended to the prompt.
 
 On stdout, these lines appear among the usual JSONL events, one per line.
 
@@ -91,11 +91,13 @@ stdin is read as JSON Lines.
 ```jsonc
 {"type":"approval","id":"approval-1","decision":"allow"}           // "allow" | "always" | "deny"
 {"type":"approval","id":"approval-1","decision":"deny","feedback":"why"}
+{"type":"message","text":"check the tests too"}
 {"type":"abort"}
 ```
 
 - `approval_request` is written once for each call that needs approval, and the call does not run until an answer arrives. `id` goes back in the answer. `callId` is the id of the tool call in the conversation, `tool` and `args` are the call itself, and `reason` is why it needs approval.
 - In `approval`, `decision` is `allow` (this once), `always` (allow, and add a rule that allows the same call, as "always allow" does in the TUI, until the process exits) or `deny`. `feedback` reaches the model with a `deny`.
+- `message` works like input typed while the TUI is busy: the model sees it at its next turn. Use it to add to or redirect the work in progress. `text` must be a non-empty string.
 - `abort` is the same as Ctrl+C: the run is interrupted (`cause` in `agent_end` is `aborted`, the exit code 1).
 - When the run is interrupted, each request still waiting gets an `approval_cancelled`; an answer to that id then draws a `control_error`.
 - A line that cannot be used (not JSON, an unknown `type`, an unknown `id`, a bad value) draws a `control_error`, and reading goes on.

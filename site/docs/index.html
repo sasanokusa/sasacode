@@ -774,12 +774,13 @@ sasacode -p "…" --permission auto --trust-project   <span class="c"># CI な�
         <tr><td><code>context_limit</code> / <code>error</code> / <code>plugin_error</code></td><td>コンテキストの上限 / エラー / プラグインのエラー</td></tr>
       </table></div>
       <h3 id="control">ヘッドレスの制御（<code>--control stdio</code>）</h3>
-      <p>ほかのプログラムが <code>sasacode -p "…" --output jsonl</code> を子プロセスとして動かすときに <code>--control stdio</code> を付けると、確認が必要な呼び出しへの答えと実行の中断を、stdinで受け付ける。<code>-p</code> と <code>--output jsonl</code> の両方が必要で、欠けていればエラーで終わる。stdinは制御に使うので、パイプした入力はプロンプトに付かない。stdinは1行1件のJSON（JSON Lines）で読み、stdoutには、JSONLのイベントに混ざって1行1件で出す。</p>
+      <p>ほかのプログラムが <code>sasacode -p "…" --output jsonl</code> を子プロセスとして動かすときに <code>--control stdio</code> を付けると、確認が必要な呼び出しへの答え、実行中のモデルへのメッセージ、実行の中断を、stdinで受け付ける。<code>-p</code> と <code>--output jsonl</code> の両方が必要で、欠けていればエラーで終わる。stdinは制御に使うので、パイプした入力はプロンプトに付かない。stdinは1行1件のJSON（JSON Lines）で読み、stdoutには、JSONLのイベントに混ざって1行1件で出す。</p>
       <pre><code><span class="c"># sasacode から親へ（stdout）</span>
 {"type":"approval_request","id":"approval-1","callId":"call_1","tool":"bash","args":{"command":"touch x"},"reason":"…","cwd":"/path/to/project"}
 <span class="c"># 親から sasacode へ（stdin）</span>
 {"type":"approval","id":"approval-1","decision":"allow"}
 {"type":"approval","id":"approval-1","decision":"deny","feedback":"理由"}
+{"type":"message","text":"テストも見て"}
 {"type":"abort"}</code></pre>
       <div class="tbl"><table>
         <tr><th>向き</th><th>type</th><th>内容</th></tr>
@@ -787,6 +788,7 @@ sasacode -p "…" --permission auto --trust-project   <span class="c"># CI な�
         <tr><td>stdout</td><td><code>approval_cancelled</code></td><td>答えが届く前に実行が中断され、取り消された要求（<code>id</code>）。そのidへの答えは <code>control_error</code> になる</td></tr>
         <tr><td>stdout</td><td><code>control_error</code></td><td>使えない行を受け取った（<code>error</code> に理由）。読み取りは続く</td></tr>
         <tr><td>stdin</td><td><code>approval</code></td><td class="brk"><code>id</code> の要求に答える。<code>decision</code> は <code>allow</code>（今回だけ許可）、<code>always</code>（許可に加えて、同じ呼び出しを許すルールを足す。TUIの「常に許可」と同じで、プロセスの終了まで有効）、<code>deny</code>（拒否。<code>feedback</code> はモデルに渡る）</td></tr>
+        <tr><td>stdin</td><td><code>message</code></td><td>モデルに伝える（<code>text</code>、空でない文字列）。TUIで実行中に打った入力と同じで、次のターンに届く</td></tr>
         <tr><td>stdin</td><td><code>abort</code></td><td>実行を中断する。Ctrl+Cと同じで、<code>agent_end</code> の <code>cause</code> は <code>aborted</code>、終了コードは 1</td></tr>
       </table></div>
       <ul>

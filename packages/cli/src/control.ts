@@ -26,12 +26,13 @@ export interface Control {
  * Lets the process that started this run answer for the user. It reads JSON Lines from `input`:
  *   {"type":"approval","id":…,"decision":"allow"|"always"|"deny","feedback"?:…}  answers a request
  *   {"type":"abort"}                                                             stops the run
+ *   {"type":"message","text":…}                                                  tells the model something mid-run
  * and asks for approval by writing `approval_request` through `emit` (one JSON object per line,
  * written by the caller's own writer so lines never interleave with the run's events).
  * Anything it cannot use becomes a `control_error` line. When `input` ends, every pending and
  * later request is denied; the run goes on.
  */
-export function startControl(agent: Pick<Agent, "abort" | "approve">, input: ControlInput, emit: (message: object) => void): Control {
+export function startControl(agent: Pick<Agent, "abort" | "approve" | "inject">, input: ControlInput, emit: (message: object) => void): Control {
   const pending = new Map<string, (answer: ApprovalAnswer) => void>();
   let seq = 0;
   let closed = false;
@@ -74,6 +75,11 @@ export function startControl(agent: Pick<Agent, "abort" | "approve">, input: Con
     }
     if (!msg || typeof msg !== "object" || Array.isArray(msg)) return fail("a control message is a JSON object");
     if (msg.type === "abort") return agent.abort();
+    if (msg.type === "message") {
+      if (typeof msg.text !== "string" || !msg.text.trim()) return fail('message needs a non-empty string "text"');
+      // Like a message typed while the TUI is busy: the model sees it at its next turn.
+      return agent.inject([{ type: "text", text: msg.text }], "next");
+    }
     if (msg.type !== "approval") return fail(`unknown message type ${JSON.stringify(msg.type) ?? "(none)"}`);
     if (typeof msg.id !== "string") return fail('approval needs a string "id"');
     if (msg.decision !== "allow" && msg.decision !== "always" && msg.decision !== "deny") return fail('approval "decision" must be allow, always or deny');

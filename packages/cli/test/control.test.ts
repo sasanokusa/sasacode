@@ -60,7 +60,13 @@ const tick = () => new Promise((r) => setTimeout(r, 0));
 function rig() {
   const ch = channel();
   const out: any[] = [];
-  const agent = { aborts: 0, abort() { this.aborts++; }, approve: undefined as ((r: ApprovalRequest) => Promise<ApprovalAnswer>) | undefined };
+  const agent = {
+    aborts: 0,
+    injected: [] as unknown[],
+    abort() { this.aborts++; },
+    inject(content: unknown, when?: string) { this.injected.push({ content, when }); },
+    approve: undefined as ((r: ApprovalRequest) => Promise<ApprovalAnswer>) | undefined,
+  };
   const control = startControl(agent, ch.input, (m) => out.push(m));
   const ask = (over: Record<string, unknown> = {}) =>
     agent.approve!({ tool: { name: "bash" }, args: { command: "ls" }, cwd: "/work", call: { type: "tool_call", id: "call_1", name: "bash", input: {} }, reason: "needs approval", ...over } as unknown as ApprovalRequest);
@@ -98,6 +104,22 @@ test("abort calls agent.abort()", async () => {
   ch.send({ type: "abort" });
   await tick();
   expect(agent.aborts).toBe(1);
+});
+
+test("a message is injected for the next turn", async () => {
+  const { ch, out, agent } = rig();
+  ch.send({ type: "message", text: "also check the tests" });
+  await tick();
+  expect(agent.injected).toEqual([{ content: [{ type: "text", text: "also check the tests" }], when: "next" }]);
+  expect(out).toHaveLength(0);
+  ch.send({ type: "message", text: "  " });
+  ch.send({ type: "message" });
+  await tick();
+  expect(out).toEqual([
+    { type: "control_error", error: 'message needs a non-empty string "text"' },
+    { type: "control_error", error: 'message needs a non-empty string "text"' },
+  ]);
+  expect(agent.injected).toHaveLength(1);
 });
 
 test("a line the channel cannot use is a control_error, and the channel goes on", async () => {
@@ -190,7 +212,7 @@ test("stdin closing denies every pending request and every later one, and does n
 
 test("a read that fails ends the channel like EOF", async () => {
   const out: any[] = [];
-  const agent = { abort() {}, approve: undefined as ((r: ApprovalRequest) => Promise<ApprovalAnswer>) | undefined };
+  const agent = { abort() {}, inject() {}, approve: undefined as ((r: ApprovalRequest) => Promise<ApprovalAnswer>) | undefined };
   startControl(agent, (async function* () { throw new Error("EPIPE"); })(), (m) => out.push(m));
   await tick();
   const answer = await agent.approve!({ tool: { name: "bash" }, args: {}, cwd: "/", call: { id: "c" }, reason: "r" } as unknown as ApprovalRequest);
@@ -308,4 +330,18 @@ test("stdin closing mid-run denies the open request and the next one; the run st
   expect(lastToolResult(provider, 1)).toContain("User feedback: the controlling process closed stdin");
   expect(lastToolResult(provider, 2)).toContain("User feedback: the controlling process closed stdin");
   expect(events.at(-1)).toEqual({ type: "agent_end", cause: "done" });
+});
+
+test("a message sent mid-run reaches the model at its next turn", async () => {
+  let sent = false;
+  const { code, provider } = await drive([bash("c1", "touch allowed"), text("done")], (e, ch) => {
+    if (e.type !== "approval_request") return;
+    ch.send({ type: "message", text: "also say hello" });
+    ch.send({ type: "approval", id: e.id, decision: "allow" });
+    sent = true;
+  });
+  expect(sent).toBe(true);
+  expect(code).toBe(0);
+  const second = JSON.stringify(provider.requests[1]!.messages);
+  expect(second).toContain("also say hello");
 });
