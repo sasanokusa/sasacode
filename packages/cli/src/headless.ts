@@ -7,7 +7,7 @@ import type { Harness } from "./setup.ts";
 
 /**
  * `sasacode -p`: run one prompt to completion. Text mode streams the answer to stdout; jsonl emits every event.
- * With `control` (`--control stdio`, jsonl only), the process that reads this output answers approvals and can abort.
+ * With `control` (`--control stdio`, jsonl only), the process that reads this output answers approvals, sends messages and can abort.
  */
 export async function runHeadless(h: Harness, prompt: string, output: "text" | "jsonl", control?: ControlInput): Promise<number> {
   const { agent } = h;

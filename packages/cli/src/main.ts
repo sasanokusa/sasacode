@@ -27,7 +27,7 @@ Options:
   -p, --print <prompt>           headless mode (stdin is appended when piped)
       --stdin                    with -p: wait for piped input however long it takes
       --output <text|jsonl>      headless output format (default text)
-      --control stdio            with -p --output jsonl: the parent answers approvals and can abort
+      --control stdio            with -p --output jsonl: the parent answers approvals, sends messages and can abort
                                  over stdin as JSON Lines (stdin is then not appended to the prompt)
   -m, --model <provider/model>   e.g. anthropic/claude-opus-5, openai/gpt-5.5, ollama/gemma4:e4b
                                  (the TUI's /model lists what your providers offer)
