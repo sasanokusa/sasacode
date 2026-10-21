@@ -271,6 +271,7 @@ export class Agent {
     let turn = 0;
     let limitRetries = 0;
     let stopped: { plugin: string; reason: string } | undefined;
+    let error: string | undefined;
     try {
       while (true) {
         if (this.maxTurns && turn >= this.maxTurns) {
@@ -338,15 +339,16 @@ export class Agent {
         if (!this.drainQueue() && !calls.length && !injected) break;
       }
     } catch (e) {
-      this.events.emit({ type: "error", error: e instanceof Error ? e.message : String(e) });
+      error = e instanceof Error ? e.message : String(e);
+      this.events.emit({ type: "error", error });
       cause = "error";
     } finally {
       this.abortController = undefined;
     }
-    await this.hooks.run("agent_end", { cause, stopped }, (r) => {
+    await this.hooks.run("agent_end", { cause, stopped, error }, (r) => {
       if (r.inject) this.queued.push([{ type: "text", text: r.inject }]);
     });
-    this.events.emit({ type: "agent_end", cause, stopped });
+    this.events.emit({ type: "agent_end", cause, stopped, error });
     return cause;
   }
 

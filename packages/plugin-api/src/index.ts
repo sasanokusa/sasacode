@@ -29,7 +29,7 @@ export type {
   UserContent,
 } from "@sasacode/ai";
 
-export const PLUGIN_API_VERSION = "1.13.0";
+export const PLUGIN_API_VERSION = "1.14.0";
 
 // ── tools ────────────────────────────────────────────────────────────
 
@@ -172,8 +172,8 @@ export interface HookMap {
   turn_end: { event: { turn: number; message: AssistantMessage }; result: { inject?: string; stop?: string } };
   /** A response outside the conversation (subagent, complete(), a discarded reply) and what it used (since 1.13.0). */
   usage: { event: Spend; result: void };
-  /** `stopped` is set when cause is "stopped" (since 1.4.0). */
-  agent_end: { event: { cause: StopCause; stopped?: { plugin: string; reason: string } }; result: { inject?: string } };
+  /** `stopped` is set when cause is "stopped" (since 1.4.0); `error`, the message, when cause is "error" (since 1.14.0). */
+  agent_end: { event: { cause: StopCause; stopped?: { plugin: string; reason: string }; error?: string }; result: { inject?: string } };
   /** Free up context (e.g. session.replaceMessages) and return `retry` to continue. */
   context_limit: { event: { tokens: number; contextWindow: number }; result: { retry?: boolean } };
 }

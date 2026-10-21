@@ -4,6 +4,9 @@
  * - agent_end が cause: "error" で終わったとき、接続チェック URL にアクセスできるか確認する。
  * - オフラインなら一定間隔で疎通チェックを続け、オンラインに復帰したら
  *   「中断した作業を再開せよ」というメッセージを inject して自動で再試行する。
+ * - 回線は生きていてサーバーが一時的なエラー（429・5xx・overloaded など）を返し続けたときは、
+ *   SDK の再試行（約35秒）を使い切った後も、間隔を空けて（既定 30・60・120・120 秒）再試行する。
+ *   待っている間にユーザーが入力したら、その再試行はやめる。
  * - /reconnect コマンドで手動でも同じ処理を起こせる（status で状態確認のみ）。
  *
  * 設定（config の "plugins": { "settings": { "auto-reconnect": { ... } } }）:
@@ -14,6 +17,8 @@
  * - maxWaitMs:        復旧を待つ最大時間。超えたらあきらめて通知する（既定 600000 = 10分）
  * - retryMessage:     復旧後に inject するメッセージ
  * - quiet:            true にすると通知を出さない（ステータス表示と inject のみ）
+ * - serverRetries:    サーバーの一時的なエラーで再試行する回数（既定 4。0 で再試行しない）
+ * - serverRetryMs:    その最初の待ち時間。毎回倍にし、4倍で頭打ち（既定 30000）
  */
 import { t } from "@sasacode/host";
 import type { Plugin } from "@sasacode/plugin-api";
@@ -25,7 +30,12 @@ interface AutoReconnectSettings {
   maxWaitMs?: number;
   retryMessage?: string;
   quiet?: boolean;
+  serverRetries?: number;
+  serverRetryMs?: number;
 }
+
+/** The server answered but could not serve now: worth asking again later. 4xx other than these is the request's fault. */
+export const TRANSIENT = /^(?:408|409|425|429|5\d\d)\b|overloaded|temporarily unavailable|rate.?limit/i;
 
 const OFFICIAL_HOSTS: Record<string, string> = {
   anthropic: "https://api.anthropic.com",
@@ -51,9 +61,13 @@ const plugin: Plugin = (api) => {
     s.retryMessage ??
     "ネットワークが復旧しました。直前のエラー（接続失敗）で中断した作業を、続きから再開してください。";
   const quiet = s.quiet ?? false;
+  const serverRetries = s.serverRetries ?? 4;
+  const serverRetryMs = s.serverRetryMs ?? 30_000;
 
   let waiting = false;
   let stopped = false;
+  let attempts = 0;
+  let cancelWait: (() => void) | undefined;
 
   /** 1つでも HTTP 応答が返ればオンライン（4xx/5xx でも回線は生きている）。 */
   async function isOnline(): Promise<boolean> {
@@ -112,19 +126,59 @@ const plugin: Plugin = (api) => {
     }
   }
 
+  /** Resolves true after `ms`, or false when cancelled (the user typed, the session ended). */
+  const wait = (ms: number) =>
+    new Promise<boolean>((resolve) => {
+      const timer = setTimeout(() => resolve(true), ms);
+      cancelWait = () => {
+        clearTimeout(timer);
+        resolve(false);
+      };
+    }).finally(() => (cancelWait = undefined));
+
+  /** サーバーが一時的に応答できないとき、間隔を空けて同じ作業を再試行する。 */
+  async function retryServer(error: string): Promise<void> {
+    if (!(await isOnline())) return monitorAndRetry("error");
+    if (attempts >= serverRetries) {
+      attempts = 0;
+      if (serverRetries) api.ui.notify(t("サーバーのエラーが続いたため、再試行をやめました。"), "warning");
+      return;
+    }
+    const ms = Math.min(serverRetryMs * 2 ** attempts, serverRetryMs * 4);
+    attempts++;
+    const s = Math.round(ms / 1000);
+    waiting = true;
+    api.ui.setStatus("auto-reconnect", t("サーバーの一時的なエラー — {s}秒後に再試行（{n}/{max}）", { s, n: attempts, max: serverRetries }));
+    if (!quiet) api.ui.notify(t("サーバーが一時的に応答できません（{error}）。{s}秒待って再試行します。", { error: error.slice(0, 160), s }), "warning");
+    const go = await wait(ms);
+    waiting = false;
+    api.ui.setStatus("auto-reconnect", undefined);
+    if (go && !stopped) api.session.inject("サーバーの一時的なエラーで中断しました。中断した作業を、続きから再開してください。", "now");
+  }
+
   api.on("session_start", () => {
     stopped = false;
   });
 
+  // 待っている間にユーザーが入力したら、そちらを優先して再試行はやめる。
+  api.on("user_prompt", () => {
+    if (!cancelWait) return;
+    cancelWait();
+    attempts = 0;
+  });
+
   api.on("session_end", () => {
     stopped = true;
+    cancelWait?.();
     api.ui.setStatus("auto-reconnect", undefined);
   });
 
   // モデル呼び出しなどでランがエラー終了し、かつ回線が落ちていれば復旧待ちに入る。
-  api.on("agent_end", ({ cause }) => {
+  api.on("agent_end", ({ cause, error }) => {
+    if (cause === "done") attempts = 0;
     if (cause !== "error" || waiting || stopped) return;
-    void monitorAndRetry("error"); // 待機中はブロックしない（バックグラウンドで監視）
+    // 待機中はブロックしない（バックグラウンドで監視）
+    void (error && TRANSIENT.test(error) ? retryServer(error) : monitorAndRetry("error"));
   });
 
   api.registerCommand({

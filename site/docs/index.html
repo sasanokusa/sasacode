@@ -568,7 +568,7 @@ sasacode -m pgx/&lt;モデル名&gt;</code></pre>
       </table></div>
 
       <h3 id="p-reconnect">接続の復旧待ち（<code>auto-reconnect</code>）</h3>
-      <p>実行がエラーで終わり、使っているモデルの接続先に届かないとき、復旧を待ってから「中断した作業を再開して」と送る。オンラインで別の理由（キーの誤りなど）のエラーなら何もしない。</p>
+      <p>実行がエラーで終わり、使っているモデルの接続先に届かないとき、復旧を待ってから「中断した作業を再開して」と送る。接続先には届くのに、サーバーが一時的なエラー（429・5xx・overloaded など）を返し続けて止まったときは、30・60・120・120 秒と間を空けて再試行する（待っている間に入力すると、そちらを優先する）。キーの誤りなど、ほかのエラーなら何もしない。</p>
       <div class="tbl"><table>
         <tr><th>設定</th><th>既定</th><th>内容</th></tr>
         <tr><td><code>checkUrl</code></td><td>使用中モデルの接続先</td><td>疎通を確かめるURL（応答が返ればオンライン）</td></tr>
@@ -576,6 +576,7 @@ sasacode -m pgx/&lt;モデル名&gt;</code></pre>
         <tr><td><code>maxWaitMs</code></td><td><code>600000</code>（10分）</td><td>待つ最大時間</td></tr>
         <tr><td><code>retryMessage</code></td><td>（再開の指示）</td><td>復旧後に送る文</td></tr>
         <tr><td><code>quiet</code></td><td><code>false</code></td><td>通知を出さない</td></tr>
+        <tr><td><code>serverRetries</code> / <code>serverRetryMs</code></td><td><code>4</code> / <code>30000</code></td><td>サーバーの一時的なエラーで再試行する回数（<code>0</code> で再試行しない） / 最初の待ち時間（毎回倍にし、4倍で頭打ち）</td></tr>
       </table></div>
 
       <h3 id="p-usage">使用量（<code>usage</code>）</h3>
@@ -838,8 +839,8 @@ sasacode -p "…" --permission auto --trust-project   <span class="c"># CI な�
         <p>同じ名前のプラグインを <code>~/.sasacode/plugins</code> に置くと、同梱版の代わりにそちらを読み込む。同梱版のソースは <a href="https://github.com/sasanokusa/sasacode/tree/main/packages/bundled/src">packages/bundled/src</a>。</p>
       </div></details>
 
-      <details class="qa"><summary>ネットワークが切れて止まった</summary><div>
-        <p>同梱の <code>auto-reconnect</code> が、接続先の復旧を待って自動で再開する（最大 10 分）。待ちきれないときや手動で再開するときは <code>/reconnect</code>。</p>
+      <details class="qa"><summary>ネットワークが切れて止まった・サーバーのエラー（503 など）で止まった</summary><div>
+        <p>同梱の <code>auto-reconnect</code> が、接続先の復旧を待って自動で再開する（最大 10 分）。サーバーが一時的なエラーを返し続けたときも、間を空けて最大 4 回再試行する。待ちきれないときや手動で再開するときは <code>/reconnect</code>。</p>
       </div></details>
     </section>
   </main>
