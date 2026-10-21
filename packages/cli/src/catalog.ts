@@ -63,6 +63,21 @@ export class ModelCatalog {
     return lists.flat();
   }
 
+  /**
+   * Whether the provider of `spec` lists that model, and if not, the listed names most like it.
+   * Undefined when it cannot be told: no Models API, offline, or an empty list.
+   */
+  async offers(spec: string): Promise<{ ok: boolean; similar: string[] } | undefined> {
+    const slash = spec.indexOf("/");
+    const provider = spec.slice(0, slash);
+    const id = spec.slice(slash + 1);
+    const group = groups(this.providers).find((g) => g.includes(provider));
+    const listed = group ? await this.fetchGroup(group).catch(() => []) : [];
+    if (!listed.length) return undefined;
+    const ids = listed.map((m) => m.spec.slice(m.spec.indexOf("/") + 1));
+    return ids.includes(id) ? { ok: true, similar: [] } : { ok: false, similar: similar(id, ids) };
+  }
+
   private async fetchGroup(members: string[]): Promise<ModelChoice[]> {
     const primary = members[0]!;
     const p = this.providers[primary]!;
@@ -93,4 +108,15 @@ export class ModelCatalog {
     }
     return out;
   }
+}
+
+/** Listed names sharing the most words with `id` (a typo'd "deepseek-v4-flsh" still finds "deepseek-v4-flash"). */
+function similar(id: string, ids: string[]): string[] {
+  const words = id.toLowerCase().split(/[^a-z0-9.]+/).filter((w) => w.length > 1);
+  return ids
+    .map((c) => ({ c, n: words.filter((w) => c.toLowerCase().includes(w)).length }))
+    .filter((x) => x.n > 0)
+    .sort((a, b) => b.n - a.n)
+    .slice(0, 5)
+    .map((x) => x.c);
 }

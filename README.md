@@ -61,7 +61,7 @@ sasacode -r <id> -p "続き"            # セッション ID を指定して続�
 
 | オプション | 内容 |
 | --- | --- |
-| `-m <provider/model>` | モデル（例 `anthropic/claude-opus-5`、`openai/gpt-5.5`、`ollama/gemma4:e4b`） |
+| `-m <provider/model>` | モデル（例 `anthropic/claude-opus-5`、`openai/gpt-5.5`、`ollama/gemma4:e4b`）。プロバイダーのモデル一覧にない名前なら、近い名前を示してエラーで終わる（一覧を取れないときは確かめない） |
 | `--permission <edits\|ask\|agent\|auto>` | 権限モード（既定 `edits`） |
 | `--thinking <off\|low\|medium\|high\|xhigh\|max>` | 推論の深さ |
 | `--max-turns <n>` | 1回の実行のターン数の上限（既定 200、0 で無制限） |

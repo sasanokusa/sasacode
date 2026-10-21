@@ -1,7 +1,7 @@
 import { chmodSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { join, resolve as resolvePath } from "node:path";
 import { Agent, buildSystemPrompt, headlessUI, isInside, PERMISSION_MODES, type PermissionMode, PermissionPolicy, PluginHost, restore, SessionFile, sessionDir, type UIBridge } from "@sasacode/agent";
-import { BUILTIN_PROVIDERS, currentLang, defaultModelFor, findSession, type Lang, listSessions, resolveModel, t } from "@sasacode/host";
+import { BUILTIN_PROVIDERS, currentLang, defaultModelFor, findSession, KNOWN_MODELS, type Lang, listSessions, resolveModel, t } from "@sasacode/host";
 import { type ModelInfo, type ProviderConfig, registerApi, type ThinkingLevel } from "@sasacode/ai";
 import { bundledPlugins, readCodexAuth } from "@sasacode/bundled";
 import { createMcpPlugin, type McpServerConfig } from "@sasacode/mcp";
@@ -60,6 +60,8 @@ export interface Harness {
   historyPath: string;
   /** Models offered by the providers you have keys for (fetched once, then cached). */
   listModels(refresh?: boolean): Promise<ModelChoice[]>;
+  /** -m: fails when the provider lists its models and `spec` is not one of them. */
+  checkModel(spec: string): Promise<void>;
   /** Load bundled, MCP, Skills and third-party plugins, then start the session. Safe to call once. */
   loadPlugins(ui?: UIBridge): Promise<void>;
   /** Replace the agent's conversation with a stored session. */
@@ -248,6 +250,18 @@ export async function setup(opts: SetupOptions): Promise<Harness> {
       const current = `${agent.model.provider}/${agent.model.id}`;
       if (catalog.discovered.has(current)) agent.model = resolve(current);
       return models;
+    },
+    async checkModel(spec) {
+      // Names sasacode or the config already knows are taken as they are (aliases are not always listed).
+      if (KNOWN_MODELS[spec.slice(spec.indexOf("/") + 1)] || config.modelOverrides?.[spec]) return;
+      const r = await catalog.offers(spec);
+      if (!r || r.ok) return;
+      const provider = spec.slice(0, spec.indexOf("/"));
+      throw new Error(
+        r.similar.length
+          ? t('{provider} has no model "{spec}". Did you mean: {similar}', { provider, spec, similar: r.similar.map((s) => `${provider}/${s}`).join(", ") })
+          : t('{provider} has no model "{spec}" (the TUI\'s /model lists what it offers)', { provider, spec }),
+      );
     },
     loadPlugins,
     async loadSession(path) {

@@ -128,6 +128,8 @@ async function main(): Promise<number> {
     preloaded: project,
   });
   for (const w of harness.warnings) console.error(t("warning: {warning}", { warning: w }));
+  // A mistyped -m should stop here, not start a session that fails at the first request.
+  if (values.model) await harness.checkModel(values.model);
 
   if (values.print !== undefined) {
     let prompt = [values.print, ...positionals].join(" ");

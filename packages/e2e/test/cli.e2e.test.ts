@@ -228,3 +228,27 @@ test("--append-system-prompt-file with a file that cannot be read fails before t
   }
   expect(server.requests).toHaveLength(0);
 });
+
+test("-m with a model the provider does not list fails before anything runs, naming close ones", async () => {
+  server = fakeServer([{ text: "never asked" }, { text: "ok" }], [{ id: "m" }, { id: "big-model" }]);
+  box = sandbox(fakeConfig(server.url));
+  const typo = await box.run(["-m", "fake/big-modle", "-p", "hi"]);
+  expect(typo.code).toBe(1);
+  expect(typo.stderr).toContain('fake has no model "fake/big-modle". Did you mean: fake/big-model');
+  const none = await box.run(["-m", "fake/nope", "-p", "hi"]);
+  expect(none.code).toBe(1);
+  expect(none.stderr).toContain('fake has no model "fake/nope"');
+  expect(server.requests).toHaveLength(0);
+  const sessions = join(box.home, "sessions");
+  expect(existsSync(sessions) ? readdirSync(sessions).flatMap((d) => readdirSync(join(sessions, d))) : []).toEqual([]);
+  // A listed model starts as before.
+  expect((await box.run(["-m", "fake/big-model", "-p", "hi"])).code).toBe(0);
+});
+
+test("-m is not checked when the provider lists nothing", async () => {
+  server = fakeServer([{ text: "ok" }], []);
+  box = sandbox(fakeConfig(server.url));
+  const r = await box.run(["-m", "fake/anything", "-p", "hi"]);
+  expect(r.code).toBe(0);
+  expect(r.stdout).toContain("ok");
+});

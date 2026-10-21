@@ -45,6 +45,8 @@ export const TO_JA: Record<string, string> = {
   -v, --version`,
   "created {path}: add your API key there": "{path} を作成。ここに API キーを書く",
   "warning: {warning}": "警告: {warning}",
+  '{provider} has no model "{spec}". Did you mean: {similar}': "{provider} に \"{spec}\" というモデルはありません。近い名前: {similar}",
+  "{provider} has no model \"{spec}\" (the TUI's /model lists what it offers)": "{provider} に \"{spec}\" というモデルはありません（TUI の /model で一覧を見られます）",
   "--output must be text or jsonl": "--output は text か jsonl",
   "--control must be stdio": "--control は stdio だけ",
   "--control stdio needs -p and --output jsonl": "--control stdio は -p と --output jsonl が必要",

@@ -61,7 +61,7 @@ sasacode -r <id> -p "go on"          # continue a session by id (a conversation 
 
 | Option | Meaning |
 | --- | --- |
-| `-m <provider/model>` | Model (e.g. `anthropic/claude-opus-5`, `openai/gpt-5.5`, `ollama/gemma4:e4b`) |
+| `-m <provider/model>` | Model (e.g. `anthropic/claude-opus-5`, `openai/gpt-5.5`, `ollama/gemma4:e4b`). A name the provider's model list does not have is an error that names close ones (not checked when the list cannot be had) |
 | `--permission <edits\|ask\|agent\|auto>` | Permission mode (default `edits`) |
 | `--thinking <off\|low\|medium\|high\|xhigh\|max>` | Reasoning effort |
 | `--max-turns <n>` | Limit on requests per run (default 200, 0 = no limit) |
