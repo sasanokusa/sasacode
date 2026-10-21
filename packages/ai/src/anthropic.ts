@@ -9,6 +9,7 @@ import {
   type AssistantMessage,
   ContextOverflowError,
   computeCost,
+  droppedMidReply,
   markIfCut,
   type Message,
   parseToolInput,
@@ -177,7 +178,7 @@ export const anthropicProvider: Provider = {
           throw new ContextOverflowError(e.message);
         } else if (attempt < 3 && !out.content.length && e instanceof Anthropic.BadRequestError && adjust(e.message, params)) {
           continue;
-        } else throw e;
+        } else if (!droppedMidReply(e)) throw e;
       }
       break;
     }

@@ -51,6 +51,15 @@ export type StopReason = "stop" | "tool_use" | "max_tokens" | "refusal" | "abort
  */
 export const INCOMPLETE_STREAM = "the stream ended before the reply was complete";
 
+/**
+ * The connection broke while the reply was streaming in (Bun: "The socket connection was closed
+ * unexpectedly", Node: "terminated"): a cut reply to ask again for, not an error the provider sent.
+ */
+export function droppedMidReply(e: unknown): boolean {
+  const err = e as { code?: unknown; message?: unknown } | undefined;
+  return /ECONNRESET|EPIPE|ETIMEDOUT|ConnectionClosed|socket connection was closed|socket hang up|^terminated$/i.test(`${err?.code ?? ""} ${err?.message ?? ""}`.trim());
+}
+
 /** Marks `out` as cut off unless the provider said it was done (`ended`) or the user aborted. */
 export function markIfCut(out: AssistantMessage, ended: boolean): void {
   if (!ended && out.stopReason !== "aborted") Object.assign(out, { stopReason: "error", errorMessage: INCOMPLETE_STREAM });

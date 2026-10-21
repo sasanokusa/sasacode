@@ -5,6 +5,7 @@ import { isContextOverflow, openaiClient } from "./openai-chat.ts";
 import {
   ContextOverflowError,
   computeCost,
+  droppedMidReply,
   markIfCut,
   type Message,
   parseToolInput,
@@ -155,7 +156,7 @@ export const openaiResponsesProvider: Provider = {
     } catch (e) {
       if (e instanceof OpenAI.APIUserAbortError || req.signal?.aborted) out.stopReason = "aborted";
       else if (isContextOverflow(e)) throw new ContextOverflowError((e as Error).message);
-      else throw e;
+      else if (!droppedMidReply(e)) throw e;
     }
     out.content = out.content.filter((c) => !(c.type === "text" && !c.text));
     markIfCut(out, ended); // neither response.completed nor response.incomplete

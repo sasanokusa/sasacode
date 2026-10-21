@@ -157,3 +157,27 @@ test("DeepSeek and MiMo plain replies do not gain reasoning fields from the loca
     await ask(m, [user, first.out, user], b => { expect(b.messages[2].reasoning_content).toBeUndefined(); return sse([chat({ content: "ok" })]); }, { tools: [] });
   }
 });
+
+test("a connection that breaks mid-reply is a cut reply to ask again for; other stream errors are thrown", async () => {
+  const breaking = (error: Error, first: string) => () => {
+    const enc = new TextEncoder();
+    const body = new ReadableStream({
+      start(c) {
+        c.enqueue(enc.encode(first));
+        setTimeout(() => c.error(error), 5);
+      },
+    });
+    return new Response(body, { headers: { "content-type": "text/event-stream" } });
+  };
+  const bun = new Error("The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()");
+  const chatFirst = `data: ${JSON.stringify(chat({ content: "Hel" }, null as unknown as string))}\n\n`;
+  const responsesFirst = `data: ${JSON.stringify({ type: "response.output_item.added", item: { type: "message", id: "m1", role: "assistant", content: [] }, output_index: 0 })}\n\n`;
+  const start = { type: "message_start", message: { id: "x", type: "message", role: "assistant", model: "m", content: [], stop_reason: null, usage: { input_tokens: 5, output_tokens: 0 } } };
+  const anthropicFirst = `event: message_start\ndata: ${JSON.stringify(start)}\n\n`;
+  for (const [api, first] of [["openai-chat", chatFirst], ["openai-responses", responsesFirst], ["anthropic", anthropicFirst]] as const) {
+    const { out } = await ask(model(api), [user], breaking(bun, first));
+    expect(out.stopReason).toBe("error");
+    expect(out.errorMessage).toBe("the stream ended before the reply was complete");
+    await expect(ask(model(api), [user], breaking(new Error("boom"), first))).rejects.toThrow("boom");
+  }
+});

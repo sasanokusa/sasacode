@@ -17,6 +17,7 @@ import {
   type Request,
   type StreamEvent,
   type ThinkingContent,
+  droppedMidReply,
   markIfCut,
   type ToolCall,
   type Usage,
@@ -155,7 +156,7 @@ export const openaiChatProvider: Provider = {
     } catch (e) {
       if (e instanceof OpenAI.APIUserAbortError || req.signal?.aborted) out.stopReason = "aborted";
       else if (isContextOverflow(e)) throw new ContextOverflowError((e as Error).message);
-      else throw e;
+      else if (!droppedMidReply(e)) throw e;
     }
     markIfCut(out, ended); // neither a finish reason nor the usage chunk
     for (const c of calls.values()) Object.assign(c.block, parseToolInput(c.json));
