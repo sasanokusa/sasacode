@@ -2,6 +2,7 @@ import { type Component, Container, Markdown, Text, truncateToWidth } from "@ear
 import type { AssistantMessage, ToolCall, UserContent } from "@sasacode/ai";
 import type { ToolRenderer, ToolResult } from "@sasacode/plugin-api";
 import { t } from "@sasacode/host";
+import { localLinks } from "./links.ts";
 import { c, markdownTheme } from "./theme.ts";
 
 /** Shared flag toggled by ctrl+o: show full tool output and thinking. */
@@ -47,7 +48,11 @@ export class AssistantView extends Container {
   private blocks = new Map<number, Component>();
   private tools = new Map<string, ToolView>();
 
-  constructor(private onTool: (call: ToolCall, view: ToolView) => void) {
+  constructor(
+    private onTool: (call: ToolCall, view: ToolView) => void,
+    /** Links to local files are resolved against it, so the terminal can open them. */
+    private cwd?: string,
+  ) {
     super();
   }
 
@@ -56,7 +61,10 @@ export class AssistantView extends Container {
       if (!b) return;
       let view = this.blocks.get(i);
       if (b.type === "text") {
-        if (!view) this.add(i, (view = new Markdown("", 0, 0, markdownTheme)));
+        if (!view) {
+          const transform = (md: string) => (this.cwd ? localLinks(md, this.cwd) : md);
+          this.add(i, (view = new Markdown("", 0, 0, markdownTheme, undefined, { transform })));
+        }
         (view as Markdown).setText(plain(b.text));
       } else if (b.type === "thinking") {
         if (!view) this.add(i, (view = new ThinkingView()));

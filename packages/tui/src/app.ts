@@ -342,7 +342,7 @@ class App {
       case "message_start":
         this.checking = [];
         this.activity?.newReply();
-        this.current = new AssistantView((call, view) => this.trackTool(call, view));
+        this.current = new AssistantView((call, view) => this.trackTool(call, view), this.host.agent.cwd);
         this.currentSpacer = new Spacer(1);
         this.chat.addChild(this.currentSpacer);
         this.chat.addChild(this.current);
@@ -889,7 +889,7 @@ class App {
         this.chat.addChild(new Spacer(1));
         this.chat.addChild(new UserView(m.content));
       } else if (m.role === "assistant") {
-        const view = new AssistantView((call, v) => this.trackTool(call, v));
+        const view = new AssistantView((call, v) => this.trackTool(call, v), this.host.agent.cwd);
         this.chat.addChild(new Spacer(1));
         this.chat.addChild(view);
         view.update(m);
