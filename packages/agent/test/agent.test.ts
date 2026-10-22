@@ -264,6 +264,19 @@ test("max_tokens shrinks to the room left in a small window, and is left alone o
   expect(replyBudget(model, [used], 0)).toBeUndefined();
 });
 
+test("after a compaction, the nearly full usage of a kept message does not squeeze the next reply", async () => {
+  const small: ModelInfo = { ...model, contextWindow: 32_000, maxOutput: 8_000 };
+  const stale = reply([say("sure")], { usage: { ...emptyUsage(), input: 28_000, output: 500 } });
+  const kept = [{ role: "user" as const, timestamp: 0, content: [say("[Summary of the earlier conversation] short")] }, stale];
+  expect(replyBudget(small, kept, 2000)).toBe(1024); // what it was: the stale usage believed
+  expect(replyBudget(small, kept, 2000, kept.length)).toBeUndefined();
+
+  const { agent, provider } = setup([reply([say("written")])], { model: small });
+  agent.replaceMessages(kept); // what compaction does: a summary, then the kept tail
+  await agent.prompt("now write the file");
+  expect(provider.requests[0]!.maxTokens).toBeUndefined();
+});
+
 test("an attached image counts as an image, not as its base64, when max_tokens is sized", async () => {
   // A 3 MB screenshot is ~4 MB of base64: read as text it looked like a full window, and the
   // reply was squeezed to 1,024 tokens, which a thinking model spends before it says anything.

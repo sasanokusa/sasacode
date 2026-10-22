@@ -68,11 +68,13 @@ export const contentChars = (m: Message): number =>
  * Servers such as vLLM reject a request whose input plus max_tokens exceeds the window, and
  * that error reads like a full context. The input is estimated from the last reported usage
  * plus about 4 characters a token for what came after it; undefined leaves the adapter's default.
+ * Usage reported before `trustFrom` describes a conversation since replaced (a compaction keeps
+ * the last messages, with the nearly full usage they reported) and is not used.
  */
-export function replyBudget(model: ModelInfo, messages: readonly Message[], fixedChars: number): number | undefined {
+export function replyBudget(model: ModelInfo, messages: readonly Message[], fixedChars: number, trustFrom = 0): number | undefined {
   let used = 0;
   let from = 0;
-  for (let i = messages.length - 1; i >= 0; i--) {
+  for (let i = messages.length - 1; i >= trustFrom; i--) {
     const m = messages[i]!;
     if (m.role === "assistant" && m.usage && m.usage.input + m.usage.output > 0) {
       used = m.usage.input + m.usage.cacheRead + m.usage.cacheWrite + m.usage.output;
@@ -124,6 +126,8 @@ export class Agent {
   private isSubagent = false;
   /** Bumped by replaceMessages, so usage figures from before a compaction are not trusted. */
   private generation = 0;
+  /** Messages before this index came from replaceMessages: their usage is not this conversation's. */
+  private trustFrom = 0;
 
   constructor(opts: AgentOptions) {
     this.opts = opts;
@@ -205,6 +209,7 @@ export class Agent {
   replaceMessages(messages: Message[]): void {
     this.messages = messages;
     this.generation++;
+    this.trustFrom = messages.length;
     this.session?.append({ type: "replace", messages });
     this.events.emit({ type: "messages_replaced" });
   }
@@ -215,6 +220,7 @@ export class Agent {
     this.queued = [];
     this.interrupted = false;
     this.generation++;
+    this.trustFrom = 0;
   }
 
   abort(): void {
@@ -471,6 +477,8 @@ export class Agent {
     if (this.model.images === false) messages = withoutImages(messages);
 
     const tools = this.requestTools().map((t) => ({ name: t.name, description: t.description, parameters: t.parameters }));
+    // Counted from the end: a before_request hook may have dropped messages at the front.
+    const trustFrom = Math.max(0, messages.length - (this.messages.length - this.trustFrom));
 
     // The request has its own controller so a plugin can stop it without it counting as a user abort.
     const request = new AbortController();
@@ -489,7 +497,7 @@ export class Agent {
         tools,
         thinking: this.thinking,
         maxRetries: this.opts.maxRetries,
-        maxTokens: replyBudget(this.model, messages, system.length + JSON.stringify(tools).length),
+        maxTokens: replyBudget(this.model, messages, system.length + JSON.stringify(tools).length, trustFrom),
         sampling,
         fetch: requestFetch,
         signal: request.signal,
