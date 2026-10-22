@@ -362,3 +362,27 @@ test("a subagent's spending shows in the footer's cost and the summary, counted 
   expect(lines).toContain("2 回（うちサブエージェントなど 1 回） · $1.750");
   await term.type("/exit"); await term.send("\r"); expect(await exited).toBe(0);
 });
+
+test("esc while a reasoning reply streams (thinking without a signature) leaves no error and ends the reply", async () => {
+  const script = [reply([{ type: "thinking", thinking: "let me think about this" }, { type: "text", text: "a".repeat(3000) }], { usage: { ...emptyUsage(), input: 100, output: 10 } })];
+  const { term, agent, exited } = await start(script);
+  registerApi("replay", replayProvider(script, { chunkSize: 50 }));
+  const errors: string[] = [];
+  const orig = console.error;
+  console.error = (...a: unknown[]) => void errors.push(a.map(String).join(" "));
+  try {
+    // Esc as soon as the answer starts, after the thinking block.
+    agent.events.on((e) => {
+      if (e.type === "message_update" && e.event.type === "text_delta") agent.abort();
+    });
+    await term.type("hi");
+    await term.send("\r");
+    await Bun.sleep(300);
+    await term.type("/exit");
+    await term.send("\r");
+    await exited;
+  } finally {
+    console.error = orig;
+  }
+  expect(errors).toEqual([]);
+});

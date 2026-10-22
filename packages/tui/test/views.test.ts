@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
-import type { ToolCall } from "@sasacode/ai";
-import { Padded, ToolView } from "../src/views.ts";
+import { type AssistantMessage, emptyUsage, type ToolCall } from "@sasacode/ai";
+import { AssistantView, Padded, ToolView } from "../src/views.ts";
 
 const plain = (l: string) => l.replace(/\x1b\[[0-9;]*m/g, "");
 
@@ -61,4 +61,19 @@ test("the check list toggles with space and confirms in option order", async () 
   list.handleInput("\r");
   new CheckList("Which?", items, [], (v) => got.push(v)).handleInput("\x1b");
   expect(got).toEqual([["a", "b"], undefined]);
+});
+
+test("a reply whose blocks shift (unsigned thinking dropped on interrupt) is redrawn, not crashed on", () => {
+  const msg = (content: AssistantMessage["content"]): AssistantMessage => ({ role: "assistant", content, api: "x", provider: "t", model: "m", usage: emptyUsage(), stopReason: "aborted", timestamp: 0 });
+  const tools: string[] = [];
+  const v = new AssistantView((call) => void tools.push(call.id));
+  const call: ToolCall = { type: "tool_call", id: "c1", name: "write", input: {} };
+  v.update(msg([{ type: "thinking", thinking: "hmm" }, { type: "text", text: "partial answer" }, call]));
+  expect(tools).toEqual(["c1"]);
+  // The core settles the same message: thinking without a signature and the half-received call are dropped.
+  expect(() => v.update(msg([{ type: "text", text: "partial answer" }]))).not.toThrow();
+  const shown = v.render(80).join("\n");
+  expect(shown).toContain("partial answer");
+  expect(shown).not.toContain("write");
+  expect(v.children).toHaveLength(1);
 });

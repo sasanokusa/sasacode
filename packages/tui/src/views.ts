@@ -57,9 +57,17 @@ export class AssistantView extends Container {
   }
 
   update(message: AssistantMessage): void {
+    let moved = false;
     message.content.forEach((b, i) => {
       if (!b) return;
       let view = this.blocks.get(i);
+      // The core may drop blocks from a reply it settles (unsigned thinking after an interrupt), so the
+      // block at an index can be another kind now: make a new view rather than reuse the wrong one.
+      if (view && !fits(view, b)) {
+        this.blocks.delete(i);
+        view = undefined;
+        moved = true;
+      }
       if (b.type === "text") {
         if (!view) {
           const transform = (md: string) => (this.cwd ? localLinks(md, this.cwd) : md);
@@ -79,6 +87,13 @@ export class AssistantView extends Container {
         (view as ToolView).call = b;
       }
     });
+    // Views past the end show blocks that were dropped (a half-received tool call, for one).
+    for (const i of this.blocks.keys()) {
+      if (i < message.content.length) continue;
+      this.blocks.delete(i);
+      moved = true;
+    }
+    if (moved) this.children = [...this.blocks].sort(([a], [b]) => a - b).map(([, v]) => v);
     this.invalidate();
   }
 
@@ -92,6 +107,13 @@ export class AssistantView extends Container {
     this.blocks.set(i, v);
     this.addChild(v);
   }
+}
+
+/** Whether `view` is the kind of view `block` is shown with (and, for a tool call, that very call). */
+function fits(view: Component, block: AssistantMessage["content"][number]): boolean {
+  if (block.type === "text") return view instanceof Markdown;
+  if (block.type === "thinking") return view instanceof ThinkingView;
+  return view instanceof ToolView && view.call.id === block.id;
 }
 
 type ToolStatus = "pending" | "running" | "done" | "error";
