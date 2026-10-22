@@ -386,3 +386,27 @@ test("esc while a reasoning reply streams (thinking without a signature) leaves 
   }
   expect(errors).toEqual([]);
 });
+
+test("esc gives a queued message back to the input instead of sending it", async () => {
+  const script = [reply([{ type: "tool_call", id: "1", name: "bash", input: { command: "sleep 1" } }]), reply([{ type: "text", text: "never" }])];
+  const { term, agent, exited } = await start(script, "auto");
+  const provider = replayProvider(script);
+  registerApi("replay", provider);
+  await term.type("go");
+  await term.send("\r");
+  await Bun.sleep(150); // the sleep is running
+  await term.type("also this");
+  await term.send("\r");
+  expect(term.text()).toContain("also this");
+  await term.send("\x1b");
+  await Bun.sleep(1200);
+  expect(provider.requests).toHaveLength(1);
+  expect(JSON.stringify(agent.messages)).not.toContain("also this");
+  const from = term.out.length;
+  await term.type("!");
+  expect(term.text(from)).toContain("also this!");
+  await term.send("\x15"); // clear the line
+  await term.type("/exit");
+  await term.send("\r");
+  await exited;
+});

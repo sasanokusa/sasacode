@@ -112,7 +112,7 @@ It runs full screen: the conversation scrolls at the top, the input and the foot
 | enter / shift+enter, alt+enter | Send / new line |
 | ↑↓ | Input history |
 | tab | Completion (slash commands, model names in `/model`, file paths) |
-| esc | Interrupt generation or a tool (the model is told on the next input) |
+| esc | Interrupt generation or a tool (the model is told on the next input). Queued messages are not sent; they go back to the input |
 | enter while running | Queue a message for the next turn |
 | ctrl+o | Expand or collapse tool output and thinking |
 | shift+tab | Cycle the permission mode |

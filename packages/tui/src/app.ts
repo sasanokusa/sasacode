@@ -267,11 +267,11 @@ class App {
       this.inputSlot.children[0] === this.editor &&
       !this.editor.isShowingAutocomplete()
     ) {
-      agent.abort();
+      this.interrupt();
       return { consume: true };
     }
     if (matchesKey(data, "ctrl+c")) {
-      if (agent.isRunning) agent.abort();
+      if (agent.isRunning) this.interrupt();
       else if (this.editor.getText()) this.editor.setText("");
       else if (Date.now() - this.lastCtrlC < 1500) this.exit?.(0);
       else {
@@ -867,6 +867,14 @@ class App {
     if (this.activity) this.status.addChild(this.activity);
     for (const q of this.queued) this.status.addChild(new Notice(t("↳ 次のターンで送信: {text}", { text: q.split("\n")[0]! })));
     this.tui.requestRender();
+  }
+
+  /** Esc / ctrl+c while running: stop, and give back what was queued for the next turn, to edit or send. */
+  private interrupt(): void {
+    const back = this.queued.splice(0);
+    void this.host.agent.halt();
+    if (back.length) this.editor.setText([...back, this.editor.getText()].filter(Boolean).join("\n"));
+    this.renderStatus();
   }
 
   private resetView(): void {
