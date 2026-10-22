@@ -121,7 +121,8 @@ export class Agent {
   private abortController?: AbortController;
   private queued: UserContent[][] = [];
   private interrupted = false;
-  private halting = false;
+  /** Set while halt() waits for the run to stop. */
+  private halted?: Promise<void>;
   private running?: Promise<StopCause>;
   private isSubagent = false;
   /** Bumped by replaceMessages, so usage figures from before a compaction are not trusted. */
@@ -174,6 +175,9 @@ export class Agent {
 
   /** Send user input. While a run is in progress it is queued and delivered at the next turn (FR-L05). */
   async prompt(input: string | UserContent[]): Promise<StopCause> {
+    // Sent while a halt waits for the run to stop: it belongs after the halt, not to the stopping run.
+    // (Input sent before the halt was queued for that run, and the halt drops it.)
+    const halting = this.halted;
     let content: UserContent[] = typeof input === "string" ? [{ type: "text", text: input }] : input;
     let handled = false;
     await this.hooks.run("user_prompt", { content }, (r) => {
@@ -182,6 +186,7 @@ export class Agent {
       return !handled;
     });
     if (handled) return "done";
+    if (halting) await halting;
     if (this.running) {
       this.queued.push(content);
       return this.running;
@@ -198,6 +203,7 @@ export class Agent {
 
   /** Add a user message from a plugin: "next" waits for the next turn or prompt, "now" also starts a run. */
   inject(content: UserContent[], when: "next" | "now" = "next"): void {
+    if (this.halted) return void this.halted.then(() => this.inject(content, when));
     if (this.running || when === "next") this.queued.push(content);
     else {
       this.pushUser(content);
@@ -229,15 +235,13 @@ export class Agent {
 
   /** Abort and drop queued input, so nothing more runs on this conversation (before switching sessions). */
   async halt(): Promise<void> {
-    this.halting = true;
     this.queued = [];
     this.abort();
-    try {
-      await this.waitForIdle();
-    } finally {
-      this.halting = false;
+    this.halted ??= this.waitForIdle().finally(() => {
+      this.halted = undefined;
       this.queued = [];
-    }
+    });
+    await this.halted;
   }
 
   async waitForIdle(): Promise<void> {
@@ -248,7 +252,7 @@ export class Agent {
     this.running = this.run().finally(() => {
       this.running = undefined;
       // Input that arrived as the run was finishing starts the next run.
-      if (!this.halting && this.drainQueue()) void this.start();
+      if (!this.halted && this.drainQueue()) void this.start();
     });
     return this.running;
   }
