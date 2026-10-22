@@ -702,16 +702,14 @@ class App {
       })),
     );
     if (!picked) return;
-    if (this.host.agent.isRunning) this.host.agent.abort();
-    await this.host.agent.waitForIdle();
+    await this.host.agent.halt();
     await this.host.loadSession(picked);
     this.resetView();
     this.notify(t("セッションを再開しました"));
   }
 
   private async clearCommand(): Promise<void> {
-    if (this.host.agent.isRunning) this.host.agent.abort();
-    await this.host.agent.waitForIdle();
+    await this.host.agent.halt();
     await this.host.newSession();
     this.resetView();
     this.contextTokens = 0;
@@ -747,8 +745,7 @@ class App {
       users.reverse().map(({ m, i }) => ({ value: String(i), label: textOf(m.content).replace(/\s+/g, " ").slice(0, 70) })),
     );
     if (picked === undefined) return;
-    if (agent.isRunning) agent.abort();
-    await agent.waitForIdle();
+    await agent.halt();
     const index = Number(picked);
     const text = textOf(agent.messages[index]!.content).replace(/^\[The user interrupted the previous response\.\]/, "");
     await this.host.fork(index);
@@ -873,6 +870,8 @@ class App {
   }
 
   private resetView(): void {
+    this.queued = [];
+    this.renderStatus();
     this.chat.clear();
     this.tools.clear();
     this.contextTokens = 0;

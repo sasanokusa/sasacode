@@ -119,6 +119,7 @@ export class Agent {
   private abortController?: AbortController;
   private queued: UserContent[][] = [];
   private interrupted = false;
+  private halting = false;
   private running?: Promise<StopCause>;
   private isSubagent = false;
   /** Bumped by replaceMessages, so usage figures from before a compaction are not trusted. */
@@ -208,8 +209,29 @@ export class Agent {
     this.events.emit({ type: "messages_replaced" });
   }
 
+  /** Another conversation (new session, resume, fork): input queued for the old one and its interrupted note do not carry over. */
+  reset(messages: Message[] = []): void {
+    this.messages = messages;
+    this.queued = [];
+    this.interrupted = false;
+    this.generation++;
+  }
+
   abort(): void {
     this.abortController?.abort();
+  }
+
+  /** Abort and drop queued input, so nothing more runs on this conversation (before switching sessions). */
+  async halt(): Promise<void> {
+    this.halting = true;
+    this.queued = [];
+    this.abort();
+    try {
+      await this.waitForIdle();
+    } finally {
+      this.halting = false;
+      this.queued = [];
+    }
   }
 
   async waitForIdle(): Promise<void> {
@@ -220,7 +242,7 @@ export class Agent {
     this.running = this.run().finally(() => {
       this.running = undefined;
       // Input that arrived as the run was finishing starts the next run.
-      if (this.drainQueue()) void this.start();
+      if (!this.halting && this.drainQueue()) void this.start();
     });
     return this.running;
   }

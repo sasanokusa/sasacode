@@ -154,7 +154,7 @@ export async function setup(opts: SetupOptions): Promise<Harness> {
   const openSession = (path: string, keepModel = false) => {
     const { file, entries } = SessionFile.open(path);
     const state = restore(entries);
-    agent.messages = state.messages;
+    agent.reset(state.messages);
     agent.session = file;
     // Record the repair, so restoring again (after more turns are appended) gives the same history.
     if (state.repaired) file.append({ type: "replace", messages: state.messages });
@@ -168,7 +168,7 @@ export async function setup(opts: SetupOptions): Promise<Harness> {
     }
   };
   const createSession = () => {
-    agent.messages = [];
+    agent.reset();
     agent.session = opts.noSession ? undefined : SessionFile.create(sessionsDir, opts.cwd);
     sessionEntries = [];
   };
@@ -279,7 +279,7 @@ export async function setup(opts: SetupOptions): Promise<Harness> {
       await endSession("switch");
       createSession();
       for (const m of kept) agent.session?.append({ type: "message", message: m });
-      agent.messages = kept;
+      agent.reset(kept);
       await startSession(false);
     },
     saveLang(lang) {
