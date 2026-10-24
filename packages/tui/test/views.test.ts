@@ -1,6 +1,9 @@
-import { expect, test } from "bun:test";
+import { beforeAll, expect, test } from "bun:test";
 import { type AssistantMessage, emptyUsage, type ToolCall } from "@sasacode/ai";
 import { AssistantView, Padded, ToolView } from "../src/views.ts";
+import { setLang } from "@sasacode/host";
+
+beforeAll(() => setLang("ja")); // these assertions quote the Japanese strings (another test file may have switched)
 
 const plain = (l: string) => l.replace(/\x1b\[[0-9;]*m/g, "");
 

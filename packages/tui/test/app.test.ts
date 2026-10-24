@@ -1,5 +1,5 @@
 // The TUI driven through a stand-in terminal: keys in, rendered text out. No model: a replay provider.
-import { expect, test } from "bun:test";
+import { beforeAll, expect, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -11,6 +11,8 @@ import { replayProvider } from "@sasacode/testing";
 import { PHRASES } from "../src/activity.ts";
 import { runTui, type TuiHost } from "../src/app.ts";
 import { UsageTally, usageLines } from "../src/summary.ts";
+
+beforeAll(() => setLang("ja")); // these assertions quote the Japanese strings (another test file may have switched)
 
 class FakeTerminal implements Terminal {
   out = "";

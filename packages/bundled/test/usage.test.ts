@@ -1,8 +1,11 @@
-import { afterAll, expect, test } from "bun:test";
+import { afterAll, beforeAll, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { byDay, graph, planLines, readRecords, type UsageRecord } from "../src/usage.ts";
+import { setLang } from "@sasacode/host";
+
+beforeAll(() => setLang("ja")); // these assertions quote the Japanese strings (another test file may have switched)
 
 const home = mkdtempSync(join(tmpdir(), "sasacode-usage-"));
 afterAll(() => rmSync(home, { recursive: true, force: true }));

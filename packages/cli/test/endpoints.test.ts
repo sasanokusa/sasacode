@@ -1,4 +1,4 @@
-import { afterAll, beforeEach, expect, test } from "bun:test";
+import { afterAll, beforeAll, beforeEach, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -8,6 +8,9 @@ import { detectEndpoint } from "../src/detect.ts";
 import { loadConfig } from "../src/config.ts";
 import { resolveEndpoints } from "../src/endpoints.ts";
 import { setup } from "../src/setup.ts";
+import { setLang } from "@sasacode/host";
+
+beforeAll(() => setLang("en")); // these assertions quote the English strings
 
 // Fake servers in the three shapes seen in the wild.
 const anthropic = Bun.serve({

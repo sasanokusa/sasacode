@@ -1,11 +1,14 @@
 // checkpoints: write / edit が変えたファイルの直前の内容を退避し、/undo で戻す。
-import { afterAll, expect, test } from "bun:test";
+import { afterAll, beforeAll, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Plugin, ToolDefinition } from "@sasacode/plugin-api";
 import { editTool, writeTool } from "@sasacode/tools";
 import checkpoints from "../src/checkpoints.ts";
+import { setLang } from "@sasacode/host";
+
+beforeAll(() => setLang("ja")); // these assertions quote the Japanese strings (another test file may have switched)
 
 const root = mkdtempSync(join(tmpdir(), "sasacode-checkpoints-"));
 afterAll(() => rmSync(root, { recursive: true, force: true }));

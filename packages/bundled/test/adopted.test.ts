@@ -1,5 +1,5 @@
 // goal, background-sessions and auto-reconnect: user plugins that became bundled ones.
-import { afterAll, expect, test } from "bun:test";
+import { afterAll, beforeAll, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -7,6 +7,9 @@ import type { Plugin } from "@sasacode/plugin-api";
 import autoReconnect from "../src/auto-reconnect.ts";
 import backgroundSessions from "../src/background-sessions.ts";
 import goal from "../src/goal.ts";
+import { setLang } from "@sasacode/host";
+
+beforeAll(() => setLang("ja")); // these assertions quote the Japanese strings (another test file may have switched)
 
 const root = mkdtempSync(join(tmpdir(), "sasacode-adopted-"));
 afterAll(() => rmSync(root, { recursive: true, force: true }));

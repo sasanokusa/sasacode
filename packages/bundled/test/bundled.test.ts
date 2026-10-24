@@ -1,4 +1,4 @@
-import { afterAll, expect, test } from "bun:test";
+import { afterAll, beforeAll, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -8,6 +8,9 @@ import { buildSystemPrompt } from "../../agent/src/system-prompt.ts";
 import { replayProvider } from "@sasacode/testing";
 import builtinTools, { bashTool } from "@sasacode/tools";
 import { agentsFiles, bundledPlugins, htmlToText, readCapped, splitPoint } from "../src/index.ts";
+import { setLang } from "@sasacode/host";
+
+beforeAll(() => setLang("ja")); // these assertions quote the Japanese strings (another test file may have switched)
 
 const root = mkdtempSync(join(tmpdir(), "sasacode-bundled-"));
 afterAll(() => rmSync(root, { recursive: true, force: true }));
