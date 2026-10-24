@@ -2,7 +2,7 @@
   "name": "sasa-code-harness",
   "private": true,
   "type": "module",
-  "packageManager": "bun@1.4.2",
+  "packageManager": "bun@1.4.4",
   "workspaces": [
     "packages/*"
   ],
@@ -16,7 +16,7 @@
     "pack:plugins": "bun scripts/pack-plugins.ts"
   },
   "devDependencies": {
-    "@types/bun": "^1.4.2",
+    "@types/bun": "^1.4.4",
     "typescript": "^7.0.2"
   },
   "patchedDependencies": {

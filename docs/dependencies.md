@@ -13,7 +13,7 @@ pi-tuiには、`patches/@earendil-works%2Fpi-tui@0.87.1.patch`を、ルートの
 
 ## pi-tui の Bun 上での検証（M1 冒頭）
 
-`@earendil-works/pi-tui@0.87.1`をBun 1.4.2で次の点について検証した。
+`@earendil-works/pi-tui@0.87.1`をBun 1.4.4で次の点について検証した。
 
 - 日本語（全角）入力が編集バッファに正しく入り、表示幅も正しく計算される
 - ブラケットペースト15行が`[paste #1 +15 lines]`マーカーに畳まれ、送信時には展開される
