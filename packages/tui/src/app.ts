@@ -255,12 +255,16 @@ class App {
         const text = this.pasted.slice(0, end);
         const rest = this.pasted.slice(end + 6);
         this.pasted = undefined;
-        void this.paste(text).then(() => rest && this.editor.handleInput(rest));
+        // Inserted after the key handler returned: render then, or it shows only on the next key.
+        void this.paste(text).then(() => {
+          if (rest) this.editor.handleInput(rest);
+          this.tui.requestRender();
+        });
         return { consume: true };
       }
       // An image on the clipboard pastes nothing in most terminals; ctrl+v asks for it.
       if (matchesKey(data, "ctrl+v") && this.host.host.pasteHandlers.length) {
-        void this.paste("");
+        void this.paste("").then(() => this.tui.requestRender());
         return { consume: true };
       }
     }
@@ -309,7 +313,6 @@ class App {
       const out = await Promise.resolve(handle(text, this.editor.getText())).catch(() => undefined);
       if (out !== undefined) {
         this.editor.insertTextAtCursor(out);
-        this.tui.requestRender();
         return;
       }
     }
@@ -319,7 +322,6 @@ class App {
     const clean = text.replace(/\r\n?/g, "\n").replace(/\t/g, "    ").replace(/[\x00-\x09\x0b-\x1f\x7f]/g, "");
     if (clean.split("\n").length <= SHOWN_PASTE_LINES && clean.length <= SHOWN_PASTE_CHARS) {
       this.editor.insertTextAtCursor(clean);
-      this.tui.requestRender();
       return;
     }
     this.editor.handleInput(`\x1b[200~${text}\x1b[201~`);

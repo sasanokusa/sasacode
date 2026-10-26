@@ -435,3 +435,19 @@ test("a pasted text that fits on screen is shown as it is; a long one is folded,
   await term.send("\r");
   expect(await exited).toBe(0);
 });
+
+test("a folded paste shows at once, not on the next key", async () => {
+  const { term, exited } = await start([reply([{ type: "text", text: "ok" }]), reply([{ type: "text", text: "ok" }])]);
+  const long = Array.from({ length: 60 }, (_, i) => `l${i}`).join("\n");
+  await term.send(`\x1b[200~${long}\x1b[201~`); // the first one also shows a note, which renders anyway
+  await term.send("\r");
+  await Bun.sleep(100);
+  const before = term.out.length;
+  await term.send(`\x1b[200~${long}\x1b[201~`);
+  expect(term.text(before)).toContain("[paste #");
+  await term.send("\r");
+  await Bun.sleep(100);
+  await term.type("/exit");
+  await term.send("\r");
+  expect(await exited).toBe(0);
+});
