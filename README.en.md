@@ -114,6 +114,7 @@ It runs full screen: the conversation scrolls at the top, the input and the foot
 | tab | Completion (slash commands, model names in `/model`, file paths) |
 | esc | Interrupt generation or a tool (the model is told on the next input). Queued messages are not sent; they go back to the input |
 | enter while running | Queue a message for the next turn |
+| paste | Up to 40 lines and 4,000 characters shows as it is; a longer paste shows as `[paste #1 +60 lines]` and is sent in full |
 | ctrl+o | Expand or collapse tool output and thinking |
 | shift+tab | Cycle the permission mode |
 | pageup / pagedown, wheel | Scroll (while scrolled up, a scrollbar and "jump to latest" appear) |

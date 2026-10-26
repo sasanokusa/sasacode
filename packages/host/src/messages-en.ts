@@ -185,6 +185,7 @@ export const TO_EN: Record<string, string> = {
   "ネットワークに接続できません（{target}）。復旧を待って自動再試行します。": "Cannot reach the network ({target}). Waiting for it to come back, then retrying.",
   "ネットワークが復旧しました。自動再試行します。": "The network is back. Retrying.",
   "ネットワークが復旧しませんでした（{s}秒待機）。/reconnect で手動再試行できます。": "The network did not come back (waited {s}s). Retry with /reconnect.",
+  "長い貼り付けは [paste #番号 +行数] とまとめて表示します。送信すると全文が送られます": "A long paste shows as [paste #number +lines] and is sent in full.",
   "サーバーのエラーが続いたため、再試行をやめました。": "The server kept failing; stopped retrying.",
   "サーバーの一時的なエラー — {s}秒後に再試行（{n}/{max}）": "server error — retrying in {s}s ({n}/{max})",
   "サーバーが一時的に応答できません（{error}）。{s}秒待って再試行します。": "The server cannot answer right now ({error}). Retrying in {s}s.",

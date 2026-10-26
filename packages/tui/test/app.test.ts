@@ -412,3 +412,26 @@ test("esc gives a queued message back to the input instead of sending it", async
   await term.send("\r");
   await exited;
 });
+
+test("a pasted text that fits on screen is shown as it is; a long one is folded, explained once, and sent in full", async () => {
+  const { term, agent, exited } = await start([reply([{ type: "text", text: "ok" }]), reply([{ type: "text", text: "ok" }])]);
+  const lines = (n: number) => Array.from({ length: n }, (_, i) => `copied line ${i + 1}`).join("\r\n");
+  let before = term.out.length;
+  await term.send(`\x1b[200~${lines(12)}\x1b[201~`);
+  expect(term.text(before)).toContain("copied line 12");
+  expect(term.text(before)).not.toContain("[paste #");
+  await term.send("\r");
+  await Bun.sleep(100);
+  expect(JSON.stringify(agent.messages.filter((m) => m.role === "user").at(-1)!.content)).toContain("copied line 1\\ncopied line 2");
+
+  before = term.out.length;
+  await term.send(`\x1b[200~${lines(60)}\x1b[201~`);
+  expect(term.text(before)).toContain("[paste #1 +60 lines]");
+  expect(term.text(before)).toContain("送信すると全文が送られます");
+  await term.send("\r");
+  await Bun.sleep(100);
+  expect(JSON.stringify(agent.messages.filter((m) => m.role === "user").at(-1)!.content)).toContain("copied line 60");
+  await term.type("/exit");
+  await term.send("\r");
+  expect(await exited).toBe(0);
+});

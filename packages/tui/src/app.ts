@@ -46,6 +46,10 @@ const MARGIN = 2;
 const BELL_AFTER_MS = 30_000;
 
 /** What the TUI needs from the CLI. */
+/** A paste up to this size is shown in the input as it is; a longer one is folded into a marker. */
+const SHOWN_PASTE_LINES = 40;
+const SHOWN_PASTE_CHARS = 4000;
+
 export interface TuiHost {
   agent: Agent;
   host: PluginHost;
@@ -98,6 +102,7 @@ class App {
   private lastCtrlC = 0;
   /** A bracketed paste still arriving (onKey). */
   private pasted?: string;
+  private foldNoticeShown = false;
   private warnedContext = new Set<string>();
   private exit?: (code: number) => void;
   private ready?: Promise<void>;
@@ -236,7 +241,7 @@ class App {
 
   private onKey(data: string): { consume: boolean } | undefined {
     const agent = this.host.agent;
-    if (this.inputSlot.children[0] === this.editor && this.host.host.pasteHandlers.length) {
+    if (this.inputSlot.children[0] === this.editor) {
       const start = data.indexOf("\x1b[200~");
       if (this.pasted !== undefined || start >= 0) {
         // A bracketed paste may come in several chunks: gather it, then let the plugins look first.
@@ -254,7 +259,7 @@ class App {
         return { consume: true };
       }
       // An image on the clipboard pastes nothing in most terminals; ctrl+v asks for it.
-      if (matchesKey(data, "ctrl+v")) {
+      if (matchesKey(data, "ctrl+v") && this.host.host.pasteHandlers.length) {
         void this.paste("");
         return { consume: true };
       }
@@ -308,7 +313,20 @@ class App {
         return;
       }
     }
-    if (text) this.editor.handleInput(`\x1b[200~${text}\x1b[201~`);
+    if (!text) return;
+    // The editor folds a paste over 10 lines into "[paste #1 +12 lines]" (sent in full), which reads
+    // like something else was pasted. A paste that fits on screen is shown as it is.
+    const clean = text.replace(/\r\n?/g, "\n").replace(/\t/g, "    ").replace(/[\x00-\x09\x0b-\x1f\x7f]/g, "");
+    if (clean.split("\n").length <= SHOWN_PASTE_LINES && clean.length <= SHOWN_PASTE_CHARS) {
+      this.editor.insertTextAtCursor(clean);
+      this.tui.requestRender();
+      return;
+    }
+    this.editor.handleInput(`\x1b[200~${text}\x1b[201~`);
+    if (!this.foldNoticeShown) {
+      this.foldNoticeShown = true;
+      this.notify(t("長い貼り付けは [paste #番号 +行数] とまとめて表示します。送信すると全文が送られます"));
+    }
   }
 
   /** The editor hands over text with paste markers already expanded, and clears itself. */
