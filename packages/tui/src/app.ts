@@ -262,6 +262,7 @@ class App {
         });
         return { consume: true };
       }
+      if (this.deleteMarker(data)) return { consume: true };
       // An image on the clipboard pastes nothing in most terminals; ctrl+v asks for it.
       if (matchesKey(data, "ctrl+v") && this.host.host.pasteHandlers.length) {
         void this.paste("").then(() => this.tui.requestRender());
@@ -305,6 +306,26 @@ class App {
       return { consume: true };
     }
     return undefined;
+  }
+
+  /**
+   * Backspace or delete next to (or inside) an "[Image #1]" marker removes all of it, as the editor
+   * does for its own "[paste #1 +12 lines]": a marker with a character missing is no longer one.
+   */
+  private deleteMarker(data: string): boolean {
+    const back = matchesKey(data, "backspace");
+    if (!back && !matchesKey(data, "delete")) return false;
+    const { line, col } = this.editor.getCursor();
+    for (const m of (this.editor.getLines()[line] ?? "").matchAll(/\[Image #\d+\]/g)) {
+      const start = m.index!;
+      const end = start + m[0].length;
+      if (back ? col <= start || col > end : col < start || col >= end) continue;
+      // Through the editor's own keys, so undo and the cursor stay right.
+      const keys = back ? "\x1b[C".repeat(end - col) + "\x7f".repeat(m[0].length) : "\x1b[D".repeat(col - start) + "\x1b[3~".repeat(m[0].length);
+      for (const k of keys.match(/\x1b\[C|\x1b\[D|\x1b\[3~|\x7f/g)!) this.editor.handleInput(k);
+      return true;
+    }
+    return false;
   }
 
   /** Pasted text (or "" for ctrl+v) offered to the plugins; unclaimed text goes to the editor as a paste. */
@@ -893,7 +914,9 @@ class App {
   private interrupt(): void {
     const back = this.queued.splice(0);
     void this.host.agent.halt();
-    if (back.length) this.editor.setText([...back, this.editor.getText()].filter(Boolean).join("\n"));
+    // setText would forget the editor's folded pastes, leaving their markers as plain text.
+    if (back.length && this.editor.getText()) this.editor.insertTextAtCursor(`\n${back.join("\n")}`);
+    else if (back.length) this.editor.setText(back.join("\n"));
     this.renderStatus();
   }
 

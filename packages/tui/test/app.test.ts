@@ -451,3 +451,42 @@ test("a folded paste shows at once, not on the next key", async () => {
   await term.send("\r");
   expect(await exited).toBe(0);
 });
+
+test("backspace or delete at an [Image #n] marker removes the whole marker", async () => {
+  const script = [1, 2, 3].map(() => reply([{ type: "text", text: "ok" }]));
+  const { term, agent, exited } = await start(script);
+  const sent = () => JSON.stringify(agent.messages.filter((m) => m.role === "user").at(-1)!.content);
+  for (const keys of [["\x1b[D", "\x1b[D", "\x7f"], ["\x1b[D", "\x1b[D", "\x1b[D", "\x1b[D", "\x7f"], ["\x01", "\x1b[C", "\x1b[C", "\x1b[C", "\x1b[C", "\x1b[3~"]]) {
+    await term.type("see [Image #1] x");
+    for (const k of keys) await term.send(k);
+    await term.send("\r");
+    await Bun.sleep(100);
+    expect(sent()).toContain("see  x");
+  }
+  await term.type("/exit");
+  await term.send("\r");
+  expect(await exited).toBe(0);
+});
+
+test("esc gives queued text back without dropping a folded paste already in the input", async () => {
+  const script = [reply([{ type: "tool_call", id: "1", name: "bash", input: { command: "sleep 1" } }]), reply([{ type: "text", text: "ok" }])];
+  const { term, agent, exited } = await start(script, "auto");
+  registerApi("replay", replayProvider(script));
+  await term.type("go");
+  await term.send("\r");
+  await Bun.sleep(150);
+  await term.type("queued");
+  await term.send("\r");
+  await term.send(`\x1b[200~${Array.from({ length: 60 }, (_, i) => `l${i}`).join("\n")}\x1b[201~`);
+  await term.send("\x1b");
+  await Bun.sleep(1200);
+  await term.send("\r");
+  await Bun.sleep(200);
+  const last = JSON.stringify(agent.messages.filter((m) => m.role === "user").at(-1)!.content);
+  expect(last).toContain("l59");
+  expect(last).toContain("queued");
+  expect(last).not.toContain("[paste #");
+  await term.type("/exit");
+  await term.send("\r");
+  await exited;
+});
