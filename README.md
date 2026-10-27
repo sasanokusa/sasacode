@@ -36,7 +36,7 @@ irm https://sasanokusa.com/sasacode/install.ps1 | iex
 - macOS（arm64 / x64）、Linux（x64 / arm64、glibc / musl、AVX2のないCPU向けのbaseline版）、Windows（x64 / arm64、x64のbaseline版）の単一バイナリ。Bunは不要。
 - インストーラーもバイナリも、[GitHub Releases](https://github.com/sasanokusa/sasacode/releases) の最新版から取得してSHA256を検証する。sasanokusa.comのURLは、最新リリースの `install.sh` / `install.ps1` へのリダイレクト。
 - SHA256が防ぐのは壊れたダウンロードまで。ファイルがこのリポジトリのGitHub Actionsでビルドされたものかは、v0.9.8以降のリリースに付けた署名つきの来歴で確かめられる（`gh attestation verify sasacode-darwin-arm64.tar.gz --repo sasanokusa/sasacode`。リリースから落としたファイルに対して。`install.sh` も同じ）。
-- `SASACODE_VERSION=v0.13.6` で版を固定でき、`SASACODE_INSTALL_DIR` で置き場所を変えられる（どちらのインストーラーでも）。
+- `SASACODE_VERSION=v0.13.7` で版を固定でき、`SASACODE_INSTALL_DIR` で置き場所を変えられる（どちらのインストーラーでも）。
 - 更新は `sasacode update`（インストーラーと同じ検証つき。`--check` で確認だけ）。新しい版が出ていると起動時に一度だけ静かに知らせる（`"updateCheck": false` で止める）。ソースから動かしている場合は `git pull` と `bun install`。
 
 ソースから使う場合（[Bun](https://bun.sh) 1.4 以上）は次のとおり。
