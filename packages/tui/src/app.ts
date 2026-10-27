@@ -931,7 +931,7 @@ class App {
   /** The rows a dialog in the input slot can have: the screen less the status, the footer and a line of the conversation. */
   private inputRows(): number {
     const width = Math.max(1, this.terminal.columns - 2 * MARGIN);
-    return this.terminal.rows - this.status.render(width).length - this.footer.render(width).length - 2;
+    return this.terminal.rows - this.status.render(width).length - this.footer.render(width).length - 3;
   }
 
     private showInput(component: Component): void {

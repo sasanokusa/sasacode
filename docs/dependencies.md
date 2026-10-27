@@ -9,7 +9,7 @@
 | `@modelcontextprotocol/sdk` | `@sasacode/mcp` | 公式のMCPクライアント。プロトコルのバージョン交渉、stdioとStreamable HTTPのトランスポート、セッションID、進捗通知によるタイムアウト延長を仕様どおりに扱える。単一バイナリに含まれるのはimportしているクライアント部分だけ（サーバー用のexpressなどは入らない） | 自前のJSON-RPC実装：HTTP側のセッション管理やSSEの再接続まで追うと、保守の負担が大きい |
 | `@earendil-works/pi-tui` | `@sasacode/tui` | 決定事項8.2。差分描画、同期出力、IME対応エディタ、貼り付け処理、Markdown表示がそろっていて、依存は`marked`と`get-east-asian-width`の2つだけ | OpenTUI（ネイティブバイナリに依存）、Ink（Reactが入る） |
 
-pi-tuiには、`patches/@earendil-works%2Fpi-tui@0.87.1.patch`を、ルートの`package.json`の`patchedDependencies`で0.87.1に当てている。pi-tuiはEast Asian Ambiguous幅の文字（①、○ など）を常に1セルとして数えるので、これを2セルで表示する端末（CJK向けの設定）で行の幅がずれる。パッチは`setAmbiguousWidth(1 | 2)`を追加して`get-east-asian-width`に`ambiguousAsWide`を渡すようにし、`@sasacode/tui`が端末に合わせて呼ぶ（`SASACODE_AMBIGUOUS_WIDTH=1|2`で固定できる）。pi-tuiの版を上げるときは、パッチを作り直す。
+pi-tuiには、`patches/@earendil-works%2Fpi-tui@0.87.1.patch`を、ルートの`package.json`の`patchedDependencies`で0.87.1に当てている。pi-tuiはEast Asian Ambiguous幅の文字（①、○ など）を常に1セルとして数えるので、これを2セルで表示する端末（CJK向けの設定）で行の幅がずれる。パッチは`setAmbiguousWidth(1 | 2)`を追加して`get-east-asian-width`に`ambiguousAsWide`を渡すようにし、`@sasacode/tui`が端末に合わせて呼ぶ（`SASACODE_AMBIGUOUS_WIDTH=1|2`で固定できる）。ほかに3か所を直している。入力欄の貼り付けマーカーは、挿入したときの形そのままのものだけを1回で展開する（手で書いた`[paste #1]`や、貼り付けた本文の中のマーカーは展開しない）。`Editor.moveToEnd()`を足す（Escで予約メッセージを下書きのあとへ戻すため）。会話内検索の案内文と「一致なし」を`setAltScreenSearchText()`で差し替えられるようにする（表示言語に合わせるため）。pi-tuiの版を上げるときは、パッチを作り直す。
 
 ## pi-tui の Bun 上での検証（M1 冒頭）
 
