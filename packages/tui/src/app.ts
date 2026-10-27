@@ -241,7 +241,9 @@ class App {
 
   private onKey(data: string): { consume: boolean } | undefined {
     const agent = this.host.agent;
-    if (this.inputSlot.children[0] === this.editor) {
+    // The editor may be shown while something else has the keys: the conversation search box, say.
+    const editing = this.inputSlot.children[0] === this.editor && this.editor.focused;
+    if (editing) {
       const start = data.indexOf("\x1b[200~");
       if (this.pasted !== undefined || start >= 0) {
         // A bracketed paste may come in several chunks: gather it, then let the plugins look first.
@@ -274,7 +276,7 @@ class App {
     if (
       matchesKey(data, "escape") &&
       agent.isRunning &&
-      this.inputSlot.children[0] === this.editor &&
+      editing &&
       !this.editor.isShowingAutocomplete()
     ) {
       this.interrupt();
@@ -300,7 +302,7 @@ class App {
       this.tui.requestRender(true);
       return { consume: true };
     }
-    if (matchesKey(data, "shift+tab") && this.inputSlot.children[0] === this.editor) {
+    if (matchesKey(data, "shift+tab") && editing) {
       const modes = PERMISSION_MODES;
       this.setMode(modes[(modes.indexOf(agent.permissions.mode) + 1) % modes.length]!);
       return { consume: true };
@@ -564,7 +566,13 @@ class App {
         resolve(answer);
       };
       const onAbort = () => done({ decision: "deny" });
-      const dialog = new ApprovalDialog(req, summary, done);
+      // Esc stops the run, as anywhere else while the agent works; the call itself is refused first.
+      const stop = () => {
+        done({ decision: "deny" });
+        this.interrupt();
+      };
+      // The rest of the dialog, the footer and a little of the conversation stay on screen.
+      const dialog = new ApprovalDialog(req, summary, done, stop, () => Math.max(3, this.terminal.rows - 14));
       this.showInput(dialog);
       req.signal?.addEventListener("abort", onAbort, { once: true });
       if (req.signal?.aborted) onAbort();

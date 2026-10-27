@@ -226,6 +226,7 @@ Endpoints in a project's `.sasacode/config.json` are not used until you trust th
 - Paths are judged by where symbolic links lead (the real path). A link inside the working directory that points outside counts as outside, even before its target exists, and links inside a project cannot swap what a rule applies to. A path whose target cannot be determined (a link loop, for example) always asks.
 - Permissions are a check before a tool runs, not isolation (a sandbox). Swapping a link between the check and the run, or what an allowed bash command does, is not prevented. For code you do not trust, isolate at the OS level (a container, for example).
 - After an interrupt (esc), tools that were approved but not yet started do not run.
+- Esc at an approval prompt refuses the call and interrupts the whole run. Esc while typing instructions for the model goes back to the choices. A command too long for the screen scrolls with shift+↑↓ (the choices stay on screen).
 
 ### Judging calls with Jev (the `jev-guard` plugin)
 

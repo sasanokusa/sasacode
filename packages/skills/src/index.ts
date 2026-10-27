@@ -76,7 +76,8 @@ export function createSkillsPlugin(dirs: string[], opts: { builtinDir?: string }
     for (const s of skills) {
       api.registerCommand({
         name: `skill:${s.name}`,
-        description: s.description.slice(0, 80),
+        // In full: /help wraps it, and the completion list shortens it to the width with an ellipsis.
+        description: s.description,
         argumentHint: "[task]",
         run({ args }) {
           const body = readFileSync(s.path, "utf8");

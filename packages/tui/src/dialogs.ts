@@ -9,6 +9,8 @@ export class Picker implements Component, Focusable {
   focused = false;
   private list!: SelectList;
   private filter = "";
+  /** A bracketed paste still arriving in chunks. */
+  private pasted?: string;
 
   constructor(
     private title: string,
@@ -29,6 +31,17 @@ export class Picker implements Component, Focusable {
   }
 
   handleInput(data: string): void {
+    if (this.pasted !== undefined || data.includes("\x1b[200~")) {
+      // A paste narrows the list like typing does; line breaks and control characters are left out.
+      const start = data.indexOf("\x1b[200~");
+      this.pasted = (this.pasted ?? "") + (start >= 0 ? data.slice(start + 6) : data);
+      const end = this.pasted.indexOf("\x1b[201~");
+      if (end < 0) return;
+      this.filter += this.pasted.slice(0, end).replace(/[\x00-\x1f\x7f]+/g, " ").trim();
+      this.pasted = undefined;
+      this.rebuild();
+      return;
+    }
     if (matchesKey(data, "backspace")) {
       this.filter = this.filter.slice(0, -1);
       this.rebuild();
@@ -53,26 +66,37 @@ export class Picker implements Component, Focusable {
   }
 }
 
-/** Tool approval: allow once, always allow (adds a session rule), deny, or deny with instructions for the model. */
+/**
+ * Tool approval: allow once, always allow (adds a session rule), deny, or deny with instructions for the model.
+ * Esc stops the whole run (`interrupt`), as it does everywhere else while the agent works. A long command
+ * is shown in a window that shift+↑↓ scroll (pgup/pgdn scroll the conversation), so the choices and the one selected stay on screen.
+ */
 export class ApprovalDialog implements Component, Focusable {
   private _focused = false;
   private list: SelectList;
   private input?: Input;
-  private header: Text;
+  private title: string;
+  private detail: Text;
+  private footer: Text;
+  private scroll = 0;
+  private page = 1;
 
-  constructor(req: ApprovalRequest, summary: string, done: (a: ApprovalAnswer) => void) {
+  constructor(
+    req: ApprovalRequest,
+    summary: string,
+    done: (a: ApprovalAnswer) => void,
+    interrupt: () => void,
+    private maxDetailRows: () => number = () => 12,
+  ) {
     const rule = PermissionPolicy.ruleFor(req);
     const raw = req.tool.name === "bash" ? String(req.args.command) : summary || JSON.stringify(req.args);
     // What is approved must be exactly what is shown: control characters are made visible, and called out.
-    const detail = plain(raw);
     const warn = /[\x00-\x08\x0b-\x1f\x7f-\x9f]/.test(raw)
-      ? `\n${c.red(t("⚠ 制御文字（端末のエスケープシーケンスなど）を含んでいます。␛ などの表示を確かめてください。"))}`
+      ? `${c.red(t("⚠ 制御文字（端末のエスケープシーケンスなど）を含んでいます。␛ などの表示を確かめてください。"))}\n`
       : "";
-    this.header = new Text(
-      `${c.yellow("?")} ${c.bold(t("{tool} を実行しますか？", { tool: req.tool.name }))}\n${c.cyan(detail)}${warn}\n${c.gray(plain(req.reason))}`,
-      0,
-      0,
-    );
+    this.title = `${c.yellow("?")} ${c.bold(t("{tool} を実行しますか？", { tool: req.tool.name }))}`;
+    this.detail = new Text(c.cyan(plain(raw)), 0, 0);
+    this.footer = new Text(`${warn}${c.gray(plain(req.reason))}`, 0, 0);
     this.list = new SelectList(
       [
         { value: "allow", label: t("はい") },
@@ -88,11 +112,15 @@ export class ApprovalDialog implements Component, Focusable {
         this.input = new Input();
         this.input.focused = this._focused;
         this.input.onSubmit = (text) => done({ decision: "deny", feedback: text.trim() || undefined });
+        // Back to the choices: the instructions were not what the user wanted after all.
+        this.input.onEscape = () => {
+          this.input = undefined;
+        };
         return;
       }
       done({ decision: item.value as ApprovalAnswer["decision"] });
     };
-    this.list.onCancel = () => done({ decision: "deny" });
+    this.list.onCancel = interrupt;
   }
 
   get focused(): boolean {
@@ -105,18 +133,36 @@ export class ApprovalDialog implements Component, Focusable {
 
   handleInput(data: string): void {
     if (this.input) this.input.handleInput(data);
+    else if (matchesKey(data, "shift+up")) this.scroll = Math.max(0, this.scroll - this.page);
+    else if (matchesKey(data, "shift+down")) this.scroll += this.page;
     else this.list.handleInput?.(data);
   }
 
   render(width: number): string[] {
-    const lines = [truncateToWidth(c.yellow("─".repeat(width)), width), ...this.header.render(width)];
-    if (this.input) lines.push(c.gray(t("モデルへの指示（enter で送信）:")), ...this.input.render(width));
-    else lines.push(...this.list.render(width), truncateToWidth(c.gray(t("esc で拒否")), width));
+    const detail = this.detail.render(width);
+    const rows = Math.max(1, this.maxDetailRows());
+    let shown = detail;
+    let more: string[] = [];
+    if (detail.length > rows) {
+      this.page = Math.max(1, rows - 1);
+      this.scroll = Math.min(this.scroll, detail.length - rows);
+      shown = detail.slice(this.scroll, this.scroll + rows);
+      more = [
+        truncateToWidth(
+          c.gray(t("{from}–{to} / {total} 行 · shift+↑↓ で全文をスクロール", { from: this.scroll + 1, to: this.scroll + shown.length, total: detail.length })),
+          width,
+        ),
+      ];
+    }
+    const lines = [truncateToWidth(c.yellow("─".repeat(width)), width), truncateToWidth(this.title, width), ...shown, ...more, ...this.footer.render(width)];
+    if (this.input) lines.push(c.gray(t("モデルへの指示（enter で送信 · esc で選択に戻る）:")), ...this.input.render(width));
+    else lines.push(...this.list.render(width), truncateToWidth(c.gray(t("esc で中断")), width));
     return lines;
   }
 
   invalidate(): void {
-    this.header.invalidate();
+    this.detail.invalidate();
+    this.footer.invalidate();
     this.list.invalidate();
   }
 }

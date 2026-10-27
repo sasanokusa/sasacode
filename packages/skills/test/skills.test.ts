@@ -72,6 +72,10 @@ test("built-in tool-authoring skill is written out, listed, and callable as /ski
   const path = join(builtinDir, "tool-authoring", "SKILL.md");
   expect(parseFrontmatter(await Bun.file(path).text()).name).toBe("tool-authoring");
   expect(host.commands.map((c) => c.name)).toContain("skill:tool-authoring");
+  // The whole description: /help wraps it, the completion list shortens it to the width (#22).
+  const { description } = parseFrontmatter(await Bun.file(path).text());
+  expect(description!.length).toBeGreaterThan(80);
+  expect(host.commands.find((c) => c.name === "skill:tool-authoring")!.description).toBe(description!);
   expect((await agent.permissions.check({ tool: readTool, args: { path }, cwd: root })).decision).toBe("allow");
   // A user skill with the same name wins over the built-in.
   const user = join(root, "user-skills");

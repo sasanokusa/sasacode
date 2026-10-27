@@ -63,7 +63,7 @@ const reply = (content: AssistantContent[], extra: Partial<AssistantMessage> = {
   stopReason: content.some((c) => c.type === "tool_call") ? "tool_use" : "stop", timestamp: 0, ...extra,
 });
 
-async function start(script: AssistantMessage[], mode: "edits" | "auto" = "edits", listed: Awaited<ReturnType<TuiHost["listModels"]>> = []) {
+async function start(script: AssistantMessage[], mode: "edits" | "auto" = "edits", listed: Awaited<ReturnType<TuiHost["listModels"]>> = [], altScreen = false) {
   registerApi("replay", replayProvider(script));
   const cwd = mkdtempSync(join(tmpdir(), "sasacode-tui-"));
   const agent = new Agent({ model, cwd, systemPrompt: "", permissions: new PermissionPolicy(mode) });
@@ -75,7 +75,7 @@ async function start(script: AssistantMessage[], mode: "edits" | "auto" = "edits
     agent,
     host,
     warnings: [],
-    config: { tui: { altScreen: false, bell: false } },
+    config: { tui: { altScreen, bell: false } },
     resolve: () => model,
     sessionsDir: cwd,
     listModels: async () => listed,
@@ -489,4 +489,74 @@ test("esc gives queued text back without dropping a folded paste already in the 
   await term.type("/exit");
   await term.send("\r");
   await exited;
+});
+
+test("a paste narrows a picker's list, as typing does (#19)", async () => {
+  const { term, host, exited } = await start([]);
+  const picked = host.api("picker-test").ui.select("Pick", [
+    { value: "first", label: "first" },
+    { value: "other", label: "other" },
+  ]);
+  await Bun.sleep(30);
+  await term.send("\x1b[200~oth");
+  await term.send("er\n\x1b[201~");
+  expect(term.text()).toContain("絞り込み: other");
+  await term.send("\r");
+  expect(await picked).toBe("other");
+  await term.type("/exit"); await term.send("\r"); await exited;
+});
+
+test("a paste while the conversation search is open goes to the search, not the message draft (#20)", async () => {
+  const { term, exited } = await start([], "edits", [], true);
+  await term.send("\x1b[102;6u"); // ctrl+shift+f
+  await term.send("\x1b[200~hello\x1b[201~");
+  await term.send("\x1b"); // closes the search
+  const from = term.out.length;
+  await term.type("!");
+  expect(term.text(from)).not.toContain("hello");
+  await term.send("\x15");
+  await term.type("/exit"); await term.send("\r"); await exited;
+});
+
+test("esc at an approval stops the run; esc in the instructions goes back to the choices (#21)", async () => {
+  const script = [reply([{ type: "tool_call", id: "1", name: "bash", input: { command: "echo nope" } }]), reply([{ type: "text", text: "never" }])];
+  const { term, agent, exited } = await start(script);
+  const provider = replayProvider(script);
+  registerApi("replay", provider);
+  await term.type("go");
+  await term.send("\r");
+  await Bun.sleep(100);
+  expect(term.text()).toContain("esc で中断");
+  await term.send("\x1b[B"); await term.send("\x1b[B"); await term.send("\x1b[B");
+  await term.send("\r"); // いいえ、代わりの指示を伝える
+  expect(term.text()).toContain("esc で選択に戻る");
+  let from = term.out.length;
+  await term.send("\x1b");
+  expect(term.text(from)).toContain("はい");
+  await term.send("\x1b");
+  await Bun.sleep(300);
+  expect(agent.isRunning).toBe(false);
+  expect(provider.requests).toHaveLength(1);
+  expect(JSON.stringify(agent.messages)).not.toContain("never");
+  await term.type("/exit"); await term.send("\r"); await exited;
+});
+
+test("a long command scrolls inside the approval; the choices stay on screen (#23)", async () => {
+  const command = `printf ${"x".repeat(4000)}`;
+  const { term, agent, exited } = await start([]);
+  const bash = agent.getTools().find((t) => t.name === "bash")!;
+  const approval = agent.approve!({ tool: bash, args: { command }, cwd: agent.cwd,
+    call: { type: "tool_call", id: "long", name: "bash", input: { command } }, reason: "test" });
+  await Bun.sleep(30);
+  let shown = term.text();
+  expect(shown).toContain("常に許可");
+  expect(shown).toContain("いいえ、代わりの指示を伝える");
+  expect(shown).toMatch(/1–26 \/ 4\d 行/);
+  const from = term.out.length;
+  await term.send("\x1b[1;2B"); // shift+down
+  expect(term.text(from)).toMatch(/[1-9]\d–4\d \/ 4\d 行/); // the window moved down to the end
+  await term.send("\x1b[B"); await term.send("\x1b[B");
+  await term.send("\r");
+  expect((await approval).decision).toBe("deny");
+  await term.type("/exit"); await term.send("\r"); await exited;
 });
