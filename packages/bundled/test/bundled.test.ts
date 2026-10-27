@@ -286,3 +286,9 @@ test("web_fetch reads at most 10 MB of a response", async () => {
     server.stop(true);
   }
 });
+
+test("htmlToText leaves a numeric reference it cannot decode as written (#44)", () => {
+  expect(htmlToText("<p>a &#x110000; b</p>")).toBe("a &#x110000; b");
+  expect(htmlToText("<p>a &#99999999; b</p>")).toBe("a &#99999999; b");
+  expect(htmlToText("<p>a &#X41; &#65; &#x41; &amp; b</p>")).toBe("a A A A & b");
+});

@@ -68,6 +68,12 @@ export function byDay(records: UsageRecord[]): Map<string, Sum> {
 }
 
 const startOfDay = (t: number) => new Date(new Date(t).setHours(0, 0, 0, 0)).getTime();
+/** Midnight `n` calendar days before `now`'s day: a day is not 24 hours where the clocks change (DST). */
+export const daysAgo = (n: number, now = Date.now()) => {
+  const d = new Date(startOfDay(now));
+  d.setDate(d.getDate() - n);
+  return d.getTime();
+};
 const since = (records: UsageRecord[], t: number) => records.filter((r) => r.t >= t).reduce(add, empty());
 
 // ── formatting ──────────────────────────────────────────────────────
@@ -254,7 +260,7 @@ const usage: Plugin = (api) => {
     const lines = [bold(t("この起動（{time}）", { time: fmtWait(Date.now() - run.started) })), `  ${sumLine(run.sum)}`];
     if (run.models.size) lines.push(gray(`  ${[...run.models].join(", ")}`));
     lines.push("", bold(t("これまで")));
-    const spans = [["今日", today], ["直近7日", today - 6 * 86_400_000], ["直近30日", today - 29 * 86_400_000], ["全期間", 0]] as const;
+    const spans = [["今日", today], ["直近7日", daysAgo(6)], ["直近30日", daysAgo(29)], ["全期間", 0]] as const;
     const labelWidth = Math.max(...spans.map(([label]) => vis(t(label)))) + 2;
     for (const [label, from] of spans) lines.push(`  ${pad(t(label), labelWidth)}${sumLine(since(records, from))}`);
     const plan = await codexPlan().catch(() => undefined);
@@ -266,7 +272,7 @@ const usage: Plugin = (api) => {
   function graphView(): void {
     const days = byDay(readRecords());
     const weeks = Math.max(4, Math.min(53, Math.floor((width() - 3) / WEEK)));
-    const from = startOfDay(Date.now()) - (weeks * 7 - 1) * 86_400_000;
+    const from = daysAgo(weeks * 7 - 1);
     const inRange = [...days].filter(([k]) => new Date(`${k}T00:00:00`).getTime() >= from);
     const total = inRange.reduce((s, [, v]) => s + v.tokens, 0);
     const top = inRange.sort((a, b) => b[1].tokens - a[1].tokens)[0];
@@ -283,10 +289,9 @@ const usage: Plugin = (api) => {
   function historyView(arg: string): void {
     const n = Math.max(1, Math.min(365, Number(arg) || 14));
     const days = byDay(readRecords());
-    const today = startOfDay(Date.now());
     const rows: [string, Sum][] = [];
     for (let i = n - 1; i >= 0; i--) {
-      const day = today - i * 86_400_000;
+      const day = daysAgo(i);
       rows.push([dayKey(day), days.get(dayKey(day)) ?? empty()]);
     }
     const max = Math.max(1, ...rows.map(([, s]) => s.tokens));

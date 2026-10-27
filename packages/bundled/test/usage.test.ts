@@ -2,7 +2,7 @@ import { afterAll, beforeAll, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { byDay, graph, planLines, readRecords, type UsageRecord } from "../src/usage.ts";
+import { byDay, dayKey, daysAgo, graph, planLines, readRecords, type UsageRecord } from "../src/usage.ts";
 import { setLang } from "@sasacode/host";
 
 beforeAll(() => setLang("ja")); // these assertions quote the Japanese strings (another test file may have switched)
@@ -117,4 +117,16 @@ test("usage served from the index matches a full scan of the same logs, before a
   const days = (r: UsageRecord[]) => [...byDay(r).entries()];
   expect(days(records)).toEqual(days(fullScan(join(h, "sessions"))));
   rmSync(h, { recursive: true, force: true });
+});
+
+test("history days are calendar days: the day the clocks go forward is not skipped (#45)", () => {
+  const tz = process.env.TZ;
+  process.env.TZ = "America/New_York";
+  try {
+    const now = new Date(2026, 2, 9, 12).getTime(); // the day after DST began in the US
+    expect([3, 2, 1, 0].map((n) => dayKey(daysAgo(n, now)))).toEqual(["2026-03-06", "2026-03-07", "2026-03-08", "2026-03-09"]);
+  } finally {
+    if (tz === undefined) delete process.env.TZ;
+    else process.env.TZ = tz;
+  }
 });

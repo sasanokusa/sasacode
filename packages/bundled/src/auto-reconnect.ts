@@ -96,6 +96,16 @@ const plugin: Plugin = (api) => {
   /** オフラインなら復旧を待ち、復帰したら inject して再試行させる。 */
   async function monitorAndRetry(trigger: "error" | "manual"): Promise<void> {
     if (waiting || stopped) return;
+    // 最初の await より前に立てる。agent_end と /reconnect が同時に来ても、再開の inject は1回だけ。
+    waiting = true;
+    try {
+      await watch(trigger);
+    } finally {
+      waiting = false;
+    }
+  }
+
+  async function watch(trigger: "error" | "manual"): Promise<void> {
     if (await isOnline()) {
       if (trigger === "manual") {
         api.ui.notify(t("オンラインです。接続に問題ありません。"), "info");
@@ -106,13 +116,11 @@ const plugin: Plugin = (api) => {
       }
       return;
     }
-    waiting = true;
     api.ui.setStatus("auto-reconnect", t("オフライン — ネットワーク復旧待ち"));
     if (!quiet) {
       api.ui.notify(t("ネットワークに接続できません（{target}）。復旧を待って自動再試行します。", { target: target() }), "warning");
     }
     const ok = await waitForOnline();
-    waiting = false;
     api.ui.setStatus("auto-reconnect", undefined);
     if (stopped) return;
     if (ok) {
@@ -138,7 +146,11 @@ const plugin: Plugin = (api) => {
 
   /** サーバーが一時的に応答できないとき、間隔を空けて同じ作業を再試行する。 */
   async function retryServer(error: string): Promise<void> {
-    if (!(await isOnline())) return monitorAndRetry("error");
+    if (waiting || stopped) return;
+    waiting = true;
+    const online = await isOnline();
+    waiting = false;
+    if (!online) return monitorAndRetry("error");
     if (attempts >= serverRetries) {
       attempts = 0;
       if (serverRetries) api.ui.notify(t("サーバーのエラーが続いたため、再試行をやめました。"), "warning");

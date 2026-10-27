@@ -199,7 +199,8 @@ function anchored(dir: string, pattern: string): string {
   const parts = slashes(pattern).split("/");
   let i = 0;
   for (; i < parts.length - 1 && (parts[i] === "." || parts[i] === ".." || parts[i] === ""); i++) if (parts[i] === "..") dir = dirname(dir);
-  const base = globPath(dir).replace(/[\\*?[\]{}!]/g, "\\$&").replace(/\/$/, "");
+  // resolve: on Windows a cwd given as /work/x gets its drive, as the paths compared with it do.
+  const base = globPath(resolve(dir)).replace(/[\\*?[\]{}!]/g, "\\$&").replace(/\/$/, "");
   const rest = parts.slice(i).join("/");
   return rest ? `${base}/${globPath(rest)}` : base || "/";
 }

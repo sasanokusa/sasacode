@@ -36,7 +36,7 @@ async function start(settings: Record<string, unknown>) {
   host.setUI({ interactive: false, notify: () => {}, confirm: async () => false, select: async () => undefined });
   host.onChange = () => void status.push(...host.status.values());
   await host.load("auto-reconnect", bundledPlugins["auto-reconnect"]!);
-  return { agent, status };
+  return { agent, status, host };
 }
 
 const settle = async (agent: Agent, ms: number) => {
@@ -81,4 +81,25 @@ test("the user typing during the wait cancels the retry", async () => {
   await settle(agent, 400);
   expect(calls).toHaveLength(2);
   expect(calls.join()).not.toContain("サーバーの一時的なエラー");
+});
+
+test("an error and /reconnect at once resume the work once, not twice (#43)", async () => {
+  // A port nothing listens on yet: offline until the server comes up there.
+  const probe = Bun.serve({ port: 0, fetch: () => new Response("ok") });
+  const port = probe.port;
+  probe.stop(true);
+  const calls = flaky(["fetch failed"]);
+  const { agent, host } = await start({ checkUrl: `http://127.0.0.1:${port}/`, checkIntervalMs: 30, checkTimeoutMs: 200 });
+  const reconnect = host.commands.find((c) => c.name === "reconnect")!;
+  const run = agent.prompt("go");
+  void reconnect.run({ args: "" });
+  expect(await run).toBe("error");
+  await Bun.sleep(150);
+  const back = Bun.serve({ port, fetch: () => new Response("ok") });
+  try {
+    await settle(agent, 400);
+    expect(calls.filter((c) => c.includes("ネットワークが復旧しました"))).toHaveLength(1);
+  } finally {
+    back.stop(true);
+  }
 });

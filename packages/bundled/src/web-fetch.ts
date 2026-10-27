@@ -27,6 +27,13 @@ export async function readCapped(res: Response, limit: number): Promise<{ text: 
 
 const ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " " };
 
+/** "#65" or "#x41" (or "#X41") as its character; one past the last code point (or not a number) is left as written. */
+function codePoint(ref: string): string | undefined {
+  const hex = ref[1] === "x" || ref[1] === "X";
+  const n = Number.parseInt(ref.slice(hex ? 2 : 1), hex ? 16 : 10);
+  return Number.isInteger(n) && n >= 0 && n <= 0x10ffff ? String.fromCodePoint(n) : undefined;
+}
+
 export function htmlToText(html: string): string {
   return html
     .replace(/<(script|style|noscript|svg|head)[\s\S]*?<\/\1>/gi, "")
@@ -35,9 +42,7 @@ export function htmlToText(html: string): string {
     .replace(/<(br|\/p|\/div|\/li|\/h[1-6]|\/tr|\/section|\/article)[^>]*>/gi, "\n")
     .replace(/<li[^>]*>/gi, "- ")
     .replace(/<[^>]+>/g, "")
-    .replace(/&(#x?[0-9a-f]+|\w+);/gi, (m, e: string) =>
-      e.startsWith("#") ? String.fromCodePoint(Number.parseInt(e.slice(e[1] === "x" ? 2 : 1), e[1] === "x" ? 16 : 10)) : (ENTITIES[e] ?? m),
-    )
+    .replace(/&(#x?[0-9a-f]+|\w+);/gi, (m, e: string) => (e.startsWith("#") ? codePoint(e) : ENTITIES[e]) ?? m)
     .replace(/[ \t]+/g, " ")
     .replace(/\n\s*\n\s*\n+/g, "\n\n")
     .trim();
