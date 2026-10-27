@@ -6,7 +6,7 @@ import { join } from "node:path";
 import type { Terminal } from "@earendil-works/pi-tui";
 import { Agent, PermissionPolicy, PluginHost, SessionFile } from "@sasacode/agent";
 import { currentLang, setLang } from "@sasacode/host";
-import { type AssistantContent, type AssistantMessage, emptyUsage, type ModelInfo, registerApi } from "@sasacode/ai";
+import { type AssistantContent, type AssistantMessage, emptyUsage, type ModelInfo, registerApi, textOf } from "@sasacode/ai";
 import { replayProvider } from "@sasacode/testing";
 import { PHRASES } from "../src/activity.ts";
 import { runTui, type TuiHost } from "../src/app.ts";
@@ -703,7 +703,7 @@ test("an interrupted queued message keeps its image when sent again (#37)", asyn
   await Bun.sleep(200);
   const last = provider.requests.at(-1)!.messages.at(-1);
   expect(imagesIn(last)).toBe(1);
-  expect(JSON.stringify(last!.content)).toContain(`[Image 1: ${png}]`);
+  expect(textOf(last!.content as never)).toContain(`[Image 1: ${png}]`);
   await term.type("/exit"); await term.send("\r"); await exited;
 });
 
@@ -725,7 +725,7 @@ test("/fork puts a message's image back with it, also when its file is gone, wit
   await Bun.sleep(200);
   const last = provider.requests.at(-1)!.messages.at(-1);
   expect(imagesIn(last)).toBe(1);
-  expect(JSON.stringify(last!.content)).toContain(`[Image 1: ${png}]`);
+  expect(textOf(last!.content as never)).toContain(`[Image 1: ${png}]`);
   expect(JSON.stringify(last!.content)).not.toContain("[Image 1: [Image");
   await term.type("/exit"); await term.send("\r"); await exited;
 });
