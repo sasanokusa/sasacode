@@ -37,11 +37,25 @@ export function makeServer(): Server {
     }
     return { content: [{ type: "text", text: "it broke" }], isError: true };
   });
-  server.setRequestHandler(ListPromptsRequestSchema, async () => ({
-    prompts: [{ name: "review", description: "Review a file", arguments: [{ name: "file", required: true }] }],
-  }));
+  // Two pages, as a server with many prompts sends them.
+  server.setRequestHandler(ListPromptsRequestSchema, async (req) =>
+    req.params?.cursor === "page2"
+      ? { prompts: [{ name: "later", description: "On the second page" }] }
+      : {
+          prompts: [
+            { name: "review", description: "Review a file", arguments: [{ name: "file", required: true }] },
+            { name: "greet", description: "Greet someone", arguments: [{ name: "who" }, { name: "greeting" }] },
+          ],
+          nextCursor: "page2",
+        },
+  );
   server.setRequestHandler(GetPromptRequestSchema, async (req) => ({
-    messages: [{ role: "user", content: { type: "text", text: `Please review ${req.params.arguments?.file}` } }],
+    messages: [
+      {
+        role: "user",
+        content: { type: "text", text: req.params.name === "greet" ? `args ${JSON.stringify(req.params.arguments)}` : `Please review ${req.params.arguments?.file}` },
+      },
+    ],
   }));
   return server;
 }

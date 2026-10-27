@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { setLang } from "@sasacode/host";
 import { emptyUsage, registerApi } from "@sasacode/ai";
 import { replayProvider } from "@sasacode/testing";
-import { loadConfig, mergeConfig } from "../src/config.ts";
+import { describeElevated, loadConfig, mergeConfig } from "../src/config.ts";
 import { runHeadless } from "../src/headless.ts";
 import { setup } from "../src/setup.ts";
 
@@ -218,6 +218,8 @@ test("judgeModel is a model choice: kept from global config, a router's needs tr
   writeConfigs({}, { judgeModel: "openrouter/some-lab/model" });
   expect(loadConfig(proj).config.judgeModel).toBeUndefined();
   expect(loadConfig(proj).elevated.judgeModel).toBe("openrouter/some-lab/model");
+  // Named for the trust prompt, so the project is not trusted without asking (#40).
+  expect(describeElevated(loadConfig(proj).elevated)).toEqual(["judge model openrouter/some-lab/model"]);
   writeConfigs({ judgeModel: 42 }, {});
   expect(loadConfig(proj).config.judgeModel).toBeUndefined();
 });

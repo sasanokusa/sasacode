@@ -264,7 +264,13 @@ async function registerTools(api: PluginAPI, server: string, cfg: McpServerConfi
 }
 
 async function registerPrompts(api: PluginAPI, server: string, client: Client) {
-  const { prompts } = await client.listPrompts();
+  const prompts = [];
+  let cursor: string | undefined;
+  do {
+    const page = await client.listPrompts(cursor ? { cursor } : undefined);
+    prompts.push(...page.prompts);
+    cursor = page.nextCursor;
+  } while (cursor);
   for (const p of prompts) {
     const argNames = (p.arguments ?? []).map((a) => a.name);
     api.registerCommand({
@@ -275,11 +281,13 @@ async function registerPrompts(api: PluginAPI, server: string, client: Client) {
         // "key=value" pairs, or plain words filling the arguments in order.
         const values: Record<string, string> = {};
         const words = args.match(/(?:[^\s"]+|"[^"]*")+/g) ?? [];
-        words.forEach((w, i) => {
+        // Only the plain words count for the order: "greeting=hi Alice" gives who=Alice.
+        let next = 0;
+        for (const w of words) {
           const m = /^(\w+)=(.*)$/s.exec(w);
           if (m) values[m[1]!] = m[2]!.replace(/^"|"$/g, "");
-          else if (argNames[i]) values[argNames[i]!] = w.replace(/^"|"$/g, "");
-        });
+          else if (argNames[next]) values[argNames[next++]!] = w.replace(/^"|"$/g, "");
+        }
         const r = await client.getPrompt({ name: p.name, arguments: values });
         const text = r.messages
           .map((m) => (m.content.type === "text" ? m.content.text : m.content.type === "resource" && "text" in m.content.resource ? m.content.resource.text : ""))

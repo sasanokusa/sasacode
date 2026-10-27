@@ -72,6 +72,17 @@ test("stdio server: tools are namespaced, callable, and prompts become commands"
   await agent.hooks.run("session_end", {});
 });
 
+test("prompts: every page is listed; plain words fill the arguments in order, key=value aside (#39)", async () => {
+  const { agent, host, until } = await load({ fx: { command: "bun", args: [join(import.meta.dir, "fixture-server.ts")] } });
+  await until(() => host.commands.some((c) => c.name === "mcp__fx__later"));
+  expect(host.commands.map((c) => c.name).filter((n) => n.startsWith("mcp__fx__"))).toEqual(["mcp__fx__review", "mcp__fx__greet", "mcp__fx__later"]);
+  const greet = host.commands.find((c) => c.name === "mcp__fx__greet")!;
+  await greet.run({ args: "greeting=hi Alice" });
+  await until(() => agent.messages.length > 0);
+  expect(JSON.stringify(agent.messages[0]!.content)).toContain(JSON.stringify(JSON.stringify({ greeting: "hi", who: "Alice" })).slice(1, -1));
+  await agent.hooks.run("session_end", {});
+});
+
 test("streamable HTTP server with headers from the environment", async () => {
   process.env.FIXTURE_TOKEN = "secret-token";
   const { agent, until } = await load({ web: { url: `http://localhost:${http.port}/mcp`, headers: { authorization: "Bearer ${FIXTURE_TOKEN}" } } });

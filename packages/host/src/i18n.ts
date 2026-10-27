@@ -18,7 +18,8 @@ export function resolveLang(setting?: string): Lang {
   const env = (process.env.SASACODE_LANG ?? "").toLowerCase();
   if (env === "ja" || env === "en") return env;
   if (setting === "ja" || setting === "en") return setting;
-  const locale = process.env.LC_ALL ?? process.env.LC_MESSAGES ?? process.env.LANG ?? "";
+  // An empty one is unset, as gettext reads them: the next one says.
+  const locale = process.env.LC_ALL || process.env.LC_MESSAGES || process.env.LANG || "";
   if (/^ja/i.test(locale)) return "ja";
   if (!locale || /^(c|posix)(\.|$)/i.test(locale)) return "ja"; // nothing said: the product's own language
   return "en";

@@ -216,6 +216,7 @@ export const TO_JA: Record<string, string> = {
   // ── the rest: trust-prompt items, stdin, JSON files ────────────────
   "endpoint {name} ({url})": "エンドポイント {name}（{url}）",
   "model {model}": "モデル {model}",
+  "judge model {model}": "判定モデル {model}",
   "models {models}": "モデル一覧 {models}",
   "model overrides for {models}": "モデル設定の上書き（{models}）",
   "MCP server {name}": "MCP サーバー {name}",

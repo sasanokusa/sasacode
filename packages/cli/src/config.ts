@@ -182,6 +182,8 @@ export function describeElevated(e: Config): string[] {
   for (const [n, p] of Object.entries(e.providers ?? {})) out.push(t("endpoint {name} ({url})", { name: n, url: p.baseUrl ?? p.api ?? "?" }));
   if (e.model) out.push(t("model {model}", { model: e.model }));
   if (e.models?.length) out.push(t("models {models}", { models: e.models.join(", ") }));
+  // It decides which tool calls run in agent mode: a project must not pick it unseen.
+  if (e.judgeModel) out.push(t("judge model {model}", { model: e.judgeModel }));
   if (e.modelOverrides) out.push(t("model overrides for {models}", { models: Object.keys(e.modelOverrides).join(", ") }));
   for (const n of Object.keys(e.mcpServers ?? {})) out.push(t("MCP server {name}", { name: n }));
   if (e.plugins?.disabled?.length) out.push(t("disables plugins {names}", { names: e.plugins.disabled.join(", ") }));

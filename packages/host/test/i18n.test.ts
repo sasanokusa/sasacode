@@ -65,6 +65,16 @@ test("resolveLang: SASACODE_LANG, then the setting, then the locale", () => {
     expect(resolveLang()).toBe("en");
     process.env.LANG = "ja_JP.UTF-8";
     expect(resolveLang()).toBe("ja");
+    // An empty LC_ALL or LC_MESSAGES is unset: LANG says (#46).
+    process.env.LANG = "en_US.UTF-8";
+    process.env.LC_ALL = "";
+    expect(resolveLang()).toBe("en");
+    delete process.env.LC_ALL;
+    process.env.LC_MESSAGES = "";
+    expect(resolveLang()).toBe("en");
+    process.env.LC_ALL = "en_US";
+    process.env.LANG = "ja_JP.UTF-8";
+    expect(resolveLang()).toBe("en");
   } finally {
     // Restored in place: a plain object in place of process.env would lose Windows' case-insensitive
     // names (Path is not PATH), and children started later would get no PATH.
