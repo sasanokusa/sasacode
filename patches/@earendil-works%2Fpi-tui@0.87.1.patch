@@ -1,25 +1,141 @@
+diff --git a/dist/alt-screen-search.d.ts b/dist/alt-screen-search.d.ts
+index 7bdab98c02b263c26ae44bf70b41772d2c4a26b7..02b8adae0cecfa6efdf09b91d5a268f796c40c61 100644
+--- a/dist/alt-screen-search.d.ts
++++ b/dist/alt-screen-search.d.ts
+@@ -21,6 +21,11 @@ export declare class AltScreenSearchIndex {
+ }
+ export declare function findAltScreenSearchMatches(lines: readonly string[], query: string): AltScreenSearchMatch[];
+ export declare function getAltScreenSearchMatchKey(match: AltScreenSearchMatch): string;
++/** sasacode patch: the search box's placeholder and its "no matches" note. */
++export declare function setAltScreenSearchText(text: {
++    placeholder?: string;
++    noMatches?: string;
++}): void;
+ export declare class AltScreenSearchComponent implements Component, Focusable {
+     private readonly input;
+     private readonly onQueryChange;
+diff --git a/dist/alt-screen-search.js b/dist/alt-screen-search.js
+index 29318b3224bb8346991569caa0fc6277fda4117b..b591710e847f9e943a78d80cdc4885e32b409be1 100644
+--- a/dist/alt-screen-search.js
++++ b/dist/alt-screen-search.js
+@@ -159,10 +159,15 @@ export function getAltScreenSearchMatchKey(match) {
+     const last = match.segments[match.segments.length - 1];
+     return first && last ? `${first.row}:${first.startCol}:${last.row}:${last.endCol}` : "";
+ }
++// sasacode patch: the search box speaks the interface's language.
++const searchText = { placeholder: "Find in transcript", noMatches: "No matches" };
++export function setAltScreenSearchText(text) {
++    Object.assign(searchText, text);
++}
+ export class AltScreenSearchComponent {
+     input = new Input({
+         prompt: " ",
+-        placeholder: "Find in transcript",
++        placeholder: searchText.placeholder,
+         placeholderStyle: (text) => `\x1b[2m${text}\x1b[22m`,
+     });
+     onQueryChange;
+@@ -235,7 +240,7 @@ export class AltScreenSearchComponent {
+         const result = !query
+             ? ""
+             : this.resultCount === 0
+-                ? "No matches"
++                ? searchText.noMatches
+                 : `${this.resultIndex + 1}/${this.resultCount}`;
+         const resultSpace = Math.max(0, innerWidth - 3);
+         const visibleResult = truncateToWidth(result, resultSpace, "");
+diff --git a/dist/components/editor.d.ts b/dist/components/editor.d.ts
+index 445c8184eeb734692d9cc036f2a4b195d8769e3e..6b3a1c44fb47dff18da1fcc6a11552a5523c03c0 100644
+--- a/dist/components/editor.d.ts
++++ b/dist/components/editor.d.ts
+@@ -102,6 +102,8 @@ export declare class Editor implements Component, Focusable {
+     private layoutText;
+     getText(): string;
+     private expandPasteMarkers;
++    /** sasacode patch: the cursor to the end of the text. */
++    moveToEnd(): void;
+     /**
+      * Get text with paste markers expanded to their actual content.
+      * Use this when you need the full content (e.g., for external editor).
+diff --git a/dist/components/editor.js b/dist/components/editor.js
+index 7eae102b06d78e10e0ab016f3ab020c66de6865d..786003f5f2ac2ecd615a55819b1750c216fa3c2e 100644
+--- a/dist/components/editor.js
++++ b/dist/components/editor.js
+@@ -8,6 +8,11 @@ import { findWordBackward, findWordForward } from "../word-navigation.js";
+ import { SelectList } from "./select-list.js";
+ const graphemeSegmenter = getGraphemeSegmenter();
+ const wordSegmenter = getWordSegmenter();
++/** sasacode patch: the marker a paste is shown as. */
++function pasteMarker(id, text) {
++    const lines = text.split("\n").length;
++    return lines > 10 ? `[paste #${id} +${lines} lines]` : `[paste #${id} ${text.length} chars]`;
++}
+ /** Regex matching paste markers like `[paste #1 +123 lines]` or `[paste #2 1234 chars]`. */
+ const PASTE_MARKER_REGEX = /\[paste #(\d+)( (\+\d+ lines|\d+ chars))?\]/g;
+ /** Non-global version for single-segment testing. */
+@@ -896,12 +901,19 @@ export class Editor {
+         return this.state.lines.join("\n");
+     }
+     expandPasteMarkers(text) {
+-        let result = text;
+-        for (const [pasteId, pasteContent] of this.pastes) {
+-            const markerRegex = new RegExp(`\\[paste #${pasteId}( (\\+\\d+ lines|\\d+ chars))?\\]`, "g");
+-            result = result.replace(markerRegex, () => pasteContent);
+-        }
+-        return result;
++        // sasacode patch: only a marker exactly as it was inserted stands for a paste, and in one pass:
++        // a typed "[paste #1]", or one inside pasted text, is left as written.
++        if (this.pastes.size === 0)
++            return text;
++        return text.replace(PASTE_MARKER_REGEX, (marker, id) => {
++            const content = this.pastes.get(Number(id));
++            return content !== undefined && marker === pasteMarker(Number(id), content) ? content : marker;
++        });
++    }
++    /** sasacode patch: the cursor to the end of the text. */
++    moveToEnd() {
++        this.state.cursorLine = this.state.lines.length - 1;
++        this.setCursorCol(this.state.lines[this.state.cursorLine].length);
+     }
+     /**
+      * Get text with paste markers expanded to their actual content.
+@@ -1089,9 +1101,7 @@ export class Editor {
+             const pasteId = this.pasteCounter;
+             this.pastes.set(pasteId, filteredText);
+             // Insert marker like "[paste #1 +123 lines]" or "[paste #1 1234 chars]"
+-            const marker = pastedLines.length > 10
+-                ? `[paste #${pasteId} +${pastedLines.length} lines]`
+-                : `[paste #${pasteId} ${totalChars} chars]`;
++            const marker = pasteMarker(pasteId, filteredText);
+             this.insertTextAtCursorInternal(marker);
+             return;
+         }
 diff --git a/dist/index.d.ts b/dist/index.d.ts
-index 4a0657e57cc77703b2c271616302b7e80cb4ef2c..43408c62a8b2b4262820d0fd4e7a6b5bb26e57f0 100644
+index 4a0657e57cc77703b2c271616302b7e80cb4ef2c..3606c85b716a2e7c2abe1b8b50468913e130c65a 100644
 --- a/dist/index.d.ts
 +++ b/dist/index.d.ts
-@@ -29,5 +29,5 @@ export { allocateImageId, type CellDimensions, calculateImageRows, deleteAllKitt
+@@ -29,5 +29,7 @@ export { allocateImageId, type CellDimensions, calculateImageRows, deleteAllKitt
  export { type Component, Container, CURSOR_MARKER, compositeTuiLine, type Focusable, isFocusable, isViewportTUI, type OverlayAnchor, type OverlayBounds, type OverlayHandle, type OverlayMargin, type OverlayOptions, type OverlayUnfocusOptions, type SizeValue, type TUI, type TuiInputListener, type TuiInputListenerResult, type TuiMode, type TuiMouseButton, type TuiMouseEvent, type TuiMouseEventResult, type TuiMouseEventType, type TuiStopOptions, type ViewportTUI, } from "./tui.ts";
  export { TuiAltScreen, type TuiAltScreenOptions } from "./tui-alt-screen.ts";
  export { TuiMainScreen, type TuiMainScreenRenderState } from "./tui-main-screen.ts";
 -export { getOsc8LinkAtColumn, sliceByColumn, stripTerminalSequences, truncateToWidth, visibleWidth, wrapTextWithAnsi, } from "./utils.ts";
 +export { getOsc8LinkAtColumn, setAmbiguousWidth, sliceByColumn, stripTerminalSequences, truncateToWidth, visibleWidth, wrapTextWithAnsi, } from "./utils.ts";
++// sasacode patch
++export { setAltScreenSearchText } from "./alt-screen-search.ts";
  //# sourceMappingURL=index.d.ts.map
 \ No newline at end of file
 diff --git a/dist/index.js b/dist/index.js
-index d3c851910daada428705eb52f0b0f55080d4d7e7..b570b07aa3a3469846904c5cbb133a9de902d6d2 100644
+index d3c851910daada428705eb52f0b0f55080d4d7e7..6b9ff836171f10fa4f44718cf4edba17c2e5d01d 100644
 --- a/dist/index.js
 +++ b/dist/index.js
-@@ -41,5 +41,5 @@ export { Container, CURSOR_MARKER, compositeTuiLine, isFocusable, isViewportTUI,
+@@ -41,5 +41,7 @@ export { Container, CURSOR_MARKER, compositeTuiLine, isFocusable, isViewportTUI,
  export { TuiAltScreen } from "./tui-alt-screen.js";
  export { TuiMainScreen } from "./tui-main-screen.js";
  // Utilities
 -export { getOsc8LinkAtColumn, sliceByColumn, stripTerminalSequences, truncateToWidth, visibleWidth, wrapTextWithAnsi, } from "./utils.js";
 +export { getOsc8LinkAtColumn, setAmbiguousWidth, sliceByColumn, stripTerminalSequences, truncateToWidth, visibleWidth, wrapTextWithAnsi, } from "./utils.js";
++// sasacode patch
++export { setAltScreenSearchText } from "./alt-screen-search.js";
  //# sourceMappingURL=index.js.map
 \ No newline at end of file
 diff --git a/dist/utils.d.ts b/dist/utils.d.ts

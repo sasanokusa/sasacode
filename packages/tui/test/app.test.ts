@@ -607,3 +607,29 @@ test("/resume lists every session, and a title is cut between whole characters (
   await term.send("\x1b");
   await term.type("/exit"); await term.send("\r"); await exited;
 });
+
+test("the search box speaks Japanese in a Japanese interface (#32)", async () => {
+  const { term, exited } = await start([], "edits", [], true);
+  await term.send("\x1b[102;6u"); // ctrl+shift+f
+  expect(term.text()).toContain("会話内を検索");
+  await term.type("zzz-nothing");
+  expect(term.text()).toContain("一致するものがありません");
+  await term.send("\x1b");
+  await term.type("/exit"); await term.send("\r"); await exited;
+});
+
+test("only a real paste marker is expanded: a typed [paste #1] is sent as written (#25)", async () => {
+  const script = [reply([{ type: "text", text: "ok" }])];
+  const { term, exited } = await start(script);
+  const provider = replayProvider(script);
+  registerApi("replay", provider);
+  await term.type("literal [paste #1] -- ");
+  await term.send(`\x1b[200~${Array.from({ length: 41 }, (_, i) => `second-${i}`).join("\n")}\x1b[201~`);
+  expect(term.text()).toContain("[paste #1 +41 lines]");
+  await term.send("\r");
+  await Bun.sleep(150);
+  const sent = JSON.stringify(provider.requests[0]!.messages.at(-1)!.content);
+  expect(sent).toContain("literal [paste #1] -- second-0");
+  expect(sent.match(/second-40/g)).toHaveLength(1);
+  await term.type("/exit"); await term.send("\r"); await exited;
+});

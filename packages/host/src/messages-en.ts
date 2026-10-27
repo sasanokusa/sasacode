@@ -253,6 +253,7 @@ export const TO_EN: Record<string, string> = {
   "↓ {n} トークン": "↓ {n} tokens",
   "esc で中断": "esc to interrupt",
   "一致するものがありません": "No matches",
+  "会話内を検索": "Find in transcript",
   "表示言語を切り替える（日本語 / English）": "switch the interface language (日本語 / English)",
   "表示言語": "Interface language",
   "使い方: /language ja|en": "usage: /language ja|en",

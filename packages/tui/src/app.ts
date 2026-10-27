@@ -8,6 +8,7 @@ import {
   matchesKey,
   ProcessTerminal,
   ScrollView,
+  setAltScreenSearchText,
   Spacer,
   type Terminal,
   type TUI,
@@ -46,6 +47,9 @@ const MARGIN = 2;
 const BELL_AFTER_MS = 30_000;
 
 /** What the TUI needs from the CLI. */
+/** The conversation search box's words, in the interface's language. */
+const searchText = () => ({ placeholder: t("会話内を検索"), noMatches: t("一致するものがありません") });
+
 /** At most `n` characters, cut between whole characters (an emoji is not split into a broken one). */
 function clip(s: string, n: number): string {
   const all = [...new Intl.Segmenter().segment(s)];
@@ -132,6 +136,7 @@ class App {
       : new TuiMainScreen(terminal);
     // home/end stay with the input line; the transcript jumps with ctrl+home/end.
     if (fullscreen) getKeybindings().setUserBindings({ "tui.altScreen.top": "ctrl+home", "tui.altScreen.bottom": "ctrl+end" });
+    setAltScreenSearchText(searchText());
     this.editor = new Editor(this.tui, editorTheme, { paddingX: 1 });
     this.editor.onSubmit = (text) => this.submit(text);
     for (const h of this.loadHistory()) this.editor.addToHistory(h);
@@ -675,6 +680,7 @@ class App {
       return;
     }
     setLang(lang);
+    setAltScreenSearchText(searchText());
     this.host.host.opts.lang = lang;
     for (const cmd of this.host.host.commands) cmd.description = retranslate(cmd.description);
     this.refreshCommands();
