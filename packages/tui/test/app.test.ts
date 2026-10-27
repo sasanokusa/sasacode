@@ -1,6 +1,6 @@
 // The TUI driven through a stand-in terminal: keys in, rendered text out. No model: a replay provider.
 import { beforeAll, expect, test } from "bun:test";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Terminal } from "@earendil-works/pi-tui";
@@ -631,5 +631,101 @@ test("only a real paste marker is expanded: a typed [paste #1] is sent as writte
   const sent = JSON.stringify(provider.requests[0]!.messages.at(-1)!.content);
   expect(sent).toContain("literal [paste #1] -- second-0");
   expect(sent.match(/second-40/g)).toHaveLength(1);
+  await term.type("/exit"); await term.send("\r"); await exited;
+});
+
+// ── queued input and images (#27, #35, #36, #37) ─────────────────────
+
+const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
+const imagesIn = (m: { content: unknown } | undefined) => JSON.stringify(m?.content ?? []).split('"type":"image"').length - 1;
+
+async function startWithImages(script: AssistantMessage[]) {
+  const s = await start(script, "auto");
+  const provider = replayProvider(script);
+  registerApi("replay", provider);
+  const { imageAttach } = await import("../../bundled/src/image-attach.ts");
+  await s.host.load("image-attach", imageAttach(async () => { throw new Error("no clipboard"); }));
+  const png = join(s.agent.cwd, "tiny.png");
+  writeFileSync(png, PNG);
+  return { ...s, provider, png };
+}
+
+test("esc puts queued messages after the draft, not into it at the cursor (#35)", async () => {
+  const script = [reply([{ type: "tool_call", id: "1", name: "bash", input: { command: "sleep 1" } }]), reply([{ type: "text", text: "never" }])];
+  const { term, exited } = await start(script, "auto");
+  registerApi("replay", replayProvider(script));
+  await term.type("go"); await term.send("\r");
+  await Bun.sleep(150);
+  await term.type("first queued"); await term.send("\r");
+  await term.type("current draft");
+  for (let i = 0; i < 5; i++) await term.send("\x1b[D");
+  const from = term.out.length;
+  await term.send("\x1b");
+  await Bun.sleep(1200);
+  await term.type("!");
+  const shown = term.text(from);
+  expect(shown).toMatch(/current draft\s*\r?\n.*first queued/);
+  expect(shown).not.toContain("queueddraft");
+  expect(shown).toContain("first queued!"); // the cursor ends after what came back
+  await term.send("\x03"); // ctrl+c clears the input
+  await term.type("/exit"); await term.send("\r"); await exited;
+});
+
+test("a queued message with an image leaves the queue once delivered; esc then gives nothing back (#36)", async () => {
+  const sleep = (id: string, s: number) => reply([{ type: "tool_call", id, name: "bash", input: { command: `sleep ${s}` } }]);
+  const { term, provider, agent, exited } = await startWithImages([sleep("1", 0.4), sleep("2", 1.5), reply([{ type: "text", text: "never" }])]);
+  await term.type("go"); await term.send("\r");
+  await Bun.sleep(150);
+  await term.type("please inspect @tiny.png"); await term.send("\r");
+  await Bun.sleep(900); // the first sleep ends, the queued message goes with the next request
+  expect(imagesIn(provider.requests[1]?.messages.at(-1))).toBe(1);
+  await term.send("\x1b");
+  await Bun.sleep(1500);
+  const from = term.out.length;
+  await term.type("!");
+  expect(term.text(from)).not.toContain("please inspect");
+  expect(JSON.stringify(agent.messages).split("please inspect").length - 1).toBe(1);
+  await term.send("\x15");
+  await term.type("/exit"); await term.send("\r"); await exited;
+});
+
+test("an interrupted queued message keeps its image when sent again (#37)", async () => {
+  const script = [reply([{ type: "tool_call", id: "1", name: "bash", input: { command: "sleep 1" } }]), reply([{ type: "text", text: "seen" }])];
+  const { term, provider, png, exited } = await startWithImages(script);
+  await term.type("go"); await term.send("\r");
+  await Bun.sleep(150);
+  await term.send(`\x1b[200~${png}\x1b[201~`);
+  expect(term.text()).toContain("[Image #1]");
+  await term.send("\r");
+  await term.send("\x1b");
+  await Bun.sleep(1200);
+  await term.send("\r"); // send what came back
+  await Bun.sleep(200);
+  const last = provider.requests.at(-1)!.messages.at(-1);
+  expect(imagesIn(last)).toBe(1);
+  expect(JSON.stringify(last!.content)).toContain(`[Image 1: ${png}]`);
+  await term.type("/exit"); await term.send("\r"); await exited;
+});
+
+test("/fork puts a message's image back with it, also when its file is gone, without doubling its label (#27)", async () => {
+  const script = [reply([{ type: "text", text: "a cat" }]), reply([{ type: "text", text: "again" }])];
+  const { term, provider, png, exited } = await startWithImages(script);
+  await term.send(`\x1b[200~${png}\x1b[201~`);
+  await term.type("what is this image?"); await term.send("\r");
+  await Bun.sleep(200);
+  expect(imagesIn(provider.requests[0]!.messages.at(-1))).toBe(1);
+  rmSync(png);
+  await term.type("/fork"); await term.send("\r");
+  await term.send("\r"); // the only message
+  const from = term.out.length;
+  await term.type("!");
+  expect(term.text(from)).toContain("[Image #1]");
+  await term.send("\x7f"); // the "!"
+  await term.send("\r");
+  await Bun.sleep(200);
+  const last = provider.requests.at(-1)!.messages.at(-1);
+  expect(imagesIn(last)).toBe(1);
+  expect(JSON.stringify(last!.content)).toContain(`[Image 1: ${png}]`);
+  expect(JSON.stringify(last!.content)).not.toContain("[Image 1: [Image");
   await term.type("/exit"); await term.send("\r"); await exited;
 });

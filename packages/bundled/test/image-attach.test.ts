@@ -94,6 +94,15 @@ test("images already in the prompt are kept, and no refs means the hook does not
   expect(kinds(content)).toEqual(["image", "text", "image"]);
 });
 
+test("an image label the message already has is not read again, and new ones are numbered after it (#27)", async () => {
+  const cwd = fixture(); const h = await loadPlugin("image-attach", plugin, cwd);
+  const held = { type: "image", mediaType: "image/png", data: "x" };
+  let content: any[] = [{ type: "text", text: `[Image 1: ${join(cwd, "shot.png")}] and @shot.png` }, held];
+  await h.agent.hooks.run("user_prompt", { content }, (r) => { if (r.content) content = r.content; });
+  expect(kinds(content)).toEqual(["text", "image", "image"]);
+  expect(content[0].text).toBe(`[Image 1: ${join(cwd, "shot.png")}] and [Image 2: ${join(cwd, "shot.png")}]`);
+});
+
 test("the limit and dropPaths=false", async () => {
   const cwd = fixture();
   const h = await loadPlugin("image-attach", plugin, cwd, { maxImages: 1 });

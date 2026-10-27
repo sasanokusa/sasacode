@@ -20,7 +20,7 @@ import {
 import { type Agent, type AgentEvent, type ApprovalAnswer, type ApprovalRequest, PERMISSION_MODE_LABELS, PERMISSION_MODES, type PermissionMode, type PluginHost, type UIBridge } from "@sasacode/agent";
 import { type Lang, listSessions, retranslate, setLang, t } from "@sasacode/host";
 import { fmtTokens, type ModelInfo, textOf, type ThinkingLevel, type ToolCall } from "@sasacode/ai";
-import type { CommandDefinition, SelectOption, ShowTextOptions } from "@sasacode/plugin-api";
+import type { CommandDefinition, SelectOption, ShowTextOptions, UserContent } from "@sasacode/plugin-api";
 import { matchAmbiguousWidth } from "./ambiguous.ts";
 import { Activity } from "./activity.ts";
 import { ApprovalDialog, CheckList, InputDialog, Picker } from "./dialogs.ts";
@@ -47,6 +47,12 @@ const MARGIN = 2;
 const BELL_AFTER_MS = 30_000;
 
 /** What the TUI needs from the CLI. */
+/** How the agent marks a message sent after an interrupt; not part of what the user wrote. */
+const INTERRUPTED = "[The user interrupted the previous response.]";
+/** An image in the input, and how a sent message names one (the image-attach plugin's forms). */
+const IMAGE_MARKER = /\[Image #(\d+)\]/g;
+const IMAGE_LABEL = /\[Image (\d+): ([^\]\n]*)\]/g;
+
 /** The conversation search box's words, in the interface's language. */
 const searchText = () => ({ placeholder: t("会話内を検索"), noMatches: t("一致するものがありません") });
 
@@ -104,7 +110,10 @@ class App {
   private current?: AssistantView;
   private currentSpacer?: Spacer;
   private tools = new Map<string, ToolView>();
-  private queued: string[] = [];
+  /** Sent while the agent works, until it reaches the model: `content` is what the plugins made of it. */
+  private queued: { text: string; content?: UserContent[] }[] = [];
+  /** Images of a message put back into the input (fork, interrupt), behind [Image #n] markers there. */
+  private held = new Map<number, { name: string; image: UserContent }>();
   private totalCost = 0;
   private contextTokens = 0;
   private usage = new UsageTally();
@@ -377,11 +386,22 @@ class App {
       return;
     }
     const agent = this.host.agent;
+    const entry: (typeof this.queued)[number] = { text };
     if (agent.isRunning) {
-      this.queued.push(text);
+      this.queued.push(entry);
       this.renderStatus();
     }
-    void (this.ready ?? Promise.resolve()).then(() => agent.prompt(text));
+    const input = this.withHeld(text);
+    void (this.ready ?? Promise.resolve()).then(() =>
+      agent.prompt(input, (content) => {
+        if (content) entry.content = content;
+        else if (this.queued.includes(entry)) {
+          // A plugin took it as a command: it will not reach the model.
+          this.queued.splice(this.queued.indexOf(entry), 1);
+          this.renderStatus();
+        }
+      }),
+    );
   }
 
   // ── agent events ───────────────────────────────────────────────────
@@ -428,8 +448,9 @@ class App {
       case "message_end": {
         const m = e.message;
         if (m.role === "user") {
-          const t = textOf(m.content);
-          const qi = this.queued.findIndex((q) => t.endsWith(q));
+          // Delivered: the message holds the very blocks the plugins made of it (text matching would miss
+          // one whose text a plugin changed, an image path for one).
+          const qi = this.queued.findIndex((q) => q.content?.length && q.content.every((b) => m.content.includes(b)));
           if (qi >= 0) this.queued.splice(qi, 1);
           this.chat.addChild(new Spacer(1));
           this.chat.addChild(new UserView(m.content));
@@ -809,10 +830,10 @@ class App {
     if (picked === undefined) return;
     await agent.halt();
     const index = Number(picked);
-    const text = textOf(agent.messages[index]!.content).replace(/^\[The user interrupted the previous response\.\]/, "");
+    const content = agent.messages[index]!.content as UserContent[];
     await this.host.fork(index);
     this.resetView();
-    this.editor.setText(text);
+    this.editor.setText(this.toDraft(content));
     this.notify(t("分岐しました。編集して送信してください"));
   }
 
@@ -933,22 +954,68 @@ class App {
   private renderStatus(): void {
     this.status.clear();
     if (this.activity) this.status.addChild(this.activity);
-    for (const q of this.queued) this.status.addChild(new Notice(t("↳ 次のターンで送信: {text}", { text: q.split("\n")[0]! })));
+    for (const q of this.queued) this.status.addChild(new Notice(t("↳ 次のターンで送信: {text}", { text: q.text.split("\n")[0]! })));
     this.tui.requestRender();
   }
 
   /** Esc / ctrl+c while running: stop, and give back what was queued for the next turn, to edit or send. */
   private interrupt(): void {
-    const back = this.queued.splice(0);
+    // What the plugins made of it, images included; text alone if they are still at it.
+    const back = this.queued.splice(0).map((q) => (q.content ? this.toDraft(q.content) : q.text));
     void this.host.agent.halt();
-    // setText would forget the editor's folded pastes, leaving their markers as plain text.
-    if (back.length && this.editor.getText()) this.editor.insertTextAtCursor(`\n${back.join("\n")}`);
-    else if (back.length) this.editor.setText(back.join("\n"));
+    // After the draft, not inside it at the cursor; setText would forget the editor's folded pastes.
+    if (back.length && this.editor.getText()) {
+      this.editor.moveToEnd();
+      this.editor.insertTextAtCursor(`\n${back.join("\n")}`);
+    } else if (back.length) this.editor.setText(back.join("\n"));
     this.renderStatus();
+  }
+
+  /**
+   * A user message back as a draft: its text, with each image held behind an [Image #n] marker (as a
+   * pasted one is) and sent again with the next message while the marker is kept.
+   */
+  private toDraft(content: UserContent[]): string {
+    const images = content.filter((b) => b.type === "image");
+    const taken = new Set([...this.held.keys(), ...[...this.editor.getText().matchAll(IMAGE_MARKER)].map((m) => Number(m[1]))]);
+    const used = new Set<number>();
+    const hold = (name: string, image: UserContent) => {
+      let n = 1;
+      while (taken.has(n)) n++;
+      taken.add(n);
+      this.held.set(n, { name, image });
+      return `[Image #${n}]`;
+    };
+    const text = content
+      .flatMap((b) => (b.type === "text" && !b.text.startsWith(INTERRUPTED) ? [b.text] : []))
+      .join("\n")
+      .replace(IMAGE_LABEL, (label, i: string, name: string) => {
+        const image = images[Number(i) - 1];
+        if (!image || used.has(Number(i))) return label;
+        used.add(Number(i));
+        return hold(name, image);
+      });
+    const rest = images.filter((_, i) => !used.has(i + 1)).map((image) => hold("image", image));
+    return [text, ...rest].filter(Boolean).join(" ");
+  }
+
+  /** The draft's held images, labeled as the image plugin labels its own, go with it; the rest are dropped. */
+  private withHeld(text: string): string | UserContent[] {
+    if (!this.held.size) return text;
+    const images: UserContent[] = [];
+    const out = text.replace(IMAGE_MARKER, (marker, n: string) => {
+      const h = this.held.get(Number(n));
+      if (!h) return marker;
+      images.push(h.image);
+      return `[Image ${images.length}: ${h.name}]`;
+    });
+    this.held.clear();
+    return images.length ? [{ type: "text", text: out }, ...images] : text;
   }
 
   private resetView(): void {
     this.queued = [];
+    this.held.clear();
     this.renderStatus();
     this.chat.clear();
     this.tools.clear();

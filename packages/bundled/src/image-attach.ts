@@ -158,6 +158,7 @@ export const imageAttach = (clipboard: () => Promise<Image> = clipboardImage): P
   /** Images pasted or dropped into the input, shown there as [Image #n] until the message is sent. */
   const inline = new Map<number, { name: string; image: Image }>();
   const MARKER = /\[Image #(\d+)\]/;
+  const LABEL = /\[Image \d+: [^\]\n]*\]/g;
   const full = () => inline.size + pending.length >= settings.maxImages;
 
   // ⌘V of a screenshot or ctrl+v ("") reads the clipboard; a drop is read now, before a
@@ -202,6 +203,9 @@ export const imageAttach = (clipboard: () => Promise<Image> = clipboardImage): P
 
   api.on("user_prompt", async ({ content }) => {
     const attached: { name: string; image: Image }[] = [];
+    // Images already in the message (the TUI puts a forked or interrupted one back): numbering goes on after them.
+    const base = content.filter((b) => b.type === "image").length;
+    const label = (name: string) => `[Image ${base + attached.length}: ${name}]`;
     const out: UserContent[] = [];
     const fail = (name: string, e: unknown) => api.ui.notify(t("画像を付けられません: {name}: {error}", { name, error: (e as Error).message }), "warning");
     for (const block of content) {
@@ -214,11 +218,14 @@ export const imageAttach = (clipboard: () => Promise<Image> = clipboardImage): P
         if (i % 2) {
           const a = inline.get(Number(part));
           if (a) attached.push(a);
-          result += a ? `[Image ${attached.length}: ${a.name}]` : `[Image #${part}]`;
+          result += a ? label(a.name) : `[Image #${part}]`;
           continue;
         }
         let pos = 0;
+        // "[Image 1: /path/a.png]" names an image the message already holds: its path is not one to read again.
+        const labels = [...part.matchAll(LABEL)].map((m) => [m.index, m.index + m[0].length]);
         for (const r of findRefs(part)) {
+          if (labels.some(([s, e]) => r.start < e! && r.end > s!)) continue;
           if (!r.explicit && !settings.dropPaths) continue;
           if (attached.length + pending.length >= settings.maxImages) break;
           const path = resolvePath(r.path, api.cwd);
@@ -229,7 +236,7 @@ export const imageAttach = (clipboard: () => Promise<Image> = clipboardImage): P
             if (r.explicit || (e as Error).message.includes("bytes")) fail(r.path, e);
             continue;
           }
-          result += part.slice(pos, r.start) + `[Image ${attached.length}: ${path}]`;
+          result += part.slice(pos, r.start) + label(path);
           pos = r.end;
         }
         result += part.slice(pos);
@@ -239,7 +246,7 @@ export const imageAttach = (clipboard: () => Promise<Image> = clipboardImage): P
     inline.clear();
     for (const p of pending.splice(0)) {
       attached.push(p);
-      out.push(text(`[Image ${attached.length}: ${p.name}]`));
+      out.push(text(label(p.name)));
     }
     status();
     if (!attached.length) return;

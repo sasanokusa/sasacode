@@ -112,7 +112,7 @@ It runs full screen: the conversation scrolls at the top, the input and the foot
 | enter / shift+enter, alt+enter | Send / new line |
 | ↑↓ | Input history |
 | tab | Completion (slash commands, model names in `/model`, file paths) |
-| esc | Interrupt generation or a tool (the model is told on the next input). Queued messages are not sent; they go back to the input |
+| esc | Interrupt generation or a tool (the model is told on the next input). Queued messages are not sent; they go back to the input after the draft (with their images, as `[Image #1]`, which go with them when sent again; the same holds for a message `/fork` puts back) |
 | enter while running | Queue a message for the next turn |
 | paste | Up to 40 lines and 4,000 characters shows as it is; a longer paste shows as `[paste #1 +60 lines]` and is sent in full. Backspace or delete removes such a marker, or an `[Image #1]`, as a whole |
 | ctrl+o | Expand or collapse tool output and thinking |

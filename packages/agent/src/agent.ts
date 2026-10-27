@@ -173,8 +173,12 @@ export class Agent {
     this.session?.append({ type: "model", model: `${model.provider}/${model.id}` });
   }
 
-  /** Send user input. While a run is in progress it is queued and delivered at the next turn (FR-L05). */
-  async prompt(input: string | UserContent[]): Promise<StopCause> {
+  /**
+   * Send user input. While a run is in progress it is queued and delivered at the next turn (FR-L05).
+   * `accepted` gets the content the user_prompt hooks made of it (undefined: a plugin handled it), the
+   * same blocks the user message will hold.
+   */
+  async prompt(input: string | UserContent[], accepted?: (content: UserContent[] | undefined) => void): Promise<StopCause> {
     // Sent while a halt waits for the run to stop: it belongs after the halt, not to the stopping run.
     // (Input sent before the halt was queued for that run, and the halt drops it.)
     const halting = this.halted;
@@ -185,6 +189,7 @@ export class Agent {
       if (r.handled) handled = true;
       return !handled;
     });
+    accepted?.(handled ? undefined : content);
     if (handled) return "done";
     // Known before the first message is written: a key pasted into it is redacted too.
     this.session?.addSecret(await this.opts.getApiKey?.(this.model.provider));
