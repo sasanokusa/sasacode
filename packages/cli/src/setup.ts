@@ -155,9 +155,10 @@ export async function setup(opts: SetupOptions): Promise<Harness> {
     const { file, entries } = SessionFile.open(path);
     const state = restore(entries);
     agent.reset(state.messages);
-    agent.session = file;
+    // --no-session: the old conversation is read, and nothing more is written to it.
+    agent.session = opts.noSession ? undefined : file;
     // Record the repair, so restoring again (after more turns are appended) gives the same history.
-    if (state.repaired) file.append({ type: "replace", messages: state.messages });
+    if (state.repaired && !opts.noSession) file.append({ type: "replace", messages: state.messages });
     sessionEntries = entries;
     if (state.model && !keepModel) {
       try {

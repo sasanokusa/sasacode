@@ -215,6 +215,16 @@ test("provider errors end the run with an error event", async () => {
   expect(events).toContainEqual({ type: "error", error: "boom" });
 });
 
+test("the key in use is redacted from the first message too (#34)", async () => {
+  const session = SessionFile.create(join(dir, "sessions"), dir);
+  const { agent } = setup([reply([say("ok")]), reply([say("ok")])], { session, getApiKey: async () => "mock-secret-abcdef123" });
+  await agent.prompt("first mock-secret-abcdef123");
+  await agent.prompt("second mock-secret-abcdef123");
+  const raw = readFileSync(session.path, "utf8");
+  expect(raw).not.toContain("mock-secret-abcdef123");
+  expect(raw).toContain("first [REDACTED]");
+});
+
 test("sessions persist every message, redact secrets, and resume to the last complete turn", async () => {
   const session = SessionFile.create(join(dir, "sessions"), dir);
   session.addSecret("sk-secret-123456");

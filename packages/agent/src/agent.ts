@@ -186,6 +186,8 @@ export class Agent {
       return !handled;
     });
     if (handled) return "done";
+    // Known before the first message is written: a key pasted into it is redacted too.
+    this.session?.addSecret(await this.opts.getApiKey?.(this.model.provider));
     if (halting) await halting;
     if (this.running) {
       this.queued.push(content);

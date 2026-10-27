@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, beforeEach, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setLang } from "@sasacode/host";
@@ -161,6 +161,24 @@ test("one-shot runs can be chained with -r <id> -p (no tmux needed)", async () =
   await quiet(() => runHeadless(second, "what number?", "text"));
   expect(provider.requests[1]!.messages.map((m) => m.role)).toEqual(["user", "assistant", "user"]);
   expect(JSON.stringify(provider.requests[1]!.messages[0])).toContain("remember 42");
+});
+
+test("--no-session: a resumed conversation is read, and nothing more is written to it (#33)", async () => {
+  writeConfigs({ providers: { test: { api: "replay" } }, model: "test/m" }, {});
+  const reply = { role: "assistant" as const, content: [{ type: "text" as const, text: "ok" }], api: "replay", provider: "test", model: "m", usage: emptyUsage(), stopReason: "stop" as const, timestamp: 0 };
+  registerApi("replay", replayProvider([reply, reply, reply]));
+  const first = await setup({ cwd: proj });
+  await first.agent.prompt("kept");
+  const { id, path } = first.agent.session!;
+  const before = readFileSync(path, "utf8");
+  const resumed = await setup({ cwd: proj, resume: id, noSession: true });
+  expect(resumed.agent.session).toBeUndefined();
+  expect(resumed.agent.messages).toHaveLength(2);
+  await resumed.agent.prompt("not saved (-r)");
+  const later = await setup({ cwd: proj, noSession: true });
+  await later.loadSession(path);
+  await later.agent.prompt("not saved (/resume)");
+  expect(readFileSync(path, "utf8")).toBe(before);
 });
 
 test("-m beats the model a resumed session ended with", async () => {
