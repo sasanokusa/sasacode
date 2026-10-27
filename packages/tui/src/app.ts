@@ -582,8 +582,7 @@ class App {
         done({ decision: "deny" });
         this.interrupt();
       };
-      // The rest of the dialog, the footer and a little of the conversation stay on screen.
-      const dialog = new ApprovalDialog(req, summary, done, stop, () => Math.max(3, this.terminal.rows - 14));
+      const dialog = new ApprovalDialog(req, summary, done, stop, () => this.inputRows());
       this.showInput(dialog);
       req.signal?.addEventListener("abort", onAbort, { once: true });
       if (req.signal?.aborted) onAbort();
@@ -908,7 +907,13 @@ class App {
     return next;
   }
 
-  private showInput(component: Component): void {
+  /** The rows a dialog in the input slot can have: the screen less the status, the footer and a line of the conversation. */
+  private inputRows(): number {
+    const width = Math.max(1, this.terminal.columns - 2 * MARGIN);
+    return this.terminal.rows - this.status.render(width).length - this.footer.render(width).length - 2;
+  }
+
+    private showInput(component: Component): void {
     this.inputSlot.clear();
     this.inputSlot.addChild(component);
     this.tui.setFocus(component);

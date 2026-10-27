@@ -551,7 +551,7 @@ test("a long command scrolls inside the approval; the choices stay on screen (#2
   let shown = term.text();
   expect(shown).toContain("常に許可");
   expect(shown).toContain("いいえ、代わりの指示を伝える");
-  expect(shown).toMatch(/1–26 \/ 4\d 行/);
+  expect(shown).toMatch(/1–\d+ \/ 4\d 行/);
   const from = term.out.length;
   await term.send("\x1b[1;2B"); // shift+down
   expect(term.text(from)).toMatch(/[1-9]\d–4\d \/ 4\d 行/); // the window moved down to the end

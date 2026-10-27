@@ -94,3 +94,20 @@ test("expanded, a long diff line wraps so its end can be read (#28)", async () =
     display.expanded = false;
   }
 });
+
+test("approval: on a short screen, or with a long reason, the choices and how to refuse stay in view (#24)", async () => {
+  const { ApprovalDialog } = await import("../src/dialogs.ts");
+  const bashTool = { name: "bash", description: "", parameters: {}, kind: "other", matchTarget: (a: { command: string }) => a.command, execute: async () => ({ content: [] }) } as never;
+  const call = { type: "tool_call" as const, id: "1", name: "bash", input: {} };
+  const command = `printf ${"x".repeat(1200)}`;
+  for (const [rows, reason] of [[10, "mode edits"], [22, `rule ask: bash(${command})`]] as const) {
+    const dialog = new ApprovalDialog({ tool: bashTool, args: { command }, cwd: "/", reason, call }, "", () => {}, () => {}, () => rows);
+    for (const down of [0, 3]) {
+      for (let i = 0; i < down; i++) dialog.handleInput("\x1b[B");
+      const lines = dialog.render(80);
+      expect(lines.length).toBeLessThanOrEqual(rows);
+      const shown = plain(lines.join("\n"));
+      for (const choice of ["はい", "常に許可", "いいえ、代わりの指示を伝える", "esc で中断", "shift+↑↓"]) expect(shown).toContain(choice);
+    }
+  }
+});

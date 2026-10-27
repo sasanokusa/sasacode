@@ -71,16 +71,17 @@ export class Picker implements Component, Focusable {
 
 /**
  * Tool approval: allow once, always allow (adds a session rule), deny, or deny with instructions for the model.
- * Esc stops the whole run (`interrupt`), as it does everywhere else while the agent works. A long command
- * is shown in a window that shift+↑↓ scroll (pgup/pgdn scroll the conversation), so the choices and the one selected stay on screen.
+ * Esc stops the whole run (`interrupt`), as it does everywhere else while the agent works. What is asked
+ * about (the command, a warning, the reason) shares the rows the choices leave on the screen (`rows`);
+ * when it needs more it scrolls with shift+↑↓ (pgup/pgdn scroll the conversation), so the choices, the
+ * one selected and how to refuse always stay in view.
  */
 export class ApprovalDialog implements Component, Focusable {
   private _focused = false;
   private list: SelectList;
   private input?: Input;
   private title: string;
-  private detail: Text;
-  private footer: Text;
+  private body: Text;
   private scroll = 0;
   private page = 1;
 
@@ -89,17 +90,16 @@ export class ApprovalDialog implements Component, Focusable {
     summary: string,
     done: (a: ApprovalAnswer) => void,
     interrupt: () => void,
-    private maxDetailRows: () => number = () => 12,
+    private rows: () => number = () => 24,
   ) {
     const rule = PermissionPolicy.ruleFor(req);
     const raw = req.tool.name === "bash" ? String(req.args.command) : summary || JSON.stringify(req.args);
     // What is approved must be exactly what is shown: control characters are made visible, and called out.
     const warn = /[\x00-\x08\x0b-\x1f\x7f-\x9f]/.test(raw)
-      ? `${c.red(t("⚠ 制御文字（端末のエスケープシーケンスなど）を含んでいます。␛ などの表示を確かめてください。"))}\n`
+      ? `\n${c.red(t("⚠ 制御文字（端末のエスケープシーケンスなど）を含んでいます。␛ などの表示を確かめてください。"))}`
       : "";
     this.title = `${c.yellow("?")} ${c.bold(t("{tool} を実行しますか？", { tool: req.tool.name }))}`;
-    this.detail = new Text(c.cyan(plain(raw)), 0, 0);
-    this.footer = new Text(`${warn}${c.gray(plain(req.reason))}`, 0, 0);
+    this.body = new Text(`${c.cyan(plain(raw))}${warn}\n${c.gray(plain(req.reason))}`, 0, 0);
     this.list = new SelectList(
       [
         { value: "allow", label: t("はい") },
@@ -142,30 +142,28 @@ export class ApprovalDialog implements Component, Focusable {
   }
 
   render(width: number): string[] {
-    const detail = this.detail.render(width);
-    const rows = Math.max(1, this.maxDetailRows());
-    let shown = detail;
-    let more: string[] = [];
-    if (detail.length > rows) {
-      this.page = Math.max(1, rows - 1);
-      this.scroll = Math.min(this.scroll, detail.length - rows);
-      shown = detail.slice(this.scroll, this.scroll + rows);
-      more = [
-        truncateToWidth(
-          c.gray(t("{from}–{to} / {total} 行 · shift+↑↓ で全文をスクロール", { from: this.scroll + 1, to: this.scroll + shown.length, total: detail.length })),
-          width,
-        ),
-      ];
+    const choices = this.input
+      ? [c.gray(t("モデルへの指示（enter で送信 · esc で選択に戻る）:")), ...this.input.render(width)]
+      : this.list.render(width);
+    const body = this.body.render(width);
+    // The rule, the title and the hint line take one row each.
+    const room = Math.max(1, this.rows() - choices.length - 3);
+    let shown = body;
+    let hint = this.input ? "" : t("esc で中断");
+    if (body.length > room) {
+      this.page = Math.max(1, room - 1);
+      this.scroll = Math.min(this.scroll, body.length - room);
+      shown = body.slice(this.scroll, this.scroll + room);
+      const where = t("{from}–{to} / {total} 行 · shift+↑↓ で全文をスクロール", { from: this.scroll + 1, to: this.scroll + shown.length, total: body.length });
+      hint = hint ? `${hint} · ${where}` : where;
     }
-    const lines = [truncateToWidth(c.yellow("─".repeat(width)), width), truncateToWidth(this.title, width), ...shown, ...more, ...this.footer.render(width)];
-    if (this.input) lines.push(c.gray(t("モデルへの指示（enter で送信 · esc で選択に戻る）:")), ...this.input.render(width));
-    else lines.push(...this.list.render(width), truncateToWidth(c.gray(t("esc で中断")), width));
+    const lines = [truncateToWidth(c.yellow("─".repeat(width)), width), truncateToWidth(this.title, width), ...shown, ...choices];
+    if (hint) lines.push(truncateToWidth(c.gray(hint), width));
     return lines;
   }
 
   invalidate(): void {
-    this.detail.invalidate();
-    this.footer.invalidate();
+    this.body.invalidate();
     this.list.invalidate();
   }
 }
