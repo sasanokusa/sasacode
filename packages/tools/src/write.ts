@@ -1,6 +1,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { errorResult, text, type ToolDefinition } from "@sasacode/plugin-api";
+import { splitLines } from "./read.ts";
 import { lineDiff, resolvePath } from "./util.ts";
 
 interface Args {
@@ -35,7 +36,8 @@ export const writeTool: ToolDefinition<Args> = {
     await mkdir(dirname(path), { recursive: true });
     if (ctx.signal.aborted) return interrupted();
     await writeFile(path, args.content);
-    const lines = args.content.split("\n").length;
+    // Counted as read counts them: a final newline ends the last line, it does not start one.
+    const lines = args.content ? splitLines(args.content).length : 0;
     return {
       content: [text(`${before === undefined ? "Created" : "Overwrote"} ${path} (${lines} lines).`)],
       details: { path, changed: true, created: before === undefined, diff: before === undefined ? undefined : lineDiff(before, args.content) },

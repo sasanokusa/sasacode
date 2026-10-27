@@ -190,16 +190,18 @@ function toChatMessages(messages: Message[], model: ModelInfo, hasTools: boolean
       const replay = canReplay(m, model) ? m.content.filter(c => c.type === "thinking") : [];
       const reasoningText = replay.filter(c => !c.redacted).map(c => c.thinking).join("");
       const reasoningDetails = openrouter(model) ? replay.flatMap(c => c.redacted && c.signature ? JSON.parse(c.signature) : []) : [];
-      if (!text && !tools.length && !reasoningDetails.length) continue;
+      const reasoning = openrouter(model)
+        ? reasoningDetails.length ? { reasoning_details: reasoningDetails } : reasoningText ? { reasoning: reasoningText } : {}
+        : deepseek || (mimo && tools.length)
+        ? { reasoning_content: reasoningText }
+        : !deepseekModel && !mimo && reasoningText && replay[0]?.reasoningField ? { [replay[0].reasoningField]: reasoningText }
+        : {};
+      // A turn of thinking alone (max_tokens spent on it) is kept when its reasoning is sent back.
+      if (!text && !tools.length && !Object.values(reasoning).some((v) => v.length)) continue;
       out.push({
         role: "assistant",
-        content: text || null,
-        ...(openrouter(model)
-          ? reasoningDetails.length ? { reasoning_details: reasoningDetails } : reasoningText ? { reasoning: reasoningText } : {}
-          : deepseek || (mimo && tools.length)
-          ? { reasoning_content: reasoningText }
-          : !deepseekModel && !mimo && reasoningText && replay[0]?.reasoningField ? { [replay[0].reasoningField]: reasoningText }
-          : {}),
+        content: text || (tools.length ? null : ""),
+        ...reasoning,
         ...(tools.length
           ? {
               tool_calls: tools.map((t) => ({

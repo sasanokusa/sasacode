@@ -329,3 +329,22 @@ test("what subagents, side requests and discarded replies use is logged and repo
   // They never enter the conversation.
   expect(restore(SessionFile.open(session.path).entries).messages.map((m) => m.role)).toEqual(["user", "assistant"]);
 });
+
+test("an approval that fails is a refused call; a concurrent call already running is waited for (#41)", async () => {
+  const slow = {
+    name: "slow", description: "", parameters: { type: "object", properties: {} }, concurrent: true,
+    execute: async () => (await Bun.sleep(300), { content: [say("slow done")] }),
+  } as never;
+  let asked = 0;
+  const { agent } = setup([reply([call("1", "slow", {}), call("2", "slow", {})]), reply([say("ok")])], {
+    tools: [slow],
+    permissions: new PermissionPolicy("ask"),
+    approve: async () => {
+      if (++asked === 2) throw new Error("UI bridge died");
+      return { decision: "allow" };
+    },
+  });
+  expect(await agent.prompt("go")).toBe("done");
+  const results = agent.messages.filter((m) => m.role === "tool");
+  expect(results.map((m) => JSON.stringify(m.content))).toEqual([expect.stringContaining("slow done"), expect.stringContaining("UI bridge died")]);
+});

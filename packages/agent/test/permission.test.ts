@@ -94,3 +94,15 @@ test("a plugin tool returning relative paths is still caught by path rules", asy
   expect((await p.check({ tool: relTool, args: { path: ".env" }, cwd })).decision).toBe("deny");
   expect((await p.check({ tool: relTool, args: { path: "src/a.ts" }, cwd })).decision).toBe("allow");
 });
+
+test("a project path with glob characters still matches its rules; a name starting with .. is inside (#38)", async () => {
+  for (const dir of ["/work/a[1]", "/work/b{x}"]) {
+    const deny = new PermissionPolicy("edits", { deny: ["edit(secret/**)"] });
+    expect((await deny.check({ tool: editTool, args: { path: "secret/x.txt" }, cwd: dir })).decision).toBe("deny");
+    const allow = new PermissionPolicy("ask", { allow: ["edit(src/**)"] });
+    expect((await allow.check({ tool: editTool, args: { path: "src/a.ts" }, cwd: dir })).decision).toBe("allow");
+  }
+  const p = new PermissionPolicy("edits");
+  for (const path of ["..foo", "..foo/bar", "..envrc"]) expect((await p.check({ tool: readTool, args: { path }, cwd })).decision).toBe("allow");
+  expect((await p.check({ tool: readTool, args: { path: "../x" }, cwd })).decision).toBe("ask");
+});

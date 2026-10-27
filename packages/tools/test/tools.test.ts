@@ -112,3 +112,11 @@ test("an identical write is a no-op: contents, mtime and inode stay unchanged", 
   expect(readFileSync(path, "utf8")).toBe("same");
   expect((await writeTool.execute({ path, content: "changed" }, ctx())).details?.changed).toBe(true);
 });
+
+test("write counts lines as read does: a final newline is not one more, empty is none (#47)", async () => {
+  const cases: [string, number][] = [["hello\n", 1], ["a\nb\n", 2], ["", 0], ["no-newline", 1]];
+  for (const [content, n] of cases) {
+    const out = await writeTool.execute({ path: `count-${n}-${content.length}.txt`, content }, ctx());
+    expect(JSON.stringify(out.content)).toContain(`(${n} lines)`);
+  }
+});

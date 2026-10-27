@@ -1,5 +1,5 @@
 import { lstatSync, readlinkSync } from "node:fs";
-import { dirname, isAbsolute, join, parse, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, parse, relative, resolve, sep } from "node:path";
 import type { ToolDefinition } from "@sasacode/plugin-api";
 
 /**
@@ -170,8 +170,9 @@ function ruleMatches(rule: ParsedRule, c: PermissionCheck, forAllow = false): bo
   // but links inside the project are not followed (a repo could point `src` at ~/.ssh). An
   // absolute pattern is the user's own path: its fixed part is resolved (/var → /private/var).
   const pattern = pathPattern(rule.pattern, c.cwd);
-  const variants = isAbsolute(pattern) ? [pattern, realPattern(pattern)] : [resolve(c.cwd, pattern), resolve(tryRealPath(c.cwd) ?? c.cwd, pattern)];
-  const globs = [...new Set(variants)].map((g) => new Bun.Glob(globPath(g)));
+  const globs = [
+    ...new Set(isAbsolute(pattern) ? [pattern, realPattern(pattern)].map(globPath) : [c.cwd, tryRealPath(c.cwd) ?? c.cwd].map((d) => anchored(d, pattern))),
+  ].map((g) => new Bun.Glob(g));
   const hit = (p: string) => globs.some((g) => g.match(globPath(p)));
   const spellings = paths.flatMap((p) => [p, tryRealPath(p) ?? p]);
   return forAllow ? spellings.every(hit) : spellings.some(hit);
@@ -191,6 +192,16 @@ function pathPattern(pattern: string, cwd: string): string {
   if (!WINDOWS) return pattern;
   const p = slashes(pattern);
   return /^\/(?!\/)/.test(p) ? resolve(cwd).slice(0, 2) + p : p;
+}
+
+/** A relative pattern under `dir`, which is a literal path: a `[` or `{` in it is not a wildcard. */
+function anchored(dir: string, pattern: string): string {
+  const parts = slashes(pattern).split("/");
+  let i = 0;
+  for (; i < parts.length - 1 && (parts[i] === "." || parts[i] === ".." || parts[i] === ""); i++) if (parts[i] === "..") dir = dirname(dir);
+  const base = globPath(dir).replace(/[\\*?[\]{}!]/g, "\\$&").replace(/\/$/, "");
+  const rest = parts.slice(i).join("/");
+  return rest ? `${base}/${globPath(rest)}` : base || "/";
 }
 
 /** A path or glob as compared: on Windows with `/` and in one case, as the file system sees names. */
@@ -291,5 +302,6 @@ function allowedByRules(rules: ParsedRule[], c: PermissionCheck): boolean {
 
 export function isInside(path: string, dir: string): boolean {
   const rel = relative(dir, path);
-  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+  // "..foo" is a name inside; only ".." itself or "../…" goes up.
+  return rel === "" || (rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
 }

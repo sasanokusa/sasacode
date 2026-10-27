@@ -86,7 +86,7 @@ export const readTool: ToolDefinition<Args> = {
   },
 };
 
-function splitLines(text: string): string[] {
+export function splitLines(text: string): string[] {
   const lines = text.split("\n");
   if (lines.length > 1 && lines[lines.length - 1] === "") lines.pop();
   return lines;

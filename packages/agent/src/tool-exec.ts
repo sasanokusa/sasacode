@@ -247,13 +247,15 @@ async function authorize(
   if (!approve)
     return denied(err(`This call needs user approval (${verdict.reason}), but no user is available to approve it (non-interactive run). It was not executed.`));
   // Esc while the question is open answers it: the call does not run.
-  const answer = await new Promise<ApprovalAnswer | undefined>((resolve, reject) => {
+  // A failed question (the UI went away) is not run either, like every other failure here a result.
+  const answer = await new Promise<ApprovalAnswer | Error | undefined>((resolve) => {
     const onAbort = () => resolve(undefined);
     signal.addEventListener("abort", onAbort, { once: true });
     approve({ ...check, call, reason: verdict.reason, signal })
-      .then(resolve, reject)
+      .then(resolve, (e) => resolve(e instanceof Error ? e : new Error(String(e))))
       .finally(() => signal.removeEventListener("abort", onAbort));
   });
+  if (answer instanceof Error) return denied(err(`The approval could not be asked (${answer.message}), so the call was not run.`));
   if (!answer || signal.aborted) return denied(notRun());
   if (answer.decision === "always") ctx.permissions.addRules({ allow: PermissionPolicy.rulesFor(check) });
   if (answer.decision === "deny") return denied(err(`The user denied this tool call.${answer.feedback ? ` User feedback: ${answer.feedback}` : ""}`));

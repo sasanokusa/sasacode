@@ -85,3 +85,16 @@ test("a strict compatible server accepts preserved reasoning instead of returnin
     }
   });
 });
+
+test("a turn of thinking alone is kept when its reasoning is sent back (#42)", async () => {
+  for (const id of ["deepseek-v4-flash"]) {
+    const thinking = { ...assistant(id, false, ["only thinking"]), stopReason: "max_tokens" as const };
+    thinking.content = thinking.content.filter((c) => c.type === "thinking");
+    await run(id, [user, thinking, user], b => {
+      const a = b.messages.filter((m: any) => m.role === "assistant");
+      expect(a).toHaveLength(1);
+      expect(a[0].reasoning_content).toBe("only thinking");
+      expect(a[0].content).toBe("");
+    });
+  }
+});
