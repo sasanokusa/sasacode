@@ -80,3 +80,17 @@ test("a reply whose blocks shift (unsigned thinking dropped on interrupt) is red
   expect(shown).not.toContain("write");
   expect(v.children).toHaveLength(1);
 });
+
+test("expanded, a long diff line wraps so its end can be read (#28)", async () => {
+  const { ToolView, display } = await import("../src/views.ts");
+  const view = new ToolView({ type: "tool_call", id: "1", name: "edit", input: {} } as ToolCall);
+  view.status = "done";
+  view.diff = `-ORIGINAL\n+START${"x".repeat(150)}SECRET_END`;
+  expect(view.render(80).join("\n")).not.toContain("SECRET_END");
+  display.expanded = true;
+  try {
+    expect(plain(view.render(80).join(""))).toContain("SECRET_END");
+  } finally {
+    display.expanded = false;
+  }
+});

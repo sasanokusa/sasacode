@@ -175,12 +175,11 @@ function argPreview(input: Record<string, unknown>): string {
 function renderDiff(diff: string, width: number): string[] {
   const all = diff.split("\n");
   const shown = display.expanded ? all : all.slice(0, 16);
-  const out = shown.map((l) => {
-    const line = truncateToWidth(`    ${l}`, width);
-    if (l.startsWith("+")) return c.green(line);
-    if (l.startsWith("-")) return c.red(line);
-    if (l.startsWith("@@")) return c.cyan(line);
-    return c.gray(line);
+  const out = shown.flatMap((l) => {
+    const color = l.startsWith("+") ? c.green : l.startsWith("-") ? c.red : l.startsWith("@@") ? c.cyan : c.gray;
+    // Expanded, a long line wraps so its end can be read; folded, each stays on one row.
+    if (display.expanded) return new Text(color(`    ${l}`), 0, 0).render(width);
+    return [color(truncateToWidth(`    ${l}`, width))];
   });
   if (all.length > shown.length) out.push(truncateToWidth(c.gray(`    … +${all.length - shown.length} lines (ctrl+o)`), width));
   return out;

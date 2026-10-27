@@ -1,4 +1,5 @@
 import type { EditorTheme, MarkdownTheme, SelectListTheme } from "@earendil-works/pi-tui";
+import { t } from "@sasacode/host";
 
 const sgr = (open: string, close: string) => (s: string) => `\x1b[${open}m${s}\x1b[${close}m`;
 
@@ -26,7 +27,8 @@ export const selectTheme: SelectListTheme = {
   selectedText: (s) => c.bold(c.cyan(s)),
   description: c.gray,
   scrollInfo: c.gray,
-  noMatch: c.gray,
+  // The list says "No matching commands" whatever it lists (models, sessions), and in English.
+  noMatch: () => c.gray(`  ${t("一致するものがありません")}`),
 };
 
 export const editorTheme: EditorTheme = {

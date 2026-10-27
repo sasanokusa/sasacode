@@ -46,6 +46,12 @@ const MARGIN = 2;
 const BELL_AFTER_MS = 30_000;
 
 /** What the TUI needs from the CLI. */
+/** At most `n` characters, cut between whole characters (an emoji is not split into a broken one). */
+function clip(s: string, n: number): string {
+  const all = [...new Intl.Segmenter().segment(s)];
+  return all.length > n ? `${all.slice(0, n - 1).map((g) => g.segment).join("")}…` : s;
+}
+
 /** A paste up to this size is shown in the input as it is; a longer one is folded into a marker. */
 const SHOWN_PASTE_LINES = 40;
 const SHOWN_PASTE_CHARS = 4000;
@@ -590,8 +596,9 @@ class App {
         argumentHint: "<provider/model> | --refresh",
         run: ({ args }) => this.modelCommand(args),
         complete: async (prefix) =>
+          // An exact match is left out, as /language does: enter then runs the command instead of completing it.
           (await this.modelChoices())
-            .filter((o) => o.value.toLowerCase().includes(prefix.toLowerCase()))
+            .filter((o) => o.value.toLowerCase().includes(prefix.toLowerCase()) && o.value.toLowerCase() !== prefix.toLowerCase())
             .slice(0, 50),
       },
       {
@@ -599,7 +606,7 @@ class App {
         description: t("推論の深さ（thinking）を切り替える"),
         argumentHint: EFFORTS.join("|"),
         run: ({ args }) => this.effortCommand(args),
-        complete: async (prefix) => EFFORTS.filter((e) => e.startsWith(prefix)).map((e) => ({ value: e, label: e, description: t(EFFORT_LABELS[e]) })),
+        complete: async (prefix) => EFFORTS.filter((e) => e.startsWith(prefix) && e !== prefix).map((e) => ({ value: e, label: e, description: t(EFFORT_LABELS[e]) })),
       },
       { name: "copy", description: t("直前の応答をクリップボードにコピー"), run: () => this.copyCommand() },
       { name: "resume", description: t("過去のセッションを再開"), run: () => this.resumeCommand() },
@@ -744,9 +751,10 @@ class App {
     }
     const picked = await this.pick(
       t("再開するセッション"),
-      sessions.slice(0, 50).map((s) => ({
+      // All of them: the filter searches the whole list, and an old session must stay reachable.
+      sessions.map((s) => ({
         value: s.path,
-        label: (s.firstPrompt || t("(空)")).replace(/\s+/g, " ").slice(0, 60),
+        label: clip((s.firstPrompt || t("(空)")).replace(/\s+/g, " "), 60),
         description: `${s.modifiedAt.toLocaleString()} · ${s.messageCount} msgs`,
       })),
     );
@@ -791,7 +799,7 @@ class App {
     }
     const picked = await this.pick(
       t("どのメッセージから分岐しますか（その直前までの会話で新しいセッションを作り、入力欄に戻します）"),
-      users.reverse().map(({ m, i }) => ({ value: String(i), label: textOf(m.content).replace(/\s+/g, " ").slice(0, 70) })),
+      users.reverse().map(({ m, i }) => ({ value: String(i), label: clip(textOf(m.content).replace(/\s+/g, " "), 70) })),
     );
     if (picked === undefined) return;
     await agent.halt();

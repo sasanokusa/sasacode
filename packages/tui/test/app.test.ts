@@ -4,7 +4,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Terminal } from "@earendil-works/pi-tui";
-import { Agent, PermissionPolicy, PluginHost } from "@sasacode/agent";
+import { Agent, PermissionPolicy, PluginHost, SessionFile } from "@sasacode/agent";
 import { currentLang, setLang } from "@sasacode/host";
 import { type AssistantContent, type AssistantMessage, emptyUsage, type ModelInfo, registerApi } from "@sasacode/ai";
 import { replayProvider } from "@sasacode/testing";
@@ -63,7 +63,7 @@ const reply = (content: AssistantContent[], extra: Partial<AssistantMessage> = {
   stopReason: content.some((c) => c.type === "tool_call") ? "tool_use" : "stop", timestamp: 0, ...extra,
 });
 
-async function start(script: AssistantMessage[], mode: "edits" | "auto" = "edits", listed: Awaited<ReturnType<TuiHost["listModels"]>> = [], altScreen = false) {
+async function start(script: AssistantMessage[], mode: "edits" | "auto" = "edits", listed: Awaited<ReturnType<TuiHost["listModels"]>> = [], altScreen = false, sessionsDir?: string) {
   registerApi("replay", replayProvider(script));
   const cwd = mkdtempSync(join(tmpdir(), "sasacode-tui-"));
   const agent = new Agent({ model, cwd, systemPrompt: "", permissions: new PermissionPolicy(mode) });
@@ -77,7 +77,7 @@ async function start(script: AssistantMessage[], mode: "edits" | "auto" = "edits
     warnings: [],
     config: { tui: { altScreen, bell: false } },
     resolve: () => model,
-    sessionsDir: cwd,
+    sessionsDir: sessionsDir ?? cwd,
     listModels: async () => listed,
     loadPlugins: async (ui) => host.setUI(ui),
     loadSession: async () => void calls.push("loadSession"),
@@ -558,5 +558,52 @@ test("a long command scrolls inside the approval; the choices stay on screen (#2
   await term.send("\x1b[B"); await term.send("\x1b[B");
   await term.send("\r");
   expect((await approval).decision).toBe("deny");
+  await term.type("/exit"); await term.send("\r"); await exited;
+});
+
+test("picker: backspace takes a whole emoji; no match is said in the interface's language (#26, #32)", async () => {
+  const { term, host, exited } = await start([]);
+  const picked = host.api("picker-test").ui.select("Pick", [{ value: "first", label: "first" }]);
+  await Bun.sleep(30);
+  await term.type("🐱");
+  expect(term.text()).toContain("一致するものがありません");
+  let from = term.out.length;
+  await term.send("\x7f");
+  expect(term.text(from)).toContain("first");
+  expect(term.text(from)).not.toContain("\ufffd");
+  expect(term.text(from)).toContain("入力で絞り込み");
+  await term.send("\x1b");
+  expect(await picked).toBeUndefined();
+  await term.type("/exit"); await term.send("\r"); await exited;
+});
+
+test("a fully typed /effort runs on the first enter (#29)", async () => {
+  const { term, agent, exited } = await start([]);
+  await term.type("/effort low");
+  await term.send("\r");
+  expect(agent.thinking).toBe("low");
+  await term.type("/exit"); await term.send("\r"); await exited;
+});
+
+test("/resume lists every session, and a title is cut between whole characters (#30, #31)", async () => {
+  const root = mkdtempSync(join(tmpdir(), "sasacode-resume-"));
+  const dir = join(root, "sessions");
+  const cwd = mkdtempSync(join(tmpdir(), "sasacode-tui-"));
+  for (let i = 0; i < 55; i++) {
+    const f = SessionFile.create(dir, cwd);
+    const text = i === 54 ? `${"a".repeat(58)}🐱 suffix` : `SESSION_${String(i).padStart(2, "0")}`;
+    f.append({ type: "message", message: { role: "user", content: [{ type: "text", text }], timestamp: i } });
+  }
+  const { term, agent, exited } = await start([], "edits", [], false, dir);
+  agent.cwd = cwd;
+  await term.type("/resume");
+  await term.send("\r");
+  expect(term.text()).toContain(`${"a".repeat(58)}🐱…`);
+  expect(term.text()).not.toContain("\ufffd");
+  const from = term.out.length;
+  await term.type("SESSION_00");
+  expect(term.text(from)).toContain("SESSION_00");
+  expect(term.text(from)).not.toContain("一致するものがありません");
+  await term.send("\x1b");
   await term.type("/exit"); await term.send("\r"); await exited;
 });

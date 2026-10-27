@@ -4,6 +4,8 @@ import { t } from "@sasacode/host";
 import { c, selectTheme } from "./theme.ts";
 import { plain } from "./views.ts";
 
+const graphemes = new Intl.Segmenter();
+
 /** A titled SelectList that resolves once. Typing narrows the list (substring match). */
 export class Picker implements Component, Focusable {
   focused = false;
@@ -43,7 +45,8 @@ export class Picker implements Component, Focusable {
       return;
     }
     if (matchesKey(data, "backspace")) {
-      this.filter = this.filter.slice(0, -1);
+      // A whole character, an emoji too: half of one would be left as a broken one.
+      this.filter = [...graphemes.segment(this.filter)].slice(0, -1).map((g) => g.segment).join("");
       this.rebuild();
     } else if (!data.startsWith("\x1b") && [...data].every((ch) => ch >= " " && ch !== "\x7f")) {
       this.filter += data;
