@@ -729,3 +729,16 @@ test("/fork puts a message's image back with it, also when its file is gone, wit
   expect(JSON.stringify(last!.content)).not.toContain("[Image 1: [Image");
   await term.type("/exit"); await term.send("\r"); await exited;
 });
+
+test("after a compaction what was said stays on screen; the model gets the summary", async () => {
+  const script = [reply([{ type: "text", text: "first answer" }])];
+  const { term, host, agent, exited } = await start(script);
+  await term.type("hello"); await term.send("\r");
+  await Bun.sleep(150);
+  host.api("compaction-test").session.replaceMessages([{ role: "user", timestamp: 0, content: [{ type: "text", text: "[Summary of the earlier conversation, compacted to save context]\n\nsaid hello" }] }]);
+  expect(agent.messages).toHaveLength(1);
+  const from = term.out.length;
+  await term.send("\x0f"); // ctrl+o redraws everything
+  expect(term.text(from)).toContain("first answer");
+  await term.type("/exit"); await term.send("\r"); await exited;
+});

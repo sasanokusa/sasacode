@@ -19,7 +19,7 @@ import {
 } from "@earendil-works/pi-tui";
 import { type Agent, type AgentEvent, type ApprovalAnswer, type ApprovalRequest, PERMISSION_MODE_LABELS, PERMISSION_MODES, type PermissionMode, type PluginHost, type UIBridge } from "@sasacode/agent";
 import { type Lang, listSessions, retranslate, setLang, t } from "@sasacode/host";
-import { fmtTokens, type ModelInfo, textOf, type ThinkingLevel, type ToolCall } from "@sasacode/ai";
+import { fmtTokens, type Message, type ModelInfo, textOf, type ThinkingLevel, type ToolCall } from "@sasacode/ai";
 import type { CommandDefinition, SelectOption, ShowTextOptions, UserContent } from "@sasacode/plugin-api";
 import { matchAmbiguousWidth } from "./ambiguous.ts";
 import { Activity } from "./activity.ts";
@@ -82,6 +82,8 @@ export interface TuiHost {
   shutdown(): Promise<void>;
   /** Keep the interface language for the next start (the `lang` setting in config.json). */
   saveLang?(lang: Lang): void;
+  /** Everything said in the session loaded, also what a compaction summarized (shown on resume). */
+  transcript?(): Message[];
 }
 
 const LANGUAGES: SelectOption[] = [
@@ -186,7 +188,7 @@ class App {
     };
     host.agent.events.on((e) => this.onEvent(e));
     this.tui.addInputListener((data) => this.onKey(data));
-    this.renderHistory();
+    this.renderHistory(true);
     this.updateFooter();
   }
 
@@ -526,7 +528,12 @@ class App {
         this.chat.addChild(new Notice(t("プラグイン {plugin} の {hook} ハンドラでエラー: {error}", { plugin: e.plugin, hook: e.hook, error: e.error }), c.red));
         break;
       case "messages_replaced":
-        this.resetView();
+        // A compaction: the model now gets a summary, but what was said stays on screen to scroll
+        // back to (the kept tail is shown already). Anything else that swaps the history is redrawn.
+        if (textOf(this.host.agent.messages[0]?.content ?? []).startsWith("[Summary of")) {
+          this.contextTokens = 0; // the next reply tells
+          this.updateFooter();
+        } else this.resetView();
         break;
       case "agent_end":
         this.activity?.stop();
@@ -787,7 +794,7 @@ class App {
     if (!picked) return;
     await this.host.agent.halt();
     await this.host.loadSession(picked);
-    this.resetView();
+    this.resetView(true);
     this.notify(t("セッションを再開しました"));
   }
 
@@ -1013,7 +1020,8 @@ class App {
     return images.length ? [{ type: "text", text: out }, ...images] : text;
   }
 
-  private resetView(): void {
+  /** `loaded`: a stored session was just opened (see renderHistory). */
+  private resetView(loaded = false): void {
     this.queued = [];
     this.held.clear();
     this.renderStatus();
@@ -1021,14 +1029,17 @@ class App {
     this.tools.clear();
     this.contextTokens = 0;
     this.totalCost = 0;
-    this.renderHistory();
+    this.renderHistory(loaded);
     this.updateFooter();
     this.tui.requestRender(true);
   }
 
-  /** Rebuild the transcript from agent.messages (after /resume or on startup with -c). */
-  private renderHistory(): void {
-    for (const m of this.host.agent.messages) {
+  /**
+   * Rebuild the transcript from agent.messages; `loaded` (on startup with -c, after /resume): from
+   * everything said in the session, also what a compaction summarized for the model.
+   */
+  private renderHistory(loaded = false): void {
+    for (const m of (loaded && this.host.transcript?.()) || this.host.agent.messages) {
       if (m.role === "user") {
         this.chat.addChild(new Spacer(1));
         this.chat.addChild(new UserView(m.content));

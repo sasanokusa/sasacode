@@ -181,6 +181,23 @@ test("--no-session: a resumed conversation is read, and nothing more is written 
   expect(readFileSync(path, "utf8")).toBe(before);
 });
 
+test("a resumed compacted session shows everything said; the model gets the summary", async () => {
+  writeConfigs({ providers: { test: { api: "replay" } }, model: "test/m" }, {});
+  const reply = (text: string) => ({ role: "assistant" as const, content: [{ type: "text" as const, text }], api: "replay", provider: "test", model: "m", usage: emptyUsage(), stopReason: "stop" as const, timestamp: 0 });
+  registerApi("replay", replayProvider([reply("a1"), reply("a2")]));
+  const first = await setup({ cwd: proj });
+  await first.agent.prompt("before compaction");
+  first.agent.replaceMessages([{ role: "user", timestamp: 0, content: [{ type: "text", text: "[Summary of the earlier conversation, compacted to save context]\n\nx" }] }]);
+  await first.agent.prompt("after compaction");
+  const resumed = await setup({ cwd: proj, resume: first.agent.session!.id });
+  expect(JSON.stringify(resumed.agent.messages[0])).toContain("[Summary of");
+  const said = resumed.transcript().map((m) => JSON.stringify(m.content));
+  expect(said).toEqual([expect.stringContaining("before compaction"), expect.stringContaining("a1"), expect.stringContaining("after compaction"), expect.stringContaining("a2")]);
+  // Not compacted: the history as restored.
+  const plain = await setup({ cwd: proj });
+  expect(plain.transcript()).toBe(plain.agent.messages);
+});
+
 test("-m beats the model a resumed session ended with", async () => {
   writeConfigs({ providers: { test: { api: "replay" }, other: { api: "replay" } }, model: "test/m" }, {});
   const reply = { role: "assistant" as const, content: [{ type: "text" as const, text: "ok" }], api: "replay", provider: "test", model: "m", usage: emptyUsage(), stopReason: "stop" as const, timestamp: 0 };

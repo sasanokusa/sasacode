@@ -2,7 +2,7 @@ import { chmodSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { join, resolve as resolvePath } from "node:path";
 import { Agent, buildSystemPrompt, headlessUI, isInside, PERMISSION_MODES, type PermissionMode, PermissionPolicy, PluginHost, restore, SessionFile, sessionDir, type UIBridge } from "@sasacode/agent";
 import { BUILTIN_PROVIDERS, currentLang, defaultModelFor, findSession, KNOWN_MODELS, type Lang, listSessions, resolveModel, t } from "@sasacode/host";
-import { type ModelInfo, type ProviderConfig, registerApi, type ThinkingLevel } from "@sasacode/ai";
+import { type Message, type ModelInfo, type ProviderConfig, registerApi, textOf, type ThinkingLevel } from "@sasacode/ai";
 import { bundledPlugins, readCodexAuth } from "@sasacode/bundled";
 import { createMcpPlugin, type McpServerConfig } from "@sasacode/mcp";
 import { createSkillsPlugin } from "@sasacode/skills";
@@ -72,6 +72,8 @@ export interface Harness {
   shutdown(): Promise<void>;
   /** /language: the `lang` setting in the global config.json. */
   saveLang(lang: Lang): void;
+  /** Everything said in the session loaded, also what a compaction summarized for the model (to show it). */
+  transcript(): Message[];
 }
 
 export async function setup(opts: SetupOptions): Promise<Harness> {
@@ -282,6 +284,12 @@ export async function setup(opts: SetupOptions): Promise<Harness> {
       for (const m of kept) agent.session?.append({ type: "message", message: m });
       agent.reset(kept);
       await startSession(false);
+    },
+    transcript() {
+      const said = sessionEntries.flatMap((e) => (e.type === "message" ? [e.message] : []));
+      // Not compacted: the history as restored (a torn tail repaired).
+      const compacted = sessionEntries.some((e) => e.type === "replace" && textOf(e.messages[0]?.content ?? []).startsWith("[Summary of"));
+      return compacted ? said : agent.messages;
     },
     saveLang(lang) {
       const path = join(sasacodeHome(), "config.json");
