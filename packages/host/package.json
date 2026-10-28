@@ -1,6 +1,6 @@
 {
   "name": "@sasacode/host",
-  "version": "0.13.7",
+  "version": "0.13.8",
   "type": "module",
   "main": "src/index.ts",
   "dependencies": {
