@@ -134,7 +134,7 @@ At start it asks the terminal how many cells it draws East Asian Ambiguous chara
 | `/language` | Switch the interface language (`ja` / `en`; without an argument, pick from a list). It switches at once and is saved as `lang` in `~/.sasacode/config.json`. Text already on screen stays as it was |
 | `/copy` | Copy the last answer (pbcopy / wl-copy / xclip, else through the terminal) |
 | `/permission` `/help` `/exit` (`/quit`) | Permission mode / help / quit |
-| `/usage` `/goal` `/bg` `/reconnect` `/compact` `/mcp` `/skills` `/skill:<name>` `/presets` `/browsr` `/undo` | Commands of bundled plugins |
+| `/usage` `/goal` `/bg` `/reconnect` `/compact` `/mcp` `/skills` `/skill:<name>` `/presets` `/browsr` `/web-search` `/undo` | Commands of bundled plugins |
 
 The footer shows the model, the reasoning effort, the permission mode, context use (`ctx 77.6k/256k (30%)`), the session id and plugin statuses (MCP connections, TODO progress, …). When a run that took 30 seconds or more finishes, the terminal bell rings (`"tui": { "bell": false }` turns it off).
 
@@ -262,7 +262,8 @@ A plugin of the same name in `~/.sasacode/plugins` or the project is loaded inst
 | `compaction` | Summarizes older history when context reaches 80% or the limit. `/compact` runs it by hand (the footer shows it while it works; an empty summary leaves the history alone). The model then gets the summary, but the conversation stays on screen (a resumed session shows it from before the summary too) |
 | `subagent` | The `task` tool: hands work to a subagent with its own history and gets back only the report (several in one turn run in parallel). With `background: true` the caller keeps working and the report arrives as a message when the run ends (interrupting the caller with Esc stops it too); `task_status`, `task_send` and `task_stop` watch, steer and stop runs. A run that fails reports why, with its last message and tool calls. The user can do the same with `/task` (list and details, `/task send <id> <message>`, `/task stop <id>`). Subagents cannot use the `task` tools, `todo_write` or `set_goal` (the caller's TODO list and goal stay its own) |
 | `todo` | The `todo_write` tool: keeps a work plan in the session and shows progress in the footer |
-| `web-fetch` | The `web_fetch` tool: fetches a URL as text |
+| `web-fetch` | The `web_fetch` tool: fetches a URL as text. The page's links come back as a numbered list of absolute URLs, so the agent follows them instead of putting URLs together by guesswork. On a 404 it points at the site's `llms.txt` / `sitemap.xml` when they exist, and at a search |
+| `web-search` | The `web_search` tool: searches through [RustXNG](https://github.com/sahenjp/RustXNG), a keyless SearXNG-compatible metasearch. With `rustxng` on PATH, the first search starts it on `127.0.0.1:47888`, and it exits by itself after `RUSTXNG_IDLE_TIMEOUT` (600 s by default) unused: nothing stays resident, and sessions running meanwhile share it. `url` in `plugins.settings.web-search` uses a RustXNG or SearXNG you keep running instead. Also `command`, `port`, `idleTimeout`, `results`. Left out while browsr's search is connected, so the model is not given two ways to search |
 | `browsr` | Web search (`search`) and reading pages (`open`) through [browsr-4-agent](https://github.com/sasanokusa/browsr-4-agent); started automatically when `browsr-agent` is on PATH |
 | `permission-presets` | Rule presets (`guard`, `read-only-shell`, `tests`) |
 | `agent-judge` | The `agent` mode's judge: a model (`judgeModel`, else the current one) decides the calls the mode would ask about. Never loosens a rule. Disabled, `agent` mode asks |

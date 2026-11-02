@@ -134,7 +134,7 @@ stdinは1行1件のJSON（JSON Lines）で読む。
 | `/language` | 画面の言語を切り替える（`ja` / `en`。引数なしなら一覧から選ぶ）。その場で切り替わり、`~/.sasacode/config.json` の `lang` にも保存する。切り替え前に表示された文はそのまま |
 | `/copy` | 直前の応答をクリップボードにコピー（pbcopy / wl-copy / xclip、なければ端末経由） |
 | `/permission` `/help` `/exit`（`/quit`） | 権限モード / ヘルプ / 終了 |
-| `/usage` `/goal` `/bg` `/reconnect` `/compact` `/mcp` `/skills` `/skill:<name>` `/presets` `/browsr` `/undo` | 同梱プラグインのコマンド |
+| `/usage` `/goal` `/bg` `/reconnect` `/compact` `/mcp` `/skills` `/skill:<name>` `/presets` `/browsr` `/web-search` `/undo` | 同梱プラグインのコマンド |
 
 フッターには、モデル、推論の深さ、権限モード、コンテキストの使用量（`ctx 77.6k/256k (30%)`）、セッションIDと、プラグインのステータス（MCPの接続数、TODOの進捗など）を出す。30 秒以上かかった実行が終わると、端末のベルを鳴らす（別の作業をしていても気づけるように。`"tui": { "bell": false }` で止める）。
 
@@ -262,7 +262,8 @@ sasacode plugin install sasacode-plugin-jev-guard
 | `compaction` | コンテキストが 80% に達するか上限に来たら、古い履歴を要約する。`/compact` で手動実行。モデルに送るのは要約だけになるが、画面の会話はそのまま残る（再開したときも、要約する前の会話から表示する） |
 | `subagent` | `task` ツール。別の履歴を持つサブエージェントに作業を任せ、報告だけを受け取る（1ターンに複数あれば並行して動く）。`background: true` なら待たずに作業を続け、終わると報告がメッセージで届く（メインをEscで止めると一緒に止まる）。`task_status`・`task_send`・`task_stop` で進み具合を見る・指示を足す・止める。途中で失敗したときは理由と最後の発言・ツール呼び出しを返す。ユーザーは `/task`（一覧・詳細、`/task send <id> <内容>`、`/task stop <id>`）で同じことができる。サブエージェントは `task` 系・`todo_write`・`set_goal` を使えない（呼び出し元のTODOとゴールを書き換えないため） |
 | `todo` | `todo_write` ツール。作業計画をセッションに残し、進捗をフッターに出す |
-| `web-fetch` | `web_fetch` ツール。URLを取ってきてテキストにする |
+| `web-fetch` | `web_fetch` ツール。URLを取ってきてテキストにする。ページ内のリンクは絶対URLの番号付き一覧にして返し、推測でURLを組み立てずに辿れるようにする。404のときは、サイトの `llms.txt` / `sitemap.xml` があればそれと検索を案内する |
+| `web-search` | `web_search` ツール。[RustXNG](https://github.com/sahenjp/RustXNG)（キー不要のSearXNG互換メタ検索）で検索する。`rustxng` がPATHにあれば、最初の検索で `127.0.0.1:47888` に起動し、`RUSTXNG_IDLE_TIMEOUT`（既定600秒）のあいだ使われなければ自分で終了する（常駐しない。同時に動くセッションは同じものを使う）。`plugins.settings.web-search` の `url` で、常駐させているRustXNGやSearXNGを使う。ほかに `command`、`port`、`idleTimeout`、`results`。browsrの検索がつながっているあいだは、検索手段が重ならないよう出さない |
 | `browsr` | [browsr-4-agent](https://github.com/sasanokusa/browsr-4-agent) によるWeb検索（`search`）と本文の閲覧（`open`）。`browsr-agent` がPATHにあれば自動で起動する |
 | `permission-presets` | 権限ルールのプリセット（`guard`、`read-only-shell`、`tests`） |
 | `agent-judge` | `agent` モードの判定役。モードが確認に回す呼び出しを、モデル（`judgeModel`、なければ現在のモデル）に判定させる。ルールは緩めない。無効にすると `agent` モードは確認になる |

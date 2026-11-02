@@ -223,6 +223,14 @@ export const TO_EN: Record<string, string> = {
   "よくあるテスト・型チェックコマンドを確認なしで許可": "allow common test and type-check commands without asking",
   "権限プリセットの一覧": "list the permission presets",
   "有効化: config の plugins.settings[\"permission-presets\"].presets": "enable with plugins.settings[\"permission-presets\"].presets in the config",
+  // ── bundled: web-search ───────────────────────────────────────────────
+  "web_search（RustXNG）の状態": "web_search (RustXNG) status",
+  "rustxng が見つかりません。{releases} から入れて PATH に置くか、plugins.settings.web-search.command を指定してください。": "rustxng not found. Get it from {releases} and put it on your PATH, or set plugins.settings.web-search.command.",
+  "web-search: {command} が見つかりません": "web-search: {command} not found",
+  "応答あり": "answering",
+  "応答なし": "not answering",
+  "起動中": "running",
+  "停止中（次の検索で起動、{idle} 秒使わなければ終了）": "stopped (starts on the next search, exits after {idle} s unused)",
   // ── bundled: browsr ───────────────────────────────────────────────────
   "browsr（Web 検索・閲覧）の状態": "browsr (web search and browsing) status",
   "browsr-agent が見つかりません。インストール: {install}\n別の場所にある場合は plugins.settings.browsr.command を指定してください。": "browsr-agent not found. Install: {install}\nIf it is somewhere else, set plugins.settings.browsr.command.",
