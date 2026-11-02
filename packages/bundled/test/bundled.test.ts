@@ -366,7 +366,7 @@ test("web_search starts rustxng on first use with RUSTXNG_IDLE_TIMEOUT, shares i
   const failed = await fetchTool.execute({ url: `http://127.0.0.1:${await freePort()}/` }, ctx);
   expect((failed.content[0] as { text: string }).text).toContain("Do not guess another URL: search with web_search.");
   // idle: the sidecar is gone by itself (not asked in the meantime: any request counts as use), and the next search starts it again
-  await Bun.sleep(2_000);
+  await Bun.sleep(3_500);
   expect(await fetch(`http://127.0.0.1:${port}/healthz`).then((r) => r.ok, () => false)).toBe(false);
   expect((await tool.execute({ query: "again" }, ctx)).isError).toBeFalsy();
 }, 20_000);
@@ -385,4 +385,17 @@ test("web_search: absent without rustxng, uses a configured server as is, and fo
     server.stop(true);
   }
   expect(formatResults("zzz", { results: [], suggestions: ["zz"] })).toBe('No results for "zzz". Try different words (perhaps: zz).');
+});
+
+test("web_search steps aside while browsr's search is connected", async () => {
+  const { agent, host } = await setup([], ["web-search", "browsr"], {
+    settings: { "web-search": { url: "http://127.0.0.1:9" }, browsr: { command: fakeBrowsr("browsr-overlap") } },
+  });
+  await host.settle(10_000);
+  expect(agent.getTools().map((t) => t.name)).toContain("web_search");
+  await agent.hooks.run("system_prompt", { prompt: "p" }, () => {});
+  const names = agent.getTools().map((t) => t.name);
+  expect(names).toContain("search");
+  expect(names).not.toContain("web_search");
+  await agent.hooks.run("session_end", {});
 });

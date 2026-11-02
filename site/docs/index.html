@@ -595,7 +595,7 @@ sasacode -m pgx/&lt;モデル名&gt;</code></pre>
       <div class="tbl"><table>
         <tr><th>プラグイン</th><th>設定</th><th>内容</th></tr>
         <tr><td><code>web-fetch</code></td><td>—</td><td><code>web_fetch</code> ツール。URLを取ってテキストにする。ページ内のリンクは絶対URLの番号付き一覧で返し、404のときはサイトの <code>llms.txt</code> / <code>sitemap.xml</code> と検索を案内する</td></tr>
-        <tr><td><code>web-search</code></td><td><code>url</code>、<code>command</code>、<code>port</code>、<code>idleTimeout</code>、<code>results</code></td><td><code>web_search</code> ツール。<a href="https://github.com/sahenjp/RustXNG">RustXNG</a> で検索する。<code>rustxng</code> がPATHにあれば最初の検索で起動し、<code>RUSTXNG_IDLE_TIMEOUT</code>（既定600秒）使われなければ自分で終了する。<code>url</code> を指定すると、常駐させているRustXNGやSearXNGを使う</td></tr>
+        <tr><td><code>web-search</code></td><td><code>url</code>、<code>command</code>、<code>port</code>、<code>idleTimeout</code>、<code>results</code></td><td><code>web_search</code> ツール。<a href="https://github.com/sahenjp/RustXNG">RustXNG</a> で検索する。<code>rustxng</code> がPATHにあれば最初の検索で起動し、<code>RUSTXNG_IDLE_TIMEOUT</code>（既定600秒）使われなければ自分で終了する。<code>url</code> を指定すると、常駐させているRustXNGやSearXNGを使う。browsrの検索がつながっているあいだは出さない</td></tr>
         <tr><td><code>browsr</code></td><td><code>command</code>、<code>mode</code>、<code>config</code></td><td><a href="https://github.com/sasanokusa/browsr-4-agent">browsr-4-agent</a> で検索（<code>search</code>）と本文の閲覧（<code>open</code>）。<code>browsr-agent</code> がPATHにあれば自動で起動。別の場所なら <code>command</code> で指定</td></tr>
       </table></div>
 

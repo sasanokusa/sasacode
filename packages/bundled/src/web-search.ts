@@ -1,5 +1,6 @@
 import { t } from "@sasacode/host";
-import { errorResult, type Plugin } from "@sasacode/plugin-api";
+import { existsSync } from "node:fs";
+import { childEnv, errorResult, type Plugin, type ToolDefinition } from "@sasacode/plugin-api";
 
 const RELEASES = "https://github.com/sahenjp/RustXNG/releases";
 const DEFAULT_PORT = 47888;
@@ -59,7 +60,8 @@ export function formatResults(query: string, data: SearxResponse): string {
  * SearXNG-compatible metasearch server, so the agent finds URLs instead of guessing them. Nothing
  * stays resident: the first search starts `rustxng` as a sidecar on 127.0.0.1 that exits by itself
  * after RUSTXNG_IDLE_TIMEOUT seconds without a request, and sessions that run meanwhile share it.
- * With `url` set, that server (RustXNG or SearXNG) is used and nothing is started.
+ * With `url` set, that server (RustXNG or SearXNG) is used and nothing is started. While browsr's
+ * search tools are connected, web_search steps aside so the model is not given two ways to search.
  * Inactive when rustxng is not installed and no url is set.
  *
  * settings: { command?: string, url?: string, port?: number, idleTimeout?: number, results?: number }
@@ -67,7 +69,7 @@ export function formatResults(query: string, data: SearxResponse): string {
 const webSearch: Plugin = (api) => {
   const url = (api.settings.url as string | undefined)?.replace(/\/+$/, "");
   const configured = api.settings.command as string | undefined;
-  const command = url ? undefined : (Bun.which(configured ?? "rustxng") ?? undefined);
+  const command = url ? undefined : configured ? (Bun.which(configured) ?? (existsSync(configured) ? configured : undefined)) : (Bun.which("rustxng") ?? undefined);
   const base = url ?? `http://127.0.0.1:${Number(api.settings.port ?? DEFAULT_PORT)}`;
   const idle = Number(api.settings.idleTimeout ?? DEFAULT_IDLE);
   const count = Number(api.settings.results ?? DEFAULT_RESULTS);
@@ -100,7 +102,7 @@ const webSearch: Plugin = (api) => {
       // Detached and unreferenced: it outlives this session and ends on its own idle timeout. (Not on
       // Windows, where Bun's detached children still end with the parent: there it is per session.)
       const proc = Bun.spawn([command!, "--bind", "127.0.0.1", "--port", port], {
-        env: { ...process.env, RUSTXNG_IDLE_TIMEOUT: String(idle), RUST_LOG: process.env.RUST_LOG ?? "warn" },
+        env: childEnv({ RUSTXNG_IDLE_TIMEOUT: String(idle), RUST_LOG: process.env.RUST_LOG ?? "warn" }),
         stdio: ["ignore", "ignore", "ignore"],
         detached: true,
       });
@@ -118,7 +120,7 @@ const webSearch: Plugin = (api) => {
     await starting;
   }
 
-  api.registerTool({
+  const tool: ToolDefinition = {
     name: "web_search",
     description:
       "Search the web. Use it to find the right URL instead of guessing one, then read the page with web_fetch. Returns titles, URLs and snippets; include_text also returns the main text of the top pages (slower).",
@@ -159,6 +161,15 @@ const webSearch: Plugin = (api) => {
       }
       return { content: [{ type: "text", text: formatResults(args.query, data) }] };
     },
+  };
+  let registered = true;
+  api.registerTool(tool);
+  // Checked before each request, as browsr connects in the background and can drop.
+  api.on("system_prompt", () => {
+    const browsr = api.agent.tools().some((t) => t.name === "search" || t.name === "web");
+    if (browsr && registered) api.unregisterTool("web_search");
+    else if (!browsr && !registered) api.registerTool(tool);
+    registered = !browsr;
   });
 };
 export default webSearch;
