@@ -27,6 +27,7 @@ export { detectRepetition } from "./repetition-guard.ts";
 export { closestName, editDistance, fitToSchema, repairJson } from "./tool-repair.ts";
 export { htmlToText, readCapped } from "./web-fetch.ts";
 export { formatResults } from "./web-search.ts";
+export { installRustxng, managedRustxng, rustxngTarget } from "./rustxng-install.ts";
 export { byDay, graph, planLines, readRecords } from "./usage.ts";
 export { codexLogin, codexLogout, codexStatus, readCodexAuth } from "./openai-codex/index.ts";
 
