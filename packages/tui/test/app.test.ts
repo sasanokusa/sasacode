@@ -1,6 +1,6 @@
 // The TUI driven through a stand-in terminal: keys in, rendered text out. No model: a replay provider.
 import { beforeAll, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Terminal } from "@earendil-works/pi-tui";
@@ -593,6 +593,8 @@ test("/resume lists every session, and a title is cut between whole characters (
     const f = SessionFile.create(dir, cwd);
     const text = i === 54 ? `${"a".repeat(58)}🐱 suffix` : `SESSION_${String(i).padStart(2, "0")}`;
     f.append({ type: "message", message: { role: "user", content: [{ type: "text", text }], timestamp: i } });
+    // Written within the same instant otherwise: the list is newest first, so the long title must be newest.
+    utimesSync(f.path, new Date(1e12 + i * 1000), new Date(1e12 + i * 1000));
   }
   const { term, agent, exited } = await start([], "edits", [], false, dir);
   agent.cwd = cwd;
