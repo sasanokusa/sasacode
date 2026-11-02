@@ -4,8 +4,11 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Agent, PermissionPolicy, PluginHost } from "@sasacode/agent";
+import { setLang } from "@sasacode/host";
 import { bundledPlugins, installRustxng, managedRustxng, rustxngTarget } from "../src/index.ts";
 
+// The messages checked below are the Japanese ones, whatever the machine's locale.
+setLang("ja");
 const home = mkdtempSync(join(tmpdir(), "sasacode-rustxng-"));
 const env = { SASACODE_HOME: process.env.SASACODE_HOME, SASACODE_RUSTXNG_BASE: process.env.SASACODE_RUSTXNG_BASE, PATH: process.env.PATH };
 afterAll(() => {
