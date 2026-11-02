@@ -18,6 +18,7 @@ import todo from "./todo.ts";
 import toolRepair from "./tool-repair.ts";
 import usage from "./usage.ts";
 import webFetch from "./web-fetch.ts";
+import webSearch from "./web-search.ts";
 
 export { agentsFiles } from "./agents-md.ts";
 export { compact, splitPoint, transcript } from "./compaction.ts";
@@ -25,6 +26,7 @@ export { PRESETS } from "./permission-presets.ts";
 export { detectRepetition } from "./repetition-guard.ts";
 export { closestName, editDistance, fitToSchema, repairJson } from "./tool-repair.ts";
 export { htmlToText, readCapped } from "./web-fetch.ts";
+export { formatResults } from "./web-search.ts";
 export { byDay, graph, planLines, readRecords } from "./usage.ts";
 export { codexLogin, codexLogout, codexStatus, readCodexAuth } from "./openai-codex/index.ts";
 
@@ -39,6 +41,7 @@ export const bundledPlugins: Record<string, Plugin> = {
   subagent,
   todo,
   "web-fetch": webFetch,
+  "web-search": webSearch,
   "permission-presets": permissionPresets,
   "agent-judge": agentJudge,
   browsr,
