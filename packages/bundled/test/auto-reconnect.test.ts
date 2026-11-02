@@ -103,3 +103,19 @@ test("an error and /reconnect at once resume the work once, not twice (#43)", as
     back.stop(true);
   }
 });
+
+test("a server error while the first online check is still out is retried, not dropped (#51)", async () => {
+  const slow = Bun.serve({ port: 0, fetch: async () => (await Bun.sleep(400), new Response("ok")) });
+  try {
+    const calls = flaky(["fetch failed", "503 down"]);
+    const { agent } = await start({ checkUrl: slow.url.href, serverRetryMs: 10 });
+    expect(await agent.prompt("go")).toBe("error"); // starts the monitor; its online check takes 400 ms
+    expect(await agent.prompt("again")).toBe("error"); // 503 meanwhile
+    await settle(agent, 800);
+    await settle(agent, 100);
+    expect(calls).toHaveLength(3);
+    expect(calls[2]).toContain("サーバーの一時的なエラー");
+  } finally {
+    slow.stop(true);
+  }
+});

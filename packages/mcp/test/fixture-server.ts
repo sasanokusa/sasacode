@@ -39,7 +39,9 @@ export function makeServer(): Server {
   });
   // Two pages, as a server with many prompts sends them.
   server.setRequestHandler(ListPromptsRequestSchema, async (req) =>
-    req.params?.cursor === "page2"
+    process.env.FIXTURE_ENDLESS_PROMPTS // a broken server: always one more page (#49)
+      ? { prompts: [{ name: "again", description: "Again" }], nextCursor: "again" }
+      : req.params?.cursor === "page2"
       ? { prompts: [{ name: "later", description: "On the second page" }] }
       : {
           prompts: [

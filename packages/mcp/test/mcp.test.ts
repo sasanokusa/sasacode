@@ -83,6 +83,18 @@ test("prompts: every page is listed; plain words fill the arguments in order, ke
   await agent.hooks.run("session_end", {});
 });
 
+test("prompts: a server that never ends its list loses its prompts only, with a notice (#49)", async () => {
+  const { agent, host, notes, until } = await load({
+    fx: { command: "bun", args: [join(import.meta.dir, "fixture-server.ts")], env: { FIXTURE_ENDLESS_PROMPTS: "1" } },
+  });
+  await until(() => notes.some((n) => n.includes("again")));
+  expect(notes.join("\n")).toMatch(/fx: .*repeats its page cursor "again"/);
+  expect(host.commands.some((c) => c.name.startsWith("mcp__fx__"))).toBe(false);
+  const add = agent.getTools().find((t) => t.name === "mcp__fx__add")!;
+  expect((await add.execute({ a: 1, b: 2 }, { cwd: ".", signal: new AbortController().signal })).content).toEqual([{ type: "text", text: "3" }]);
+  await agent.hooks.run("session_end", {});
+});
+
 test("streamable HTTP server with headers from the environment", async () => {
   process.env.FIXTURE_TOKEN = "secret-token";
   const { agent, until } = await load({ web: { url: `http://localhost:${http.port}/mcp`, headers: { authorization: "Bearer ${FIXTURE_TOKEN}" } } });

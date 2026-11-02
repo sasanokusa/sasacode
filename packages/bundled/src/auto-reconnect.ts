@@ -65,6 +65,8 @@ const plugin: Plugin = (api) => {
   const serverRetryMs = s.serverRetryMs ?? 30_000;
 
   let waiting = false;
+  /** 待機中に別のランが終わったサーバーの一時エラー。監視が再開させずに終われば、それを再試行する（#51）。 */
+  let missed: string | undefined;
   let stopped = false;
   let attempts = 0;
   let cancelWait: (() => void) | undefined;
@@ -98,23 +100,27 @@ const plugin: Plugin = (api) => {
     if (waiting || stopped) return;
     // 最初の await より前に立てる。agent_end と /reconnect が同時に来ても、再開の inject は1回だけ。
     waiting = true;
+    let resumed = false;
     try {
-      await watch(trigger);
+      resumed = await watch(trigger);
     } finally {
       waiting = false;
     }
+    const error = missed;
+    missed = undefined;
+    if (error && !resumed) await retryServer(error);
   }
 
-  async function watch(trigger: "error" | "manual"): Promise<void> {
+  /** 作業を再開させた（inject した）とき true。 */
+  async function watch(trigger: "error" | "manual"): Promise<boolean> {
     if (await isOnline()) {
-      if (trigger === "manual") {
-        api.ui.notify(t("オンラインです。接続に問題ありません。"), "info");
-        api.session.inject(
-          "接続に問題ありません。直前で中断した作業があれば、続きから再開してください。",
-          "now",
-        );
-      }
-      return;
+      if (trigger !== "manual") return false;
+      api.ui.notify(t("オンラインです。接続に問題ありません。"), "info");
+      api.session.inject(
+        "接続に問題ありません。直前で中断した作業があれば、続きから再開してください。",
+        "now",
+      );
+      return true;
     }
     api.ui.setStatus("auto-reconnect", t("オフライン — ネットワーク復旧待ち"));
     if (!quiet) {
@@ -122,15 +128,17 @@ const plugin: Plugin = (api) => {
     }
     const ok = await waitForOnline();
     api.ui.setStatus("auto-reconnect", undefined);
-    if (stopped) return;
+    if (stopped) return false;
     if (ok) {
       if (!quiet) api.ui.notify(t("ネットワークが復旧しました。自動再試行します。"), "info");
       api.session.inject(retryMessage, "now");
+      return true;
     } else {
       api.ui.notify(
         t("ネットワークが復旧しませんでした（{s}秒待機）。/reconnect で手動再試行できます。", { s: Math.round(maxWaitMs / 1000) }),
         "warning",
       );
+      return false;
     }
   }
 
@@ -165,6 +173,7 @@ const plugin: Plugin = (api) => {
     const go = await wait(ms);
     waiting = false;
     api.ui.setStatus("auto-reconnect", undefined);
+    if (go) missed = undefined; // この再開で、待機中に終わったランの作業も続く
     if (go && !stopped) api.session.inject("サーバーの一時的なエラーで中断しました。中断した作業を、続きから再開してください。", "now");
   }
 
@@ -188,7 +197,11 @@ const plugin: Plugin = (api) => {
   // モデル呼び出しなどでランがエラー終了し、かつ回線が落ちていれば復旧待ちに入る。
   api.on("agent_end", ({ cause, error }) => {
     if (cause === "done") attempts = 0;
-    if (cause !== "error" || waiting || stopped) return;
+    if (cause !== "error" || stopped) return;
+    if (waiting) {
+      if (error && TRANSIENT.test(error)) missed = error;
+      return;
+    }
     // 待機中はブロックしない（バックグラウンドで監視）
     void (error && TRANSIENT.test(error) ? retryServer(error) : monitorAndRetry("error"));
   });

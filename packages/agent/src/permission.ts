@@ -196,13 +196,17 @@ function pathPattern(pattern: string, cwd: string): string {
 
 /** A relative pattern under `dir`, which is a literal path: a `[` or `{` in it is not a wildcard. */
 function anchored(dir: string, pattern: string): string {
-  const parts = slashes(pattern).split("/");
-  let i = 0;
-  for (; i < parts.length - 1 && (parts[i] === "." || parts[i] === ".." || parts[i] === ""); i++) if (parts[i] === "..") dir = dirname(dir);
+  // Normalized as resolve(dir, pattern) would, a ".." anywhere included (#50).
+  const rest: string[] = [];
+  for (const part of slashes(pattern).split("/")) {
+    if (part === "" || part === ".") continue;
+    if (part !== "..") rest.push(part);
+    else if (rest.length) rest.pop();
+    else dir = dirname(dir);
+  }
   // resolve: on Windows a cwd given as /work/x gets its drive, as the paths compared with it do.
   const base = globPath(resolve(dir)).replace(/[\\*?[\]{}!]/g, "\\$&").replace(/\/$/, "");
-  const rest = parts.slice(i).join("/");
-  return rest ? `${base}/${globPath(rest)}` : base || "/";
+  return rest.length ? `${base}/${globPath(rest.join("/"))}` : base || "/";
 }
 
 /** A path or glob as compared: on Windows with `/` and in one case, as the file system sees names. */

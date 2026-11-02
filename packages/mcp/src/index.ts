@@ -221,15 +221,25 @@ async function connect(api: PluginAPI, name: string, cfg: McpServerConfig, state
   onChange();
 }
 
-/** Brings the model's tool list in line with what the server offers right now (also on list changes). */
-async function registerTools(api: PluginAPI, server: string, cfg: McpServerConfig, client: Client, state: ServerState) {
-  const tools = [];
+/** A list call followed through its pages, stopping a server that keeps sending a next cursor (#49). */
+async function allPages<T>(list: (cursor?: string) => Promise<{ items: T[]; nextCursor?: string }>): Promise<T[]> {
+  const items: T[] = [];
+  const seen = new Set<string>();
   let cursor: string | undefined;
   do {
-    const page = await client.listTools(cursor ? { cursor } : undefined);
-    tools.push(...page.tools);
+    if (seen.size >= 100) throw new Error("the list did not end after 100 pages");
+    const page = await list(cursor);
+    items.push(...page.items);
+    if (page.nextCursor !== undefined && seen.has(page.nextCursor)) throw new Error(`the list repeats its page cursor ${JSON.stringify(page.nextCursor)}`);
     cursor = page.nextCursor;
+    if (cursor) seen.add(cursor);
   } while (cursor);
+  return items;
+}
+
+/** Brings the model's tool list in line with what the server offers right now (also on list changes). */
+async function registerTools(api: PluginAPI, server: string, cfg: McpServerConfig, client: Client, state: ServerState) {
+  const tools = await allPages((cursor) => client.listTools(cursor ? { cursor } : undefined).then((p) => ({ items: p.tools, nextCursor: p.nextCursor })));
   state.tools = tools.map((t) => t.name);
   // A tool the server no longer offers must come off the model's list: it would only keep failing.
   const names = tools.map((t) => (cfg.toolNames === "plain" ? t.name : toolName(server, t.name)));
@@ -264,13 +274,14 @@ async function registerTools(api: PluginAPI, server: string, cfg: McpServerConfi
 }
 
 async function registerPrompts(api: PluginAPI, server: string, client: Client) {
-  const prompts = [];
-  let cursor: string | undefined;
-  do {
-    const page = await client.listPrompts(cursor ? { cursor } : undefined);
-    prompts.push(...page.prompts);
-    cursor = page.nextCursor;
-  } while (cursor);
+  let prompts;
+  try {
+    prompts = await allPages((cursor) => client.listPrompts(cursor ? { cursor } : undefined).then((p) => ({ items: p.prompts, nextCursor: p.nextCursor })));
+  } catch (e) {
+    // The tools work without them: give up on the prompts only.
+    const why = e instanceof Error ? e.message : String(e);
+    return api.ui.notify(api.ui.lang === "en" ? `MCP server ${server}: prompts not loaded: ${why}` : `MCP サーバー ${server}: プロンプトを読み込めませんでした: ${why}`, "warning");
+  }
   for (const p of prompts) {
     const argNames = (p.arguments ?? []).map((a) => a.name);
     api.registerCommand({

@@ -106,3 +106,14 @@ test("a project path with glob characters still matches its rules; a name starti
   for (const path of ["..foo", "..foo/bar", "..envrc"]) expect((await p.check({ tool: readTool, args: { path }, cwd })).decision).toBe("allow");
   expect((await p.check({ tool: readTool, args: { path: "../x" }, cwd })).decision).toBe("ask");
 });
+
+test("a .. after the first part of a rule is normalized as the path is (#50)", async () => {
+  const denied = async (rule: string, path: string) =>
+    (await new PermissionPolicy("auto", { deny: [`edit(${rule})`] }).check({ tool: editTool, args: { path }, cwd })).decision;
+  expect(await denied("foo/../secret/**", "secret/a.txt")).toBe("deny");
+  expect(await denied("a/b/../../secret/**", "secret/a.txt")).toBe("deny");
+  expect(await denied("foo/..", "/work/proj")).toBe("deny");
+  expect(await denied("./x/./../secret/**", "secret/a.txt")).toBe("deny");
+  expect(await denied("../shared/**", "../shared/a.txt")).toBe("deny");
+  expect(await denied("foo/../secret/**", "other/a.txt")).not.toBe("deny");
+});
