@@ -7,7 +7,7 @@ import { type AssistantContent, type AssistantMessage, emptyUsage, type Message,
 import { buildSystemPrompt } from "../../agent/src/system-prompt.ts";
 import { replayProvider } from "@sasacode/testing";
 import builtinTools, { bashTool } from "@sasacode/tools";
-import { agentsFiles, bundledPlugins, formatResults, htmlToText, readCapped, splitPoint } from "../src/index.ts";
+import { agentsFiles, bundledPlugins, formatResults, htmlToText, matchesQuery, privateAddress, readable, readCapped, splitPoint } from "../src/index.ts";
 import { setLang } from "@sasacode/host";
 
 beforeAll(() => setLang("ja")); // these assertions quote the Japanese strings (another test file may have switched)
@@ -291,6 +291,7 @@ test("htmlToText leaves a numeric reference it cannot decode as written (#44)", 
   expect(htmlToText("<p>a &#x110000; b</p>").text).toBe("a &#x110000; b");
   expect(htmlToText("<p>a &#99999999; b</p>").text).toBe("a &#99999999; b");
   expect(htmlToText("<p>a &#X41; &#65; &#x41; &amp; b</p>").text).toBe("a A A A & b");
+  expect(htmlToText("<p>W&auml;chter &Eacute;cole &rsaquo; &hellip; &xuml;</p>").text).toBe("Wächter École › … &xuml;");
 });
 
 test("htmlToText numbers links as absolute URLs, once each, and leaves out the ones that go nowhere else", () => {
@@ -373,18 +374,108 @@ test("web_search starts rustxng on first use with RUSTXNG_IDLE_TIMEOUT, shares i
 
 test("web_search: absent without rustxng, uses a configured server as is, and formats what it returns", async () => {
   expect((await setup([], ["web-search"], { settings: { "web-search": { command: join(root, "no-such-rustxng") } } })).agent.getTools().map((t) => t.name)).not.toContain("web_search");
-  const many = Array.from({ length: 12 }, (_, i) => ({ title: `R${i}`, url: `https://ex.com/${i}`, content: "s", raw_content: "body" }));
+  const many = Array.from({ length: 12 }, (_, i) => ({ title: `R${i}`, url: `https://ex.com/${i}`, content: "s" }));
   const server = Bun.serve({ port: 0, fetch: () => Response.json({ results: many }) });
   try {
     const { agent } = await setup([], ["web-search"], { settings: { "web-search": { url: `http://localhost:${server.port}/` } } });
-    const r = await agent.getTools().find((t) => t.name === "web_search")!.execute({ query: "q", max_results: 2, include_text: true }, { cwd: root, signal: new AbortController().signal });
+    const r = await agent.getTools().find((t) => t.name === "web_search")!.execute({ query: "q", max_results: 2 }, { cwd: root, signal: new AbortController().signal });
     const text = (r.content[0] as { text: string }).text;
-    expect(text).toContain("2. R1\n   https://ex.com/1\n   s\n   --- page text ---\nbody");
+    expect(text).toContain("2. R1\n   https://ex.com/1\n   s\n");
     expect(text).not.toContain("3. R2"); // SearXNG itself ignores max_results
+    expect(text).toContain("A snippet is the search engine's excerpt, not the page");
   } finally {
     server.stop(true);
   }
   expect(formatResults("zzz", { results: [], suggestions: ["zz"] })).toBe('No results for "zzz". Try different words (perhaps: zz).');
+});
+
+test("web_search include_text reads the first pages that match the query, their main text only", async () => {
+  const page = (body: string) => new Response(`<html><head><title>t</title><style>.x{color:red}</style></head><body><nav>Main menu</nav>${body}<footer>Footer</footer></body></html>`, { headers: { "content-type": "text/html" } });
+  const server = Bun.serve({
+    port: 0,
+    fetch(req) {
+      const { pathname, origin } = new URL(req.url);
+      if (pathname === "/search")
+        return Response.json({
+          results: [
+            { title: "MiG-29 in the Luftwaffe", url: `${origin}/a`, content: "East German MiG-29 jets" },
+            { title: "Weather today", url: `${origin}/b`, content: "Rain" },
+            { title: "MiG-29 Fulcrum", url: `${origin}/c`, content: "Luftwaffe MiG-29 pilots" },
+            { title: "Luftwaffe MiG-29 list", url: `${origin}/gone`, content: "MiG-29 serials" },
+            { title: "MiG-29 Luftwaffe again", url: `${origin}/d`, content: "x" },
+          ],
+        });
+      if (pathname === "/a") return page(`<main><p>${"The Luftwaffe flew the MiG-29 until 2004. ".repeat(10)}</p><script>window.x=1</script></main>`);
+      if (pathname === "/c") return page("<article><p>Short</p></article><div>Fulcrum notes</div>");
+      return new Response("missing", { status: 404 });
+    },
+  });
+  try {
+    // Pages on this machine are read only with privatePages: without it, none of them is.
+    const guarded = await setup([], ["web-search"], { settings: { "web-search": { url: `http://localhost:${server.port}` } } });
+    const blocked = await guarded.agent.getTools().find((t) => t.name === "web_search")!.execute({ query: "Luftwaffe MiG-29", include_text: true }, { cwd: root, signal: new AbortController().signal });
+    expect((blocked.content[0] as { text: string }).text).toContain("(page could not be read: not a public address)");
+    expect((blocked.content[0] as { text: string }).text).not.toContain("--- page text");
+    const { agent } = await setup([], ["web-search"], { settings: { "web-search": { url: `http://localhost:${server.port}`, privatePages: true } } });
+    const r = await agent.getTools().find((t) => t.name === "web_search")!.execute({ query: "Luftwaffe MiG-29", include_text: true }, { cwd: root, signal: new AbortController().signal });
+    const text = (r.content[0] as { text: string }).text;
+    expect(text).toContain("--- page text (read) ---\nt\nThe Luftwaffe flew the MiG-29 until 2004.");
+    expect(text).not.toMatch(/Main menu|Footer|window\.x|color:red/);
+    expect(text).toContain("2. Weather today\n");
+    expect(text).toContain("(page not read: its title and snippet share little with the query)");
+    expect(text).toContain("Short\n\nFulcrum notes"); // an article with hardly any text: the page is read whole
+    expect(text).toContain("(page could not be read: 404)");
+    expect(text).toContain(`/d\n   x\n\nA snippet`); // three pages at most: the fourth match is neither read nor noted
+    const one = await setup([], ["web-search"], { settings: { "web-search": { url: `http://localhost:${server.port}`, privatePages: true, textPages: 1 } } });
+    const only = ((await one.agent.getTools().find((t) => t.name === "web_search")!.execute({ query: "Luftwaffe MiG-29", include_text: true }, { cwd: root, signal: new AbortController().signal })).content[0] as { text: string }).text;
+    expect(only.match(/--- page text/g)).toHaveLength(1);
+  } finally {
+    server.stop(true);
+  }
+});
+
+test("privateAddress: loopback, private, link-local and the like, IPv4 and IPv6", () => {
+  for (const ip of ["127.0.0.1", "10.1.2.3", "172.16.0.1", "172.31.255.255", "192.168.1.1", "169.254.169.254", "100.64.0.1", "0.0.0.0", "::1", "fd00::1", "fe80::1", "::ffff:127.0.0.1"])
+    expect([ip, privateAddress(ip)]).toEqual([ip, true]);
+  for (const ip of ["8.8.8.8", "172.32.0.1", "1.1.1.1", "2606:4700::1111", "::ffff:8.8.8.8"]) expect([ip, privateAddress(ip)]).toEqual([ip, false]);
+});
+
+test("matchesQuery: words compared without case, width or hyphens; the first result needs one, the others two", () => {
+  const q = "ドイツ空軍 MiG-29 ポーランド 1ユーロ 売却";
+  expect(matchesQuery(q, { title: "Mig29の話", content: "ドイツ空軍は１ユーロで" })).toBe(true);
+  expect(matchesQuery(q, { title: "ポーランド、ミグ２９を供与", content: "ドイツの基地" })).toBe(false);
+  expect(matchesQuery(q, { title: "ポーランド、ミグ２９を供与", content: "ドイツの基地" }, true)).toBe(true);
+  expect(matchesQuery("rustxng", { title: "RustXNG", content: "" })).toBe(true);
+});
+
+test("readable keeps a page's content region, without its menus, and htmlToText reads it", () => {
+  const wiki =
+    '<html><head><title>MiG-29 - Wikipedia</title><base href="https://w.org/wiki/"></head><body><a class="mw-jump-link" href="#c">Jump to content</a><nav>Main menu</nav>' +
+    `<div id="mw-content-text"><style>.mw-parser-output .ambox{border:1px}</style><span data-mw='{"a":"<ref>x</ref>"}'>Infobox</span><div class="ambox">This article needs sources</div><p>${"The MiG-29 is a fighter. ".repeat(12)}<a href="F-15">F-15</a></p><div class="navbox">Navbox</div></div>` +
+    '<div class="catlinks">Categories</div></body></html>';
+  const { text, links } = htmlToText(readable(wiki), "https://w.org/x");
+  expect(text.startsWith("MiG-29 - Wikipedia\nInfobox")).toBe(true);
+  expect(text).not.toMatch(/Jump to content|Main menu|ambox|needs sources|Navbox|Categories|ref>/);
+  expect(links).toEqual(["https://w.org/wiki/F-15"]); // the page's <base> still applies
+  expect(readable("<p>plain</p>")).toBe("<p>plain</p>");
+});
+
+test("readable keeps hidden parts of the content (tabs), and with siteLinks the navigation as one short line", () => {
+  const body = "Spawn a process with Bun.spawn. ".repeat(10);
+  const docs =
+    '<body><nav><a href="/docs/install">Install</a><a href="/docs/quickstart">Quick&amp;start</a><a href="#top">Top</a><a href="/docs/install">Install again</a></nav>' +
+    `<main><h1>Spawn</h1><p>${body}</p><div hidden>Windows tab: use cmd</div></main><div aria-hidden="true">Cookie banner</div></body>`;
+  const { text, links } = htmlToText(readable(docs, { siteLinks: true }), "https://bun.com/docs/spawn");
+  expect(text).toContain("Windows tab: use cmd");
+  expect(text).not.toContain("Cookie banner");
+  expect(text.endsWith("Site navigation: [Install][1] · [Quick&start][2]")).toBe(true);
+  expect(links).toEqual(["https://bun.com/docs/install", "https://bun.com/docs/quickstart"]);
+  expect(htmlToText(readable(docs), "https://bun.com/").text).not.toContain("Site navigation");
+  // No content region: the whole page, hidden parts and all furniture out, the navigation line before </body>
+  const plain = `<body><nav><a href="/a">A</a></nav><div><p>${body}</p><div hidden>Hidden menu</div></div></body>`;
+  const whole = htmlToText(readable(plain, { siteLinks: true }), "https://ex.com/").text;
+  expect(whole).not.toContain("Hidden menu");
+  expect(whole.endsWith("Site navigation: [A][1]")).toBe(true);
 });
 
 test("web_search steps aside while browsr's search is connected", async () => {

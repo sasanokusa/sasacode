@@ -25,15 +25,122 @@ export async function readCapped(res: Response, limit: number): Promise<{ text: 
   return { text: new TextDecoder().decode(Buffer.concat(chunks).subarray(0, limit)), cut };
 }
 
-const USER_AGENT = "sasacode (+https://github.com/sasanokusa/sasacode)";
+export const USER_AGENT = "sasacode (+https://github.com/sasanokusa/sasacode)";
 
-const ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " " };
+const ENTITIES: Record<string, string> = {
+  amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " ", copy: "©", reg: "®", trade: "™", hellip: "…", middot: "·", bull: "•",
+  mdash: "—", ndash: "–", lsquo: "‘", rsquo: "’", ldquo: "“", rdquo: "”", laquo: "«", raquo: "»", lsaquo: "‹", rsaquo: "›", times: "×",
+  deg: "°", euro: "€", pound: "£", yen: "¥", szlig: "ß",
+};
+// Accented letters: &auml; &Eacute; &ccedil; …
+for (const [mark, combining] of Object.entries({ uml: "\u0308", acute: "\u0301", grave: "\u0300", circ: "\u0302", tilde: "\u0303", ring: "\u030a", cedil: "\u0327" }))
+  for (const letter of "aeiouyncAEIOUYNC") {
+    const composed = (letter + combining).normalize("NFC");
+    if (composed.length === 1) ENTITIES[letter + mark] = composed;
+  }
 
 /** "#65" or "#x41" (or "#X41") as its character; one past the last code point (or not a number) is left as written. */
 function codePoint(ref: string): string | undefined {
   const hex = ref[1] === "x" || ref[1] === "X";
   const n = Number.parseInt(ref.slice(hex ? 2 : 1), hex ? 16 : 10);
   return Number.isInteger(n) && n >= 0 && n <= 0x10ffff ? String.fromCodePoint(n) : undefined;
+}
+
+/** Page furniture: never the content an agent reads a page for (menus, language lists, inline code, banners). */
+const FURNITURE = [
+  "script", "style", "noscript", "template", "svg", "iframe", "object", "canvas", "button", "select", "dialog", "nav", "aside",
+  "[role=navigation]", "[role=banner]", "[role=contentinfo]", "[role=complementary]", "[role=search]", "[role=dialog]",
+  "body > header", "body > footer", "#header", "#footer", ".site-header", ".site-footer",
+  // MediaWiki (Wikipedia): edit links, tables of contents, navigation boxes, maintenance notices, tools
+  ".mw-editsection", ".mw-jump-link", "#toc", ".toc", ".vector-toc", ".navbox", ".vertical-navbox", ".ambox", ".mbox-small",
+  ".metadata", ".noprint", ".catlinks", ".printfooter", "#siteSub", ".mw-indicators", ".vector-page-toolbar", ".vector-menu", ".mw-portlet",
+].join(", ");
+
+/** Hidden elements: furniture outside the content region; inside it, often content (tabs, accordions), so kept there. */
+const HIDDEN = "[hidden], [aria-hidden=true]";
+
+/** Where a page keeps its content, most specific first: the first of these with real text is what is read. */
+const CONTENT = ["#mw-content-text", "[role=main]", "main", "article", "#content", "#main", ".entry-content", ".post-content", ".article-body"];
+
+/** Text characters in some HTML, roughly: what tells a content region from an empty frame. */
+const textLength = (html: string) => html.replace(/<!--[\s\S]*?-->|<[^>]+>/g, "").replace(/\s+/g, " ").length;
+
+/** The share of the page's text a content region must hold: less is a card or a comment, not the content. */
+const CONTENT_SHARE = 0.2;
+
+/** Site navigation links kept, at most: the way on to the site's other pages (a docs sidebar), without its bulk. */
+const SITE_LINKS = 25;
+
+/**
+ * The part of a page worth reading: furniture removed, and only the content region when the page
+ * marks one (main, article, MediaWiki's content) that holds most of its text. What htmlToText then reads.
+ * With `siteLinks`, the navigation's links follow the content as one short line.
+ */
+export function readable(html: string, opts: { siteLinks?: boolean } = {}): string {
+  let n = 0;
+  const nav: { href: string; label: string }[] = [];
+  let link: { href: string; label: string } | undefined;
+  const marks = new HTMLRewriter()
+    .on(FURNITURE, { element: (e) => void e.remove() })
+    // Removed with their navigation, and gathered first.
+    .on("nav a[href], [role=navigation] a[href]", {
+      element(e) {
+        nav.push((link = { href: e.getAttribute("href") ?? "", label: "" }));
+      },
+      text(t) {
+        if (link) link.label += t.text;
+      },
+    })
+    // An attribute holding < or > (MediaWiki's data-mw) would end a tag early for htmlToText's patterns.
+    .on("*", {
+      element(e) {
+        for (const [name, value] of [...e.attributes]) if (/[<>]/.test(value)) e.removeAttribute(name);
+      },
+    });
+  CONTENT.forEach((selector, i) =>
+    marks.on(selector, {
+      element(e) {
+        const k = n++;
+        e.prepend(`<!--sx${i}.${k}-->`, { html: true });
+        e.append(`<!--/sx${i}.${k}-->`, { html: true });
+      },
+    }),
+  );
+  let cleaned: string;
+  try {
+    cleaned = marks.transform(html);
+  } catch {
+    return html; // not HTML lol-html can read: leave it to htmlToText as it is
+  }
+  const siteLinks = () => {
+    if (!opts.siteLinks) return "";
+    const seen = new Set<string>();
+    const kept = nav
+      .map((l) => ({ href: l.href.trim(), label: l.label.replace(/\s+/g, " ").trim() }))
+      .filter((l) => l.label && l.href && !l.href.startsWith("#") && !seen.has(l.href) && seen.add(l.href))
+      .slice(0, SITE_LINKS);
+    // Both as the page wrote them (HTML, entities included): only what would end the attribute is escaped.
+    return kept.length ? `<p>Site navigation: ${kept.map((l) => `<a href="${l.href.replace(/"/g, "&quot;")}">${l.label}</a>`).join(" · ")}</p>` : "";
+  };
+  const whole = textLength(cleaned.replace(/<head[\s\S]*?<\/head>/i, ""));
+  for (let i = 0; i < CONTENT.length; i++) {
+    // Each match on its own (a page can have many <article>s: cards, comments): the one with the most text.
+    let best = "";
+    let bestLength = 0;
+    for (const m of cleaned.matchAll(new RegExp(`<!--sx${i}\\.(\\d+)-->`, "g"))) {
+      const end = cleaned.indexOf(`<!--/sx${i}.${m[1]}-->`, m.index);
+      const region = cleaned.slice(m.index, end > 0 ? end : undefined);
+      const length = textLength(region);
+      if (length > bestLength) [best, bestLength] = [region, length];
+    }
+    if (bestLength < 200 || bestLength < whole * CONTENT_SHARE) continue;
+    // What the region leaves behind and the reading needs: the base for relative links, the page's title.
+    const base = /<base\s[^>]*>/i.exec(html)?.[0] ?? "";
+    const title = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(html)?.[1]?.trim();
+    return `${base}${title && !/<h1[\s>]/i.test(best) ? `<h1>${title}</h1>` : ""}${best}${siteLinks()}`;
+  }
+  // No content region: the whole page, its hidden parts left out too.
+  return new HTMLRewriter().on(HIDDEN, { element: (e) => void e.remove() }).transform(cleaned).replace(/<\/body>|$/i, (m) => `${siteLinks()}${m}`);
 }
 
 /** A link's target as an absolute URL; undefined for one that goes nowhere else (same page, script, mail). */
@@ -78,6 +185,7 @@ export function htmlToText(html: string, base?: string): { text: string; links: 
     .replace(/<[^>]+>/g, "")
     .replace(/&(#x?[0-9a-f]+|\w+);/gi, (m, e: string) => (e.startsWith("#") ? codePoint(e) : ENTITIES[e]) ?? m)
     .replace(/[ \t]+/g, " ")
+    .replace(/^ ?(?:- ?)+$/gm, "") // the bullets of emptied list items
     .replace(/\n\s*\n\s*\n+/g, "\n\n")
     .trim();
   return { text, links };
@@ -149,7 +257,7 @@ const webFetch: Plugin = (api) => {
       const type = res.headers.get("content-type") ?? "";
       if (!/text|json|xml|javascript/.test(type) && type) return errorResult(`${res.status} ${type}: not a text document.`);
       const { text: raw, cut } = await readCapped(res, MAX_BYTES);
-      const { text: body, links } = /html/.test(type) ? htmlToText(raw, res.url) : { text: raw, links: [] };
+      const { text: body, links } = /html/.test(type) ? htmlToText(readable(raw, { siteLinks: true }), res.url) : { text: raw, links: [] };
       const start = args.offset ?? 0;
       const max = args.max_chars ?? DEFAULT_MAX;
       const slice = body.slice(start, start + max);
