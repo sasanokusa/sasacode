@@ -58,7 +58,7 @@ index 445c8184eeb734692d9cc036f2a4b195d8769e3e..6b3a1c44fb47dff18da1fcc6a11552a5
       * Get text with paste markers expanded to their actual content.
       * Use this when you need the full content (e.g., for external editor).
 diff --git a/dist/components/editor.js b/dist/components/editor.js
-index 7eae102b06d78e10e0ab016f3ab020c66de6865d..786003f5f2ac2ecd615a55819b1750c216fa3c2e 100644
+index 7eae102b06d78e10e0ab016f3ab020c66de6865d..b8915d3454202bc0ba8b564f0ba8186f76055040 100644
 --- a/dist/components/editor.js
 +++ b/dist/components/editor.js
 @@ -8,6 +8,11 @@ import { findWordBackward, findWordForward } from "../word-navigation.js";
@@ -73,7 +73,19 @@ index 7eae102b06d78e10e0ab016f3ab020c66de6865d..786003f5f2ac2ecd615a55819b1750c2
  /** Regex matching paste markers like `[paste #1 +123 lines]` or `[paste #2 1234 chars]`. */
  const PASTE_MARKER_REGEX = /\[paste #(\d+)( (\+\d+ lines|\d+ chars))?\]/g;
  /** Non-global version for single-segment testing. */
-@@ -896,12 +901,19 @@ export class Editor {
+@@ -166,6 +171,11 @@ const SLASH_COMMAND_SELECT_LIST_LAYOUT = {
+     minPrimaryColumnWidth: 12,
+     maxPrimaryColumnWidth: 32,
+ };
++// sasacode: an argument (a provider/model id, a path) gets room to show whole, as a picker does.
++const ARGUMENT_SELECT_LIST_LAYOUT = {
++    minPrimaryColumnWidth: 12,
++    maxPrimaryColumnWidth: 64,
++};
+ const ATTACHMENT_AUTOCOMPLETE_DEBOUNCE_MS = 20;
+ const DEFAULT_AUTOCOMPLETE_TRIGGER_CHARACTERS = ["@", "#"];
+ // Unquoted completions end at whitespace or CJK punctuation; quoted paths may contain either.
+@@ -896,12 +906,19 @@ export class Editor {
          return this.state.lines.join("\n");
      }
      expandPasteMarkers(text) {
@@ -99,7 +111,7 @@ index 7eae102b06d78e10e0ab016f3ab020c66de6865d..786003f5f2ac2ecd615a55819b1750c2
      }
      /**
       * Get text with paste markers expanded to their actual content.
-@@ -1089,9 +1101,7 @@ export class Editor {
+@@ -1089,9 +1106,7 @@ export class Editor {
              const pasteId = this.pasteCounter;
              this.pastes.set(pasteId, filteredText);
              // Insert marker like "[paste #1 +123 lines]" or "[paste #1 1234 chars]"
@@ -110,6 +122,15 @@ index 7eae102b06d78e10e0ab016f3ab020c66de6865d..786003f5f2ac2ecd615a55819b1750c2
              this.insertTextAtCursorInternal(marker);
              return;
          }
+@@ -1871,7 +1886,7 @@ export class Editor {
+         return firstPrefixIndex;
+     }
+     createAutocompleteList(prefix, items) {
+-        const layout = prefix.startsWith("/") ? SLASH_COMMAND_SELECT_LIST_LAYOUT : undefined;
++        const layout = prefix.startsWith("/") ? SLASH_COMMAND_SELECT_LIST_LAYOUT : ARGUMENT_SELECT_LIST_LAYOUT;
+         const list = new SelectList(items, this.autocompleteMaxVisible, this.theme.selectList, layout);
+         list.onSelect = (selected) => {
+             if (!this.autocompleteProvider)
 diff --git a/dist/index.d.ts b/dist/index.d.ts
 index 4a0657e57cc77703b2c271616302b7e80cb4ef2c..3606c85b716a2e7c2abe1b8b50468913e130c65a 100644
 --- a/dist/index.d.ts

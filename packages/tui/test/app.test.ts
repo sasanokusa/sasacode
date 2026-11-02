@@ -174,6 +174,17 @@ test("a model without num_ctx gets one warning, at startup and not again on /mod
   expect(term.text(before)).not.toContain("num_ctx が設定されていません");
 });
 
+test("/model completion shows a long model id whole, as the picker does", async () => {
+  const long = "commandcode/deepseek/deepseek-v4.1-flash-fast";
+  const { term, exited } = await start([], "edits", [{ spec: long, contextWindow: 1_000_000 }, { spec: `${long}-2`, contextWindow: 1_000_000 }]);
+  const from = term.out.length;
+  await term.type("/model Deep");
+  await Bun.sleep(50);
+  expect(term.text(from)).toContain(`${long}-2`);
+  await term.send("\x03");
+  await term.type("/exit"); await term.send("\r"); await exited;
+});
+
 test("a model whose size is known gets no warning", async () => {
   const { term } = await start([], "edits", [{ spec: "t/m", contextWindow: 32_768, maxContext: 262_144 }]);
   await Bun.sleep(50);
