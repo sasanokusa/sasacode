@@ -426,6 +426,9 @@ test("web_search include_text reads the first pages that match the query, their 
     expect(text).toContain("Short\n\nFulcrum notes"); // an article with hardly any text: the page is read whole
     expect(text).toContain("(page could not be read: 404)");
     expect(text).toContain(`/d\n   x\n\nA snippet`); // three pages at most: the fourth match is neither read nor noted
+    const one = await setup([], ["web-search"], { settings: { "web-search": { url: `http://localhost:${server.port}`, privatePages: true, textPages: 1 } } });
+    const only = ((await one.agent.getTools().find((t) => t.name === "web_search")!.execute({ query: "Luftwaffe MiG-29", include_text: true }, { cwd: root, signal: new AbortController().signal })).content[0] as { text: string }).text;
+    expect(only.match(/--- page text/g)).toHaveLength(1);
   } finally {
     server.stop(true);
   }
@@ -455,6 +458,24 @@ test("readable keeps a page's content region, without its menus, and htmlToText 
   expect(text).not.toMatch(/Jump to content|Main menu|ambox|needs sources|Navbox|Categories|ref>/);
   expect(links).toEqual(["https://w.org/wiki/F-15"]); // the page's <base> still applies
   expect(readable("<p>plain</p>")).toBe("<p>plain</p>");
+});
+
+test("readable keeps hidden parts of the content (tabs), and with siteLinks the navigation as one short line", () => {
+  const body = "Spawn a process with Bun.spawn. ".repeat(10);
+  const docs =
+    '<body><nav><a href="/docs/install">Install</a><a href="/docs/quickstart">Quick&amp;start</a><a href="#top">Top</a><a href="/docs/install">Install again</a></nav>' +
+    `<main><h1>Spawn</h1><p>${body}</p><div hidden>Windows tab: use cmd</div></main><div aria-hidden="true">Cookie banner</div></body>`;
+  const { text, links } = htmlToText(readable(docs, { siteLinks: true }), "https://bun.com/docs/spawn");
+  expect(text).toContain("Windows tab: use cmd");
+  expect(text).not.toContain("Cookie banner");
+  expect(text.endsWith("Site navigation: [Install][1] · [Quick&start][2]")).toBe(true);
+  expect(links).toEqual(["https://bun.com/docs/install", "https://bun.com/docs/quickstart"]);
+  expect(htmlToText(readable(docs), "https://bun.com/").text).not.toContain("Site navigation");
+  // No content region: the whole page, hidden parts and all furniture out, the navigation line before </body>
+  const plain = `<body><nav><a href="/a">A</a></nav><div><p>${body}</p><div hidden>Hidden menu</div></div></body>`;
+  const whole = htmlToText(readable(plain, { siteLinks: true }), "https://ex.com/").text;
+  expect(whole).not.toContain("Hidden menu");
+  expect(whole.endsWith("Site navigation: [A][1]")).toBe(true);
 });
 
 test("web_search steps aside while browsr's search is connected", async () => {

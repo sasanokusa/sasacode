@@ -50,11 +50,14 @@ function codePoint(ref: string): string | undefined {
 const FURNITURE = [
   "script", "style", "noscript", "template", "svg", "iframe", "object", "canvas", "button", "select", "dialog", "nav", "aside",
   "[role=navigation]", "[role=banner]", "[role=contentinfo]", "[role=complementary]", "[role=search]", "[role=dialog]",
-  "[hidden]", "[aria-hidden=true]", "body > header", "body > footer", "#header", "#footer", ".site-header", ".site-footer",
+  "body > header", "body > footer", "#header", "#footer", ".site-header", ".site-footer",
   // MediaWiki (Wikipedia): edit links, tables of contents, navigation boxes, maintenance notices, tools
   ".mw-editsection", ".mw-jump-link", "#toc", ".toc", ".vector-toc", ".navbox", ".vertical-navbox", ".ambox", ".mbox-small",
   ".metadata", ".noprint", ".catlinks", ".printfooter", "#siteSub", ".mw-indicators", ".vector-page-toolbar", ".vector-menu", ".mw-portlet",
 ].join(", ");
+
+/** Hidden elements: furniture outside the content region; inside it, often content (tabs, accordions), so kept there. */
+const HIDDEN = "[hidden], [aria-hidden=true]";
 
 /** Where a page keeps its content, most specific first: the first of these with real text is what is read. */
 const CONTENT = ["#mw-content-text", "[role=main]", "main", "article", "#content", "#main", ".entry-content", ".post-content", ".article-body"];
@@ -65,14 +68,29 @@ const textLength = (html: string) => html.replace(/<!--[\s\S]*?-->|<[^>]+>/g, ""
 /** The share of the page's text a content region must hold: less is a card or a comment, not the content. */
 const CONTENT_SHARE = 0.2;
 
+/** Site navigation links kept, at most: the way on to the site's other pages (a docs sidebar), without its bulk. */
+const SITE_LINKS = 25;
+
 /**
  * The part of a page worth reading: furniture removed, and only the content region when the page
  * marks one (main, article, MediaWiki's content) that holds most of its text. What htmlToText then reads.
+ * With `siteLinks`, the navigation's links follow the content as one short line.
  */
-export function readable(html: string): string {
+export function readable(html: string, opts: { siteLinks?: boolean } = {}): string {
   let n = 0;
+  const nav: { href: string; label: string }[] = [];
+  let link: { href: string; label: string } | undefined;
   const marks = new HTMLRewriter()
     .on(FURNITURE, { element: (e) => void e.remove() })
+    // Removed with their navigation, and gathered first.
+    .on("nav a[href], [role=navigation] a[href]", {
+      element(e) {
+        nav.push((link = { href: e.getAttribute("href") ?? "", label: "" }));
+      },
+      text(t) {
+        if (link) link.label += t.text;
+      },
+    })
     // An attribute holding < or > (MediaWiki's data-mw) would end a tag early for htmlToText's patterns.
     .on("*", {
       element(e) {
@@ -94,6 +112,16 @@ export function readable(html: string): string {
   } catch {
     return html; // not HTML lol-html can read: leave it to htmlToText as it is
   }
+  const siteLinks = () => {
+    if (!opts.siteLinks) return "";
+    const seen = new Set<string>();
+    const kept = nav
+      .map((l) => ({ href: l.href.trim(), label: l.label.replace(/\s+/g, " ").trim() }))
+      .filter((l) => l.label && l.href && !l.href.startsWith("#") && !seen.has(l.href) && seen.add(l.href))
+      .slice(0, SITE_LINKS);
+    // Both as the page wrote them (HTML, entities included): only what would end the attribute is escaped.
+    return kept.length ? `<p>Site navigation: ${kept.map((l) => `<a href="${l.href.replace(/"/g, "&quot;")}">${l.label}</a>`).join(" · ")}</p>` : "";
+  };
   const whole = textLength(cleaned.replace(/<head[\s\S]*?<\/head>/i, ""));
   for (let i = 0; i < CONTENT.length; i++) {
     // Each match on its own (a page can have many <article>s: cards, comments): the one with the most text.
@@ -109,9 +137,10 @@ export function readable(html: string): string {
     // What the region leaves behind and the reading needs: the base for relative links, the page's title.
     const base = /<base\s[^>]*>/i.exec(html)?.[0] ?? "";
     const title = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(html)?.[1]?.trim();
-    return `${base}${title && !/<h1[\s>]/i.test(best) ? `<h1>${title}</h1>` : ""}${best}`;
+    return `${base}${title && !/<h1[\s>]/i.test(best) ? `<h1>${title}</h1>` : ""}${best}${siteLinks()}`;
   }
-  return cleaned;
+  // No content region: the whole page, its hidden parts left out too.
+  return new HTMLRewriter().on(HIDDEN, { element: (e) => void e.remove() }).transform(cleaned).replace(/<\/body>|$/i, (m) => `${siteLinks()}${m}`);
 }
 
 /** A link's target as an absolute URL; undefined for one that goes nowhere else (same page, script, mail). */
@@ -228,7 +257,7 @@ const webFetch: Plugin = (api) => {
       const type = res.headers.get("content-type") ?? "";
       if (!/text|json|xml|javascript/.test(type) && type) return errorResult(`${res.status} ${type}: not a text document.`);
       const { text: raw, cut } = await readCapped(res, MAX_BYTES);
-      const { text: body, links } = /html/.test(type) ? htmlToText(readable(raw), res.url) : { text: raw, links: [] };
+      const { text: body, links } = /html/.test(type) ? htmlToText(readable(raw, { siteLinks: true }), res.url) : { text: raw, links: [] };
       const start = args.offset ?? 0;
       const max = args.max_chars ?? DEFAULT_MAX;
       const slice = body.slice(start, start + max);

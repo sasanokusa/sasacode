@@ -12,8 +12,8 @@ const DEFAULT_IDLE = 600;
 const DEFAULT_RESULTS = 8;
 /** Page text kept per result when include_text is on. */
 const TEXT_CHARS = 4_000;
-/** Results whose page include_text reads, at most: the first ones that match the query. */
-const TEXT_PAGES = 3;
+/** Results whose page include_text reads, at most: the first ones that match the query (setting textPages). */
+const DEFAULT_TEXT_PAGES = 3;
 /** Snippet kept per result: some engines send whole paragraphs. */
 const SNIPPET_CHARS = 300;
 
@@ -137,7 +137,7 @@ export function formatResults(query: string, data: SearxResponse): string {
  * include_text reads result pages on public addresses only; `privatePages: true` lifts that (an
  * intranet search server whose results are internal pages).
  *
- * settings: { command?: string, url?: string, port?: number, idleTimeout?: number, results?: number, privatePages?: boolean }
+ * settings: { command?: string, url?: string, port?: number, idleTimeout?: number, results?: number, textPages?: number, privatePages?: boolean }
  */
 const webSearch: Plugin = (api) => {
   const url = (api.settings.url as string | undefined)?.replace(/\/+$/, "");
@@ -153,6 +153,7 @@ const webSearch: Plugin = (api) => {
   const idle = Number(api.settings.idleTimeout ?? DEFAULT_IDLE);
   const count = Number(api.settings.results ?? DEFAULT_RESULTS);
   const privatePages = api.settings.privatePages === true;
+  const textPages = Math.max(1, Number(api.settings.textPages ?? DEFAULT_TEXT_PAGES) || DEFAULT_TEXT_PAGES);
 
   api.registerCommand({
     name: "web-search",
@@ -228,7 +229,7 @@ const webSearch: Plugin = (api) => {
       properties: {
         query: { type: "string", description: "Search words" },
         max_results: { type: "integer", minimum: 1, maximum: 20, description: `Number of results (default ${count})` },
-        include_text: { type: "boolean", description: `Also read the main text of the first ${TEXT_PAGES} results that match the query` },
+        include_text: { type: "boolean", description: `Also read the main text of the first ${textPages} results that match the query` },
       },
       required: ["query"],
       additionalProperties: false,
@@ -261,7 +262,7 @@ const webSearch: Plugin = (api) => {
         // Read here rather than by the server: its page text keeps menus, inline CSS and scripts.
         const chosen: SearxResult[] = [];
         for (const [i, r] of (data.results ?? []).entries()) {
-          if (chosen.length >= TEXT_PAGES || !r.url) break;
+          if (chosen.length >= textPages || !r.url) break;
           if (matchesQuery(args.query, r, i === 0)) chosen.push(r);
           else r.textNote = "page not read: its title and snippet share little with the query";
         }
