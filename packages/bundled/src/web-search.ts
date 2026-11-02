@@ -1,8 +1,8 @@
 import { t } from "@sasacode/host";
 import { existsSync } from "node:fs";
 import { childEnv, errorResult, type Plugin, type ToolDefinition } from "@sasacode/plugin-api";
+import { installRustxng, managedRustxng, RUSTXNG_RELEASES } from "./rustxng-install.ts";
 
-const RELEASES = "https://github.com/sahenjp/RustXNG/releases";
 const DEFAULT_PORT = 47888;
 /** Seconds without a request before the sidecar exits (RUSTXNG_IDLE_TIMEOUT). */
 const DEFAULT_IDLE = 600;
@@ -62,24 +62,53 @@ export function formatResults(query: string, data: SearxResponse): string {
  * after RUSTXNG_IDLE_TIMEOUT seconds without a request, and sessions that run meanwhile share it.
  * With `url` set, that server (RustXNG or SearXNG) is used and nothing is started. While browsr's
  * search tools are connected, web_search steps aside so the model is not given two ways to search.
- * Inactive when rustxng is not installed and no url is set.
+ * Inactive until rustxng is installed (on PATH, or by `/web-search install` / `sasacode web-search
+ * install` into ~/.sasacode/bin) or a url is set; an install while running takes effect at once.
  *
  * settings: { command?: string, url?: string, port?: number, idleTimeout?: number, results?: number }
  */
 const webSearch: Plugin = (api) => {
   const url = (api.settings.url as string | undefined)?.replace(/\/+$/, "");
   const configured = api.settings.command as string | undefined;
-  const command = url ? undefined : configured ? (Bun.which(configured) ?? (existsSync(configured) ? configured : undefined)) : (Bun.which("rustxng") ?? undefined);
+  const find = (): string | undefined => {
+    if (url) return;
+    if (configured) return Bun.which(configured) ?? (existsSync(configured) ? configured : undefined);
+    // PATH as it is now: Bun.which alone keeps reading the one the process started with.
+    return Bun.which("rustxng", { PATH: process.env.PATH ?? "" }) ?? (existsSync(managedRustxng()) ? managedRustxng() : undefined);
+  };
+  let command = find();
   const base = url ?? `http://127.0.0.1:${Number(api.settings.port ?? DEFAULT_PORT)}`;
   const idle = Number(api.settings.idleTimeout ?? DEFAULT_IDLE);
   const count = Number(api.settings.results ?? DEFAULT_RESULTS);
 
   api.registerCommand({
     name: "web-search",
-    description: t("web_search（RustXNG）の状態"),
-    run: async () => {
+    description: t("web_search（RustXNG）の状態。install で RustXNG を入れる"),
+    argumentHint: "[install [tag]]",
+    complete: (prefix) => ("install".startsWith(prefix) ? [{ value: "install", label: t("RustXNG を入れる・更新する") }] : []),
+    run: async ({ args }) => {
+      const [sub, tag] = (args ?? "").trim().split(/\s+/);
+      if (sub === "install") {
+        try {
+          const done = await installRustxng({ tag, log: (m) => api.ui.notify(m) });
+          command = find();
+          sync();
+          api.ui.notify(
+            command === done.path
+              ? t("{version} を {path} に入れました。web_search が使えます。", done)
+              : t("{version} を {path} に入れました（ただし web_search は {command} を使います）。", { ...done, command: command ?? "" }),
+          );
+        } catch (e) {
+          api.ui.notify(t("RustXNG を入れられませんでした: {error}", { error: (e as Error).message }), "error");
+        }
+        return;
+      }
       if (!url && !command)
-        return api.ui.notify(configured ? t("web-search: {command} が見つかりません", { command: configured }) : t("rustxng が見つかりません。{releases} から入れて PATH に置くか、plugins.settings.web-search.command を指定してください。", { releases: RELEASES }));
+        return api.ui.notify(
+          configured
+            ? t("web-search: {command} が見つかりません", { command: configured })
+            : t("rustxng が見つかりません。/web-search install（または sasacode web-search install）で入れるか、{releases} から入れて PATH に置いてください。", { releases: RUSTXNG_RELEASES }),
+        );
       const up = await healthy(base);
       api.ui.notify(
         url
@@ -88,10 +117,7 @@ const webSearch: Plugin = (api) => {
       );
     },
   });
-  if (!url && !command) {
-    if (configured) api.ui.notify(t("web-search: {command} が見つかりません", { command: configured }), "warning");
-    return;
-  }
+  if (!url && !command && configured) api.ui.notify(t("web-search: {command} が見つかりません", { command: configured }), "warning");
 
   /** One start at a time: concurrent searches wait for the same sidecar. */
   let starting: Promise<void> | undefined;
@@ -162,14 +188,18 @@ const webSearch: Plugin = (api) => {
       return { content: [{ type: "text", text: formatResults(args.query, data) }] };
     },
   };
-  let registered = true;
-  api.registerTool(tool);
-  // Checked before each request, as browsr connects in the background and can drop.
-  api.on("system_prompt", () => {
+  let registered = false;
+  /** Offered when there is something to search with and browsr's search is not connected. */
+  function sync() {
+    command ??= find(); // installed meanwhile (sasacode web-search install from a shell)
     const browsr = api.agent.tools().some((t) => t.name === "search" || t.name === "web");
-    if (browsr && registered) api.unregisterTool("web_search");
-    else if (!browsr && !registered) api.registerTool(tool);
-    registered = !browsr;
-  });
+    const offer = Boolean(url || command) && !browsr;
+    if (offer && !registered) api.registerTool(tool);
+    else if (!offer && registered) api.unregisterTool("web_search");
+    registered = offer;
+  }
+  sync();
+  // Checked before each request, as browsr connects in the background and can drop.
+  api.on("system_prompt", sync);
 };
 export default webSearch;

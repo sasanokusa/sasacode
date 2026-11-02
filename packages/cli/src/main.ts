@@ -5,7 +5,7 @@ import { parseArgs } from "node:util";
 import { PERMISSION_MODES } from "@sasacode/agent";
 import { BUILTIN_PROVIDERS, resolveLang, setLang, t } from "@sasacode/host";
 import { hideFromChildren } from "@sasacode/plugin-api";
-import { codexLogin, codexLogout, codexStatus } from "@sasacode/bundled";
+import { codexLogin, codexLogout, codexStatus, installRustxng } from "@sasacode/bundled";
 import { loadConfig, sasacodeHome } from "./config.ts";
 import { dropBlankKeys, ensureEnvFile, loadEnvFile } from "./env.ts";
 import { controlMode } from "./control.ts";
@@ -52,6 +52,7 @@ Subcommands:
   sasacode endpoint list
   sasacode login [status|logout]    use a ChatGPT plan instead of an API key (openai-codex/… models)
   sasacode update [--check] [tag]   download and install the newest release (checksum-verified)
+  sasacode web-search install [tag] install RustXNG for the web_search tool (checksum-verified)
   -h, --help
   -v, --version`;
 
@@ -75,6 +76,7 @@ async function main(): Promise<number> {
   if (process.argv[2] === "endpoint") return endpointCommand(process.argv.slice(3), process.cwd());
   if (process.argv[2] === "login") return loginCommand(process.argv[3]);
   if (process.argv[2] === "update") return updateCommand(process.argv.slice(3));
+  if (process.argv[2] === "web-search") return webSearchCommand(process.argv.slice(3));
   const { values, positionals } = parseArgs({
     allowPositionals: true,
     options: {
@@ -157,6 +159,14 @@ function turnsArg(v: string): number {
   const n = Number(v);
   if (!Number.isInteger(n) || n < 0) throw new Error(t('--max-turns needs a whole number (0 = no limit), got "{value}"', { value: v }));
   return n;
+}
+
+/** `sasacode web-search install [tag]`: rustxng into ~/.sasacode/bin, for the web_search tool. */
+async function webSearchCommand(args: string[]): Promise<number> {
+  if (args[0] !== "install") throw new Error(t('unknown web-search subcommand "{sub}" (install)', { sub: args[0] ?? "" }));
+  const { path, version } = await installRustxng({ tag: args[1], log: (m) => console.log(m) });
+  console.log(t("installed {version}: {path} (web_search uses it from the next request)", { version, path }));
+  return 0;
 }
 
 async function loginCommand(sub: string | undefined): Promise<number> {
