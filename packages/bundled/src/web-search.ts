@@ -2,6 +2,7 @@ import { t } from "@sasacode/host";
 import { existsSync } from "node:fs";
 import { childEnv, errorResult, type Plugin, type ToolDefinition } from "@sasacode/plugin-api";
 import { installRustxng, managedRustxng, RUSTXNG_RELEASES } from "./rustxng-install.ts";
+import { htmlToText, readable, readCapped, USER_AGENT } from "./web-fetch.ts";
 
 const DEFAULT_PORT = 47888;
 /** Seconds without a request before the sidecar exits (RUSTXNG_IDLE_TIMEOUT). */
@@ -9,6 +10,8 @@ const DEFAULT_IDLE = 600;
 const DEFAULT_RESULTS = 8;
 /** Page text kept per result when include_text is on. */
 const TEXT_CHARS = 4_000;
+/** Results whose page include_text reads, at most: the first ones that match the query. */
+const TEXT_PAGES = 3;
 /** Snippet kept per result: some engines send whole paragraphs. */
 const SNIPPET_CHARS = 300;
 
@@ -16,7 +19,9 @@ interface SearxResult {
   title?: string;
   url?: string;
   content?: string;
-  raw_content?: string;
+  /** The page's main text, read for include_text; or why it was not. */
+  text?: string;
+  textNote?: string;
 }
 interface SearxResponse {
   results?: SearxResult[];
@@ -35,6 +40,31 @@ async function healthy(base: string): Promise<boolean> {
   }
 }
 
+const words = (s: string) => s.normalize("NFKC").toLowerCase().replace(/[\s\-_・.]+/g, "");
+
+/**
+ * Whether a result looks like it is about the query: enough of the query's words appear in its title
+ * and snippet, compared without case, width, spaces or hyphens. Enough is two (or all of a shorter
+ * query), and one for the engine's first result.
+ */
+export function matchesQuery(query: string, r: SearxResult, first = false): boolean {
+  const terms = query.split(/\s+/).map(words).filter(Boolean);
+  const hay = words(`${r.title ?? ""} ${r.content ?? ""}`);
+  return terms.filter((t) => hay.includes(t)).length >= (first ? 1 : Math.min(2, terms.length));
+}
+
+/** A result page's main text (furniture and menus left out), at most TEXT_CHARS + 1 characters. */
+async function pageText(url: string, signal: AbortSignal): Promise<string> {
+  const res = await fetch(url, { signal: AbortSignal.any([signal, AbortSignal.timeout(15_000)]), headers: { "user-agent": USER_AGENT, accept: "text/html,text/plain;q=0.9" } });
+  const type = res.headers.get("content-type") ?? "";
+  if (!res.ok) throw new Error(`${res.status}`);
+  if (!/html|text\/plain/.test(type)) throw new Error(`not a text page (${type || "no type"})`);
+  const { text: raw } = await readCapped(res, 5_000_000);
+  // The links' targets are left out here: the agent opens a page with web_fetch to follow them.
+  const text = /html/.test(type) ? htmlToText(readable(raw), res.url).text.replace(/\[([^\]]*)\]\[\d+\]/g, "$1") : raw;
+  return text.trim().slice(0, TEXT_CHARS + 1);
+}
+
 export function formatResults(query: string, data: SearxResponse): string {
   const results = (data.results ?? []).filter((r) => r.url);
   if (!results.length) {
@@ -48,10 +78,10 @@ export function formatResults(query: string, data: SearxResponse): string {
     lines.push(`${i + 1}. ${(r.title ?? "").trim() || r.url}`, `   ${r.url}`);
     const snippet = (r.content ?? "").replace(/\s+/g, " ").trim();
     if (snippet) lines.push(`   ${snippet.length > SNIPPET_CHARS ? `${snippet.slice(0, SNIPPET_CHARS)}…` : snippet}`);
-    const text = (r.raw_content ?? "").trim();
-    if (text) lines.push(`   --- page text${text.length > TEXT_CHARS ? ` (first ${TEXT_CHARS} characters)` : ""} ---`, text.slice(0, TEXT_CHARS), "   ---");
+    if (r.text) lines.push(`   --- page text (read${r.text.length > TEXT_CHARS ? `, first ${TEXT_CHARS} characters` : ""}) ---`, r.text.slice(0, TEXT_CHARS), "   ---");
+    else if (r.textNote) lines.push(`   (${r.textNote})`);
   });
-  lines.push("", "Open a result with web_fetch to read it.");
+  lines.push("", "A snippet is the search engine's excerpt, not the page: read a page (page text above, or web_fetch) before citing it.");
   return lines.join("\n");
 }
 
@@ -149,13 +179,13 @@ const webSearch: Plugin = (api) => {
   const tool: ToolDefinition = {
     name: "web_search",
     description:
-      "Search the web. Use it to find the right URL instead of guessing one, then read the page with web_fetch. Returns titles, URLs and snippets; include_text also returns the main text of the top pages (slower).",
+      "Search the web. Use it to find the right URL instead of guessing one, then read the page with web_fetch. Returns titles, URLs and snippets; include_text also reads the main text of the first results that match the query (slower).",
     parameters: {
       type: "object",
       properties: {
         query: { type: "string", description: "Search words" },
         max_results: { type: "integer", minimum: 1, maximum: 20, description: `Number of results (default ${count})` },
-        include_text: { type: "boolean", description: "Also return the main text of the top pages" },
+        include_text: { type: "boolean", description: `Also read the main text of the first ${TEXT_PAGES} results that match the query` },
       },
       required: ["query"],
       additionalProperties: false,
@@ -173,17 +203,35 @@ const webSearch: Plugin = (api) => {
       }
       const n = args.max_results ?? count;
       const params = new URLSearchParams({ q: args.query, format: "json", max_results: String(n) });
-      if (args.include_text) params.set("include_raw_content", "1");
       let data: SearxResponse;
       try {
         const res = await fetch(`${base}/search?${params}`, {
-          signal: AbortSignal.any([ctx.signal, AbortSignal.timeout(args.include_text ? 60_000 : 30_000)]),
+          signal: AbortSignal.any([ctx.signal, AbortSignal.timeout(30_000)]),
         });
         if (!res.ok) return errorResult(`Search failed: ${res.status} ${res.statusText}`);
         data = (await res.json()) as SearxResponse;
         data.results = data.results?.slice(0, n); // SearXNG itself has no max_results
       } catch (e) {
         return errorResult(`Search failed: ${(e as Error).message}`);
+      }
+      if (args.include_text) {
+        // Read here rather than by the server: its page text keeps menus, inline CSS and scripts.
+        const chosen: SearxResult[] = [];
+        for (const [i, r] of (data.results ?? []).entries()) {
+          if (chosen.length >= TEXT_PAGES || !r.url) break;
+          if (matchesQuery(args.query, r, i === 0)) chosen.push(r);
+          else r.textNote = "page not read: its title and snippet share little with the query";
+        }
+        await Promise.all(
+          chosen.map(async (r) => {
+            try {
+              r.text = await pageText(r.url!, ctx.signal);
+              if (!r.text) r.textNote = "page read, but it has no text";
+            } catch (e) {
+              r.textNote = `page could not be read: ${(e as Error).message}`;
+            }
+          }),
+        );
       }
       return { content: [{ type: "text", text: formatResults(args.query, data) }] };
     },

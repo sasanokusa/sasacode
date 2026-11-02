@@ -7,7 +7,7 @@ import { type AssistantContent, type AssistantMessage, emptyUsage, type Message,
 import { buildSystemPrompt } from "../../agent/src/system-prompt.ts";
 import { replayProvider } from "@sasacode/testing";
 import builtinTools, { bashTool } from "@sasacode/tools";
-import { agentsFiles, bundledPlugins, formatResults, htmlToText, readCapped, splitPoint } from "../src/index.ts";
+import { agentsFiles, bundledPlugins, formatResults, htmlToText, matchesQuery, readable, readCapped, splitPoint } from "../src/index.ts";
 import { setLang } from "@sasacode/host";
 
 beforeAll(() => setLang("ja")); // these assertions quote the Japanese strings (another test file may have switched)
@@ -291,6 +291,7 @@ test("htmlToText leaves a numeric reference it cannot decode as written (#44)", 
   expect(htmlToText("<p>a &#x110000; b</p>").text).toBe("a &#x110000; b");
   expect(htmlToText("<p>a &#99999999; b</p>").text).toBe("a &#99999999; b");
   expect(htmlToText("<p>a &#X41; &#65; &#x41; &amp; b</p>").text).toBe("a A A A & b");
+  expect(htmlToText("<p>W&auml;chter &Eacute;cole &rsaquo; &hellip; &xuml;</p>").text).toBe("Wächter École › … &xuml;");
 });
 
 test("htmlToText numbers links as absolute URLs, once each, and leaves out the ones that go nowhere else", () => {
@@ -373,18 +374,76 @@ test("web_search starts rustxng on first use with RUSTXNG_IDLE_TIMEOUT, shares i
 
 test("web_search: absent without rustxng, uses a configured server as is, and formats what it returns", async () => {
   expect((await setup([], ["web-search"], { settings: { "web-search": { command: join(root, "no-such-rustxng") } } })).agent.getTools().map((t) => t.name)).not.toContain("web_search");
-  const many = Array.from({ length: 12 }, (_, i) => ({ title: `R${i}`, url: `https://ex.com/${i}`, content: "s", raw_content: "body" }));
+  const many = Array.from({ length: 12 }, (_, i) => ({ title: `R${i}`, url: `https://ex.com/${i}`, content: "s" }));
   const server = Bun.serve({ port: 0, fetch: () => Response.json({ results: many }) });
   try {
     const { agent } = await setup([], ["web-search"], { settings: { "web-search": { url: `http://localhost:${server.port}/` } } });
-    const r = await agent.getTools().find((t) => t.name === "web_search")!.execute({ query: "q", max_results: 2, include_text: true }, { cwd: root, signal: new AbortController().signal });
+    const r = await agent.getTools().find((t) => t.name === "web_search")!.execute({ query: "q", max_results: 2 }, { cwd: root, signal: new AbortController().signal });
     const text = (r.content[0] as { text: string }).text;
-    expect(text).toContain("2. R1\n   https://ex.com/1\n   s\n   --- page text ---\nbody");
+    expect(text).toContain("2. R1\n   https://ex.com/1\n   s\n");
     expect(text).not.toContain("3. R2"); // SearXNG itself ignores max_results
+    expect(text).toContain("A snippet is the search engine's excerpt, not the page");
   } finally {
     server.stop(true);
   }
   expect(formatResults("zzz", { results: [], suggestions: ["zz"] })).toBe('No results for "zzz". Try different words (perhaps: zz).');
+});
+
+test("web_search include_text reads the first pages that match the query, their main text only", async () => {
+  const page = (body: string) => new Response(`<html><head><title>t</title><style>.x{color:red}</style></head><body><nav>Main menu</nav>${body}<footer>Footer</footer></body></html>`, { headers: { "content-type": "text/html" } });
+  const server = Bun.serve({
+    port: 0,
+    fetch(req) {
+      const { pathname, origin } = new URL(req.url);
+      if (pathname === "/search")
+        return Response.json({
+          results: [
+            { title: "MiG-29 in the Luftwaffe", url: `${origin}/a`, content: "East German MiG-29 jets" },
+            { title: "Weather today", url: `${origin}/b`, content: "Rain" },
+            { title: "MiG-29 Fulcrum", url: `${origin}/c`, content: "Luftwaffe MiG-29 pilots" },
+            { title: "Luftwaffe MiG-29 list", url: `${origin}/gone`, content: "MiG-29 serials" },
+            { title: "MiG-29 Luftwaffe again", url: `${origin}/d`, content: "x" },
+          ],
+        });
+      if (pathname === "/a") return page(`<main><p>${"The Luftwaffe flew the MiG-29 until 2004. ".repeat(10)}</p><script>window.x=1</script></main>`);
+      if (pathname === "/c") return page("<article><p>Short</p></article><div>Fulcrum notes</div>");
+      return new Response("missing", { status: 404 });
+    },
+  });
+  try {
+    const { agent } = await setup([], ["web-search"], { settings: { "web-search": { url: `http://localhost:${server.port}` } } });
+    const r = await agent.getTools().find((t) => t.name === "web_search")!.execute({ query: "Luftwaffe MiG-29", include_text: true }, { cwd: root, signal: new AbortController().signal });
+    const text = (r.content[0] as { text: string }).text;
+    expect(text).toContain("--- page text (read) ---\nt\nThe Luftwaffe flew the MiG-29 until 2004.");
+    expect(text).not.toMatch(/Main menu|Footer|window\.x|color:red/);
+    expect(text).toContain("2. Weather today\n");
+    expect(text).toContain("(page not read: its title and snippet share little with the query)");
+    expect(text).toContain("Short\n\nFulcrum notes"); // an article with hardly any text: the page is read whole
+    expect(text).toContain("(page could not be read: 404)");
+    expect(text).toContain(`/d\n   x\n\nA snippet`); // three pages at most: the fourth match is neither read nor noted
+  } finally {
+    server.stop(true);
+  }
+});
+
+test("matchesQuery: words compared without case, width or hyphens; the first result needs one, the others two", () => {
+  const q = "ドイツ空軍 MiG-29 ポーランド 1ユーロ 売却";
+  expect(matchesQuery(q, { title: "Mig29の話", content: "ドイツ空軍は１ユーロで" })).toBe(true);
+  expect(matchesQuery(q, { title: "ポーランド、ミグ２９を供与", content: "ドイツの基地" })).toBe(false);
+  expect(matchesQuery(q, { title: "ポーランド、ミグ２９を供与", content: "ドイツの基地" }, true)).toBe(true);
+  expect(matchesQuery("rustxng", { title: "RustXNG", content: "" })).toBe(true);
+});
+
+test("readable keeps a page's content region, without its menus, and htmlToText reads it", () => {
+  const wiki =
+    '<html><head><title>MiG-29 - Wikipedia</title><base href="https://w.org/wiki/"></head><body><a class="mw-jump-link" href="#c">Jump to content</a><nav>Main menu</nav>' +
+    `<div id="mw-content-text"><style>.mw-parser-output .ambox{border:1px}</style><span data-mw='{"a":"<ref>x</ref>"}'>Infobox</span><div class="ambox">This article needs sources</div><p>${"The MiG-29 is a fighter. ".repeat(12)}<a href="F-15">F-15</a></p><div class="navbox">Navbox</div></div>` +
+    '<div class="catlinks">Categories</div></body></html>';
+  const { text, links } = htmlToText(readable(wiki), "https://w.org/x");
+  expect(text.startsWith("MiG-29 - Wikipedia\nInfobox")).toBe(true);
+  expect(text).not.toMatch(/Jump to content|Main menu|ambox|needs sources|Navbox|Categories|ref>/);
+  expect(links).toEqual(["https://w.org/wiki/F-15"]); // the page's <base> still applies
+  expect(readable("<p>plain</p>")).toBe("<p>plain</p>");
 });
 
 test("web_search steps aside while browsr's search is connected", async () => {
