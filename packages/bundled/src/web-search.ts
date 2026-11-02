@@ -1,5 +1,7 @@
 import { t } from "@sasacode/host";
+import { lookup } from "node:dns/promises";
 import { existsSync } from "node:fs";
+import { isIP } from "node:net";
 import { childEnv, errorResult, type Plugin, type ToolDefinition } from "@sasacode/plugin-api";
 import { installRustxng, managedRustxng, RUSTXNG_RELEASES } from "./rustxng-install.ts";
 import { htmlToText, readable, readCapped, USER_AGENT } from "./web-fetch.ts";
@@ -53,15 +55,52 @@ export function matchesQuery(query: string, r: SearxResult, first = false): bool
   return terms.filter((t) => hay.includes(t)).length >= (first ? 1 : Math.min(2, terms.length));
 }
 
-/** A result page's main text (furniture and menus left out), at most TEXT_CHARS + 1 characters. */
-async function pageText(url: string, signal: AbortSignal): Promise<string> {
-  const res = await fetch(url, { signal: AbortSignal.any([signal, AbortSignal.timeout(15_000)]), headers: { "user-agent": USER_AGENT, accept: "text/html,text/plain;q=0.9" } });
+/** Loopback, private, link-local (cloud metadata), shared, unspecified and multicast addresses. */
+export function privateAddress(ip: string): boolean {
+  if (isIP(ip) === 4) {
+    const [a = 0, b = 0] = ip.split(".").map(Number);
+    return a === 0 || a === 10 || a === 127 || a >= 224 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 100 && b >= 64 && b <= 127);
+  }
+  const v = ip.toLowerCase();
+  if (v.startsWith("::ffff:") && isIP(v.slice(7)) === 4) return privateAddress(v.slice(7));
+  return v === "::" || v === "::1" || /^(fc|fd|fe[89ab]|ff)/.test(v);
+}
+
+/** Whether a URL's host is on the public internet (what a page an engine returned may be read from). */
+async function publicHost(url: URL): Promise<boolean> {
+  const host = url.hostname.replace(/^\[|\]$/g, "");
+  if (host === "localhost" || host.endsWith(".localhost")) return false;
+  const addresses = isIP(host) ? [host] : (await lookup(host, { all: true })).map((a) => a.address);
+  return addresses.length > 0 && !addresses.some(privateAddress);
+}
+
+/**
+ * A result page's main text (furniture and menus left out), at most TEXT_CHARS + 1 characters.
+ * The URL comes from the engine, not the user: unless `anyHost`, it and every redirect must be public.
+ */
+async function pageText(url: string, signal: AbortSignal, anyHost: boolean): Promise<string> {
+  let res: Response | undefined;
+  let next = new URL(url);
+  for (let hops = 0; ; hops++) {
+    if (next.protocol !== "http:" && next.protocol !== "https:") throw new Error(`not http(s): ${next.protocol}`);
+    if (!anyHost && !(await publicHost(next))) throw new Error("not a public address");
+    res = await fetch(next, {
+      signal: AbortSignal.any([signal, AbortSignal.timeout(15_000)]),
+      headers: { "user-agent": USER_AGENT, accept: "text/html,text/plain;q=0.9" },
+      redirect: "manual",
+    });
+    const location = res.status >= 300 && res.status < 400 ? res.headers.get("location") : null;
+    if (!location) break;
+    await res.body?.cancel().catch(() => {});
+    if (hops >= 5) throw new Error("too many redirects");
+    next = new URL(location, next);
+  }
   const type = res.headers.get("content-type") ?? "";
   if (!res.ok) throw new Error(`${res.status}`);
   if (!/html|text\/plain/.test(type)) throw new Error(`not a text page (${type || "no type"})`);
   const { text: raw } = await readCapped(res, 5_000_000);
   // The links' targets are left out here: the agent opens a page with web_fetch to follow them.
-  const text = /html/.test(type) ? htmlToText(readable(raw), res.url).text.replace(/\[([^\]]*)\]\[\d+\]/g, "$1") : raw;
+  const text = /html/.test(type) ? htmlToText(readable(raw), next.href).text.replace(/\[([^\]]*)\]\[\d+\]/g, "$1") : raw;
   return text.trim().slice(0, TEXT_CHARS + 1);
 }
 
@@ -95,7 +134,10 @@ export function formatResults(query: string, data: SearxResponse): string {
  * Inactive until rustxng is installed (on PATH, or by `/web-search install` / `sasacode web-search
  * install` into ~/.sasacode/bin) or a url is set; an install while running takes effect at once.
  *
- * settings: { command?: string, url?: string, port?: number, idleTimeout?: number, results?: number }
+ * include_text reads result pages on public addresses only; `privatePages: true` lifts that (an
+ * intranet search server whose results are internal pages).
+ *
+ * settings: { command?: string, url?: string, port?: number, idleTimeout?: number, results?: number, privatePages?: boolean }
  */
 const webSearch: Plugin = (api) => {
   const url = (api.settings.url as string | undefined)?.replace(/\/+$/, "");
@@ -110,6 +152,7 @@ const webSearch: Plugin = (api) => {
   const base = url ?? `http://127.0.0.1:${Number(api.settings.port ?? DEFAULT_PORT)}`;
   const idle = Number(api.settings.idleTimeout ?? DEFAULT_IDLE);
   const count = Number(api.settings.results ?? DEFAULT_RESULTS);
+  const privatePages = api.settings.privatePages === true;
 
   api.registerCommand({
     name: "web-search",
@@ -225,7 +268,7 @@ const webSearch: Plugin = (api) => {
         await Promise.all(
           chosen.map(async (r) => {
             try {
-              r.text = await pageText(r.url!, ctx.signal);
+              r.text = await pageText(r.url!, ctx.signal, privatePages);
               if (!r.text) r.textNote = "page read, but it has no text";
             } catch (e) {
               r.textNote = `page could not be read: ${(e as Error).message}`;

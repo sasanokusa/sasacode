@@ -7,7 +7,7 @@ import { type AssistantContent, type AssistantMessage, emptyUsage, type Message,
 import { buildSystemPrompt } from "../../agent/src/system-prompt.ts";
 import { replayProvider } from "@sasacode/testing";
 import builtinTools, { bashTool } from "@sasacode/tools";
-import { agentsFiles, bundledPlugins, formatResults, htmlToText, matchesQuery, readable, readCapped, splitPoint } from "../src/index.ts";
+import { agentsFiles, bundledPlugins, formatResults, htmlToText, matchesQuery, privateAddress, readable, readCapped, splitPoint } from "../src/index.ts";
 import { setLang } from "@sasacode/host";
 
 beforeAll(() => setLang("ja")); // these assertions quote the Japanese strings (another test file may have switched)
@@ -411,7 +411,12 @@ test("web_search include_text reads the first pages that match the query, their 
     },
   });
   try {
-    const { agent } = await setup([], ["web-search"], { settings: { "web-search": { url: `http://localhost:${server.port}` } } });
+    // Pages on this machine are read only with privatePages: without it, none of them is.
+    const guarded = await setup([], ["web-search"], { settings: { "web-search": { url: `http://localhost:${server.port}` } } });
+    const blocked = await guarded.agent.getTools().find((t) => t.name === "web_search")!.execute({ query: "Luftwaffe MiG-29", include_text: true }, { cwd: root, signal: new AbortController().signal });
+    expect((blocked.content[0] as { text: string }).text).toContain("(page could not be read: not a public address)");
+    expect((blocked.content[0] as { text: string }).text).not.toContain("--- page text");
+    const { agent } = await setup([], ["web-search"], { settings: { "web-search": { url: `http://localhost:${server.port}`, privatePages: true } } });
     const r = await agent.getTools().find((t) => t.name === "web_search")!.execute({ query: "Luftwaffe MiG-29", include_text: true }, { cwd: root, signal: new AbortController().signal });
     const text = (r.content[0] as { text: string }).text;
     expect(text).toContain("--- page text (read) ---\nt\nThe Luftwaffe flew the MiG-29 until 2004.");
@@ -424,6 +429,12 @@ test("web_search include_text reads the first pages that match the query, their 
   } finally {
     server.stop(true);
   }
+});
+
+test("privateAddress: loopback, private, link-local and the like, IPv4 and IPv6", () => {
+  for (const ip of ["127.0.0.1", "10.1.2.3", "172.16.0.1", "172.31.255.255", "192.168.1.1", "169.254.169.254", "100.64.0.1", "0.0.0.0", "::1", "fd00::1", "fe80::1", "::ffff:127.0.0.1"])
+    expect([ip, privateAddress(ip)]).toEqual([ip, true]);
+  for (const ip of ["8.8.8.8", "172.32.0.1", "1.1.1.1", "2606:4700::1111", "::ffff:8.8.8.8"]) expect([ip, privateAddress(ip)]).toEqual([ip, false]);
 });
 
 test("matchesQuery: words compared without case, width or hyphens; the first result needs one, the others two", () => {
