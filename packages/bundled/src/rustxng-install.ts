@@ -15,10 +15,11 @@ export function managedRustxng(): string {
   return join(sasacodeHome(), "bin", process.platform === "win32" ? "rustxng.exe" : "rustxng");
 }
 
-/** The release's target for this machine: RustXNG ships macOS, x86_64 Linux (musl: any distribution) and x86_64 Windows. */
+/** The release's target for this machine: RustXNG ships macOS, x86_64 Linux (musl: any distribution), arm64 Linux (glibc, from v0.27.1) and x86_64 Windows. */
 export function rustxngTarget(platform: string = process.platform, arch: string = process.arch): string {
   if (platform === "darwin") return arch === "arm64" ? "aarch64-apple-darwin" : "x86_64-apple-darwin";
   if (platform === "linux" && arch === "x64") return "x86_64-unknown-linux-musl";
+  if (platform === "linux" && arch === "arm64") return "aarch64-unknown-linux-gnu"; // on musl, the --version check below refuses it
   if (platform === "win32") return "x86_64-pc-windows-msvc"; // Windows on arm64 runs it emulated
   throw new Error(
     t("RustXNG の配布物に {platform}-{arch} 向けのものがありません。cargo install --git https://github.com/sahenjp/RustXNG.git で入れられます。", { platform, arch }),
