@@ -36,7 +36,8 @@ test("the release target for each platform RustXNG ships", () => {
   expect(rustxngTarget("darwin", "x64")).toBe("x86_64-apple-darwin");
   expect(rustxngTarget("linux", "x64")).toBe("x86_64-unknown-linux-musl");
   expect(rustxngTarget("win32", "x64")).toBe("x86_64-pc-windows-msvc");
-  expect(() => rustxngTarget("linux", "arm64")).toThrow("cargo install");
+  expect(rustxngTarget("linux", "arm64")).toBe("aarch64-unknown-linux-gnu");
+  expect(() => rustxngTarget("freebsd", "x64")).toThrow("cargo install");
 });
 
 // The stand-in binary is a shell script: there is no such thing on Windows.
