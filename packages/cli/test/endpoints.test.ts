@@ -91,14 +91,15 @@ test("LM Studio is told apart by /api/v0/models: a loaded model's size is what i
     { id: "qwen-loaded", contextWindow: 4096, maxContext: undefined },
     { id: "qwen-cold", contextWindow: undefined, maxContext: 32768 },
   ]);
-  // In the catalog: the maximum is not a size requests get, so it is not used for the thresholds.
+  // In the catalog: the maximum is not a size requests get, so the model's size stays unknown; it
+  // is planned with only because it is below the default (no request can get more).
   const catalog = new ModelCatalog({ studio: providers.studio as ProviderConfig }, async () => undefined, () => "studio");
   expect(await catalog.list()).toEqual([
     { spec: "studio/qwen-loaded", contextWindow: 4096, maxContext: undefined, server: "lmstudio" },
     { spec: "studio/qwen-cold", contextWindow: undefined, maxContext: 32768, server: "lmstudio" },
   ]);
   expect(catalog.discovered.get("studio/qwen-loaded")).toEqual({ contextWindow: 4096 });
-  expect(catalog.discovered.has("studio/qwen-cold")).toBe(false);
+  expect(catalog.discovered.get("studio/qwen-cold")).toEqual({ contextWindow: 32768 });
 });
 
 test("URL-only providers are detected at startup, cached, and dropped with a warning when unreachable", async () => {

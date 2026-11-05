@@ -182,9 +182,15 @@ test("LM Studio: a model not loaded yet shows its maximum; after its first reply
   configure({}, "studio/qwen", { studio: { api: "openai-chat", baseUrl: `${studioUrl}/v1`, lmstudio: true } });
   const h = await setup({ cwd: proj, noSession: true });
   expect((await h.listModels()).find((m) => m.spec === "studio/qwen")).toEqual({ spec: "studio/qwen", contextWindow: undefined, maxContext: 32768, server: "lmstudio" });
+  // Not the default 128K: whatever LM Studio loads it with, it is no more than the maximum.
+  expect(h.agent.model.contextWindow).toBe(32768);
   await h.agent.prompt("hi");
   expect(h.agent.model.contextWindow).toBe(4096);
   expect((await h.listModels()).find((m) => m.spec === "studio/qwen")?.contextWindow).toBe(4096);
+  // Unloaded later (LM Studio's idle TTL): the length it was loaded with stays the better guess.
+  studioLoaded = false;
+  await h.listModels(true);
+  expect(h.agent.model.contextWindow).toBe(4096);
   await h.shutdown();
 });
 

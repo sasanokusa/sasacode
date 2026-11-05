@@ -1,5 +1,5 @@
 import { getProvider, type ModelInfo, type Provider, type ProviderConfig } from "@sasacode/ai";
-import { BUILTIN_PROVIDERS, KNOWN_MODELS } from "@sasacode/host";
+import { BUILTIN_PROVIDERS, DEFAULT_CONTEXT_WINDOW, KNOWN_MODELS } from "@sasacode/host";
 import { API_ENDPOINT, type ListedModel, listModels, lmstudioList } from "./list-models.ts";
 
 export interface ModelChoice {
@@ -128,6 +128,10 @@ export class ModelCatalog {
       const spec = `${target}/${m.id}`;
       const info: Partial<ModelInfo> = {};
       if (m.contextWindow) info.contextWindow = m.contextWindow;
+      // Only the maximum known (not loaded yet): no request gets more, so one below the default is
+      // planned with, though the size stays unknown. A size learned before is the better guess.
+      else if (m.maxContext && m.maxContext < (KNOWN_MODELS[m.id]?.contextWindow ?? DEFAULT_CONTEXT_WINDOW) && !this.discovered.get(spec)?.contextWindow)
+        info.contextWindow = m.maxContext;
       if (m.maxOutput) info.maxOutput = m.maxOutput;
       // A listing that reports an all-zero price is saying "unknown", not free: keep it from
       // shadowing a price the built-in table knows.
