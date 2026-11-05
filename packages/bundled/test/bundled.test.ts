@@ -228,7 +228,7 @@ test("compaction: /compact whose instructions take more than half the room leave
   // A history that must be cut: instructions leaving room for a few characters of it had those
   // summarized, and the summary replaced every message.
   const window = 8192;
-  const room = Math.floor(((window - Math.floor(window * 0.15)) / 1.1) * 4); // the input's characters, the summary's 15% aside
+  const room = Math.floor(((window - Math.floor(window * 0.15)) / 1.1) * 4) - 278 - 8 - 159; // what instructions can take: the input, less the summary's 15%, the system prompt (278 + 8) and the request's framing (159)
   for (const length of [Math.floor(room * 0.4), Math.ceil(room * 0.55), room - 600, room * 2]) {
     const { agent, host, provider } = await setup([reply([say("SUMMARY")])], ["compaction"], { model: { contextWindow: window, maxOutput: 32_000 } });
     const history = readingSession(window * 12);
