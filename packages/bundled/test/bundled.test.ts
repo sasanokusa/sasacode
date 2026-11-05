@@ -275,6 +275,22 @@ test("splitPoint keeps a Japanese tail within its budget, a Japanese character c
   expect(tokens({ system: "", messages: tail })).toBeGreaterThan(keep / 2);
 });
 
+test("splitPoint does not read through the base64 of images in the tail (#60)", () => {
+  // Looking for Japanese in each screenshot's megabytes of base64 held up every compaction for about 0.6 s.
+  const session = (data: string) =>
+    Array.from({ length: 40 }, (_, i): Message[] => [
+      { role: "user", content: [{ type: "text", text: `look at shot ${i}` }, { type: "image", mediaType: "image/png", data }], timestamp: 0 },
+      reply([say("ok")]),
+    ]).flat();
+  const shots = session("A".repeat(5_000_000));
+  const t0 = Date.now();
+  const split = splitPoint(shots, 30_000); // the tail kept of a 200K window
+  expect(Date.now() - t0).toBeLessThan(100);
+  expect(split).toBe(splitPoint(session(""), 30_000));
+  expect(split).toBeGreaterThan(0);
+  expect(split).toBeLessThan(shots.length);
+});
+
 test("subagent: task runs a fresh loop and returns its report; no approval needed to start", async () => {
   const { agent, provider } = await setup(
     [reply([call("1", "task", { description: "look around", prompt: "list files" })]), reply([say("found 3 files")]), reply([say("thanks")])],

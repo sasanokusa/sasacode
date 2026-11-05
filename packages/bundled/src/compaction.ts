@@ -8,9 +8,13 @@ const SYSTEM =
 /** Characters outside ASCII: local tokenizers (Qwen, Gemma, Llama) make about a token of each, not a quarter of one. */
 const wide = (s: string) => s.replace(/[\x00-\x7f]/g, "").length;
 
-/** Tokens of a message, weighed as summaryRequest weighs them: at 4 characters a token, the tail kept of a Japanese session was 3 times its budget. */
+/**
+ * Tokens of a message, weighed as summaryRequest weighs them: at 4 characters a token, the tail kept of a Japanese session was 3 times its budget.
+ * The wide characters are looked for in what contentChars counts, without an image's base64: going through megabytes of it took 0.6 s.
+ */
 function estimate(m: Message): number {
-  return Math.ceil((contentChars(m) + 3 * wide(JSON.stringify(m.content))) / 4);
+  const text = JSON.stringify(m.content, (k, v) => (k === "data" && typeof v === "string" && v.length > 64 ? "" : v));
+  return Math.ceil((contentChars(m) + 3 * wide(text)) / 4);
 }
 
 /** Plain-text transcript, so tool call/result pairing does not matter to the summarizer. Tool results and call arguments are clipped. */
