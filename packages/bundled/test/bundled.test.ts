@@ -184,6 +184,46 @@ for (const window of [8192, 16_384])
     expect(JSON.stringify(manual.agent.messages[0])).toContain("SUMMARY");
   });
 
+/** A session of about `chars` characters in Japanese, as a Japanese user's is: the files read are code. */
+function japaneseSession(chars: number): Message[] {
+  const history: Message[] = [];
+  for (let i = 0; history.reduce((n, m) => n + contentChars(m), 0) < chars; i++)
+    history.push(
+      { role: "user", content: [{ type: "text", text: `手順${i}：${"このファイルがなぜ必要なのかを調べてください。".repeat(6)}` }], timestamp: 0 },
+      reply([say(`f${i}.tsを読みます。`), call(`c${i}`, "read", { path: `f${i}.ts` })]),
+      { role: "tool", toolCallId: `c${i}`, toolName: "read", content: [{ type: "text", text: `// 設定値${i}\nconst v${i} = 1;\n`.repeat(40) }], isError: false, timestamp: 0 },
+      reply([say(`f${i}.tsはv${i}を設定しています。${"そのため、この値を変えると読み込みの動作が変わります。".repeat(8)}`)]),
+    );
+  return history;
+}
+
+/** Tokens a local tokenizer (Qwen, Gemma, Llama) makes of a request, roughly: 4 ASCII characters a token, a Japanese character a token. */
+function tokens(req: Request): number {
+  const text = req.system + req.messages.map((m) => m.content.map((c) => (c.type === "text" ? c.text : "")).join("")).join("");
+  const wide = text.replace(/[\x00-\x7f]/g, "").length;
+  return Math.ceil((text.length - wide) / 4 + wide);
+}
+
+for (const window of [8192, 16_384])
+  test(`compaction: a Japanese history more than a ${window}-token window holds is cut to fit, the latest of it kept (#60)`, async () => {
+    // About 4 characters a token undercounts Japanese 3-4 times: the request went over the window.
+    const { agent, host, provider } = await setup([reply([say("要約")])], ["compaction"], { model: { contextWindow: window, maxOutput: 32_000 } });
+    const history = japaneseSession(window * 4);
+    agent.messages = [...history];
+    await host.commands.find((c) => c.name === "compact")!.run({ args: "パスを残して" });
+    const req = provider.requests[0]!;
+    expect(req.maxTokens).toBe(Math.floor(window * 0.15));
+    expect(tokens(req) + req.maxTokens!).toBeLessThanOrEqual(window);
+    expect(tokens(req) + req.maxTokens!).toBeGreaterThan(window * 0.6); // not much more left out than needed
+    const sent = JSON.stringify(req.messages);
+    const last = history.length / 4 - 1;
+    expect(sent).not.toContain("手順0：");
+    expect(sent).toContain(`手順${last}：`);
+    expect(sent).toContain(`f${last}.tsはv${last}を設定しています`);
+    expect(sent).toContain("パスを残して");
+    expect(agent.messages).toHaveLength(1);
+  });
+
 test("compaction: a large window still asks for an 8,192-token summary of everything (#60)", async () => {
   const { agent, host, provider } = await setup([reply([say("SUMMARY")])], ["compaction"], { model: { contextWindow: 1_000_000, maxOutput: 64_000 } });
   agent.messages = readingSession(200_000);

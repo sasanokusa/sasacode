@@ -32,22 +32,29 @@ const LEFT_OUT = "[The start of the session is left out here, so that this reque
  * input plus max_tokens is over it, and a fixed 8,192-token summary broke compaction in the small
  * windows that need it most (#60). The summary gets about 15% of the window (as responseRoom gives
  * a reply), at most 8,192 tokens; the input gets the rest, estimated as the core sizes replies
- * (about 4 characters a token, plus 10%). A transcript too long for that (/compact sends the whole
- * history) has its tool results and calls clipped harder first, which keeps every step; if that is
- * not enough, its oldest part is dropped, since the latest context matters most for carrying on.
+ * (about 4 characters a token, plus 10%), except that a character outside ASCII counts as a token:
+ * local tokenizers make about one of each Japanese character, and at a quarter of a token a Japanese
+ * history went over the window. A transcript too long for that (/compact sends the whole history)
+ * has its tool results and calls clipped harder first, which keeps every step; if that is not
+ * enough, its oldest part is dropped, since the latest context matters most for carrying on.
  */
 function summaryRequest(model: ModelInfo, head: readonly Message[], instructions: string): { maxTokens: number; message: Message } {
   const maxTokens = Math.min(8192, responseRoom(model));
   const maxChars = Math.floor(((model.contextWindow - maxTokens) / 1.1) * 4) - SYSTEM.length - 8;
   const ask = `\n\n---\nSummarize the session above.${instructions ? ` ${instructions}` : ""}`;
   const message = (text: string): Message => ({ role: "user", timestamp: Date.now(), content: [{ type: "text", text: text + ask }] });
-  const over = (text: string) => contentChars(message(text)) - maxChars;
+  const size = (text: string) => contentChars(message(text)) + 3 * (text + ask).replace(/[\x00-\x7f]/g, "").length;
   let text = transcript(head);
-  if (over(text) > 0) text = transcript(head, 200, 100);
-  // Each step drops at least as many characters as the request is over by: a few steps at most.
-  const full = text;
-  for (let keep = full.length; over(text) > 0 && keep > 0; ) {
-    keep = Math.max(0, keep - over(text));
+  if (size(text) > maxChars) text = transcript(head, 200, 100);
+  if (size(text) > maxChars) {
+    // The longest recent part that fits, found by halving, since what a character weighs varies (code, Japanese).
+    const full = text;
+    let keep = 0;
+    for (let most = full.length; keep < most; ) {
+      const mid = Math.ceil((keep + most) / 2);
+      if (size(LEFT_OUT + full.slice(full.length - mid)) > maxChars) most = mid - 1;
+      else keep = mid;
+    }
     text = LEFT_OUT + full.slice(full.length - keep);
   }
   return { maxTokens, message: message(text) };
