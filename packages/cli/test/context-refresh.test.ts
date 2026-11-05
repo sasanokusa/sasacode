@@ -47,10 +47,12 @@ const ollama = Bun.serve({
 });
 // LM Studio loads a model at its first request, with its own default length, not the maximum.
 let studioLoaded = false;
+let studioDown = false; // not started yet when sasacode lists the models
 const lmstudio = Bun.serve({
   port: 0,
   async fetch(req) {
     const path = new URL(req.url).pathname;
+    if (studioDown) return new Response("", { status: 503 });
     if (path === "/v1/models") return Response.json({ object: "list", data: [{ id: "qwen", object: "model", owned_by: "organization_owner" }] });
     if (path === "/api/v0/models") {
       const size = studioLoaded ? { state: "loaded", loaded_context_length: 4096 } : { state: "not-loaded" };
@@ -64,11 +66,12 @@ const lmstudio = Bun.serve({
   },
 });
 // llama-server: one model, the size of each request slot in /props.
+let cppListHits = 0;
 const llamacpp = Bun.serve({
   port: 0,
   async fetch(req) {
     const path = new URL(req.url).pathname;
-    if (path === "/v1/models") return Response.json({ object: "list", data: [{ id: "qwen", object: "model", owned_by: "llamacpp", meta: { n_ctx_train: 131072 } }] });
+    if (path === "/v1/models") return cppListHits++, Response.json({ object: "list", data: [{ id: "qwen", object: "model", owned_by: "llamacpp", meta: { n_ctx_train: 131072 } }] });
     if (path === "/props") return Response.json({ default_generation_settings: { n_ctx: 16384 } });
     if (path === "/v1/chat/completions") return reply(req);
     return new Response("", { status: 404 });
@@ -99,6 +102,8 @@ beforeEach(() => {
   listHits = 0;
   listDown = false;
   studioLoaded = false;
+  studioDown = false;
+  cppListHits = 0;
 });
 
 /** stderr of `fn`, stdout dropped. */
@@ -209,6 +214,29 @@ for (const [how, studio] of [
     expect(h.agent.model.contextWindow).toBe(4096);
     await h.shutdown();
   });
+
+test("LM Studio set up before it was told apart and down when first listed is recognised at a turn's end (#59)", async () => {
+  configure({}, "studio/qwen", { studio: { api: "openai-chat", baseUrl: `${studioUrl}/v1` } });
+  studioDown = true;
+  const h = await setup({ cwd: proj, noSession: true });
+  expect((await h.listModels()).find((m) => m.spec === "studio/qwen")).toBeUndefined();
+  studioDown = false;
+  await h.agent.prompt("hi");
+  expect(h.agent.model).toMatchObject({ contextWindow: 4096, server: "lmstudio" });
+  await h.shutdown();
+});
+
+test("a custom server not told apart that has listed the model is not LM Studio, and is not listed again at turns' ends", async () => {
+  configure({}, "cpp/qwen", { cpp: { api: "openai-chat", baseUrl: `http://localhost:${llamacpp.port}/v1` } });
+  const h = await setup({ cwd: proj, noSession: true });
+  expect((await h.listModels()).find((m) => m.spec === "cpp/qwen")).toMatchObject({ contextWindow: undefined });
+  const hits = cppListHits;
+  await h.agent.prompt("hi");
+  await h.agent.prompt("again");
+  expect(cppListHits).toBe(hits);
+  expect(h.agent.model.server).toBeUndefined();
+  await h.shutdown();
+});
 
 test("headless: LM Studio set up before it was told apart also learns the loaded length", async () => {
   configure({}, "studio/qwen", { studio: { api: "openai-chat", baseUrl: `${studioUrl}/v1` } });

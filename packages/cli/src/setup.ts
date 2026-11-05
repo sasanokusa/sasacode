@@ -9,7 +9,7 @@ import { createSkillsPlugin } from "@sasacode/skills";
 import builtinTools from "@sasacode/tools";
 import { type Config, type ConfigFiles, DEFAULT_MAX_TURNS, loadConfig, sasacodeHome } from "./config.ts";
 import { discoverPlugins, type FoundPlugin, importExtensions } from "./loader.ts";
-import { type ModelChoice, ModelCatalog } from "./catalog.ts";
+import { type ModelChoice, ModelCatalog, untold } from "./catalog.ts";
 import { resolveEndpoints } from "./endpoints.ts";
 import { resolveApiKey } from "./keys.ts";
 import { readJson, writeJson } from "./json.ts";
@@ -138,15 +138,19 @@ export async function setup(opts: SetupOptions): Promise<Harness> {
   // threshold already uses the real size (#61). While the size stays unknown (the server was down
   // when listed, the refresh failed, it reported none) it is asked again at the next turns' ends,
   // three times in all. A contextWindow in modelOverrides is the user's: nothing is asked for it.
+  // A custom server not told apart may be LM Studio that was down when listed (#59): it is listed
+  // again while it has not listed the model; one that has, and is still not told apart, is not.
   const asked = new Map<string, number>();
   agent.hooks.on(
     "turn_end",
     async () => {
       const spec = current();
-      const p = providers[agent.model.provider];
+      const name = agent.model.provider;
+      const p = providers[name];
       const n = asked.get(spec) ?? 0;
-      if (!(p?.ollama || p?.lmstudio) || n >= 3 || config.modelOverrides?.[spec]?.contextWindow) return;
-      const known = (await catalog.entry(spec))?.contextWindow || (await catalog.entry(spec, true))?.contextWindow;
+      if (!(p?.ollama || p?.lmstudio || untold(name, p)) || n >= 3 || config.modelOverrides?.[spec]?.contextWindow) return;
+      const listed = await catalog.entry(spec);
+      const known = listed?.contextWindow || (listed && untold(name, p)) || (await catalog.entry(spec, true))?.contextWindow;
       asked.set(spec, known ? 3 : n + 1);
       adopt();
     },
