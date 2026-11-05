@@ -224,6 +224,17 @@ for (const window of [8192, 16_384])
     expect(agent.messages).toHaveLength(1);
   });
 
+test("compaction: /compact whose instructions leave no room for the session leaves the history as it was", async () => {
+  const { agent, host, provider } = await setup([reply([say("SUMMARY")])], ["compaction"], { model: { contextWindow: 8192, maxOutput: 32_000 } });
+  const history = readingSession(2000);
+  agent.messages = [...history];
+  const compact = host.commands.find((c) => c.name === "compact")!;
+  await expect(Promise.resolve(compact.run({ args: "be thorough ".repeat(4000) }))).rejects.toThrow(/instructions/);
+  expect(agent.messages).toEqual(history);
+  expect(provider.requests).toHaveLength(0);
+  expect(host.status.size).toBe(0);
+});
+
 test("compaction: a large window still asks for an 8,192-token summary of everything (#60)", async () => {
   const { agent, host, provider } = await setup([reply([say("SUMMARY")])], ["compaction"], { model: { contextWindow: 1_000_000, maxOutput: 64_000 } });
   agent.messages = readingSession(200_000);

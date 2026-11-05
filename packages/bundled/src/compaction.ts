@@ -37,6 +37,7 @@ const LEFT_OUT = "[The start of the session is left out here, so that this reque
  * history went over the window. A transcript too long for that (/compact sends the whole history)
  * has its tool results and calls clipped harder first, which keeps every step; if that is not
  * enough, its oldest part is dropped, since the latest context matters most for carrying on.
+ * Instructions that leave no room for any of it throw, and the history stays as it was.
  */
 function summaryRequest(model: ModelInfo, head: readonly Message[], instructions: string): { maxTokens: number; message: Message } {
   const maxTokens = Math.min(8192, responseRoom(model));
@@ -55,6 +56,7 @@ function summaryRequest(model: ModelInfo, head: readonly Message[], instructions
       if (size(LEFT_OUT + full.slice(full.length - mid)) > maxChars) most = mid - 1;
       else keep = mid;
     }
+    if (!keep) throw new Error("the /compact instructions leave no room for the session in the context window; the history was left as it was");
     text = LEFT_OUT + full.slice(full.length - keep);
   }
   return { maxTokens, message: message(text) };
