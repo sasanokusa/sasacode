@@ -247,6 +247,13 @@ test("openai-chat: a tool name sent after the id, and tool calls without an inde
       [{ id: "a", name: "read", input: { path: "a" } }, { name: "read", input: { path: "b" } }]],
     ["no index, no id, name repeated", [tc([{ type: "function", function: { name: "read", arguments: "" } }]), tc([{ function: { name: "read", arguments: '{"path":' } }]), tc([{ function: { name: "read", arguments: '"a"}' } }], "tool_calls")],
       [{ name: "read", input: { path: "a" } }]],
+    // No index, a name-only chunk after complete arguments: it starts the next call, whose arguments follow without the name.
+    ["no index, name first", [tc([{ id: "a", type: "function", function: { name: "read", arguments: '{"path":"a"}' } }]), tc([{ function: { name: "read" } }]), tc([{ function: { arguments: '{"path":"b"}' } }], "tool_calls")],
+      [{ id: "a", name: "read", input: { path: "a" } }, { name: "read", input: { path: "b" } }]],
+    // The trade-off of that rule: a server that ended a call with a name-only chunk would get an extra call with no
+    // arguments (main folded it into the call). No server is known to send one.
+    ["no index, trailing name", [tc([{ id: "a", type: "function", function: { name: "read", arguments: '{"path":"a"}' } }]), tc([{ function: { name: "read", arguments: "" } }], "tool_calls")],
+      [{ id: "a", name: "read", input: { path: "a" } }, { name: "read", input: {} }]],
     // An empty id is no id: it neither matches the earlier call nor becomes the new one's id.
     ["no index, empty ids", [tc([{ id: "", type: "function", function: { name: "read", arguments: '{"path":"a"}' } }]), tc([{ id: "", type: "function", function: { name: "read", arguments: '{"path":"b"}' } }], "tool_calls")],
       [{ name: "read", input: { path: "a" } }, { name: "read", input: { path: "b" } }]],
@@ -268,4 +275,26 @@ test("openai-chat: a tool name sent after the id, and tool calls without an inde
     expect(starts).toEqual(got.map((c) => message.content.indexOf(c)));
     expect(message.stopReason).toBe("tool_use");
   }
+});
+
+test("openai-chat: an index-less call that repeats its name is not parsed again on every chunk (#62)", async () => {
+  const model: ModelInfo = { id: "m", provider: "local", api: "openai-chat", baseUrl: "http://x/v1", contextWindow: 1e5, maxOutput: 1000 };
+  // About 20 KB of code with braces, quotes and backslashes inside the string, in 3-character chunks that split its escapes.
+  const content = 'if (a) { s = "}\\"{\\\\"; }\n'.repeat(800);
+  const pieces = JSON.stringify({ path: "a.js", content }).match(/[^]{1,3}/g)!;
+  const write = (args: string, id?: string) => chatChunk({ tool_calls: [{ ...(id ? { id, type: "function" } : {}), function: { name: "write", arguments: args } }] });
+  const chunks = [write(pieces[0]!, "a"), ...pieces.slice(1).map((p) => write(p)), write('{"path":"b"}'), chatChunk({}, "tool_calls")];
+  const parse = JSON.parse;
+  let large = 0; // SSE lines and the request body are small; only the arguments of the first call are this long
+  JSON.parse = ((text: string, reviver?: (key: string, value: unknown) => unknown) => {
+    if (String(text).length > 4096) large++;
+    return parse(text, reviver);
+  }) as typeof JSON.parse;
+  try {
+    const { message } = await run(openaiChatProvider, reqFor(model, fakeFetch(sse(chunks)).fetch));
+    expect(message.content.filter((c) => c.type === "tool_call").map(({ name, input }) => ({ name, input }))).toEqual([{ name: "write", input: { path: "a.js", content } }, { name: "write", input: { path: "b" } }]);
+  } finally {
+    JSON.parse = parse;
+  }
+  expect(large).toBe(1); // the final parse of the first call's arguments
 });

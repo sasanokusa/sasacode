@@ -97,7 +97,7 @@ export const openaiChatProvider: Provider = {
     let detailsBlock: ThinkingContent | undefined;
     const details: unknown[] = [];
     let text: { type: "text"; text: string } | undefined;
-    const calls = new Map<number | string, { block: ToolCall; json: string; index: number }>();
+    const calls = new Map<number | string, { block: ToolCall; json: string; index: number; depth: number; str?: boolean; esc?: boolean }>();
     let ended = false;
     try {
       const stream = await withEffort(replayScope(model), level, async (effort) => {
@@ -143,16 +143,19 @@ export const openaiChatProvider: Provider = {
           const name = tc.function?.name, known = [...calls.values()], last = known.at(-1);
           // Without an index (some servers), match by a non-empty id, else continue the latest call unless this one starts
           // another: a new id, or a name after a call with another name or with complete arguments.
-          let c = tc.index != null ? calls.get(tc.index) : (tc.id && known.find((k) => k.block.id === tc.id)) || (tc.id || (name && last?.block.name && (name !== last.block.name || (last.json && !parseToolInput(last.json).rawInput))) ? undefined : last);
+          let c = tc.index != null ? calls.get(tc.index) : (tc.id && known.find((k) => k.block.id === tc.id)) || (tc.id || (name && last?.block.name && (name !== last.block.name || (last.json && !last.depth))) ? undefined : last);
           if (!c) {
             const block: ToolCall = { type: "tool_call", id: tc.id || `call_${tc.index ?? calls.size}`, name: name ?? "", input: {} };
             out.content.push(block);
-            c = { block, json: "", index: out.content.length - 1 };
+            c = { block, json: "", index: out.content.length - 1, depth: 0 };
             calls.set(tc.index ?? block.id, c);
             yield { type: "toolcall_start", index: c.index, id: block.id, name: block.name, partial: out };
           } else if (name && !c.block.name) c.block.name = name; // the name came after the id
           if (tc.function?.arguments) {
             c.json += tc.function.arguments;
+            // Braces open outside strings, counted chunk by chunk: back to 0 once the arguments are complete, so the
+            // check above never re-parses the whole string on every chunk.
+            for (const ch of tc.function.arguments) if (c.esc) c.esc = false; else if (c.str) c.esc = ch === "\\", c.str = ch !== '"'; else if (ch === '"') c.str = true; else c.depth += ch === "{" ? 1 : ch === "}" ? -1 : 0;
             yield { type: "toolcall_delta", index: c.index, delta: tc.function.arguments, partial: out };
           }
         }
