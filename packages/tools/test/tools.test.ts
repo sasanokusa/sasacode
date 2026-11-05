@@ -245,20 +245,8 @@ test("edit: a loose match must be unique, replace_all or not; nothing is changed
   }
 });
 
-test("edit: read's output is taken as copied, a blank line's bare number and a CRLF file's CRs too (#65)", async () => {
+test("edit: read's output is taken as copied, a CRLF file's CRs too (#65)", async () => {
   const path = join(dir, "copied.ts");
-  writeFileSync(path, "function f() {\n\n  return 1;\n}\n");
-  const bare = await editTool.execute({ path, old_string: "     1\tfunction f() {\n     2\n     3\t  return 1;", new_string: "     1\tfunction f() {\n     2\n     3\t  return 2;" }, ctx());
-  expect(out(bare)).toStartWith("[harness matched old_string ignoring line-number prefixes]\n");
-  expect(readFileSync(path, "utf8")).toBe("function f() {\n\n  return 2;\n}\n");
-  // Two blank lines in a row: each bare number follows the one before.
-  writeFileSync(path, "a\n\n\nb\n");
-  await editTool.execute({ path, old_string: "     1\ta\n     2\n     3\n     4\tb", new_string: "     1\ta\n     2\n     3\tc\n     4\tb" }, ctx());
-  expect(readFileSync(path, "utf8")).toBe("a\n\nc\nb\n");
-  // A new_string written without numbers keeps its lines of only digits.
-  writeFileSync(path, "a\nb\n");
-  await editTool.execute({ path, old_string: "     1\ta", new_string: "0\na" }, ctx());
-  expect(readFileSync(path, "utf8")).toBe("0\na\nb\n");
   writeFileSync(path, "function f() {\r\n  return 1;\r\n}\r\n");
   await editTool.execute({ path, old_string: "     1\tfunction f() {\r\n     2\t  return 1;\r", new_string: "     1\tfunction f() {\n     2\t  return 2;" }, ctx());
   expect(readFileSync(path, "utf8")).toBe("function f() {\r\n  return 2;\r\n}\r\n");
@@ -268,29 +256,39 @@ test("edit: read's output is taken as copied, a blank line's bare number and a C
   expect(readFileSync(path, "utf8")).toBe("bar\n  next\n");
 });
 
-test("edit: a line of only digits is a line number only at read's width right after the one before, so content digits are kept (#65)", async () => {
-  const path = join(dir, "digits.txt");
+test("edit: a line of only digits among read's line numbers is refused as ambiguous, and the file is left as it was (#65)", async () => {
+  const path = join(dir, "digits.txt"), imports = `${"\n".repeat(9)}import a\nimport b\n\nfn main() {}\n`;
   const cases = [
-    // Copied lines numbered, an added line not: its 3 and the Rust body's 0 are content.
-    ["let v = [\n  1,\n  2\n];\n", "     2\t  1,\n     3\t  2", "     2\t  1,\n     3\t  2,\n  3", "let v = [\n  1,\n  2,\n  3\n];\n"],
-    ["fn f() -> i32 {\n    1\n}\n", "     1\tfn f() -> i32 {\n     2\t    1\n     3\t}", "     1\tfn f() -> i32 {\n    0\n     3\t}", "fn f() -> i32 {\n    0\n}\n"],
-    // Six columns wide but not the next line's number, so content too: 4-space, 2-space and unindented.
-    ["fn f() -> i32 {\n    1\n}\n", "     1\tfn f() -> i32 {\n     2\t    1\n     3\t}", "     1\tfn f() -> i32 {\n    42\n     3\t}", "fn f() -> i32 {\n    42\n}\n"],
-    ["let v = [\n  1,\n  2\n];\n", "     2\t  1,\n     3\t  2", "     2\t  1,\n     3\t  2,\n  1000", "let v = [\n  1,\n  2,\n  1000\n];\n"],
-    ["a\nb\n", "     1\ta\n     2\tb", "     1\ta\n     2\tb\n100000", "a\nb\n100000\n"],
+    // A blank line's number without its tab: deleting the line before it, the same in Python, inserting without renumbering.
+    [imports, "    10\timport a\n    11\timport b\n    12\n    13\tfn main() {}", "    10\timport a\n    12\n    13\tfn main() {}"],
+    ["def f():\n    x = 1\n    y = 2\n\n    return x\n", "     2\t    x = 1\n     3\t    y = 2\n     4\n     5\t    return x", "     2\t    x = 1\n     4\n     5\t    return x"],
+    ["a\n\nb\n", "     1\ta\n     2\n     3\tb", "     1\ta\n     2\tins\n     2\n     3\tb"],
+    ["function f() {\n\n  return 1;\n}\n", "     1\tfunction f() {\n     2\n     3\t  return 1;", "     1\tfunction f() {\n     2\n     3\t  return 2;"],
+    ["a\n\n\nb\n", "     1\ta\n     2\n     3\n     4\tb", "     1\ta\n     2\n     3\tc\n     4\tb"],
+    // Text of only digits: a line added without a number, at any width, a new_string written without numbers, and old_string's own.
+    ["let v = [\n  1,\n  2\n];\n", "     2\t  1,\n     3\t  2", "     2\t  1,\n     3\t  2,\n  3"],
+    ["let v = [\n  1,\n  2\n];\n", "     2\t  1,\n     3\t  2", "     2\t  1,\n     3\t  2,\n  1000"],
+    ["fn f() -> i32 {\n    1\n}\n", "     1\tfn f() -> i32 {\n     2\t    1\n     3\t}", "     1\tfn f() -> i32 {\n    0\n     3\t}"],
+    ["fn f() -> i32 {\n    1\n}\n", "     1\tfn f() -> i32 {\n     2\t    1\n     3\t}", "     1\tfn f() -> i32 {\n    42\n     3\t}"],
+    ["a\nb\n", "     1\ta\n     2\tb", "     1\ta\n     2\tb\n100000"],
+    ["a\nb\n", "     1\ta", "0\na"],
+    ["foo\n42\n", "     1\tfoo\n42", "     1\tbar\n43"],
+    ["foo\n    42\n", "     1\tfoo\n    42", "     1\tbar\n    43"],
   ];
-  for (const [file, old_string, new_string, after] of cases) {
+  for (const [file, old_string, new_string] of cases) {
     writeFileSync(path, file!);
-    expect(out(await editTool.execute({ path, old_string: old_string!, new_string: new_string! }, ctx()))).toStartWith("[harness matched old_string ignoring line-number prefixes]\n");
-    expect(readFileSync(path, "utf8")).toBe(after!);
+    const r = await editTool.execute({ path, old_string: old_string!, new_string: new_string! }, ctx());
+    expect(r.isError).toBe(true);
+    expect(out(r)).toContain("line-number form is ambiguous there");
+    expect(readFileSync(path, "utf8")).toBe(file!);
   }
-  // 42 is not a line number of read's, at any width, so old_string is not numbered throughout and is not found.
-  for (const line of ["42", "    42"]) {
-    writeFileSync(path, `foo\n${line}\n`);
-    const r = await editTool.execute({ path, old_string: `     1\tfoo\n${line}`, new_string: `     1\tbar\n${line.replace("42", "43")}` }, ctx());
-    expect(out(r)).toContain("not found");
-    expect(readFileSync(path, "utf8")).toBe(`foo\n${line}\n`);
-  }
+  // With the tab read gives a blank line, the same edits are made as meant.
+  writeFileSync(path, imports);
+  await editTool.execute({ path, old_string: "    10\timport a\n    11\timport b\n    12\t\n    13\tfn main() {}", new_string: "    10\timport a\n    12\t\n    13\tfn main() {}" }, ctx());
+  expect(readFileSync(path, "utf8")).toBe(`${"\n".repeat(9)}import a\n\nfn main() {}\n`);
+  writeFileSync(path, "a\n\nb\n");
+  await editTool.execute({ path, old_string: "     1\ta\n     2\t\n     3\tb", new_string: "     1\ta\n     2\tins\n     2\t\n     3\tb" }, ctx());
+  expect(readFileSync(path, "utf8")).toBe("a\nins\n\nb\n");
 });
 
 test("edit: a loose match that would change nothing is an error, so loop-guard sees no change (#65)", async () => {

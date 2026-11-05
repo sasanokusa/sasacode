@@ -51,16 +51,15 @@ export const editTool: ToolDefinition<Args> = {
 };
 
 /**
- * old_string is not in the file as given (#65): look again without read's line numbers (a bare one at read's 6 columns only next
- * to the one before), then ignoring trailing whitespace and CR (a trailing CR or indentation-only last line is the next line's), then
- * indentation; one place only, overlaps counted. Each indentation in new_string becomes the file's for that old_string indentation,
- * else the one shift all lines share if two depths of old_string or unmoved lines show it, else refused.
+ * old_string is not in the file as given (#65): look again without read's "N\t" line numbers (refused if a bare line of digits,
+ * a number without its tab or text, is among them), then ignoring trailing whitespace and CR (a trailing CR or indentation-only last
+ * line is the next line's), then indentation; one place only, overlaps counted. Each indentation in new_string becomes the file's for
+ * that old_string indentation, else the one shift all lines share if two depths of old_string or unmoved lines show it, else refused.
  */
 function loosely(path: string, file: string, old: string, neu: string): string | { after: string; note: string } {
-  // Each line without its number, or [line] if it has none and is not blank: a blank line's bare "     7" only right after line 6.
-  const unnumber = (s: string, n = NaN) => s.split("\n").map((l) => { const m = /^ *(\d+)\t|^(?=.{6}$) *(\d+)$/.exec(l); return m && (m[1] ? (n = +m[1]) + 1 : +m[2] === n + 1 && ++n) ? l.slice(m[0].length) : l.trim() ? [l] : l; });
-  const numbered = /^ *\d+\t/m.test(old) && !unnumber(old).some(Array.isArray), [bare, plain] = [old, neu].map((s) => (numbered ? unnumber(s).flat().join("\n") : s));
-  [old, neu] = [bare, plain].map((s) => s.replace(/[ \t\r]+$/, ""));
+  const numbered = /^ *\d+\t/m.test(old) && old.split("\n").every((l) => !l.trim() || /^ *\d+(\t| *\r?$)/.test(l)), bare = numbered ? old.replace(/^ *\d+\t/gm, "") : old, digits = numbered && /^ *\d+ *\r?$/m.exec(`${old}\n${neu}`);
+  if (digits) return `${digits.index > old.length ? "new" : "old"}_string's line ${JSON.stringify(digits[0])} is only digits among read's line numbers: a blank line's number without its tab, or text, so the line-number form is ambiguous there. Nothing was changed; give old_string and new_string as the file's exact text, without line numbers.`;
+  [old, neu] = [bare, numbered ? neu.replace(/^ *\d+\t/gm, "") : neu].map((s) => s.replace(/[ \t\r]+$/, ""));
   let i = 0, find = (re: string) => file.matchAll(new RegExp(`(?=(${re}))`, "gm")).take(2).toArray(), hits = find(RegExp.escape(old));
   for (; !hits.length && i < 2; i++) {
     const lines = old.split("\n").map((l) => l.replace(i ? /^[ \t]+|[ \t\r]+$/g : /[ \t\r]+$/, ""));
