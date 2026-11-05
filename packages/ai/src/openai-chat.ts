@@ -141,10 +141,11 @@ export const openaiChatProvider: Provider = {
         }
         for (const tc of delta.tool_calls ?? []) {
           const name = tc.function?.name, known = [...calls.values()], last = known.at(-1);
-          // Without an index (some servers), match by id, else continue the latest call unless this one starts another.
-          let c = tc.index != null ? calls.get(tc.index) : known.find((k) => k.block.id === tc.id) ?? (tc.id || (name && last?.block.name) ? undefined : last);
+          // Without an index (some servers), match by a non-empty id, else continue the latest call unless this one starts
+          // another: a new id, or a name after a call with another name or with complete arguments.
+          let c = tc.index != null ? calls.get(tc.index) : (tc.id && known.find((k) => k.block.id === tc.id)) || (tc.id || (name && last?.block.name && (name !== last.block.name || (last.json && !parseToolInput(last.json).rawInput))) ? undefined : last);
           if (!c) {
-            const block: ToolCall = { type: "tool_call", id: tc.id ?? `call_${tc.index ?? calls.size}`, name: name ?? "", input: {} };
+            const block: ToolCall = { type: "tool_call", id: tc.id || `call_${tc.index ?? calls.size}`, name: name ?? "", input: {} };
             out.content.push(block);
             c = { block, json: "", index: out.content.length - 1 };
             calls.set(tc.index ?? block.id, c);

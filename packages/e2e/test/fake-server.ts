@@ -12,6 +12,12 @@ export interface Reply {
   reasoning?: string;
   text?: string;
   toolCalls?: ToolCallSpec[];
+  /**
+   * How the tool calls are streamed. By default OpenAI's way: one chunk each, with its index, id and
+   * name. "name-later": the id and type first, the name in the next chunk, then the arguments.
+   * "no-index": no index on any chunk, the arguments in two halves, the name repeated on both.
+   */
+  toolCallShape?: "name-later" | "no-index";
   /** Stop sending after the content: no finish_reason, no usage, no [DONE] (a dropped connection). */
   cut?: boolean;
   /** Answer with this HTTP status and an error body instead of a stream. */
@@ -58,9 +64,16 @@ function stream(model: string, r: Reply): ReadableStream {
   else {
     if (r.reasoning) for (const part of split(r.reasoning)) events.push(chunk({ reasoning_content: part }));
     if (r.text) for (const part of split(r.text)) events.push(chunk({ content: part }));
-    r.toolCalls?.forEach((c, i) =>
-      events.push(chunk({ tool_calls: [{ index: i, id: `call_${i}_${Math.random().toString(36).slice(2, 8)}`, type: "function", function: { name: c.name, arguments: JSON.stringify(c.args) } }] })),
-    );
+    r.toolCalls?.forEach((c, i) => {
+      const id = `call_${i}_${Math.random().toString(36).slice(2, 8)}`, args = JSON.stringify(c.args), half = Math.ceil(args.length / 2);
+      const parts =
+        r.toolCallShape === "name-later"
+          ? [{ index: i, id, type: "function", function: { arguments: "" } }, { index: i, function: { name: c.name } }, { index: i, function: { arguments: args } }]
+          : r.toolCallShape === "no-index"
+            ? [{ id, type: "function", function: { name: c.name, arguments: args.slice(0, half) } }, { function: { name: c.name, arguments: args.slice(half) } }]
+            : [{ index: i, id, type: "function", function: { name: c.name, arguments: args } }];
+      for (const part of parts) events.push(chunk({ tool_calls: [part] }));
+    });
     if (!r.cut) {
       events.push(chunk({}, r.toolCalls?.length ? "tool_calls" : "stop"));
       events.push({ id: "c", object: "chat.completion.chunk", created: 0, model, choices: [], usage: { prompt_tokens: 100, completion_tokens: 20, total_tokens: 120 } });

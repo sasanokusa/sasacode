@@ -237,13 +237,24 @@ test("openai-chat: a tool name sent after the id, and tool calls without an inde
     // Neither index nor id: arguments continue the latest call; a second name starts the next.
     ["no index, no id", [tc([{ function: { name: "read", arguments: '{"path"' } }]), tc([{ function: { arguments: ':"a"}' } }]), tc([{ function: { name: "ls", arguments: '{"path":"b"}' } }], "tool_calls")],
       [{ name: "read", input: { path: "a" } }, { name: "ls", input: { path: "b" } }]],
+    // No index, the name repeated on every chunk: one call while its arguments are unfinished, the next once they are.
+    ["no index, name repeated", [tc([{ id: "a", type: "function", function: { name: "read", arguments: '{"path":' } }]), tc([{ function: { name: "read", arguments: '"a"}' } }]), tc([{ function: { name: "read", arguments: '{"path":"b"}' } }], "tool_calls")],
+      [{ id: "a", name: "read", input: { path: "a" } }, { name: "read", input: { path: "b" } }]],
+    ["no index, no id, name repeated", [tc([{ type: "function", function: { name: "read", arguments: "" } }]), tc([{ function: { name: "read", arguments: '{"path":' } }]), tc([{ function: { name: "read", arguments: '"a"}' } }], "tool_calls")],
+      [{ name: "read", input: { path: "a" } }]],
+    // An empty id is no id: it neither matches the earlier call nor becomes the new one's id.
+    ["no index, empty ids", [tc([{ id: "", type: "function", function: { name: "read", arguments: '{"path":"a"}' } }]), tc([{ id: "", type: "function", function: { name: "read", arguments: '{"path":"b"}' } }], "tool_calls")],
+      [{ name: "read", input: { path: "a" } }, { name: "read", input: { path: "b" } }]],
+    // Two index-less calls in one chunk.
+    ["no index, one chunk", [tc([{ function: { name: "read", arguments: '{"path":"a"}' } }, { function: { name: "ls", arguments: '{"path":"b"}' } }], "tool_calls")],
+      [{ name: "read", input: { path: "a" } }, { name: "ls", input: { path: "b" } }]],
   ];
   for (const [label, chunks, want] of streams) {
     const { message, events } = await run(openaiChatProvider, reqFor(model, fakeFetch(sse(chunks)).fetch));
     const got = message.content.filter((c) => c.type === "tool_call");
     expect([label, got.map(({ name, input, rawInput }) => ({ name, input, rawInput }))]).toEqual([label, want.map(({ name, input }) => ({ name, input, rawInput: undefined }))]);
     for (const [i, w] of want.entries()) if (w.id) expect(got[i]!.id).toBe(w.id);
-    expect(new Set(got.map((c) => c.id)).size).toBe(got.length);
+    expect([label, new Set(got.map((c) => c.id || undefined).filter(Boolean)).size]).toEqual([label, got.length]);
     // One start per call, ahead of its deltas, at the call's own place in the content.
     const starts: number[] = [];
     for (const e of events)
