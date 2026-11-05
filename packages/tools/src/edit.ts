@@ -65,7 +65,7 @@ function loosely(path: string, file: string, old: string, neu: string): string |
     // A blank first line may start only where a run of blanks does: scanning the run from each of its places is quadratic.
     hits = find((lines[0] ? "" : "(?<![ \\t])") + lines.map((l) => (i && l ? "^[ \\t]*" : "") + RegExp.escape(l)).join("[ \\t]*\\r?\\n"));
   }
-  const ignoring = `ignoring ${[numbered && "line-number prefixes", ...["trailing whitespace and line endings", "indentation"].slice(0, i)].filter(Boolean).join(", ")}`;
+  const ignoring = `ignoring ${[numbered && "line-number prefixes", ...["trailing whitespace and line endings", "indentation"].slice(0, i || +!numbered)].filter(Boolean).join(", ")}`;
   if (!hits.length) return `old_string not found in ${path}, even ${ignoring}. Re-read the file and match it exactly.`;
   if (hits.length > 1) return `old_string appears more than once in ${path}, ${ignoring}. Add surrounding context to make it unique.`;
   const [{ index, 1: at = "" }] = hits, ws = (l = "") => /^[ \t]*/.exec(l)![0], fl = at.split("\n");

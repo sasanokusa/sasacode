@@ -152,6 +152,10 @@ test("edit: trailing whitespace and CRLF are ignored both ways, and the file kee
   writeFileSync(lf, "x\ny\nz\n");
   expect((await editTool.execute({ path: lf, old_string: "x\r\ny \r\n", new_string: "x\r\nY\r\n" }, ctx())).isError).toBeFalsy();
   expect(readFileSync(lf, "utf8")).toBe("x\nY\nz\n");
+  // Found once only the whitespace at the end is dropped: the note still names what was ignored.
+  const end = await editTool.execute({ path: lf, old_string: "Y\nz  ", new_string: "Y\nZ" }, ctx());
+  expect(out(end)).toStartWith("[harness matched old_string ignoring trailing whitespace and line endings]\n");
+  expect(readFileSync(lf, "utf8")).toBe("x\nY\nZ\n");
 });
 
 test("edit: other indentation is ignored, and new_string takes the file's (#65)", async () => {
