@@ -117,6 +117,10 @@ export async function lmstudioModels(root: string, headers?: Record<string, stri
   }
 }
 
+/** lmstudioModels for a configured provider. */
+export const lmstudioList = (p: ProviderConfig, apiKey: string | undefined, signal?: AbortSignal) =>
+  lmstudioModels((p.baseUrl ?? "").replace(/\/v1\/?$/, ""), { ...p.headers, ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}) }, signal);
+
 /**
  * LM Studio's /v1/models has no sizes; /api/v0/models has each model's maximum and, while it is
  * loaded, the context it was loaded with. A model is loaded with LM Studio's own default length
@@ -124,8 +128,7 @@ export async function lmstudioModels(root: string, headers?: Record<string, stri
  * num_ctx, and the size is asked again once the model has answered.
  */
 async function lmstudioContext(p: ProviderConfig, models: ListedModel[], apiKey: string | undefined, signal?: AbortSignal): Promise<void> {
-  const root = (p.baseUrl ?? "").replace(/\/v1\/?$/, "");
-  const native = new Map((await lmstudioModels(root, { ...p.headers, ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}) }, signal))?.map((m) => [m.id, m] as const));
+  const native = new Map((await lmstudioList(p, apiKey, signal))?.map((m) => [m.id, m] as const));
   for (const m of models) {
     const n = native.get(m.id);
     if (n?.loaded_context_length) m.contextWindow = n.loaded_context_length;

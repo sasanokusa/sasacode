@@ -148,6 +148,22 @@ test("endpoints in a project config need trust (even keyless ones would receive 
   expect(loadConfig(proj, true).config.providers?.lan).toEqual({ baseUrl: "http://192.168.1.20:8080" });
 });
 
+test("endpoint add says it found LM Studio, and saves the flag", async () => {
+  const { endpointCommand } = await import("../src/endpoints.ts");
+  const url = `http://localhost:${lmstudio.port}`;
+  const said: string[] = [];
+  const log = console.log;
+  console.log = (s: string) => void said.push(s);
+  try {
+    expect(await endpointCommand(["add", "studio", url], proj)).toBe(0);
+  } finally {
+    console.log = log;
+  }
+  expect(said[0]).toBe(`studio: OpenAI Chat Completions (LM Studio) at ${url}/v1`);
+  expect(said[1]).toContain("studio/qwen-loaded  (4096 ctx)");
+  expect(JSON.parse(readFileSync(join(home, "config.json"), "utf8")).providers.studio).toEqual({ api: "openai-chat", baseUrl: `${url}/v1`, lmstudio: true });
+});
+
 test("endpoint add stops on a config it cannot read instead of overwriting it", async () => {
   const { endpointCommand } = await import("../src/endpoints.ts");
   const broken = '{"model":"x/y","permissions":{"deny":["read(**/.env)"]},}\n';

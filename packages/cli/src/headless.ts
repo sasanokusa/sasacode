@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { type AgentEvent, type StopCause } from "@sasacode/agent";
 import { t } from "@sasacode/host";
 import { fmtTokens, textOf } from "@sasacode/ai";
+import { untold } from "./catalog.ts";
 import { type ControlInput, startControl } from "./control.ts";
 import type { Harness } from "./setup.ts";
 
@@ -46,8 +47,9 @@ export async function runHeadless(h: Harness, prompt: string, output: "text" | "
   const controller = control && startControl(agent, control, (m) => write(`${JSON.stringify(m)}\n`));
   // A local server knows the context the model really gets: asked while the plugins load, as the
   // TUI does at startup, and with the TUI's warning when Ollama will cut the input short (#61).
+  // A custom server not told apart may be LM Studio added before sasacode knew it (#59).
   const local = h.providers[agent.model.provider];
-  const listing = local?.ollama || local?.lmstudio || local?.llamacpp ? h.currentListing() : undefined;
+  const listing = local?.ollama || local?.lmstudio || local?.llamacpp || untold(agent.model.provider, local) ? h.currentListing() : undefined;
   await h.loadPlugins();
   // Unlike the TUI, a one-shot run should start with MCP servers and similar tools connected.
   await h.host.settle();

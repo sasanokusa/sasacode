@@ -31,8 +31,11 @@ const providers: Record<string, ProviderConfig> = {
 
 test("lists each service once, routes models to the provider speaking their endpoint, keeps context windows", async () => {
   const catalog = new ModelCatalog(providers, async (p) => (p.startsWith("svc") ? "k" : undefined), () => "svc");
-  const specs = (await catalog.list()).map((m) => m.spec);
-  expect(specs).toEqual(["svc-anthropic/claude-x", "svc/gpt-y", "svc/plain"]);
+  const listed = await catalog.list();
+  expect(listed.map((m) => m.spec)).toEqual(["svc-anthropic/claude-x", "svc/gpt-y", "svc/plain"]);
+  // svc has no flag, so it is asked whether it is LM Studio: this server answers /api/v0/models with
+  // its OpenAI-style list too, which has no max_context_length and so is not LM Studio's.
+  expect(listed.some((m) => m.server) || providers.svc!.lmstudio).toBeFalsy();
   expect(catalog.discovered.get("svc/gpt-y")).toEqual({ contextWindow: 400_000 });
   expect(catalog.discovered.get("svc-anthropic/claude-x")).toEqual({ contextWindow: 1_000_000 });
 });

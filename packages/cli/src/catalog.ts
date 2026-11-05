@@ -1,6 +1,6 @@
 import { getProvider, type ModelInfo, type Provider, type ProviderConfig } from "@sasacode/ai";
-import { KNOWN_MODELS } from "@sasacode/host";
-import { API_ENDPOINT, type ListedModel, listModels } from "./list-models.ts";
+import { BUILTIN_PROVIDERS, KNOWN_MODELS } from "@sasacode/host";
+import { API_ENDPOINT, type ListedModel, listModels, lmstudioList } from "./list-models.ts";
 
 export interface ModelChoice {
   /** "<provider>/<model>" */
@@ -39,6 +39,14 @@ function groups(providers: Record<string, ProviderConfig>): string[][] {
     byKey.set(k, [...(byKey.get(k) ?? []), name]);
   }
   return [...byKey.values()];
+}
+
+/**
+ * A custom OpenAI-style server not told apart. LM Studio set up before sasacode knew it is one
+ * (`endpoint add` wrote no flag, a URL-only entry was cached without one) until it is listed (#59).
+ */
+export function untold(name: string, p: ProviderConfig | undefined): boolean {
+  return p?.api === "openai-chat" && !!p.baseUrl && !BUILTIN_PROVIDERS[name] && !p.ollama && !p.llamacpp && !p.lmstudio;
 }
 
 /** Models the configured providers offer, fetched from their Models API (GET /v1/models). */
@@ -105,6 +113,10 @@ export class ModelCatalog {
       impl = getProvider(p.api);
     } catch {}
     const signal = AbortSignal.timeout(8000);
+    // Asked when listed, not at startup: a server that is down delays nothing, and LM Studio with no
+    // model downloaded when it was detected is still recognised later. The flag stays on the
+    // provider for the session, so the turn_end refresh asks it too.
+    if (untold(primary, p) && (await lmstudioList(p, key, signal))) p.lmstudio = true;
     const models: ListedModel[] = impl?.listModels ? await impl.listModels(p, key, signal) : await listModels(p, key, signal);
     const server = p.ollama ? "ollama" : p.lmstudio ? "lmstudio" : p.llamacpp ? "llamacpp" : undefined;
     const out: ModelChoice[] = [];
