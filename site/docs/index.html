@@ -346,7 +346,7 @@ sasacode -m pgx/&lt;モデル名&gt;</code></pre>
       <div class="tbl"><table>
         <tr><th>API形式</th><th>送るもの</th></tr>
         <tr><td>Anthropic Messages</td><td>adaptive thinkingと <code>effort</code>。<code>off</code> ならthinkingを付けない</td></tr>
-        <tr><td>OpenAI Chat Completions（OpenAI互換の自前サーバーを含む）</td><td><code>reasoning_effort</code>。<code>off</code> も <code>none</code> として送る（vLLMなどは送らないと推論する）</td></tr>
+        <tr><td>OpenAI Chat Completions（OpenAI互換の自前サーバーを含む）</td><td><code>reasoning_effort</code>。<code>off</code> も <code>none</code> として送る（vLLMなどは送らないと推論する）。llama.cppでは、b10121より前のllama-serverが <code>reasoning_effort</code> を読まないので、<code>off</code> のときに <code>chat_template_kwargs</code> の <code>enable_thinking: false</code> も送る</td></tr>
         <tr><td>OpenAI Responses・ChatGPTプラン</td><td><code>reasoning.effort</code></td></tr>
       </table></div>
       <p>OpenAI形式のサーバーは受け付ける値がまちまちなので、断られたら次の候補で送り直し、通った値を覚えて次からはそれを使う（サーバーとモデルごと）。</p>
