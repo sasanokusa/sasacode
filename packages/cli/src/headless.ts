@@ -1,7 +1,8 @@
 import { existsSync } from "node:fs";
 import { type AgentEvent, type StopCause } from "@sasacode/agent";
 import { t } from "@sasacode/host";
-import { textOf } from "@sasacode/ai";
+import { fmtTokens, textOf } from "@sasacode/ai";
+import { untold } from "./catalog.ts";
 import { type ControlInput, startControl } from "./control.ts";
 import type { Harness } from "./setup.ts";
 
@@ -44,9 +45,19 @@ export async function runHeadless(h: Harness, prompt: string, output: "text" | "
   if (output === "jsonl") write(`${JSON.stringify({ type: "session", id: session?.id ?? null, path: session?.path ?? null })}\n`);
   // Through the writer above, so a control line never lands in the middle of an event.
   const controller = control && startControl(agent, control, (m) => write(`${JSON.stringify(m)}\n`));
+  // A local server knows the context the model really gets: asked while the plugins load, as the
+  // TUI does at startup, and with the TUI's warning when Ollama will cut the input short (#61).
+  // A custom server not told apart may be LM Studio added before sasacode knew it (#59).
+  const local = h.providers[agent.model.provider];
+  const listing = local?.ollama || local?.lmstudio || local?.llamacpp || untold(agent.model.provider, local) ? h.currentListing() : undefined;
   await h.loadPlugins();
   // Unlike the TUI, a one-shot run should start with MCP servers and similar tools connected.
   await h.host.settle();
+  const listed = await listing;
+  if (listed?.server === "ollama" && !listed.contextWindow && listed.maxContext) {
+    const warning = t("{spec} には num_ctx が設定されていません。Ollama を OLLAMA_CONTEXT_LENGTH で起動していなければ、Ollama の既定の長さ（数千トークン）を超えた入力は黙って切り詰められます。Modelfile に PARAMETER num_ctx 32768 などを書くか、OLLAMA_CONTEXT_LENGTH を設定してください（このモデルは最大 {max}）。", { spec: listed.spec, max: fmtTokens(listed.maxContext) });
+    process.stderr.write(`${t("warning: {warning}", { warning })}\n`);
+  }
   const onSigint = () => agent.abort();
   process.on("SIGINT", onSigint);
   let stoppedBy = "";

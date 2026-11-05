@@ -9,7 +9,7 @@ import { createSkillsPlugin } from "@sasacode/skills";
 import builtinTools from "@sasacode/tools";
 import { type Config, type ConfigFiles, DEFAULT_MAX_TURNS, loadConfig, sasacodeHome } from "./config.ts";
 import { discoverPlugins, type FoundPlugin, importExtensions } from "./loader.ts";
-import { type ModelChoice, ModelCatalog } from "./catalog.ts";
+import { type ModelChoice, ModelCatalog, untold } from "./catalog.ts";
 import { resolveEndpoints } from "./endpoints.ts";
 import { resolveApiKey } from "./keys.ts";
 import { readJson, writeJson } from "./json.ts";
@@ -60,6 +60,8 @@ export interface Harness {
   historyPath: string;
   /** Models offered by the providers you have keys for (fetched once, then cached). */
   listModels(refresh?: boolean): Promise<ModelChoice[]>;
+  /** What the current model's provider alone lists for it (cached); the model takes in the size it reports. */
+  currentListing(): Promise<ModelChoice | undefined>;
   /** -m: fails when the provider lists its models and `spec` is not one of them. */
   checkModel(spec: string): Promise<void>;
   /** Load bundled, MCP, Skills and third-party plugins, then start the session. Safe to call once. */
@@ -124,6 +126,39 @@ export async function setup(opts: SetupOptions): Promise<Harness> {
     providers,
     (p) => resolveApiKey(p, providers[p]),
     () => agent.model.provider,
+  );
+  const current = () => `${agent.model.provider}/${agent.model.id}`;
+  /** The current model may just have learned its real context window, or which server it runs on (#59). */
+  const adopt = () => {
+    const fresh = resolve(current());
+    if (catalog.discovered.has(current()) || fresh.server !== agent.model.server) agent.model = fresh;
+  };
+  // A model Ollama (without num_ctx) or LM Studio has not loaded yet is listed with its maximum
+  // only; once it has answered, the server says what it was loaded with. Asked at the end of its
+  // turn and before the plugins' turn_end hooks (registered later), so that turn's compaction
+  // threshold already uses the real size (#61). While the size stays unknown (the server was down
+  // when listed, the refresh failed, it reported none) it is asked again at the next turns' ends,
+  // three times in all. A contextWindow in modelOverrides is the user's: nothing is asked for it.
+  // A custom server not told apart may be LM Studio that was down when listed (#59). One that has
+  // listed the model, and is still not told apart, is not. One that has not is listed again once:
+  // it has just answered the turn, so it is up, and one still not told apart then is not asked
+  // again. Telling a server apart is the provider's, so it is counted by the provider's name.
+  const asked = new Map<string, number>();
+  agent.hooks.on(
+    "turn_end",
+    async () => {
+      const spec = current();
+      const name = agent.model.provider;
+      const p = providers[name];
+      const key = () => (untold(name, p) ? name : spec);
+      const n = asked.get(key()) ?? 0;
+      if (!(p?.ollama || p?.lmstudio || untold(name, p)) || n >= 3 || config.modelOverrides?.[spec]?.contextWindow) return;
+      const listed = await catalog.entry(spec);
+      const done = listed?.contextWindow || (listed && untold(name, p)) || (await catalog.entry(spec, true))?.contextWindow || untold(name, p);
+      asked.set(key(), done ? 3 : n + 1);
+      adopt();
+    },
+    "sasacode",
   );
 
   const disabled = new Set(config.plugins?.disabled ?? []);
@@ -249,10 +284,13 @@ export async function setup(opts: SetupOptions): Promise<Harness> {
     historyPath: join(home, "history.jsonl"),
     async listModels(refresh) {
       const models = await catalog.list(refresh);
-      // The current model may just have learned its real context window.
-      const current = `${agent.model.provider}/${agent.model.id}`;
-      if (catalog.discovered.has(current)) agent.model = resolve(current);
+      adopt();
       return models;
+    },
+    async currentListing() {
+      const listed = await catalog.entry(current());
+      adopt();
+      return listed;
     },
     async checkModel(spec) {
       // Names sasacode or the config already knows are taken as they are (aliases are not always listed).

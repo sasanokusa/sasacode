@@ -6,7 +6,7 @@ export interface ListedModel {
   id: string;
   /** The context the server actually uses for this model. */
   contextWindow?: number;
-  /** The most the model supports, when the effective size is not known (Ollama without num_ctx). */
+  /** The most the model supports, when the effective size is not known (Ollama without num_ctx, LM Studio before loading). */
   maxContext?: number;
   maxOutput?: number;
   /** Endpoints the model answers on, when the provider says (e.g. Command Code: "/messages"). */
@@ -49,8 +49,11 @@ export function parsePricing(pricing: unknown): ModelInfo["price"] | undefined {
   };
 }
 
-/** GET <baseUrl>/models (the Models API) for one provider. Throws on network or auth errors. */
-export async function listModels(p: ProviderConfig, apiKey: string | undefined, signal?: AbortSignal): Promise<ListedModel[]> {
+/**
+ * GET <baseUrl>/models (the Models API) for one provider. Throws on network or auth errors.
+ * `lmstudio`: LM Studio's native list, when it was just fetched (not asked for again).
+ */
+export async function listModels(p: ProviderConfig, apiKey: string | undefined, signal?: AbortSignal, lmstudio?: LmStudioModel[]): Promise<ListedModel[]> {
   const out: ListedModel[] = [];
   const num = (v: unknown) => (typeof v === "number" && v > 0 ? v : undefined);
   if (p.api === "anthropic") {
@@ -82,6 +85,7 @@ export async function listModels(p: ProviderConfig, apiKey: string | undefined, 
     await Promise.all(chat.map((m) => ollamaDetails(p, m, loaded, signal)));
   }
   if (p.llamacpp) await llamacppContext(p, chat, signal);
+  if (p.lmstudio) lmstudioContext(chat, lmstudio ?? (await lmstudioList(p, apiKey, signal)));
   return chat;
 }
 
@@ -95,6 +99,44 @@ async function llamacppContext(p: ProviderConfig, models: ListedModel[], signal?
     const nCtx = props.default_generation_settings?.n_ctx;
     if (typeof nCtx === "number" && nCtx > 0) for (const m of models) m.contextWindow = nCtx;
   } catch {}
+}
+
+export interface LmStudioModel {
+  id: string;
+  max_context_length: number;
+  /** Only while the model is loaded (or loading). */
+  loaded_context_length?: number;
+}
+
+/** LM Studio's native model list (0.3.6+), or undefined when `root` is not LM Studio. */
+export async function lmstudioModels(root: string, headers?: Record<string, string>, signal?: AbortSignal): Promise<LmStudioModel[] | undefined> {
+  try {
+    const res = await fetch(`${root}/api/v0/models`, { headers, signal });
+    const data = res.ok ? ((await res.json()) as { data?: unknown }).data : undefined;
+    // Every entry carries max_context_length: an OpenAI-style list served at any path has none.
+    return Array.isArray(data) && data.length && data.every((m) => typeof m?.max_context_length === "number") ? data : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** lmstudioModels for a configured provider. */
+export const lmstudioList = (p: ProviderConfig, apiKey: string | undefined, signal?: AbortSignal) =>
+  lmstudioModels((p.baseUrl ?? "").replace(/\/v1\/?$/, ""), { ...p.headers, ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}) }, signal);
+
+/**
+ * LM Studio's /v1/models has no sizes; /api/v0/models has each model's maximum and, while it is
+ * loaded, the context it was loaded with. A model is loaded with LM Studio's own default length
+ * (often 4096), not its maximum, so before that the maximum is only shown, as for Ollama without
+ * num_ctx, and the size is asked again once the model has answered.
+ */
+function lmstudioContext(models: ListedModel[], list: LmStudioModel[] | undefined): void {
+  const native = new Map(list?.map((m) => [m.id, m] as const));
+  for (const m of models) {
+    const n = native.get(m.id);
+    if (n?.loaded_context_length) m.contextWindow = n.loaded_context_length;
+    else if (n) m.maxContext = n.max_context_length;
+  }
 }
 
 const ollamaRoot = (p: ProviderConfig) => (p.baseUrl ?? "http://localhost:11434/v1").replace(/\/v1\/?$/, "");

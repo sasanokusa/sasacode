@@ -7,6 +7,7 @@ import { listModels } from "../src/list-models.ts";
 import { detectEndpoint } from "../src/detect.ts";
 import { loadConfig } from "../src/config.ts";
 import { resolveEndpoints } from "../src/endpoints.ts";
+import { ModelCatalog } from "../src/catalog.ts";
 import { setup } from "../src/setup.ts";
 import { setLang } from "@sasacode/host";
 
@@ -30,7 +31,27 @@ const llamacpp = Bun.serve({
   },
 });
 const keyed = Bun.serve({ port: 0, fetch: (req) => (req.headers.get("authorization") === "Bearer secret" ? Response.json({ object: "list", data: [{ id: "m", object: "model" }] }) : new Response("", { status: 401 })) });
-afterAll(() => [anthropic, llamacpp, keyed].forEach((s) => s.stop(true)));
+// LM Studio (0.3.6+): /v1/models without sizes, the native /api/v0/models with them. One model is
+// loaded (at LM Studio's default length, not its maximum), one is not, one is an embedding model.
+const lmstudio = Bun.serve({
+  port: 0,
+  fetch: (req) => {
+    const p = new URL(req.url).pathname;
+    const ids = ["qwen-loaded", "qwen-cold", "text-embedding-nomic"];
+    if (p === "/v1/models") return Response.json({ object: "list", data: ids.map((id) => ({ id, object: "model", owned_by: "organization_owner" })) });
+    if (p === "/api/v0/models")
+      return Response.json({
+        object: "list",
+        data: [
+          { id: "qwen-loaded", object: "model", type: "llm", state: "loaded", max_context_length: 131072, loaded_context_length: 4096 },
+          { id: "qwen-cold", object: "model", type: "llm", state: "not-loaded", max_context_length: 32768 },
+          { id: "text-embedding-nomic", object: "model", type: "embeddings", state: "not-loaded", max_context_length: 2048 },
+        ],
+      });
+    return new Response("", { status: 404 });
+  },
+});
+afterAll(() => [anthropic, llamacpp, keyed, lmstudio].forEach((s) => s.stop(true)));
 
 const base = mkdtempSync(join(tmpdir(), "sasacode-endpoints-"));
 let home = "";
@@ -57,6 +78,28 @@ test("lists models from both kinds, with context sizes", async () => {
   expect(a).toEqual([{ id: "claude-local", contextWindow: 200_000, maxOutput: undefined, endpoints: ["/messages"] }]);
   const l = await listModels({ api: "openai-chat", baseUrl: `http://localhost:${llamacpp.port}/v1`, llamacpp: true }, undefined);
   expect(l[0]).toMatchObject({ id: "qwen", contextWindow: 8192, maxContext: 131072 }); // /props wins over meta.n_ctx
+});
+
+test("LM Studio is told apart by /api/v0/models: a loaded model's size is what it was loaded with, the maximum is only shown (#59)", async () => {
+  const url = `http://localhost:${lmstudio.port}`;
+  expect(await detectEndpoint(url)).toEqual({ api: "openai-chat", baseUrl: `${url}/v1`, lmstudio: true });
+  const providers: Record<string, Partial<ProviderConfig>> = { studio: { baseUrl: url } };
+  await resolveEndpoints(providers, async () => undefined, []);
+  expect(providers.studio).toEqual({ api: "openai-chat", baseUrl: `${url}/v1`, lmstudio: true });
+  const listed = await listModels(providers.studio as ProviderConfig, undefined);
+  expect(listed.map(({ id, contextWindow, maxContext }) => ({ id, contextWindow, maxContext }))).toEqual([
+    { id: "qwen-loaded", contextWindow: 4096, maxContext: undefined },
+    { id: "qwen-cold", contextWindow: undefined, maxContext: 32768 },
+  ]);
+  // In the catalog: the maximum is not a size requests get, so the model's size stays unknown; it
+  // is planned with only because it is below the default (no request can get more).
+  const catalog = new ModelCatalog({ studio: providers.studio as ProviderConfig }, async () => undefined, () => "studio");
+  expect(await catalog.list()).toEqual([
+    { spec: "studio/qwen-loaded", contextWindow: 4096, maxContext: undefined, server: "lmstudio" },
+    { spec: "studio/qwen-cold", contextWindow: undefined, maxContext: 32768, server: "lmstudio" },
+  ]);
+  expect(catalog.discovered.get("studio/qwen-loaded")).toEqual({ contextWindow: 4096 });
+  expect(catalog.discovered.get("studio/qwen-cold")).toEqual({ contextWindow: 32768 });
 });
 
 test("URL-only providers are detected at startup, cached, and dropped with a warning when unreachable", async () => {
@@ -104,6 +147,22 @@ test("endpoints in a project config need trust (even keyless ones would receive 
   expect(config.providers?.mine?.baseUrl).toBe("https://good.example/v1");
   expect(warnings.at(-1)).toContain("endpoint lan (http://192.168.1.20:8080)");
   expect(loadConfig(proj, true).config.providers?.lan).toEqual({ baseUrl: "http://192.168.1.20:8080" });
+});
+
+test("endpoint add says it found LM Studio, and saves the flag", async () => {
+  const { endpointCommand } = await import("../src/endpoints.ts");
+  const url = `http://localhost:${lmstudio.port}`;
+  const said: string[] = [];
+  const log = console.log;
+  console.log = (s: string) => void said.push(s);
+  try {
+    expect(await endpointCommand(["add", "studio", url], proj)).toBe(0);
+  } finally {
+    console.log = log;
+  }
+  expect(said[0]).toBe(`studio: OpenAI Chat Completions (LM Studio) at ${url}/v1`);
+  expect(said[1]).toContain("studio/qwen-loaded  (4096 ctx)");
+  expect(JSON.parse(readFileSync(join(home, "config.json"), "utf8")).providers.studio).toEqual({ api: "openai-chat", baseUrl: `${url}/v1`, lmstudio: true });
 });
 
 test("endpoint add stops on a config it cannot read instead of overwriting it", async () => {

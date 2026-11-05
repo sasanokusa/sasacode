@@ -77,6 +77,9 @@ export function defaultModelFor(providers: Record<string, ProviderConfig>, env: 
   return DEFAULT_MODEL;
 }
 
+/** What a model neither the provider nor the table of known models has a size for plans with. */
+export const DEFAULT_CONTEXT_WINDOW = 128_000;
+
 export function resolveModel(
   spec: string,
   providers: Record<string, ProviderConfig>,
@@ -95,7 +98,7 @@ export function resolveModel(
     api: p.api,
     baseUrl: p.baseUrl,
     headers: p.headers,
-    contextWindow: known?.contextWindow ?? 128_000,
+    contextWindow: known?.contextWindow ?? DEFAULT_CONTEXT_WINDOW,
     maxOutput: known?.maxOutput ?? 32_000,
     price: known?.price,
     // Unknown models are assumed to reason: the effort is sent, and dropped if the server refuses it.

@@ -68,7 +68,7 @@ export async function endpointCommand(args: string[], cwd: string): Promise<numb
     if (keyEnv && !key) console.error(t("warning: {keyEnv} is not set; detecting without a key", { keyEnv }));
     const found = await detectEndpoint(url, key, AbortSignal.timeout(10_000));
     const provider: Partial<ProviderConfig> = { ...applyDetected({}, found), ...(keyEnv ? { apiKeyEnv: keyEnv } : {}) };
-    const flavour = found.llamacpp ? " (llama.cpp)" : found.ollama ? " (Ollama)" : "";
+    const flavour = found.llamacpp ? " (llama.cpp)" : found.ollama ? " (Ollama)" : found.lmstudio ? " (LM Studio)" : "";
     console.log(
       t("{name}: {api}{flavour} at {url}", {
         name,

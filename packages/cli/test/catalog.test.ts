@@ -31,8 +31,11 @@ const providers: Record<string, ProviderConfig> = {
 
 test("lists each service once, routes models to the provider speaking their endpoint, keeps context windows", async () => {
   const catalog = new ModelCatalog(providers, async (p) => (p.startsWith("svc") ? "k" : undefined), () => "svc");
-  const specs = (await catalog.list()).map((m) => m.spec);
-  expect(specs).toEqual(["svc-anthropic/claude-x", "svc/gpt-y", "svc/plain"]);
+  const listed = await catalog.list();
+  expect(listed.map((m) => m.spec)).toEqual(["svc-anthropic/claude-x", "svc/gpt-y", "svc/plain"]);
+  // svc has no flag, so it is asked whether it is LM Studio: this server answers /api/v0/models with
+  // its OpenAI-style list too, which has no max_context_length and so is not LM Studio's.
+  expect(listed.some((m) => m.server) || providers.svc!.lmstudio).toBeFalsy();
   expect(catalog.discovered.get("svc/gpt-y")).toEqual({ contextWindow: 400_000 });
   expect(catalog.discovered.get("svc-anthropic/claude-x")).toEqual({ contextWindow: 1_000_000 });
 });
@@ -47,6 +50,20 @@ test("providers without a key are skipped, and failures just yield nothing", asy
   expect(calls).toBe(1);
   await cached.list(true);
   expect(calls).toBe(2);
+});
+
+test("a refresh that fails keeps the last listing: the server's models stay in /model", async () => {
+  let up = true;
+  const flaky = Bun.serve({ port: 0, fetch: () => (up ? Response.json({ object: "list", data: [{ id: "m", object: "model" }] }) : new Response("", { status: 404 })) });
+  try {
+    const catalog = new ModelCatalog({ svc: { api: "openai-chat", baseUrl: `http://localhost:${flaky.port}/v1` } }, async () => undefined, () => "svc");
+    expect((await catalog.list()).map((m) => m.spec)).toEqual(["svc/m"]);
+    up = false;
+    expect((await catalog.list(true)).map((m) => m.spec)).toEqual(["svc/m"]);
+    expect((await catalog.entry("svc/m", true))?.spec).toBe("svc/m");
+  } finally {
+    flaky.stop(true);
+  }
 });
 
 test("Ollama: num_ctx is the context window, otherwise the trained maximum is shown; OpenAI falls back to known sizes", async () => {
@@ -77,8 +94,8 @@ test("Ollama: num_ctx is the context window, otherwise the trained maximum is sh
       () => "local",
     );
     const byId = Object.fromEntries((await catalog.list()).map((m) => [m.spec, m]));
-    expect(byId["local/small-32k"]).toEqual({ spec: "local/small-32k", contextWindow: 32768, maxContext: undefined });
-    expect(byId["local/plain"]).toEqual({ spec: "local/plain", contextWindow: undefined, maxContext: 131072 });
+    expect(byId["local/small-32k"]).toEqual({ spec: "local/small-32k", contextWindow: 32768, maxContext: undefined, server: "ollama" });
+    expect(byId["local/plain"]).toEqual({ spec: "local/plain", contextWindow: undefined, maxContext: 131072, server: "ollama" });
     expect(catalog.discovered.get("local/small-32k")).toEqual({ contextWindow: 32768 }); // used for thresholds too
     expect(catalog.discovered.has("local/plain")).toBe(false); // the maximum is not what requests get
     expect(byId["oa/gpt-5.5"]!.contextWindow).toBe(400_000);

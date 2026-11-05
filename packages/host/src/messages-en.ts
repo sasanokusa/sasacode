@@ -50,6 +50,8 @@ export const TO_EN: Record<string, string> = {
   "モデル一覧を取得できませんでした: {error}": "Could not list models: {error}",
   "プロバイダーからモデル一覧を取得しています…": "Asking the providers for their models…",
   "最大 {size}（num_ctx 未設定）": "up to {size} (num_ctx not set)",
+  "最大 {size}（未ロード）": "up to {size} (not loaded yet)",
+  "最大 {size}": "up to {size}",
   "現在": "current",
   "モデルを選択（一覧にないモデルは /model <provider/model>）": "Choose a model (for one not listed: /model <provider/model>)",
   "モデル: {spec}": "Model: {spec}",
