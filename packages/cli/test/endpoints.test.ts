@@ -7,6 +7,7 @@ import { listModels } from "../src/list-models.ts";
 import { detectEndpoint } from "../src/detect.ts";
 import { loadConfig } from "../src/config.ts";
 import { resolveEndpoints } from "../src/endpoints.ts";
+import { ModelCatalog } from "../src/catalog.ts";
 import { setup } from "../src/setup.ts";
 import { setLang } from "@sasacode/host";
 
@@ -30,7 +31,27 @@ const llamacpp = Bun.serve({
   },
 });
 const keyed = Bun.serve({ port: 0, fetch: (req) => (req.headers.get("authorization") === "Bearer secret" ? Response.json({ object: "list", data: [{ id: "m", object: "model" }] }) : new Response("", { status: 401 })) });
-afterAll(() => [anthropic, llamacpp, keyed].forEach((s) => s.stop(true)));
+// LM Studio (0.3.6+): /v1/models without sizes, the native /api/v0/models with them. One model is
+// loaded (at LM Studio's default length, not its maximum), one is not, one is an embedding model.
+const lmstudio = Bun.serve({
+  port: 0,
+  fetch: (req) => {
+    const p = new URL(req.url).pathname;
+    const ids = ["qwen-loaded", "qwen-cold", "text-embedding-nomic"];
+    if (p === "/v1/models") return Response.json({ object: "list", data: ids.map((id) => ({ id, object: "model", owned_by: "organization_owner" })) });
+    if (p === "/api/v0/models")
+      return Response.json({
+        object: "list",
+        data: [
+          { id: "qwen-loaded", object: "model", type: "llm", state: "loaded", max_context_length: 131072, loaded_context_length: 4096 },
+          { id: "qwen-cold", object: "model", type: "llm", state: "not-loaded", max_context_length: 32768 },
+          { id: "text-embedding-nomic", object: "model", type: "embeddings", state: "not-loaded", max_context_length: 2048 },
+        ],
+      });
+    return new Response("", { status: 404 });
+  },
+});
+afterAll(() => [anthropic, llamacpp, keyed, lmstudio].forEach((s) => s.stop(true)));
 
 const base = mkdtempSync(join(tmpdir(), "sasacode-endpoints-"));
 let home = "";
@@ -57,6 +78,27 @@ test("lists models from both kinds, with context sizes", async () => {
   expect(a).toEqual([{ id: "claude-local", contextWindow: 200_000, maxOutput: undefined, endpoints: ["/messages"] }]);
   const l = await listModels({ api: "openai-chat", baseUrl: `http://localhost:${llamacpp.port}/v1`, llamacpp: true }, undefined);
   expect(l[0]).toMatchObject({ id: "qwen", contextWindow: 8192, maxContext: 131072 }); // /props wins over meta.n_ctx
+});
+
+test("LM Studio is told apart by /api/v0/models: a loaded model's size is what it was loaded with, the maximum is only shown (#59)", async () => {
+  const url = `http://localhost:${lmstudio.port}`;
+  expect(await detectEndpoint(url)).toEqual({ api: "openai-chat", baseUrl: `${url}/v1`, lmstudio: true });
+  const providers: Record<string, Partial<ProviderConfig>> = { studio: { baseUrl: url } };
+  await resolveEndpoints(providers, async () => undefined, []);
+  expect(providers.studio).toEqual({ api: "openai-chat", baseUrl: `${url}/v1`, lmstudio: true });
+  const listed = await listModels(providers.studio as ProviderConfig, undefined);
+  expect(listed.map(({ id, contextWindow, maxContext }) => ({ id, contextWindow, maxContext }))).toEqual([
+    { id: "qwen-loaded", contextWindow: 4096, maxContext: undefined },
+    { id: "qwen-cold", contextWindow: undefined, maxContext: 32768 },
+  ]);
+  // In the catalog: the maximum is not a size requests get, so it is not used for the thresholds.
+  const catalog = new ModelCatalog({ studio: providers.studio as ProviderConfig }, async () => undefined, () => "studio");
+  expect(await catalog.list()).toEqual([
+    { spec: "studio/qwen-loaded", contextWindow: 4096, maxContext: undefined, server: "lmstudio" },
+    { spec: "studio/qwen-cold", contextWindow: undefined, maxContext: 32768, server: "lmstudio" },
+  ]);
+  expect(catalog.discovered.get("studio/qwen-loaded")).toEqual({ contextWindow: 4096 });
+  expect(catalog.discovered.has("studio/qwen-cold")).toBe(false);
 });
 
 test("URL-only providers are detected at startup, cached, and dropped with a warning when unreachable", async () => {

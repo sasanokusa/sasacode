@@ -77,8 +77,8 @@ test("Ollama: num_ctx is the context window, otherwise the trained maximum is sh
       () => "local",
     );
     const byId = Object.fromEntries((await catalog.list()).map((m) => [m.spec, m]));
-    expect(byId["local/small-32k"]).toEqual({ spec: "local/small-32k", contextWindow: 32768, maxContext: undefined });
-    expect(byId["local/plain"]).toEqual({ spec: "local/plain", contextWindow: undefined, maxContext: 131072 });
+    expect(byId["local/small-32k"]).toEqual({ spec: "local/small-32k", contextWindow: 32768, maxContext: undefined, server: "ollama" });
+    expect(byId["local/plain"]).toEqual({ spec: "local/plain", contextWindow: undefined, maxContext: 131072, server: "ollama" });
     expect(catalog.discovered.get("local/small-32k")).toEqual({ contextWindow: 32768 }); // used for thresholds too
     expect(catalog.discovered.has("local/plain")).toBe(false); // the maximum is not what requests get
     expect(byId["oa/gpt-5.5"]!.contextWindow).toBe(400_000);

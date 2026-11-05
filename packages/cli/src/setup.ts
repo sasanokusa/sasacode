@@ -60,6 +60,8 @@ export interface Harness {
   historyPath: string;
   /** Models offered by the providers you have keys for (fetched once, then cached). */
   listModels(refresh?: boolean): Promise<ModelChoice[]>;
+  /** What the current model's provider alone lists for it (cached); the model takes in the size it reports. */
+  currentListing(): Promise<ModelChoice | undefined>;
   /** -m: fails when the provider lists its models and `spec` is not one of them. */
   checkModel(spec: string): Promise<void>;
   /** Load bundled, MCP, Skills and third-party plugins, then start the session. Safe to call once. */
@@ -124,6 +126,30 @@ export async function setup(opts: SetupOptions): Promise<Harness> {
     providers,
     (p) => resolveApiKey(p, providers[p]),
     () => agent.model.provider,
+  );
+  const current = () => `${agent.model.provider}/${agent.model.id}`;
+  /** The current model may just have learned its real context window. */
+  const adopt = () => {
+    if (catalog.discovered.has(current())) agent.model = resolve(current());
+  };
+  // A model Ollama (without num_ctx) or LM Studio has not loaded yet is listed with its maximum
+  // only; once it has answered, the server says what it was loaded with. Asked once per model, at
+  // the end of its first turn and before the plugins' turn_end hooks (registered later), so that
+  // turn's compaction threshold already uses the real size (#61). A contextWindow in modelOverrides
+  // is the user's: nothing is asked for it (and it would win anyway).
+  const asked = new Set<string>();
+  agent.hooks.on(
+    "turn_end",
+    async () => {
+      const spec = current();
+      const p = providers[agent.model.provider];
+      if (!(p?.ollama || p?.lmstudio) || asked.has(spec) || config.modelOverrides?.[spec]?.contextWindow) return;
+      asked.add(spec);
+      const listed = await catalog.entry(spec);
+      if (listed && !listed.contextWindow && listed.maxContext) await catalog.entry(spec, true);
+      adopt();
+    },
+    "sasacode",
   );
 
   const disabled = new Set(config.plugins?.disabled ?? []);
@@ -249,10 +275,13 @@ export async function setup(opts: SetupOptions): Promise<Harness> {
     historyPath: join(home, "history.jsonl"),
     async listModels(refresh) {
       const models = await catalog.list(refresh);
-      // The current model may just have learned its real context window.
-      const current = `${agent.model.provider}/${agent.model.id}`;
-      if (catalog.discovered.has(current)) agent.model = resolve(current);
+      adopt();
       return models;
+    },
+    async currentListing() {
+      const listed = await catalog.entry(current());
+      adopt();
+      return listed;
     },
     async checkModel(spec) {
       // Names sasacode or the config already knows are taken as they are (aliases are not always listed).

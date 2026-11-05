@@ -163,11 +163,11 @@ sasacode endpoint list
 sasacode -m llama/<モデル名>
 ```
 
-`GET /v1/models` の応答から、OpenAI形式（Chat Completionsで呼ぶ）かAnthropic形式（Messagesで呼ぶ）かを自動で判別し、URLも各形式のSDKに合わせて整える。llama.cppとOllamaは、それぞれ `/props` と `/api/show` から実際のコンテキスト長も取る。追加したサーバーのモデルは、`/model` の一覧に自動で出る。設定ファイルに `"providers": { "llama": { "baseUrl": "http://…" } }` とURLだけ書いた場合も、起動時に判別する（結果は `~/.sasacode/endpoints.json` にキャッシュする）。
+`GET /v1/models` の応答から、OpenAI形式（Chat Completionsで呼ぶ）かAnthropic形式（Messagesで呼ぶ）かを自動で判別し、URLも各形式のSDKに合わせて整える。llama.cpp、Ollama、LM Studio（0.3.6以降）は、それぞれ `/props`、`/api/show`、`/api/v0/models` から実際のコンテキスト長も取る。追加したサーバーのモデルは、`/model` の一覧に自動で出る。設定ファイルに `"providers": { "llama": { "baseUrl": "http://…" } }` とURLだけ書いた場合も、起動時に判別する（結果は `~/.sasacode/endpoints.json` にキャッシュする）。
 
 プロジェクトの `.sasacode/config.json` に書いたエンドポイントは、そのプロジェクトを信頼するまで使わない（[プロジェクトの信頼](#プロジェクトの信頼)）。キーを使わないサーバーでも、会話とコードが送られるため。
 
-**モデル一覧の自動取得**：TUIの起動時に、キーのあるプロバイダー（とOllama）のModels API（`GET /v1/models`）をバックグラウンドで呼び、`/model` に一覧とコンテキスト長を出す。取得したコンテキスト長は、フッターの使用率や圧縮のしきい値にも使う（設定の `modelOverrides` があればそちらが優先）。Ollamaは独自の `/api/show` から読み、Modelfileの `num_ctx` があればそれを実際の長さとして使い、なければモデルの最大長を参考として表示する（メモリに載っているモデルは `/api/ps` の実際の長さを使う）。`num_ctx` のないモデルを選ぶと、Ollamaが既定の長さを超えた入力を気づかないうちに切り詰めることを一度だけ警告する。OpenAIのModels APIはコンテキスト長を返さないので、組み込みのモデル表の値で補う。Command Codeのように1つのキーで複数のAPI形式を提供するサービスでは、モデルごとに対応する形式のプロバイダーへ自動で振り分ける（例：Claude系は `commandcode-anthropic/…`）。
+**モデル一覧の自動取得**：TUIの起動時に、キーのあるプロバイダー（とOllama）のModels API（`GET /v1/models`）をバックグラウンドで呼び、`/model` に一覧とコンテキスト長を出す。取得したコンテキスト長は、フッターの使用率や圧縮のしきい値にも使う（設定の `modelOverrides` があればそちらが優先）。Ollamaは独自の `/api/show` から読み、Modelfileの `num_ctx` があればそれを実際の長さとして使い、なければモデルの最大長を参考として表示する（メモリに載っているモデルは `/api/ps` の実際の長さを使う）。LM Studioも同じで、ロード済みのモデルはロードしたときの長さ（`/api/v0/models` の `loaded_context_length`）を使い、未ロードのモデルは最大長を参考として表示する（LM Studioは最大長ではなく自分の既定の長さでロードするため）。長さがまだ分からないOllamaとLM Studioのモデルは、最初の応答の後に一度だけサーバーに聞き直し、実際にロードされた長さに切り替える。`num_ctx` のないOllamaのモデルを選ぶと、Ollamaが既定の長さを超えた入力を気づかないうちに切り詰めることを一度だけ警告する。ヘッドレス（`-p`）でも、ローカルのサーバー（Ollama、LM Studio、llama.cpp）なら実行の前に現在のモデルの長さを聞き、同じ警告を標準エラーに出す。OpenAIのModels APIはコンテキスト長を返さないので、組み込みのモデル表の値で補う。Command Codeのように1つのキーで複数のAPI形式を提供するサービスでは、モデルごとに対応する形式のプロバイダーへ自動で振り分ける（例：Claude系は `commandcode-anthropic/…`）。
 
 **APIキー**は次の順で探す：シェルの環境変数 → `~/.sasacode/.env` → OSキーチェーン（macOS: `security add-generic-password -s sasacode -a <provider> -w`、Linux: `secret-tool store --label sasacode service sasacode account <provider>`）。どこでも空欄は無視する。作業ディレクトリの `.env` と `bunfig.toml` は読まない（リポジトリが `ANTHROPIC_BASE_URL` などで接続先を差し替えたり、起動時にスクリプトを実行させたりできないようにするため）。セッションのログには、使用中のキーを `[REDACTED]` に置き換えてから書く。`~/.sasacode/.env` にだけ書いたキーは、エージェントが実行するコマンド（bash、バックグラウンドジョブ）には渡さない。`~/.sasacode`（セッションのログ、入力履歴、長い出力の保存先 `tmp/`）は本人しか読めない権限（0700）にする。
 

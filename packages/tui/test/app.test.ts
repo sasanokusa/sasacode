@@ -162,7 +162,7 @@ test("lang en: the approval prompt, the footer and /help are in English", async 
 });
 
 test("a model without num_ctx gets one warning, at startup and not again on /model", async () => {
-  const { term } = await start([], "edits", [{ spec: "t/m", maxContext: 262_144 }]);
+  const { term } = await start([], "edits", [{ spec: "t/m", maxContext: 262_144, server: "ollama" }]);
   await Bun.sleep(50);
   expect(term.text()).toContain("t/m には num_ctx が設定されていません");
   const before = term.out.length;
@@ -183,6 +183,29 @@ test("/model completion shows a long model id whole, as the picker does", async 
   expect(term.text(from)).toContain(`${long}-2`);
   await term.send("\x03");
   await term.type("/exit"); await term.send("\r"); await exited;
+});
+
+test("an LM Studio model not loaded yet gets no num_ctx warning, and the picker says it is not loaded (#59)", async () => {
+  const { term } = await start([], "edits", [{ spec: "t/m", maxContext: 32_768, server: "lmstudio" }]);
+  await Bun.sleep(50);
+  expect(term.text()).not.toContain("num_ctx");
+  const before = term.out.length;
+  await term.type("/model");
+  await term.send("\r");
+  await Bun.sleep(50);
+  expect(term.text(before)).toContain("最大 32k（未ロード）");
+  expect(term.text(before)).not.toContain("num_ctx");
+});
+
+test("a context window learned at a turn's end shows in the footer when the run ends (#61)", async () => {
+  const { term, agent } = await start([reply([{ type: "text", text: "ok" }])]);
+  agent.hooks.on("turn_end", () => void (agent.model = { ...model, contextWindow: 8192 }), "test");
+  expect(term.text()).toContain("/100k");
+  const before = term.out.length;
+  await term.type("hi");
+  await term.send("\r");
+  await Bun.sleep(150);
+  expect(term.text(before)).toContain("/8k");
 });
 
 test("a model whose size is known gets no warning", async () => {

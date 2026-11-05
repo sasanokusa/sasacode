@@ -62,6 +62,10 @@ function clip(s: string, n: number): string {
   return all.length > n ? `${all.slice(0, n - 1).map((g) => g.segment).join("")}…` : s;
 }
 
+/** A model's maximum, when the size the server will give it is not known yet, and why. */
+const maxLabel = (server: string | undefined, size: string) =>
+  server === "ollama" ? t("最大 {size}（num_ctx 未設定）", { size }) : server === "lmstudio" ? t("最大 {size}（未ロード）", { size }) : t("最大 {size}", { size });
+
 /** A paste up to this size is shown in the input as it is; a longer one is folded into a marker. */
 const SHOWN_PASTE_LINES = 40;
 const SHOWN_PASTE_CHARS = 4000;
@@ -74,7 +78,8 @@ export interface TuiHost {
   resolve(spec: string): ModelInfo;
   sessionsDir: string;
   historyPath?: string;
-  listModels(refresh?: boolean): Promise<{ spec: string; contextWindow?: number; maxContext?: number }[]>;
+  /** `maxContext` without `contextWindow`: the size the server will use is not known yet (`server` says why). */
+  listModels(refresh?: boolean): Promise<{ spec: string; contextWindow?: number; maxContext?: number; server?: string }[]>;
   loadPlugins(ui: UIBridge): Promise<void>;
   loadSession(path: string): Promise<void>;
   newSession(): Promise<void>;
@@ -410,6 +415,9 @@ class App {
 
   private onEvent(e: AgentEvent): void {
     switch (e.type) {
+      case "turn_start":
+        this.updateFooter(); // the model may have learned its real context window at the last turn's end
+        break;
       case "agent_start":
         this.runStarted = Date.now();
         this.activity = new Activity(this.tui, c.cyan, c.gray);
@@ -546,6 +554,7 @@ class App {
         if (e.cause === "context_limit")
           this.chat.addChild(new Notice(t("コンテキストの上限に達したため停止しました。/compact で要約するか、/clear で新しいセッションを始めてください。"), c.yellow));
         if (e.cause === "stopped" && e.stopped) this.chat.addChild(new Notice(t("{plugin} が停止しました: {reason}", { plugin: e.stopped.plugin, reason: e.stopped.reason }), c.yellow));
+        this.updateFooter();
         this.renderStatus();
         break;
     }
@@ -738,7 +747,7 @@ class App {
     if (!quick) this.notify(t("プロバイダーからモデル一覧を取得しています…"));
     const listed = quick ?? (await pending);
     const size = new Map(
-      listed.map((m) => [m.spec, m.contextWindow ? `${fmtTokens(m.contextWindow)} ctx` : m.maxContext ? t("最大 {size}（num_ctx 未設定）", { size: fmtTokens(m.maxContext) }) : ""]),
+      listed.map((m) => [m.spec, m.contextWindow ? `${fmtTokens(m.contextWindow)} ctx` : m.maxContext ? maxLabel(m.server, fmtTokens(m.maxContext)) : ""]),
     );
     const specs = [...new Set([current, ...(this.host.config.models ?? []), ...listed.map((m) => m.spec)])];
     return specs.map((s) => ({
@@ -771,7 +780,7 @@ class App {
     const spec = `${provider}/${id}`;
     if (this.warnedContext.has(spec)) return;
     const listed = (await this.host.listModels().catch(() => [])).find((m) => m.spec === spec);
-    if (!listed || listed.contextWindow || !listed.maxContext) return;
+    if (!listed || listed.contextWindow || !listed.maxContext || listed.server !== "ollama") return;
     this.warnedContext.add(spec);
     this.notify(t("{spec} には num_ctx が設定されていません。Ollama を OLLAMA_CONTEXT_LENGTH で起動していなければ、Ollama の既定の長さ（数千トークン）を超えた入力は黙って切り詰められます。Modelfile に PARAMETER num_ctx 32768 などを書くか、OLLAMA_CONTEXT_LENGTH を設定してください（このモデルは最大 {max}）。", { spec, max: fmtTokens(listed.maxContext) }), c.yellow);
   }

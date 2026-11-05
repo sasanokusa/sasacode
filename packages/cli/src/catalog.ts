@@ -7,8 +7,10 @@ export interface ModelChoice {
   spec: string;
   /** Effective context window: from the provider, else sasacode's table of known models. */
   contextWindow?: number;
-  /** The model's maximum, shown when the effective size is unknown (Ollama without num_ctx). */
+  /** The model's maximum, shown when the effective size is unknown (Ollama without num_ctx, LM Studio before loading). */
   maxContext?: number;
+  /** The local server it runs on: why the size may be unknown, and what to do about it. */
+  server?: "ollama" | "lmstudio" | "llamacpp";
 }
 
 const DEFAULT_HOST: Record<string, string> = {
@@ -43,7 +45,8 @@ function groups(providers: Record<string, ProviderConfig>): string[][] {
 export class ModelCatalog {
   /** Per spec, what the provider told us (context window, max output, price). */
   readonly discovered = new Map<string, Partial<ModelInfo>>();
-  private pending?: Promise<ModelChoice[]>;
+  /** Each group's listing, asked once (again on refresh). */
+  private lists = new Map<string, Promise<ModelChoice[]>>();
 
   constructor(
     private providers: Record<string, ProviderConfig>,
@@ -53,14 +56,26 @@ export class ModelCatalog {
   ) {}
 
   /** Cached after the first call; `refresh` fetches again. */
-  list(refresh = false): Promise<ModelChoice[]> {
-    if (refresh || !this.pending) this.pending = this.fetch();
-    return this.pending;
+  async list(refresh = false): Promise<ModelChoice[]> {
+    return (await Promise.all(groups(this.providers).map((g) => this.listGroup(g, refresh)))).flat();
   }
 
-  private async fetch(): Promise<ModelChoice[]> {
-    const lists = await Promise.all(groups(this.providers).map((g) => this.fetchGroup(g).catch(() => [])));
-    return lists.flat();
+  /** What the provider of `spec` lists for it; `refresh` asks that provider again, and no other. */
+  async entry(spec: string, refresh = false): Promise<ModelChoice | undefined> {
+    const group = this.groupOf(spec);
+    return group && (await this.listGroup(group, refresh)).find((m) => m.spec === spec);
+  }
+
+  private groupOf(spec: string): string[] | undefined {
+    const provider = spec.slice(0, spec.indexOf("/"));
+    return groups(this.providers).find((g) => g.includes(provider));
+  }
+
+  private listGroup(members: string[], refresh = false): Promise<ModelChoice[]> {
+    const key = members.join(" ");
+    let listed = this.lists.get(key);
+    if (refresh || !listed) this.lists.set(key, (listed = this.fetchGroup(members).catch(() => [])));
+    return listed;
   }
 
   /**
@@ -68,11 +83,9 @@ export class ModelCatalog {
    * Undefined when it cannot be told: no Models API, offline, or an empty list.
    */
   async offers(spec: string): Promise<{ ok: boolean; similar: string[] } | undefined> {
-    const slash = spec.indexOf("/");
-    const provider = spec.slice(0, slash);
-    const id = spec.slice(slash + 1);
-    const group = groups(this.providers).find((g) => g.includes(provider));
-    const listed = group ? await this.fetchGroup(group).catch(() => []) : [];
+    const id = spec.slice(spec.indexOf("/") + 1);
+    const group = this.groupOf(spec);
+    const listed = group ? await this.listGroup(group) : [];
     if (!listed.length) return undefined;
     const ids = listed.map((m) => m.spec.slice(m.spec.indexOf("/") + 1));
     return ids.includes(id) ? { ok: true, similar: [] } : { ok: false, similar: similar(id, ids) };
@@ -90,6 +103,7 @@ export class ModelCatalog {
     } catch {}
     const signal = AbortSignal.timeout(8000);
     const models: ListedModel[] = impl?.listModels ? await impl.listModels(p, key, signal) : await listModels(p, key, signal);
+    const server = p.ollama ? "ollama" : p.lmstudio ? "lmstudio" : p.llamacpp ? "llamacpp" : undefined;
     const out: ModelChoice[] = [];
     for (const m of models) {
       const target = m.endpoints
@@ -104,7 +118,7 @@ export class ModelCatalog {
       // shadowing a price the built-in table knows.
       if (m.price && (m.price.input > 0 || m.price.output > 0)) info.price = m.price;
       if (Object.keys(info).length) this.discovered.set(spec, info);
-      out.push({ spec, contextWindow: m.contextWindow ?? KNOWN_MODELS[m.id]?.contextWindow, maxContext: m.maxContext });
+      out.push({ spec, contextWindow: m.contextWindow ?? KNOWN_MODELS[m.id]?.contextWindow, maxContext: m.maxContext, ...(server ? { server } : {}) });
     }
     return out;
   }

@@ -1,4 +1,5 @@
 import type { ProviderConfig } from "@sasacode/ai";
+import { lmstudioModels } from "./list-models.ts";
 
 export interface DetectedEndpoint {
   api: "openai-chat" | "anthropic";
@@ -6,6 +7,7 @@ export interface DetectedEndpoint {
   baseUrl: string;
   ollama?: boolean;
   llamacpp?: boolean;
+  lmstudio?: boolean;
 }
 
 /**
@@ -50,6 +52,8 @@ export async function detectEndpoint(url: string, apiKey?: string, signal?: Abor
     const owner = String(data[0]?.owned_by ?? "");
     if (owner === "llamacpp" || data[0]?.meta?.n_ctx_train !== undefined) endpoint.llamacpp = true;
     else if (owner === "library" || (await isOllama(root, signal))) endpoint.ollama = true;
+    // LM Studio's /v1/models looks like any other; its native list (0.3.6+) is what tells it apart.
+    else if (await lmstudioModels(root, headers, signal)) endpoint.lmstudio = true;
     return endpoint;
   }
   throw new Error(`could not find a model list at ${url} (${lastError})`);
@@ -66,5 +70,5 @@ async function isOllama(root: string, signal?: AbortSignal): Promise<boolean> {
 
 /** Fill in `api` (and the server flavour) for a provider configured with only a URL. */
 export function applyDetected(p: Partial<ProviderConfig>, d: DetectedEndpoint): ProviderConfig {
-  return { ...p, api: d.api, baseUrl: d.baseUrl, ...(d.ollama ? { ollama: true } : {}), ...(d.llamacpp ? { llamacpp: true } : {}) } as ProviderConfig;
+  return { ...p, api: d.api, baseUrl: d.baseUrl, ...(d.ollama ? { ollama: true } : {}), ...(d.llamacpp ? { llamacpp: true } : {}), ...(d.lmstudio ? { lmstudio: true } : {}) } as ProviderConfig;
 }
