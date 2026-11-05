@@ -334,7 +334,7 @@ sasacode                    <span class="c"># 対話モードで始める</span>
 sasacode endpoint add mygw https://llm.example.com/v1 --key-env MYGW_KEY
 sasacode endpoint list
 sasacode -m pgx/&lt;モデル名&gt;</code></pre>
-      <p><code>GET /v1/models</code> の応答から、OpenAI形式かAnthropic形式かを判別し、URLもSDKに合わせて整える。llama.cppは <code>/props</code>、Ollamaは <code>/api/show</code> から実際のコンテキスト長も取る。判別の結果は <code>~/.sasacode/endpoints.json</code> にキャッシュする。表にないモデルのコンテキスト長が違うときは <code>modelOverrides</code> で直す。</p>
+      <p><code>GET /v1/models</code> の応答から、OpenAI形式かAnthropic形式かを判別し、URLもSDKに合わせて整える。llama.cppは <code>/props</code>、Ollamaは <code>/api/show</code>（メモリに載っていれば <code>/api/ps</code>）、LM Studio（0.3.6以降）は <code>/api/v0/models</code> から実際のコンテキスト長も取る。まだロードされていなくて長さが分からないOllamaとLM Studioのモデルは、応答の後にサーバーに聞き直して、実際にロードされた長さに切り替える。判別の結果は <code>~/.sasacode/endpoints.json</code> にキャッシュする。表にないモデルのコンテキスト長が違うときは <code>modelOverrides</code> で直す。</p>
       <pre><code>{ "modelOverrides": { "pgx/qwen3.8-flash-next": { "contextWindow": 262144, "maxOutput": 32000 } } }</code></pre>
 
       <h3 id="chatgpt">ChatGPTプラン</h3>
