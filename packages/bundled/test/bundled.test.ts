@@ -198,7 +198,7 @@ function japaneseSession(chars: number): Message[] {
 }
 
 /** Tokens a local tokenizer (Qwen, Gemma, Llama) makes of a request, roughly: 4 ASCII characters a token, a Japanese character a token. */
-function tokens(req: Request): number {
+function tokens(req: Pick<Request, "system" | "messages">): number {
   const text = req.system + req.messages.map((m) => m.content.map((c) => (c.type === "text" ? c.text : "")).join("")).join("");
   const wide = text.replace(/[\x00-\x7f]/g, "").length;
   return Math.ceil((text.length - wide) / 4 + wide);
@@ -263,6 +263,16 @@ test("splitPoint keeps the tail from a user message", () => {
   const msgs: Message[] = [u("a".repeat(400)), reply([say("b")]), u("c"), reply([say("d")])];
   expect(splitPoint(msgs, 50)).toBe(2);
   expect(splitPoint(msgs, 10_000)).toBe(0);
+});
+
+test("splitPoint keeps a Japanese tail within its budget, a Japanese character counted as a token (#60)", () => {
+  // At 4 characters a token the tail was about 3 times the budget, and the window soon filled again.
+  const keep = Math.floor(16_384 * 0.15);
+  const history = japaneseSession(40_000);
+  const tail = history.slice(splitPoint(history, keep));
+  expect(tail[0]!.role).toBe("user");
+  expect(tokens({ system: "", messages: tail })).toBeLessThanOrEqual(keep);
+  expect(tokens({ system: "", messages: tail })).toBeGreaterThan(keep / 2);
 });
 
 test("subagent: task runs a fresh loop and returns its report; no approval needed to start", async () => {

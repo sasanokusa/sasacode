@@ -5,8 +5,12 @@ import type { Message, ModelInfo, Plugin, PluginAPI } from "@sasacode/plugin-api
 const SYSTEM =
   "You write handoff summaries of coding sessions so the work can continue in a fresh context. Include: the user's goals and constraints, decisions made, files read or changed (paths), commands run and their outcomes, the current state, and the next steps. Be specific and concise.";
 
+/** Characters outside ASCII: local tokenizers (Qwen, Gemma, Llama) make about a token of each, not a quarter of one. */
+const wide = (s: string) => s.replace(/[\x00-\x7f]/g, "").length;
+
+/** Tokens of a message, weighed as summaryRequest weighs them: at 4 characters a token, the tail kept of a Japanese session was 3 times its budget. */
 function estimate(m: Message): number {
-  return Math.ceil(contentChars(m) / 4);
+  return Math.ceil((contentChars(m) + 3 * wide(JSON.stringify(m.content))) / 4);
 }
 
 /** Plain-text transcript, so tool call/result pairing does not matter to the summarizer. Tool results and call arguments are clipped. */
@@ -45,7 +49,7 @@ function summaryRequest(model: ModelInfo, head: readonly Message[], instructions
   const maxChars = Math.floor(((model.contextWindow - maxTokens) / 1.1) * 4) - SYSTEM.length - 8;
   const ask = `\n\n---\nSummarize the session above.${instructions ? ` ${instructions}` : ""}`;
   const message = (text: string): Message => ({ role: "user", timestamp: Date.now(), content: [{ type: "text", text: text + ask }] });
-  const size = (text: string) => contentChars(message(text)) + 3 * (text + ask).replace(/[\x00-\x7f]/g, "").length;
+  const size = (text: string) => contentChars(message(text)) + 3 * wide(text + ask);
   let text = transcript(head);
   if (size(text) > maxChars) text = transcript(head, 200, 100);
   if (size(text) > maxChars) {
