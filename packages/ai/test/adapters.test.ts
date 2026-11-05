@@ -220,3 +220,36 @@ test("openai-chat: a local server gets max_tokens, a cloud provider keeps max_co
   for (const server of ["ollama", "llamacpp", "lmstudio"] as const)
     expect(await sent({ ...base, provider: "myollama", baseUrl: "http://host:11434/v1", server })).toEqual({ max_tokens: 500, max_completion_tokens: undefined });
 });
+
+test("openai-chat: a tool name sent after the id, and tool calls without an index, are kept apart and named (#62)", async () => {
+  const model: ModelInfo = { id: "m", provider: "local", api: "openai-chat", baseUrl: "http://x/v1", contextWindow: 1e5, maxOutput: 1000 };
+  const tc = (calls: object[], finish: string | null = null) => chatChunk({ tool_calls: calls }, finish);
+  const streams: [string, object[], { id?: string; name: string; input: Record<string, unknown> }[]][] = [
+    // The OpenAI shape: the name in the first chunk, an index on every chunk. Unchanged.
+    ["openai", [tc([{ index: 0, id: "a", type: "function", function: { name: "read", arguments: '{"path":' } }]), tc([{ index: 0, function: { arguments: '"a"}' } }]), tc([{ index: 1, id: "b", type: "function", function: { name: "read", arguments: '{"path":"b"}' } }], "tool_calls")],
+      [{ id: "a", name: "read", input: { path: "a" } }, { id: "b", name: "read", input: { path: "b" } }]],
+    // The first chunk carries only the id and type; the name follows.
+    ["name later", [tc([{ index: 0, id: "a", type: "function", function: { arguments: "" } }]), tc([{ index: 0, function: { name: "read" } }]), tc([{ index: 0, function: { arguments: '{"path":"a"}' } }], "tool_calls")],
+      [{ id: "a", name: "read", input: { path: "a" } }]],
+    // No index: two calls told apart by their ids, the second one's arguments arriving by id.
+    ["ids, no index", [tc([{ id: "a", type: "function", function: { name: "read", arguments: '{"path":"a"}' } }]), tc([{ id: "b", type: "function", function: { name: "ls", arguments: '{"path":' } }]), tc([{ id: "b", function: { arguments: '"b"}' } }], "tool_calls")],
+      [{ id: "a", name: "read", input: { path: "a" } }, { id: "b", name: "ls", input: { path: "b" } }]],
+    // Neither index nor id: arguments continue the latest call; a second name starts the next.
+    ["no index, no id", [tc([{ function: { name: "read", arguments: '{"path"' } }]), tc([{ function: { arguments: ':"a"}' } }]), tc([{ function: { name: "ls", arguments: '{"path":"b"}' } }], "tool_calls")],
+      [{ name: "read", input: { path: "a" } }, { name: "ls", input: { path: "b" } }]],
+  ];
+  for (const [label, chunks, want] of streams) {
+    const { message, events } = await run(openaiChatProvider, reqFor(model, fakeFetch(sse(chunks)).fetch));
+    const got = message.content.filter((c) => c.type === "tool_call");
+    expect([label, got.map(({ name, input, rawInput }) => ({ name, input, rawInput }))]).toEqual([label, want.map(({ name, input }) => ({ name, input, rawInput: undefined }))]);
+    for (const [i, w] of want.entries()) if (w.id) expect(got[i]!.id).toBe(w.id);
+    expect(new Set(got.map((c) => c.id)).size).toBe(got.length);
+    // One start per call, ahead of its deltas, at the call's own place in the content.
+    const starts: number[] = [];
+    for (const e of events)
+      if (e.type === "toolcall_start") starts.push(e.index);
+      else if (e.type === "toolcall_delta") expect(starts).toContain(e.index);
+    expect(starts).toEqual(got.map((c) => message.content.indexOf(c)));
+    expect(message.stopReason).toBe("tool_use");
+  }
+});

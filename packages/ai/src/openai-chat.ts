@@ -93,7 +93,7 @@ export const openaiChatProvider: Provider = {
     let detailsBlock: ThinkingContent | undefined;
     const details: unknown[] = [];
     let text: { type: "text"; text: string } | undefined;
-    const calls = new Map<number, { block: ToolCall; json: string; index: number }>();
+    const calls = new Map<number | string, { block: ToolCall; json: string; index: number }>();
     let ended = false;
     try {
       // "off" is sent too: servers such as vLLM think by default unless told "none".
@@ -137,14 +137,16 @@ export const openaiChatProvider: Provider = {
           yield { type: "text_delta", index: out.content.indexOf(text), delta: prose, partial: out };
         }
         for (const tc of delta.tool_calls ?? []) {
-          let c = calls.get(tc.index);
+          const name = tc.function?.name, known = [...calls.values()], last = known.at(-1);
+          // Without an index (some servers), match by id, else continue the latest call unless this one starts another.
+          let c = tc.index != null ? calls.get(tc.index) : known.find((k) => k.block.id === tc.id) ?? (tc.id || (name && last?.block.name) ? undefined : last);
           if (!c) {
-            const block: ToolCall = { type: "tool_call", id: tc.id ?? `call_${tc.index}`, name: tc.function?.name ?? "", input: {} };
+            const block: ToolCall = { type: "tool_call", id: tc.id ?? `call_${tc.index ?? calls.size}`, name: name ?? "", input: {} };
             out.content.push(block);
             c = { block, json: "", index: out.content.length - 1 };
-            calls.set(tc.index, c);
+            calls.set(tc.index ?? block.id, c);
             yield { type: "toolcall_start", index: c.index, id: block.id, name: block.name, partial: out };
-          }
+          } else if (name && !c.block.name) c.block.name = name; // the name came after the id
           if (tc.function?.arguments) {
             c.json += tc.function.arguments;
             yield { type: "toolcall_delta", index: c.index, delta: tc.function.arguments, partial: out };
