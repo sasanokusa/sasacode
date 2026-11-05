@@ -435,9 +435,36 @@ test("web_search include_text reads the first pages that match the query, their 
 });
 
 test("privateAddress: loopback, private, link-local and the like, IPv4 and IPv6", () => {
-  for (const ip of ["127.0.0.1", "10.1.2.3", "172.16.0.1", "172.31.255.255", "192.168.1.1", "169.254.169.254", "100.64.0.1", "0.0.0.0", "::1", "fd00::1", "fe80::1", "::ffff:127.0.0.1"])
-    expect([ip, privateAddress(ip)]).toEqual([ip, true]);
-  for (const ip of ["8.8.8.8", "172.32.0.1", "1.1.1.1", "2606:4700::1111", "::ffff:8.8.8.8"]) expect([ip, privateAddress(ip)]).toEqual([ip, false]);
+  const internal = [
+    "127.0.0.1", "10.1.2.3", "172.16.0.1", "172.31.255.255", "192.168.1.1", "169.254.169.254", "100.64.0.1", "0.0.0.0", "::1", "fd00::1", "fe80::1", "::ffff:127.0.0.1",
+    // The same addresses written in hexadecimal: the URL parser keeps them as written, so they must be
+    // judged by the IPv4 they mean (#55).
+    "::ffff:7f00:1", "::ffff:7f00:0001", "0:0:0:0:0:ffff:7f00:1", "::ffff:a00:1", "::ffff:a9fe:a9fe", "::ffff:6440:0", "::ffff:c0a8:1", "::ffff:0:0",
+  ];
+  for (const ip of internal) expect([ip, privateAddress(ip)]).toEqual([ip, true]);
+  for (const ip of ["8.8.8.8", "172.32.0.1", "1.1.1.1", "2606:4700::1111", "::ffff:8.8.8.8", "::ffff:100:63", "::ffff:a9fd:1", "::ffff:c0a7:1"]) expect([ip, privateAddress(ip)]).toEqual([ip, false]);
+});
+
+test("web_search include_text: a result page addressed as IPv4 inside hexadecimal IPv6 is internal too", async () => {
+  const secret = "the internal service greeting";
+  let port = 0; // the handler reads it; it runs only after the line below has set it
+  const server = Bun.serve({
+    port: 0,
+    fetch(req) {
+      const { pathname } = new URL(req.url);
+      if (pathname === "/search") return Response.json({ results: [{ title: "MiG-29 Luftwaffe list", url: `http://[::ffff:7f00:1]:${port}/secret`, content: "Luftwaffe MiG-29 serials" }] });
+      return new Response(secret);
+    },
+  });
+  port = server.port!;
+  try {
+    const { agent } = await setup([], ["web-search"], { settings: { "web-search": { url: `http://localhost:${server.port}` } } });
+    const text = ((await agent.getTools().find((t) => t.name === "web_search")!.execute({ query: "Luftwaffe MiG-29", include_text: true }, { cwd: root, signal: new AbortController().signal })).content[0] as { text: string }).text;
+    expect(text).toContain("(page could not be read: not a public address)");
+    expect(text).not.toContain(secret);
+  } finally {
+    server.stop(true);
+  }
 });
 
 test("matchesQuery: words compared without case, width or hyphens; the first result needs one, the others two", () => {

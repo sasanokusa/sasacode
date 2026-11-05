@@ -55,14 +55,50 @@ export function matchesQuery(query: string, r: SearxResult, first = false): bool
   return terms.filter((t) => hay.includes(t)).length >= (first ? 1 : Math.min(2, terms.length));
 }
 
+/** An IPv6 address as its eight 16-bit words, `::` filled in with zeros; nothing for anything else. */
+function ipv6Words(ip: string): number[] | undefined {
+  const v = ip.toLowerCase();
+  if (isIP(v) !== 6) return undefined;
+  const wordsOf = (part: string): number[] => {
+    const out: number[] = [];
+    for (const g of part ? part.split(":") : []) {
+      const o = g.split(".").map(Number);
+      // A group may be a dotted IPv4 (`::ffff:127.0.0.1`), which is two words.
+      if (o.length === 1) out.push(Number.parseInt(g, 16));
+      else out.push(((o[0] << 8) | o[1]) & 0xffff, ((o[2] << 8) | o[3]) & 0xffff);
+    }
+    return out;
+  };
+  const at = v.indexOf("::");
+  if (at < 0) return wordsOf(v).length === 8 ? wordsOf(v) : undefined;
+  const [head, tail] = [wordsOf(v.slice(0, at)), wordsOf(v.slice(at + 2))];
+  return head.length + tail.length >= 8 ? undefined : [...head, ...Array(8 - head.length - tail.length).fill(0), ...tail];
+}
+
+/**
+ * The IPv4 an address means: itself for an IPv4, and for an IPv6 that carries one its last 32 bits —
+ * written in dotted decimal (`::ffff:127.0.0.1`) or in hexadecimal (`::ffff:7f00:1`, which the URL
+ * parser keeps as written and so used to be judged as an unknown, public IPv6). Nothing for an
+ * address that really is IPv6.
+ */
+function carriedIPv4(ip: string): string | undefined {
+  if (isIP(ip) === 4) return ip;
+  const w = ipv6Words(ip);
+  // An IPv4-mapped (`::ffff:`) address, or the older IPv4-compatible one (all zero): a fetch to
+  // either goes to the IPv4 they carry, so both are judged as that address.
+  if (!w || w.slice(0, 5).some((x) => x !== 0) || (w[5] !== 0xffff && w[5] !== 0)) return undefined;
+  return `${w[6] >> 8}.${w[6] & 0xff}.${w[7] >> 8}.${w[7] & 0xff}`;
+}
+
 /** Loopback, private, link-local (cloud metadata), shared, unspecified and multicast addresses. */
 export function privateAddress(ip: string): boolean {
-  if (isIP(ip) === 4) {
-    const [a = 0, b = 0] = ip.split(".").map(Number);
+  const v4 = carriedIPv4(ip);
+  if (v4 !== undefined) {
+    const [a = 0, b = 0] = v4.split(".").map(Number);
     return a === 0 || a === 10 || a === 127 || a >= 224 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 100 && b >= 64 && b <= 127);
   }
   const v = ip.toLowerCase();
-  if (v.startsWith("::ffff:") && isIP(v.slice(7)) === 4) return privateAddress(v.slice(7));
+  // A real IPv6, then: unspecified and loopback, unique local (fc/fd), link-local (fe80..) and multicast (ff).
   return v === "::" || v === "::1" || /^(fc|fd|fe[89ab]|ff)/.test(v);
 }
 
