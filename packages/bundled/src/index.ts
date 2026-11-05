@@ -24,7 +24,7 @@ export { agentsFiles } from "./agents-md.ts";
 export { compact, splitPoint, transcript } from "./compaction.ts";
 export { PRESETS } from "./permission-presets.ts";
 export { detectRepetition } from "./repetition-guard.ts";
-export { closestName, editDistance, fitToSchema, repairJson } from "./tool-repair.ts";
+export { closestName, editDistance, fitToSchema, repairJson, TOOL_SYNONYMS } from "./tool-repair.ts";
 export { htmlToText, readable, readCapped } from "./web-fetch.ts";
 export { formatResults, matchesQuery, privateAddress } from "./web-search.ts";
 export { installRustxng, managedRustxng, rustxngTarget } from "./rustxng-install.ts";
