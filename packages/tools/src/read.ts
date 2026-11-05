@@ -7,6 +7,8 @@ import { resolvePath } from "./util.ts";
 
 const DEFAULT_LIMIT = 2000;
 const MAX_LINE = 2000;
+/** Characters one call returns at most: 2,000 lines of 200 would fill a small model's whole window (#66). */
+const MAX_TOTAL = 100_000;
 /** Larger files are read line by line up to what is shown, not loaded whole. */
 const WHOLE_FILE_BYTES = 10_000_000;
 /** The providers' limit for one image (Anthropic's is 5 MB); a larger one would fail every request after it. */
@@ -27,7 +29,7 @@ interface Args {
 
 export const readTool: ToolDefinition<Args> = {
   name: "read",
-  description: `Read a file. Text is returned with line numbers (cat -n style), up to ${DEFAULT_LIMIT} lines per call; use offset/limit for more. Images (png, jpg, gif, webp) are returned as images.`,
+  description: `Read a file. Text is returned with line numbers (cat -n style), up to ${DEFAULT_LIMIT} lines or ${MAX_TOTAL} characters per call; use offset/limit for more. Images (png, jpg, gif, webp) are returned as images.`,
   parameters: {
     type: "object",
     properties: {
@@ -64,25 +66,21 @@ export const readTool: ToolDefinition<Args> = {
     const { lines, more } = st.size > WHOLE_FILE_BYTES ? await readLines(path, wanted, ctx.signal) : { lines: splitLines((await readFile(path)).toString("utf8")), more: false };
     if (start >= lines.length && lines.length > 0)
       return errorResult(`offset ${args.offset} is past the end of the file (${lines.length} lines).`);
-    const end = Math.min(lines.length, start + (args.limit ?? DEFAULT_LIMIT));
-    let cut = 0;
-    const body = lines
+    let end = Math.min(lines.length, wanted), size = 0;
+    // size only grows, so the filter keeps the whole lines that fit in MAX_TOTAL and drops every one after (#66).
+    const shown = lines
       .slice(start, end)
-      .map((l, i) => {
-        if (l.length > MAX_LINE) {
-          cut++;
-          l = `${l.slice(0, MAX_LINE)}… [line truncated, ${l.length} chars]`;
-        }
-        return `${String(start + i + 1).padStart(6)}\t${l}`;
-      })
-      .join("\n");
+      .map((l, i) => `${String(start + i + 1).padStart(6)}\t${l.length > MAX_LINE ? `${l.slice(0, MAX_LINE)}… [line truncated, ${l.length} chars]` : l}`)
+      .filter((l) => (size += l.length + 1) <= MAX_TOTAL);
+    end = start + shown.length;
+    const cut = lines.slice(start, end).filter((l) => l.length > MAX_LINE).length;
     const notes: string[] = [];
     if (more) notes.push(`[Showing lines ${start + 1}-${end} of a ${Math.round(st.size / 1_000_000)} MB file. Use offset=${end + 1} to continue.]`);
     else if (end < lines.length || start > 0)
       notes.push(`[Showing lines ${start + 1}-${end} of ${lines.length}.${end < lines.length ? ` Use offset=${end + 1} to continue.` : ""}]`);
     if (cut) notes.push(`[${cut} long line(s) truncated at ${MAX_LINE} chars; use bash (e.g. cut, sed) to see them in full.]`);
     if (!lines.length || (lines.length === 1 && lines[0] === "")) return { content: [text(`${path} is empty.`)] };
-    return { content: [text([body, ...notes].join("\n"))] };
+    return { content: [text([shown.join("\n"), ...notes].join("\n"))] };
   },
 };
 
