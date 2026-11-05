@@ -71,16 +71,27 @@ function summaryRequest(model: ModelInfo, head: readonly Message[], instructions
   return { maxTokens, message: message(text) };
 }
 
-/** Index where the kept tail starts: a user message, with the tail under `keepTokens`. */
+/**
+ * Index where the kept tail starts, with the tail under `keepTokens`: a user message, or, when the
+ * tail from one would keep less than half of that, the start of an assistant turn further back (its
+ * tool calls and their results stay together, after it). A long run of tool calls after one prompt
+ * has no user message within the budget: all of it was summarized, nothing of the latest steps was
+ * kept as it was, and a small model then made up what those steps had done (the files it had written).
+ */
 export function splitPoint(messages: readonly Message[], keepTokens: number): number {
   let tokens = 0;
-  let split = messages.length;
+  let user = messages.length;
+  let userTokens = 0;
+  let turn = messages.length;
   for (let i = messages.length - 1; i >= 0; i--) {
     tokens += estimate(messages[i]!);
     if (tokens > keepTokens) break;
-    if (messages[i]!.role === "user") split = i;
+    if (messages[i]!.role === "user") {
+      user = i;
+      userTokens = tokens;
+    } else if (messages[i]!.role === "assistant") turn = i;
   }
-  return split;
+  return user < messages.length && userTokens >= keepTokens / 2 ? user : Math.min(user, turn);
 }
 
 /** `manual` (/compact) summarizes everything; automatic compaction keeps a recent tail verbatim. */
