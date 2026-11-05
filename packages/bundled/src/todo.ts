@@ -8,9 +8,18 @@ interface Todo {
 
 const MARK: Record<Status, string> = { pending: "☐", in_progress: "◐", completed: "☑" };
 
-/** A task list the model maintains; kept in the session log and shown in the status line. */
+/**
+ * A task list the model maintains; kept in the session log and shown in the status line.
+ * Models of every size write the list and then forget it: when unfinished items sit through
+ * `remindAfter` tool calls without an update, the next result carries a one-line reminder.
+ *
+ * settings: { remindAfter?: number (default 15, 0 = off) }
+ */
 const todo: Plugin = (api) => {
+  const remindAfter = typeof api.settings.remindAfter === "number" ? api.settings.remindAfter : 15;
   let todos: Todo[] = [];
+  /** Tool calls of the main agent since the list was last written. */
+  let sinceUpdate = 0;
   const show = () => {
     if (!todos.length) return api.ui.setStatus("todos", undefined);
     const done = todos.filter((t) => t.status === "completed").length;
@@ -19,7 +28,18 @@ const todo: Plugin = (api) => {
   };
   api.on("session_start", () => {
     todos = (api.session.entries("todos").at(-1) as Todo[] | undefined) ?? [];
+    sinceUpdate = 0;
     show();
+  });
+  api.on("tool_result", ({ call, result }, ctx) => {
+    // Subagents have no list of their own (todo_write is kept from them).
+    if (ctx.agent || !remindAfter) return;
+    if (call.name === "todo_write") return void (sinceUpdate = 0);
+    if (!todos.some((t) => t.status !== "completed") || ++sinceUpdate < remindAfter) return;
+    sinceUpdate = 0;
+    const list = todos.map((t) => `${MARK[t.status]} ${t.content}`).join(", ");
+    const note = `[harness] Your task list has not been updated for ${remindAfter} tool calls: ${list}. Update it with todo_write if the state changed.`;
+    return { result: { ...result, content: [...result.content, { type: "text", text: note }] } };
   });
   api.permissions.addRules({ allow: ["todo_write"] });
   api.registerTool({
