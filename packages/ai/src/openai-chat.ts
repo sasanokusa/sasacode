@@ -39,7 +39,7 @@ export function openaiClient(req: Request): OpenAI {
 
 export function isContextOverflow(e: unknown): boolean {
   if (!(e instanceof OpenAI.APIError)) return false;
-  return e.code === "context_length_exceeded" || /context length|context window|too many tokens|maximum context/i.test(e.message);
+  return e.code === "context_length_exceeded" || e.type === "exceed_context_size_error" || /context length|context window|context size|too many tokens|maximum context/i.test(e.message);
 }
 /** A Chat Completions usage object: the standard counts, plus fields vendors add on. */
 export interface ChatUsage {

@@ -1,9 +1,10 @@
 // The three adapters, without a model: a fake fetch records what is sent and replays a recorded
 // stream. Covers the conversion of the history and the parsing of the stream.
 import { expect, test } from "bun:test";
+import OpenAI from "openai";
 import { anthropicProvider } from "../src/anthropic.ts";
-import { type AssistantMessage, emptyUsage, replayScope, INCOMPLETE_STREAM, type Message, type ModelInfo, type Request, type StreamEvent } from "../src/index.ts";
-import { openaiChatProvider } from "../src/openai-chat.ts";
+import { type AssistantMessage, ContextOverflowError, emptyUsage, replayScope, INCOMPLETE_STREAM, type Message, type ModelInfo, type Request, type StreamEvent } from "../src/index.ts";
+import { isContextOverflow, openaiChatProvider } from "../src/openai-chat.ts";
 import { openaiResponsesProvider } from "../src/openai-responses.ts";
 
 function fakeFetch(body: string, status = 200) {
@@ -185,6 +186,27 @@ test("a stream cut before the reply finished is an error with what arrived, not 
 
 const reqFor = (model: ModelInfo, fetch: typeof globalThis.fetch, extra: Partial<Request> = {}): Request => ({ model, system: "", messages: [user("x")], tools, fetch, maxRetries: 0, ...extra });
 const chatChunk = (delta: object, finish: string | null = null) => ({ id: "1", object: "chat.completion.chunk", created: 0, model: "m", choices: [{ index: 0, delta, finish_reason: finish }] });
+
+test("each server's context overflow is ContextOverflowError, llama.cpp's included (#57)", async () => {
+  const err = (error: object) => OpenAI.APIError.generate(400, { error }, undefined, new Headers());
+  // As llama-server b9860 answered a prompt longer than its slot; then the wording of llama.cpp PR 15780.
+  const llama = { code: 400, message: "request (391 tokens) exceeds the available context size (256 tokens), try increasing it", type: "exceed_context_size_error", n_prompt_tokens: 391, n_ctx: 256 };
+  const overflows = [
+    llama,
+    { code: 400, message: "the request exceeds the available context size. try increasing the context size or enable context shift", type: "exceed_context_size_error" },
+    { code: 400, message: "input (391 tokens) is larger than the max context size (256 tokens). skipping", type: "exceed_context_size_error" },
+    { code: 400, message: "prompt too long", type: "exceed_context_size_error" },
+    { message: "This model's maximum context length is 8192 tokens. However, you requested 9000 tokens", type: "BadRequestError", code: 400 }, // vLLM
+    { message: "The number of tokens to keep from the initial prompt is greater than the context length" }, // LM Studio
+    { message: "Your input exceeds the context window of this model.", code: "context_length_exceeded" }, // OpenAI
+  ];
+  for (const error of overflows) expect([error.message, isContextOverflow(err(error))]).toEqual([error.message, true]);
+  expect(isContextOverflow(err({ message: "Unsupported value: 'reasoning_effort'", type: "invalid_request_error" }))).toBe(false);
+  // Both OpenAI-style adapters turn llama-server's 400 into the error the agent compacts on.
+  const chat: ModelInfo = { id: "m", provider: "llama", api: "openai-chat", baseUrl: "http://x/v1", contextWindow: 256, maxOutput: 100, server: "llamacpp" };
+  for (const [provider, model] of [[openaiChatProvider, chat], [openaiResponsesProvider, { ...chat, api: "openai-responses" }]] as const)
+    await expect(run(provider, reqFor(model, fakeFetch(JSON.stringify({ error: llama }), 400).fetch))).rejects.toBeInstanceOf(ContextOverflowError);
+});
 
 test("openai-chat: a local server gets max_tokens, a cloud provider keeps max_completion_tokens (#58)", async () => {
   const base = { id: "m", api: "openai-chat", contextWindow: 1e5, maxOutput: 1000 } as const;
