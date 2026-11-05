@@ -96,6 +96,8 @@ test("read: pipes and devices are refused, big images too, big files read only a
   writeFileSync(join(dir, "big.log"), `${"x".repeat(99)}\n`.repeat(120_000)); // 12 MB
   const r = out(await readTool.execute({ path: "big.log", limit: 3 }, ctx()));
   expect(r).toContain("Showing lines 1-3 of a 12 MB file. Use offset=4");
+  // 100,000 characters come before 2,000 lines here, and the note says so in its own words (#66).
+  expect(out(await readTool.execute({ path: "big.log" }, ctx()))).toContain("Showing lines 1-934 of a 12 MB file. Use offset=935");
 });
 
 
@@ -178,4 +180,24 @@ test("edit: a loose match must be unique, replace_all or not; nothing is changed
   // Blank once trailing whitespace is ignored: that is everywhere, so it is refused as ambiguous.
   expect(out(await editTool.execute({ path, old_string: " \t ", new_string: "x" }, ctx()))).toContain("appears more than once");
   expect(readFileSync(path, "utf8")).toBe("\tfoo();\n  foo();\n");
+});
+
+test("read stops on a whole line within 100,000 characters and says where to go on (#66)", async () => {
+  const lines = Array.from({ length: 2000 }, (_, i) => `line ${i + 1} `.padEnd(200, "x"));
+  writeFileSync(join(dir, "wide.txt"), `${lines.join("\n")}\n`);
+  const first = out(await readTool.execute({ path: "wide.txt" }, ctx()));
+  expect(first).toEndWith("\n[Showing lines 1-480 of 2000. Use offset=481 to continue.]");
+  const seen: string[] = [];
+  for (let offset = 1; offset; ) {
+    const r = out(await readTool.execute({ path: "wide.txt", offset }, ctx()));
+    const body = r.slice(0, r.indexOf("\n[Showing"));
+    expect(body.length).toBeLessThanOrEqual(100_000);
+    seen.push(...body.split("\n").map((l) => l.replace(/^ *\d+\t/, "")));
+    offset = Number(/Use offset=(\d+)/.exec(r)?.[1] ?? 0);
+  }
+  expect(seen).toEqual(lines);
+  // Long lines are cut first, and only the ones shown are counted.
+  writeFileSync(join(dir, "long.txt"), `${"y".repeat(3000)}\n`.repeat(60));
+  const long = out(await readTool.execute({ path: "long.txt" }, ctx()));
+  expect(long).toContain("[Showing lines 1-49 of 60. Use offset=50 to continue.]\n[49 long line(s) truncated");
 });
