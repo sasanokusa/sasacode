@@ -1,6 +1,6 @@
-import { contentChars } from "@sasacode/agent";
+import { contentChars, responseRoom } from "@sasacode/agent";
 import { t } from "@sasacode/host";
-import type { Message, Plugin, PluginAPI } from "@sasacode/plugin-api";
+import type { Message, ModelInfo, Plugin, PluginAPI } from "@sasacode/plugin-api";
 
 const SYSTEM =
   "You write handoff summaries of coding sessions so the work can continue in a fresh context. Include: the user's goals and constraints, decisions made, files read or changed (paths), commands run and their outcomes, the current state, and the next steps. Be specific and concise.";
@@ -9,20 +9,48 @@ function estimate(m: Message): number {
   return Math.ceil(contentChars(m) / 4);
 }
 
-/** Plain-text transcript, so tool call/result pairing does not matter to the summarizer. */
-export function transcript(messages: readonly Message[]): string {
+/** Plain-text transcript, so tool call/result pairing does not matter to the summarizer. Tool results and call arguments are clipped. */
+export function transcript(messages: readonly Message[], resultChars = 2000, callChars = 500): string {
   const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n)}… [${s.length - n} more chars]` : s);
   return messages
     .map((m) => {
       if (m.role === "user") return `USER: ${m.content.map((c) => (c.type === "text" ? c.text : "[image]")).join("\n")}`;
       if (m.role === "tool")
-        return `TOOL RESULT (${m.toolName}${m.isError ? ", error" : ""}): ${clip(m.content.map((c) => (c.type === "text" ? c.text : "[image]")).join("\n"), 2000)}`;
+        return `TOOL RESULT (${m.toolName}${m.isError ? ", error" : ""}): ${clip(m.content.map((c) => (c.type === "text" ? c.text : "[image]")).join("\n"), resultChars)}`;
       return `ASSISTANT: ${m.content
-        .map((c) => (c.type === "text" ? c.text : c.type === "tool_call" ? `[call ${c.name} ${clip(JSON.stringify(c.input), 500)}]` : ""))
+        .map((c) => (c.type === "text" ? c.text : c.type === "tool_call" ? `[call ${c.name} ${clip(JSON.stringify(c.input), callChars)}]` : ""))
         .filter(Boolean)
         .join("\n")}`;
     })
     .join("\n\n");
+}
+
+const LEFT_OUT = "[The start of the session is left out here, so that this request fits the context window.]\n\n";
+
+/**
+ * The summary request, made to fit the window: servers such as vLLM and llama.cpp reject one whose
+ * input plus max_tokens is over it, and a fixed 8,192-token summary broke compaction in the small
+ * windows that need it most (#60). The summary gets about 15% of the window (as responseRoom gives
+ * a reply), at most 8,192 tokens; the input gets the rest, estimated as the core sizes replies
+ * (about 4 characters a token, plus 10%). A transcript too long for that (/compact sends the whole
+ * history) has its tool results and calls clipped harder first, which keeps every step; if that is
+ * not enough, its oldest part is dropped, since the latest context matters most for carrying on.
+ */
+function summaryRequest(model: ModelInfo, head: readonly Message[], instructions: string): { maxTokens: number; message: Message } {
+  const maxTokens = Math.min(8192, responseRoom(model));
+  const maxChars = Math.floor(((model.contextWindow - maxTokens) / 1.1) * 4) - SYSTEM.length - 8;
+  const ask = `\n\n---\nSummarize the session above.${instructions ? ` ${instructions}` : ""}`;
+  const message = (text: string): Message => ({ role: "user", timestamp: Date.now(), content: [{ type: "text", text: text + ask }] });
+  const over = (text: string) => contentChars(message(text)) - maxChars;
+  let text = transcript(head);
+  if (over(text) > 0) text = transcript(head, 200, 100);
+  // Each step drops at least as many characters as the request is over by: a few steps at most.
+  const full = text;
+  for (let keep = full.length; over(text) > 0 && keep > 0; ) {
+    keep = Math.max(0, keep - over(text));
+    text = LEFT_OUT + full.slice(full.length - keep);
+  }
+  return { maxTokens, message: message(text) };
 }
 
 /** Index where the kept tail starts: a user message, with the tail under `keepTokens`. */
@@ -40,7 +68,8 @@ export function splitPoint(messages: readonly Message[], keepTokens: number): nu
 /** `manual` (/compact) summarizes everything; automatic compaction keeps a recent tail verbatim. */
 export async function compact(api: PluginAPI, instructions = "", manual = false): Promise<boolean> {
   const messages = api.session.messages();
-  const keep = Math.min(40_000, Math.floor(api.agent.model().contextWindow * 0.15));
+  const model = api.agent.model();
+  const keep = Math.min(40_000, Math.floor(model.contextWindow * 0.15));
   const split = manual ? messages.length : splitPoint(messages, keep);
   const head = messages.slice(0, split);
   if (head.length < 2) return false;
@@ -48,17 +77,8 @@ export async function compact(api: PluginAPI, instructions = "", manual = false)
   api.ui.setStatus("compaction", t("履歴を要約中（{n} 件）…", { n: head.length }));
   let summary: string;
   try {
-    summary = await api.agent.complete({
-      system: SYSTEM,
-      maxTokens: 8192,
-      messages: [
-        {
-          role: "user",
-          timestamp: Date.now(),
-          content: [{ type: "text", text: `${transcript(head)}\n\n---\nSummarize the session above.${instructions ? ` ${instructions}` : ""}` }],
-        },
-      ],
-    });
+    const { maxTokens, message } = summaryRequest(model, head, instructions);
+    summary = await api.agent.complete({ system: SYSTEM, maxTokens, messages: [message] });
   } finally {
     api.ui.setStatus("compaction", undefined);
   }

@@ -2,8 +2,8 @@ import { afterAll, beforeAll, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Agent, makeToolSearchTool, PermissionPolicy, PluginHost, SessionFile } from "@sasacode/agent";
-import { type AssistantContent, type AssistantMessage, emptyUsage, type Message, registerApi } from "@sasacode/ai";
+import { Agent, contentChars, makeToolSearchTool, PermissionPolicy, PluginHost, SessionFile } from "@sasacode/agent";
+import { type AssistantContent, type AssistantMessage, emptyUsage, type Message, type ModelInfo, registerApi, type Request } from "@sasacode/ai";
 import { buildSystemPrompt } from "../../agent/src/system-prompt.ts";
 import { replayProvider } from "@sasacode/testing";
 import builtinTools, { bashTool } from "@sasacode/tools";
@@ -28,11 +28,15 @@ const reply = (content: AssistantContent[], extra: Partial<AssistantMessage> = {
 const say = (text: string) => ({ type: "text" as const, text });
 const call = (id: string, name: string, input: Record<string, unknown>) => ({ type: "tool_call" as const, id, name, input });
 
-async function setup(script: AssistantMessage[], names: string[], opts: { cwd?: string; session?: SessionFile; settings?: Record<string, any> } = {}) {
+async function setup(
+  script: AssistantMessage[],
+  names: string[],
+  opts: { cwd?: string; session?: SessionFile; settings?: Record<string, any>; model?: Partial<ModelInfo> } = {},
+) {
   const provider = replayProvider(script);
   registerApi("replay", provider);
   const agent = new Agent({
-    model: { id: "m", provider: "t", api: "replay", contextWindow: 100_000, maxOutput: 1000 },
+    model: { id: "m", provider: "t", api: "replay", contextWindow: 100_000, maxOutput: 1000, ...opts.model },
     cwd: opts.cwd ?? root,
     systemPrompt: "base",
     permissions: new PermissionPolicy("edits"),
@@ -116,6 +120,77 @@ test("compaction: /compact shows that it is summarizing, and an empty summary le
   expect(agent.messages).toEqual(history);
   expect(seen[0]?.[0]).toContain("要約中");
   expect(host.status.size).toBe(0);
+});
+
+/** A session of about `chars` characters: questions, file reads with long results, answers. */
+function readingSession(chars: number): Message[] {
+  const history: Message[] = [];
+  for (let i = 0; history.reduce((n, m) => n + contentChars(m), 0) < chars; i++)
+    history.push(
+      { role: "user", content: [{ type: "text", text: `step ${i}: ${"why ".repeat(150)}` }], timestamp: 0 },
+      reply([say(`reading f${i}.ts`), call(`c${i}`, "read", { path: `f${i}.ts` })]),
+      { role: "tool", toolCallId: `c${i}`, toolName: "read", content: [{ type: "text", text: `const v${i} = 1;\n`.repeat(200) }], isError: false, timestamp: 0 },
+      reply([say(`f${i}.ts sets v${i}. ${"so ".repeat(300)}`)]),
+    );
+  return history;
+}
+
+/** The summarizer's request, estimated as the core sizes replies, leaves room for its max_tokens. */
+function expectFits(req: Request, window: number) {
+  const input = Math.ceil(((req.system.length + req.messages.reduce((n, m) => n + contentChars(m), 0)) / 4) * 1.1);
+  expect(req.tools).toEqual([]);
+  expect(input + req.maxTokens!).toBeLessThanOrEqual(window);
+}
+
+for (const window of [8192, 16_384])
+  test(`compaction: in a ${window}-token window the summary request fits, on context_limit and on /compact (#60)`, async () => {
+    // vLLM and llama.cpp reject input + max_tokens over the window: an 8,192-token summary could not be asked for.
+    const small = { contextWindow: window, maxOutput: 32_000 };
+    const auto = await setup(
+      [reply([call("1", "read", { path: "nope" })], { usage: { ...emptyUsage(), input: window - 300 } }), reply([say("SUMMARY")]), reply([say("continued")])],
+      ["compaction"],
+      { model: small, settings: { compaction: { threshold: 2 } } },
+    );
+    auto.agent.messages = readingSession(window * 4);
+    expect(await auto.agent.prompt("next question")).toBe("done");
+    expect(auto.provider.requests[1]!.maxTokens).toBe(Math.floor(window * 0.15));
+    expectFits(auto.provider.requests[1]!, window);
+    expect(JSON.stringify(auto.agent.messages[0])).toContain("SUMMARY");
+
+    // /compact summarizes all of it: a full window fits with its tool results clipped harder, every step kept.
+    const full = await setup([reply([say("SUMMARY")])], ["compaction"], { model: small });
+    full.agent.messages = readingSession(window * 4);
+    await full.host.commands.find((c) => c.name === "compact")!.run({ args: "" });
+    expect(full.provider.requests[0]!.maxTokens).toBe(Math.floor(window * 0.15));
+    expectFits(full.provider.requests[0]!, window);
+    expect(JSON.stringify(full.provider.requests[0]!.messages)).toContain("step 0:");
+
+    // More than the window holds (a session carried over from a larger model): the oldest part makes way.
+    const manual = await setup([reply([say("SUMMARY")])], ["compaction"], { model: small });
+    const history = readingSession(window * 12);
+    manual.agent.messages = [...history];
+    await manual.host.commands.find((c) => c.name === "compact")!.run({ args: "keep the paths" });
+    const req = manual.provider.requests[0]!;
+    expect(req.maxTokens).toBe(Math.floor(window * 0.15));
+    expectFits(req, window);
+    // The latest step and the instructions are there.
+    const sent = JSON.stringify(req.messages);
+    const last = history.length / 4 - 1;
+    expect(sent).not.toContain("step 0:");
+    expect(sent).toContain(`step ${last}:`);
+    expect(sent).toContain(`f${last}.ts sets v${last}`);
+    expect(sent).toContain("keep the paths");
+    expect(manual.agent.messages).toHaveLength(1);
+    expect(JSON.stringify(manual.agent.messages[0])).toContain("SUMMARY");
+  });
+
+test("compaction: a large window still asks for an 8,192-token summary of everything (#60)", async () => {
+  const { agent, host, provider } = await setup([reply([say("SUMMARY")])], ["compaction"], { model: { contextWindow: 1_000_000, maxOutput: 64_000 } });
+  agent.messages = readingSession(200_000);
+  await host.commands.find((c) => c.name === "compact")!.run({ args: "" });
+  expect(provider.requests[0]!.maxTokens).toBe(8192);
+  expect(JSON.stringify(provider.requests[0]!.messages)).toContain("step 0:");
+  expect(JSON.stringify(provider.requests[0]!.messages)).toContain("… [800 more chars]"); // results clipped as before, at 2,000 characters
 });
 
 test("splitPoint keeps the tail from a user message", () => {
