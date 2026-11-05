@@ -683,3 +683,28 @@ test("web_search steps aside while browsr's search is connected", async () => {
   expect(names).not.toContain("web_search");
   await agent.hooks.run("session_end", {});
 });
+
+test("todo: a list with unfinished items that goes remindAfter tool calls without an update gets a one-line reminder, once", async () => {
+  writeFileSync(join(root, "todo-nudge.txt"), "x\n");
+  const read = (id: string) => call(id, "read", { path: "todo-nudge.txt" });
+  const open = [
+    { content: "write tests", status: "completed" },
+    { content: "fix bug", status: "in_progress" },
+  ];
+  const script = (todos: unknown[]) => [reply([call("1", "todo_write", { todos })]), reply([read("2"), read("3")]), reply([read("4")]), reply([read("5")]), reply([say("ok")])];
+  const { agent, provider } = await setup(script(open), ["todo"], { settings: { todo: { remindAfter: 3 } } });
+  await agent.prompt("go");
+  const last = (i: number) => JSON.stringify(provider.requests[i]!.messages.at(-1));
+  expect(last(2)).not.toContain("has not been updated"); // two calls since the list was written
+  expect(last(3)).toContain("has not been updated for 3 tool calls: ☑ write tests, ◐ fix bug. Update it with todo_write");
+  expect(last(4)).not.toContain("has not been updated"); // the count starts over after a reminder
+
+  // Nothing left to do: no reminder. Off with 0.
+  const done = open.map((t) => ({ ...t, status: "completed" }));
+  const quiet = await setup(script(done), ["todo"], { settings: { todo: { remindAfter: 3 } } });
+  await quiet.agent.prompt("go");
+  expect(JSON.stringify(quiet.provider.requests)).not.toContain("has not been updated");
+  const off = await setup(script(open), ["todo"], { settings: { todo: { remindAfter: 0 } } });
+  await off.agent.prompt("go");
+  expect(JSON.stringify(off.provider.requests)).not.toContain("has not been updated");
+});
