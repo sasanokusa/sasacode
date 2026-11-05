@@ -1,9 +1,10 @@
 import { afterAll, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Agent, PermissionPolicy, PluginHost, SessionFile } from "@sasacode/agent";
+import { Agent, type AgentOptions, PermissionPolicy, PluginHost, SessionFile } from "@sasacode/agent";
 import { type AssistantContent, type AssistantMessage, emptyUsage, registerApi, type ToolResultMessage } from "@sasacode/ai";
+import type { PermissionMode } from "@sasacode/plugin-api";
 import { replayProvider } from "@sasacode/testing";
 import builtinTools from "@sasacode/tools";
 import { bundledPlugins, extractTextCalls } from "../src/index.ts";
@@ -27,18 +28,28 @@ const reply = (content: AssistantContent[], extra: Partial<AssistantMessage> = {
 });
 const say = (text: string, extra: Partial<AssistantMessage> = {}) => reply([{ type: "text", text }], extra);
 
-async function run(first: AssistantMessage, plugins = ["text-tool-calls"]) {
+interface RunOptions {
+  /** Where the model is served; a server on this machine unless given. */
+  baseUrl?: string;
+  mode?: PermissionMode;
+  settings?: Record<string, unknown>;
+  approve?: AgentOptions["approve"];
+}
+
+async function run(first: AssistantMessage, plugins = ["text-tool-calls"], opts: RunOptions = {}) {
   const provider = replayProvider([first, say("done")]);
   registerApi("replay", provider);
   const session = SessionFile.create(join(root, "sessions"), root);
+  const baseUrl = "baseUrl" in opts ? opts.baseUrl : "http://127.0.0.1:8080/v1";
   const agent = new Agent({
-    model: { id: "m", provider: "t", api: "replay", contextWindow: 1e5, maxOutput: 1e3 },
+    model: { id: "m", provider: "t", api: "replay", baseUrl, contextWindow: 1e5, maxOutput: 1e3 },
     cwd: root,
     systemPrompt: "",
-    permissions: new PermissionPolicy("auto"),
+    permissions: new PermissionPolicy(opts.mode ?? "auto"),
     session,
+    approve: opts.approve,
   });
-  const host = new PluginHost({ agent, cwd: root });
+  const host = new PluginHost({ agent, cwd: root, settings: (p) => (p === "text-tool-calls" ? (opts.settings ?? {}) : {}) });
   await host.load("builtin-tools", builtinTools);
   for (const p of plugins) await host.load(p, bundledPlugins[p]!);
   await agent.prompt("go");
@@ -52,21 +63,40 @@ test("extractTextCalls: the three formats, and only calls that end the reply", (
   expect(extractTextCalls('Let me look.\n<tool_call>\n{"name": "read", "arguments": {"path": "a.ts"}}\n</tool_call>')).toEqual({
     prose: "Let me look.",
     calls: [call("read", '{"path":"a.ts"}')],
+    skipped: 0,
   });
   // Several in a row; Hermes puts the arguments first; a missing closing tag at the very end.
   expect(extractTextCalls('<tool_call>{"arguments": {"path": "a"}, "name": "read"}</tool_call>\n<tool_call>{"name": "bash", "arguments": {"command": "ls"}}')?.calls).toEqual([
     call("read", '{"path":"a"}'),
     call("bash", '{"command":"ls"}'),
   ]);
-  expect(extractTextCalls('<function=read>{"path": "a.ts"}</function>')).toEqual({ prose: "", calls: [call("read", '{"path": "a.ts"}')] });
+  expect(extractTextCalls('<function=read>{"path": "a.ts"}</function>')).toEqual({ prose: "", calls: [call("read", '{"path": "a.ts"}')], skipped: 0 });
   expect(extractTextCalls('Reading it.\n```json\n{"name": "read", "parameters": {"path": "a.ts"}}\n```\n')?.calls).toEqual([call("read", '{"path":"a.ts"}')]);
   // Broken JSON: the arguments are cut out as written, for tool-repair.
   expect(extractTextCalls("<tool_call>{\"name\": \"read\", \"arguments\": {path: 'a.ts',}}</tool_call>")?.calls).toEqual([call("read", "{path: 'a.ts',}")]);
   expect(extractTextCalls('<tool_call>{"arguments": {"path": "a",}, "name": "read"}</tool_call>')?.calls).toEqual([call("read", '{"path": "a",}')]);
+  // A Python-style envelope (single quotes around the name too) is repaired as a whole.
+  expect(extractTextCalls("<tool_call>{'name': 'read', 'arguments': {'path': 'a.ts'}}</tool_call>")?.calls).toEqual([call("read", '{"path":"a.ts"}')]);
+  // A closing tag missing before the next call does not swallow that call.
+  expect(extractTextCalls('<tool_call>{"name": "read", "arguments": {"path": "a"}}\n<tool_call>{"name": "bash", "arguments": {"command": "ls"}}</tool_call>')?.calls).toEqual([
+    call("read", '{"path":"a"}'),
+    call("bash", '{"command":"ls"}'),
+  ]);
+  // A tag inside the content of a call that is picked up belongs to that content.
+  const nested = { path: "t.md", content: '<tool_call>{"name": "read", "arguments": {"path": "a"}}</tool_call>' };
+  expect(extractTextCalls(`\`\`\`json\n${JSON.stringify({ name: "write", arguments: nested })}\n\`\`\``)?.calls).toEqual([call("write", JSON.stringify(nested))]);
+  // A call followed by more prose stays text when a later one ends the reply; it is counted.
+  expect(extractTextCalls('Read a.\n<tool_call>{"name": "read", "arguments": {"path": "a"}}</tool_call>\nAnd b.\n<tool_call>{"name": "read", "arguments": {"path": "b"}}</tool_call>')).toMatchObject({
+    calls: [call("read", '{"path":"b"}')],
+    skipped: 1,
+  });
   // Not calls: an example followed by more text, one shown in a code block, a tool definition,
   // a JSON answer after a long explanation, and a call that cannot be read.
   expect(extractTextCalls('Write <tool_call>{"name": "read", "arguments": {"path": "a"}}</tool_call> and it runs.')).toBeUndefined();
   expect(extractTextCalls('The format:\n```\n<tool_call>{"name": "read", "arguments": {"path": "a"}}</tool_call>\n```')).toBeUndefined();
+  // … also when the code block is never closed.
+  expect(extractTextCalls('```\n<tool_call>{"name": "read", "arguments": {"path": "a"}}</tool_call>')).toBeUndefined();
+  expect(extractTextCalls('```xml\n<function=read>{"path": "a"}</function>')).toBeUndefined();
   expect(extractTextCalls('```json\n{"name": "read", "description": "Read a file", "parameters": {"type": "object"}}\n```')).toBeUndefined();
   expect(extractTextCalls(`${"Here is how the protocol works. ".repeat(12)}\n\`\`\`json\n{"name": "read", "arguments": {"path": "a"}}\n\`\`\``)).toBeUndefined();
   expect(extractTextCalls("<tool_call>{not json at all}</tool_call>")).toBeUndefined();
@@ -125,6 +155,8 @@ test("text-tool-calls: leaves alone a reply with a native call, an unknown tool,
 
   const untouched = [
     say('<tool_call>{"name": "launch_rockets", "arguments": {"count": 3}}</tool_call>'),
+    // A name only a typo away from a tool (head → read) is not taken for it.
+    say('Example:\n```json\n{"name": "head", "arguments": {"n": 5}}\n```'),
     say(`To call a tool, write ${tagged} on its own, and the harness runs it.`),
     reply([{ type: "thinking", thinking: "…", signature: "sig" }, { type: "text", text: tagged }]),
     say(tagged, { stopReason: "max_tokens" }),
@@ -136,4 +168,51 @@ test("text-tool-calls: leaves alone a reply with a native call, an unknown tool,
     expect(results).toEqual([]);
     expect(entries.some((e) => e.type === "custom" && e.plugin === "text-tool-calls")).toBe(false);
   }
+});
+
+test("text-tool-calls: tells the model when an earlier call in the text did not run", async () => {
+  const text = `Read a.\n<tool_call>{"name": "read", "arguments": {"path": "a"}}</tool_call>\nAnd this.\n<tool_call>{"name": "read", "arguments": {"path": ${at}}}</tool_call>`;
+  const { results } = await run(say(text));
+  expect(results).toHaveLength(1);
+  expect((results[0]!.content[0] as { text: string }).text).toContain("1 other call written earlier in the text did not run");
+});
+
+// What a cloud model may answer when asked what a write call looks like.
+const target = join(root, "config.json");
+const example = say(`It looks like this:\n\`\`\`json\n{"name": "write", "arguments": {"path": ${JSON.stringify(target)}, "content": "{}"}}\n\`\`\``);
+
+test("text-tool-calls: off for a model served from a public address or with no baseUrl, unless always is set", async () => {
+  writeFileSync(target, '{"keep": true}');
+  for (const baseUrl of ["https://api.anthropic.com", undefined]) {
+    const { provider, stored, results } = await run(example, ["tool-repair", "text-tool-calls"], { baseUrl, mode: "edits" });
+    expect(provider.requests).toHaveLength(1);
+    expect(stored.content).toEqual(example.content);
+    expect(results).toEqual([]);
+  }
+  expect(readFileSync(target, "utf8")).toBe('{"keep": true}');
+  // This machine and the local network count as local; always: true picks calls up from any model.
+  const local: [string, Record<string, unknown>][] = [
+    ["http://[::1]:8080/v1", {}],
+    ["http://192.168.1.20:1234/v1", {}],
+    ["http://llama:8080/v1", {}],
+    ["http://host.docker.internal:11434/v1", {}],
+    ["https://api.example.com/v1", { always: true }],
+  ];
+  for (const [baseUrl, settings] of local) {
+    const { results } = await run(say(formats["<tool_call>"]), undefined, { baseUrl, settings });
+    expect([baseUrl, results.length]).toEqual([baseUrl, 1]);
+  }
+});
+
+test("text-tool-calls: in edits mode a write picked up from text is asked about; a read is not", async () => {
+  writeFileSync(target, '{"keep": true}');
+  const asked: string[] = [];
+  const approve: AgentOptions["approve"] = async (req) => (asked.push(req.reason), { decision: "deny" });
+  const { results } = await run(example, ["tool-repair", "text-tool-calls"], { mode: "edits", approve });
+  expect(asked).toEqual([expect.stringContaining("written as text")]);
+  expect(results[0]!.isError).toBe(true);
+  expect(readFileSync(target, "utf8")).toBe('{"keep": true}');
+  const read = await run(say(formats["<tool_call>"]), undefined, { mode: "edits", approve });
+  expect(read.results[0]!.isError).toBe(false);
+  expect(asked).toHaveLength(1);
 });
