@@ -285,7 +285,7 @@ before_request → stream_delta（生成中、差分ごと） → assistant_mess
 }
 ```
 
-同梱プラグインの名前は`tool-repair`、`repetition-guard`、`loop-guard`、`agents-md`、`compaction`、`subagent`、`todo`、`web-fetch`、`web-search`、`permission-presets`、`agent-judge`、`browsr`、`openai-codex`、`usage`、`goal`、`background-sessions`、`auto-reconnect`、`checkpoints`、`image-attach`、`diagnostics`、`skills`、`mcp`。同じ名前のユーザー・プロジェクトのプラグインがあれば、同梱版は読み込まない。
+同梱プラグインの名前は`tool-repair`、`text-tool-calls`、`repetition-guard`、`loop-guard`、`agents-md`、`compaction`、`subagent`、`todo`、`web-fetch`、`web-search`、`permission-presets`、`agent-judge`、`browsr`、`openai-codex`、`usage`、`goal`、`background-sessions`、`auto-reconnect`、`checkpoints`、`image-attach`、`diagnostics`、`skills`、`mcp`。同じ名前のユーザー・プロジェクトのプラグインがあれば、同梱版は読み込まない。
 
 プラグインを作るときは、組み込みのSkillを使うのが早い。TUIで`/skill:tool-authoring <作りたいもの>`と打つと、このリファレンスを読んだうえでモデルがプラグインを書く。
 
@@ -296,6 +296,17 @@ before_request → stream_delta（生成中、差分ごと） → assistant_mess
 記録するのは、実際のリクエストのUTF-8バイト数・system/toolsのバイト数・メッセージ/推論/署名付きブロック件数、同じモデル呼び出し内のHTTP試行番号と同一本文かどうか、HTTPステータス、完了/中断、APIの使用量・キャッシュ数値、Anthropicの`input_transformations`件数と既知の破棄理由の件数、ツールが実行されたか・エラーか・変更を報告したか。本文・URL・ヘッダー・APIキー・署名・暗号化推論・任意のエラーメッセージは記録しない。未知の破棄理由は件数だけにする。数値はAPIが返した情報で、欠落を0として計上しない。
 
 `before_request`のoptional `fetch`は前のハンドラが渡したtransportを受け取り、それを包んで返す。未指定ならホストの標準fetchを使う。リクエストごとのラッパーなので並列サブエージェントの試行は混ざらない。SDK内部の再試行も観測するが、診断自身は再試行しない。同一本文という記録だけで429等の原因を断定しない。Codexの本文調整後もこのtransportへ委譲する。SSEは先読みせず元のバイト列を渡し、キャンセルを下流へ伝える。本文が文字列でない独自transportやSSE以外は、観測できた範囲に限られる。
+
+## テキストで書かれたツール呼び出し
+
+同梱の`text-tool-calls`（既定で有効）は、`assistant_message`で応答を書き換え、本文に書かれた呼び出しを`tool_call`ブロックにする（`stopReason`は`tool_use`、idは`textcall`で始まる）。引数のJSONは書かれたままパースし、崩れていれば`rawInput`に入れて、`tool_call_raw`でtool-repairに直させる。拾ったことは、その呼び出しの`tool_call_raw`の`note`でモデルに伝える（呼び出しが変わらない`note`だけの結果はモデルに届かないので、`input`を新しいオブジェクトで返している）。元の本文はセッションに`text_tool_call`（`{text, calls, agent?}`、`calls`は呼び出しのid）として残る。
+
+拾うのは、次をすべて満たす応答だけ。どれかが外れれば、応答はそのまま残す。
+
+- 自然に終わった（`stopReason`が`stop`で、プラグインが止めていない）。ネイティブの`tool_call`も、署名付きのthinkingもない（書き換えると、署名付きの推論は次のリクエストで再生できない）
+- 最後のtextブロックが呼び出しで終わり、最後の呼び出しの後ろと呼び出しの間には空白しかない。前の文は残す。後ろに説明が続く例や、コードブロック・インラインコードの中の例は、閉じる記号が後ろに来るので拾わない
+- `json`のコードフェンスを含むときは、前の文が300字以内で、ほかのコードブロックを含まない（普通の回答も、長い説明の最後にJSONの例を置くことがあるため）。中身は`name`と`arguments`（または`parameters`）の2つのキーだけのオブジェクトで、`description`などを持つツール定義は呼び出しとみなさない
+- ツール名がすべて、既知のツールか、`resolveToolName`（tool-repairと同じ規則：接頭辞の除去、ほかのハーネスでの名前、typo）で1つに決まるもの
 
 ## 公開APIの詳細な契約
 
