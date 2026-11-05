@@ -37,7 +37,8 @@ const LEFT_OUT = "[The start of the session is left out here, so that this reque
  * history went over the window. A transcript too long for that (/compact sends the whole history)
  * has its tool results and calls clipped harder first, which keeps every step; if that is not
  * enough, its oldest part is dropped, since the latest context matters most for carrying on.
- * Instructions that leave no room for any of it throw, and the history stays as it was.
+ * Instructions that then take more than half the room throw, and the history stays as it was:
+ * a summary of the session's last few lines would otherwise replace all of it.
  */
 function summaryRequest(model: ModelInfo, head: readonly Message[], instructions: string): { maxTokens: number; message: Message } {
   const maxTokens = Math.min(8192, responseRoom(model));
@@ -48,6 +49,7 @@ function summaryRequest(model: ModelInfo, head: readonly Message[], instructions
   let text = transcript(head);
   if (size(text) > maxChars) text = transcript(head, 200, 100);
   if (size(text) > maxChars) {
+    if (size(LEFT_OUT) > maxChars / 2) throw new Error("the /compact instructions leave too little room for the session in the context window; the history was left as it was");
     // The longest recent part that fits, found by halving, since what a character weighs varies (code, Japanese).
     const full = text;
     let keep = 0;
@@ -56,7 +58,6 @@ function summaryRequest(model: ModelInfo, head: readonly Message[], instructions
       if (size(LEFT_OUT + full.slice(full.length - mid)) > maxChars) most = mid - 1;
       else keep = mid;
     }
-    if (!keep) throw new Error("the /compact instructions leave no room for the session in the context window; the history was left as it was");
     text = LEFT_OUT + full.slice(full.length - keep);
   }
   return { maxTokens, message: message(text) };

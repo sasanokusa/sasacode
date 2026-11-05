@@ -224,15 +224,29 @@ for (const window of [8192, 16_384])
     expect(agent.messages).toHaveLength(1);
   });
 
-test("compaction: /compact whose instructions leave no room for the session leaves the history as it was", async () => {
-  const { agent, host, provider } = await setup([reply([say("SUMMARY")])], ["compaction"], { model: { contextWindow: 8192, maxOutput: 32_000 } });
-  const history = readingSession(2000);
-  agent.messages = [...history];
-  const compact = host.commands.find((c) => c.name === "compact")!;
-  await expect(Promise.resolve(compact.run({ args: "be thorough ".repeat(4000) }))).rejects.toThrow(/instructions/);
-  expect(agent.messages).toEqual(history);
-  expect(provider.requests).toHaveLength(0);
-  expect(host.status.size).toBe(0);
+test("compaction: /compact whose instructions take more than half the room leaves the history as it was (#60)", async () => {
+  // A history that must be cut: instructions leaving room for a few characters of it had those
+  // summarized, and the summary replaced every message.
+  const window = 8192;
+  const room = Math.floor(((window - Math.floor(window * 0.15)) / 1.1) * 4); // the input's characters, the summary's 15% aside
+  for (const length of [Math.floor(room * 0.4), Math.ceil(room * 0.55), room - 600, room * 2]) {
+    const { agent, host, provider } = await setup([reply([say("SUMMARY")])], ["compaction"], { model: { contextWindow: window, maxOutput: 32_000 } });
+    const history = readingSession(window * 12);
+    agent.messages = [...history];
+    const run = Promise.resolve(host.commands.find((c) => c.name === "compact")!.run({ args: "be thorough ".repeat(length).slice(0, length) }));
+    if (length < room / 2) {
+      await run;
+      expectFits(provider.requests[0]!, window);
+      const last = history.length / 4 - 1;
+      expect(JSON.stringify(provider.requests[0]!.messages)).toContain(`f${last}.ts sets v${last}`);
+      expect(agent.messages).toHaveLength(1);
+      continue;
+    }
+    await expect(run).rejects.toThrow(/instructions/);
+    expect(agent.messages).toEqual(history);
+    expect(provider.requests).toHaveLength(0);
+    expect(host.status.size).toBe(0);
+  }
 });
 
 test("compaction: a large window still asks for an 8,192-token summary of everything (#60)", async () => {
