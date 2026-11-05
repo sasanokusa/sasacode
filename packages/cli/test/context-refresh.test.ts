@@ -48,18 +48,21 @@ const ollama = Bun.serve({
 // LM Studio loads a model at its first request, with its own default length, not the maximum.
 let studioLoaded = false;
 let studioDown = false; // not started yet when sasacode lists the models
+let studioBodies: Record<string, unknown>[] = [];
 const lmstudio = Bun.serve({
   port: 0,
   async fetch(req) {
     const path = new URL(req.url).pathname;
     if (studioDown) return new Response("", { status: 503 });
-    if (path === "/v1/models") return Response.json({ object: "list", data: [{ id: "qwen", object: "model", owned_by: "organization_owner" }] });
+    const ids = { qwen: 32768, big: 131072 };
+    if (path === "/v1/models") return Response.json({ object: "list", data: Object.keys(ids).map((id) => ({ id, object: "model", owned_by: "organization_owner" })) });
     if (path === "/api/v0/models") {
       const size = studioLoaded ? { state: "loaded", loaded_context_length: 4096 } : { state: "not-loaded" };
-      return Response.json({ object: "list", data: [{ id: "qwen", object: "model", type: "llm", max_context_length: 32768, ...size }] });
+      return Response.json({ object: "list", data: Object.entries(ids).map(([id, max]) => ({ id, object: "model", type: "llm", max_context_length: max, ...size })) });
     }
     if (path === "/v1/chat/completions") {
       studioLoaded = true;
+      studioBodies.push(await req.clone().json());
       return reply(req);
     }
     return new Response("", { status: 404 });
@@ -103,6 +106,7 @@ beforeEach(() => {
   listDown = false;
   studioLoaded = false;
   studioDown = false;
+  studioBodies = [];
   cppListHits = 0;
 });
 
@@ -214,6 +218,18 @@ for (const [how, studio] of [
     expect(h.agent.model.contextWindow).toBe(4096);
     await h.shutdown();
   });
+
+test("LM Studio set up before it was told apart gets max_tokens from its first request once listed, whatever the model's maximum (#59)", async () => {
+  configure({}, "studio/big", { studio: { api: "openai-chat", baseUrl: `${studioUrl}/v1` } });
+  const h = await setup({ cwd: proj, noSession: true });
+  await h.listModels();
+  // Its maximum (131072) is above the default: no size is learned, but the server is.
+  expect(h.agent.model).toMatchObject({ server: "lmstudio", contextWindow: 128_000 });
+  await h.agent.prompt("hi");
+  expect(studioBodies[0]).toHaveProperty("max_tokens");
+  expect(studioBodies[0]).not.toHaveProperty("max_completion_tokens");
+  await h.shutdown();
+});
 
 test("LM Studio set up before it was told apart and down when first listed is recognised at a turn's end (#59)", async () => {
   configure({}, "studio/qwen", { studio: { api: "openai-chat", baseUrl: `${studioUrl}/v1` } });

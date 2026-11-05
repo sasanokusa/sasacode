@@ -128,9 +128,10 @@ export async function setup(opts: SetupOptions): Promise<Harness> {
     () => agent.model.provider,
   );
   const current = () => `${agent.model.provider}/${agent.model.id}`;
-  /** The current model may just have learned its real context window. */
+  /** The current model may just have learned its real context window, or which server it runs on (#59). */
   const adopt = () => {
-    if (catalog.discovered.has(current())) agent.model = resolve(current());
+    const fresh = resolve(current());
+    if (catalog.discovered.has(current()) || fresh.server !== agent.model.server) agent.model = fresh;
   };
   // A model Ollama (without num_ctx) or LM Studio has not loaded yet is listed with its maximum
   // only; once it has answered, the server says what it was loaded with. Asked at the end of its
