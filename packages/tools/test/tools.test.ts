@@ -120,3 +120,62 @@ test("write counts lines as read does: a final newline is not one more, empty is
     expect(JSON.stringify(out.content)).toContain(`(${n} lines)`);
   }
 });
+
+test("edit: an exact match is replaced as given, with no note", async () => {
+  writeFileSync(join(dir, "plain.txt"), "\tkeep\r\nme\r\n");
+  const r = await editTool.execute({ path: "plain.txt", old_string: "me", new_string: "you\nthere" }, ctx());
+  expect(out(r)).toBe(`Edited ${join(dir, "plain.txt")} (1 replacement).`);
+  expect(readFileSync(join(dir, "plain.txt"), "utf8")).toBe("\tkeep\r\nyou\nthere\r\n");
+});
+
+test("edit: read's line numbers are ignored when every line of old_string has one (#65)", async () => {
+  const path = join(dir, "numbered.ts");
+  writeFileSync(path, "function f() {\n\n  return 1;\n}\n");
+  const r = await editTool.execute({ path, old_string: "     1\tfunction f() {\n     2\t\n     3\t  return 1;", new_string: "     1\tfunction f() {\n     3\t  return 2;" }, ctx());
+  expect(out(r)).toBe(`[harness matched old_string ignoring line-number prefixes]\nEdited ${path} (1 replacement).`);
+  expect(readFileSync(path, "utf8")).toBe("function f() {\n  return 2;\n}\n");
+  // One line without a number: old_string is taken as it is, and is not found.
+  const mixed = await editTool.execute({ path, old_string: "     1\tfunction f() {\n  return 2;", new_string: "x" }, ctx());
+  expect(out(mixed)).toContain("not found");
+  expect(readFileSync(path, "utf8")).toBe("function f() {\n  return 2;\n}\n");
+});
+
+test("edit: trailing whitespace and CRLF are ignored both ways, and the file keeps its line endings (#65)", async () => {
+  const crlf = join(dir, "crlf.txt");
+  writeFileSync(crlf, "a\r\nb  \r\nc\r\n");
+  const r = await editTool.execute({ path: crlf, old_string: "a\nb\nc", new_string: "a\nB\nc" }, ctx());
+  expect(out(r)).toStartWith("[harness matched old_string ignoring trailing whitespace and line endings]\n");
+  expect(readFileSync(crlf, "utf8")).toBe("a\r\nB\r\nc\r\n");
+  const lf = join(dir, "lf.txt");
+  writeFileSync(lf, "x\ny\nz\n");
+  expect((await editTool.execute({ path: lf, old_string: "x\r\ny \r\n", new_string: "x\r\nY\r\n" }, ctx())).isError).toBeFalsy();
+  expect(readFileSync(lf, "utf8")).toBe("x\nY\nz\n");
+});
+
+test("edit: other indentation is ignored, and new_string takes the file's (#65)", async () => {
+  const path = join(dir, "indent.ts");
+  writeFileSync(path, "function f() {\n\tif (x) {\n\t\treturn 1;\n\t}\n}\n");
+  // Dedented by a level: every line of new_string gets the file's indentation in front.
+  const r = await editTool.execute({ path, old_string: "if (x) {\n\treturn 1;\n}", new_string: "if (x) {\n\treturn 2;\n}" }, ctx());
+  expect(out(r)).toStartWith("[harness matched old_string ignoring trailing whitespace and line endings, indentation]\n");
+  expect(readFileSync(path, "utf8")).toBe("function f() {\n\tif (x) {\n\t\treturn 2;\n\t}\n}\n");
+  // Spaces for tabs: old_string's first-line indentation becomes the file's where a line starts with it.
+  const spaces = { path, old_string: "    if (x) {\n        return 2;\n    }\n", new_string: "    if (y) {\n        return 3;\n    }\n" };
+  expect((await editTool.execute(spaces, ctx())).isError).toBeFalsy();
+  expect(readFileSync(path, "utf8")).toBe("function f() {\n\tif (y) {\n\t    return 3;\n\t}\n}\n");
+});
+
+test("edit: a loose match must be unique, replace_all or not; nothing is changed otherwise (#65)", async () => {
+  const path = join(dir, "twice.ts");
+  writeFileSync(path, "\tfoo();\n  foo();\n");
+  for (const replace_all of [false, true]) {
+    const r = await editTool.execute({ path, old_string: "    foo();", new_string: "bar();", replace_all }, ctx());
+    expect(r.isError).toBe(true);
+    expect(out(r)).toContain("appears more than once");
+  }
+  const none = await editTool.execute({ path, old_string: "    baz();", new_string: "bar();" }, ctx());
+  expect(out(none)).toContain("even ignoring");
+  // Blank once trailing whitespace is ignored: that is everywhere, so it is refused as ambiguous.
+  expect(out(await editTool.execute({ path, old_string: " \t ", new_string: "x" }, ctx()))).toContain("appears more than once");
+  expect(readFileSync(path, "utf8")).toBe("\tfoo();\n  foo();\n");
+});
