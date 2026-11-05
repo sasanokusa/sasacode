@@ -21,7 +21,7 @@ const SYNONYMS: Record<string, string[]> = {
  * only; words that name other things too (`open`, `run`, `create`, `replace`) are left out.
  */
 export const TOOL_SYNONYMS: Record<string, string[]> = {
-  read: ["read_file", "view_file", "open_file", "file_read", "read_text_file", "get_file_contents", "cat", "view"],
+  read: ["read_file", "view_file", "open_file", "file_read", "read_text_file", "cat", "view"],
   write: ["write_file", "create_file", "save_file", "file_write", "write_to_file", "new_file"],
   edit: ["edit_file", "file_edit", "str_replace", "str_replace_editor", "str_replace_based_edit_tool", "replace_in_file", "apply_edit", "search_replace"],
   bash: ["run_command", "execute_command", "execute_bash", "run_shell_command", "run_terminal_cmd", "shell", "local_shell", "terminal", "exec", "bash_command"],
@@ -41,14 +41,14 @@ export function editDistance(a: string, b: string): number {
   return d[a.length]![b.length]!;
 }
 
-/** The single best match for `name` among `candidates`, or undefined when none or several fit. */
-export function closestName(name: string, candidates: string[], synonyms: Record<string, string[]> = {}): string | undefined {
+/** The single best match for `name` among `candidates`, or undefined when none or several fit. `typos: false` skips the edit-distance pass. */
+export function closestName(name: string, candidates: string[], synonyms: Record<string, string[]> = {}, typos = true): string | undefined {
   const n = norm(name);
   const pick = (hits: string[]) => (hits.length === 1 ? hits[0] : undefined);
   const exact = candidates.filter((c) => norm(c) === n);
   if (exact.length) return pick(exact);
   const syn = candidates.filter((c) => synonyms[c]?.some((s) => norm(s) === n));
-  if (syn.length) return pick(syn);
+  if (syn.length || !typos) return pick(syn);
   const limit = n.length < 5 ? 1 : 2;
   const scored = candidates.map((c) => ({ c, d: editDistance(n, norm(c)) })).filter((x) => x.d <= limit);
   if (!scored.length) return undefined;

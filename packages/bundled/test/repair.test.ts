@@ -6,7 +6,7 @@ import { Agent, PermissionPolicy, PluginHost } from "@sasacode/agent";
 import { type AssistantMessage, emptyUsage, registerApi } from "@sasacode/ai";
 import { replayProvider } from "@sasacode/testing";
 import builtinTools, { editTool, readTool, writeTool } from "@sasacode/tools";
-import { bundledPlugins, closestName, detectRepetition, fitToSchema, repairJson, TOOL_SYNONYMS } from "../src/index.ts";
+import { bundledPlugins, closestName, detectRepetition, fitToSchema, repairJson, resolveToolName, TOOL_SYNONYMS } from "../src/index.ts";
 
 test("repairJson: the usual small-model mistakes", () => {
   const ok = (raw: string) => repairJson(raw)?.value;
@@ -181,6 +181,18 @@ test("closestName: tool names other harnesses use, only to a tool that is offere
   expect(spellings.filter((s) => Object.keys(TOOL_SYNONYMS).includes(s))).toEqual([]);
 });
 
+test("resolveToolName: an MCP tool's own name wins over a built-in's, and typos only when allowed", () => {
+  const names = ["read", "write", "bash", "mcp__github__get_file_contents", "mcp__filesystem__read_file"];
+  expect(resolveToolName("get_file_contents", names)).toBe("mcp__github__get_file_contents");
+  expect(resolveToolName("get_file_contents", ["read", "bash"])).toBeUndefined(); // GitHub's name, not one for read
+  expect(resolveToolName("read_file", names)).toBe("mcp__filesystem__read_file");
+  expect(resolveToolName("read_file", ["read"])).toBe("read");
+  expect(resolveToolName("read_file", ["read", "mcp__a__read_file", "mcp__b__read_file"])).toBeUndefined(); // two such tools
+  expect(resolveToolName("head", names)).toBe("read");
+  expect(resolveToolName("head", names, false)).toBeUndefined();
+  expect(resolveToolName("functions.read_file", ["read"], false)).toBe("read");
+});
+
 test("tool-repair: another harness's tool and argument names run as the built-in tool", async () => {
   const dir = mkdtempSync(join(tmpdir(), "sasacode-repair-"));
   const file = join(dir, "a.ts");
@@ -192,22 +204,26 @@ test("tool-repair: another harness's tool and argument names run as the built-in
       call(2, "str_replace", { path: file, old_str: "const a = 1;", new_str: "const a = 10;" }),
       call(3, "str_replace_editor", { command: "str_replace", path: file, old_str: "const b = 2;", new_str: "const b = 20;" }),
       call(4, "str_replace_editor", { command: "view", path: file }),
-      call(5, "run_shell_command", { command: "echo shell-ran" }),
-      reply([{ type: "text", text: "done" }], 6),
+      // The command that picks the tool can be inside broken JSON: it is repaired first.
+      reply([{ type: "tool_call", id: "5", name: "str_replace_editor", input: {}, rawInput: `{command: 'view', path: ${JSON.stringify(file)},}` }], 5),
+      call(6, "run_shell_command", { command: "echo shell-ran" }),
+      reply([{ type: "text", text: "done" }], 7),
     ],
     "tool-repair",
   );
   const results = provider.requests.slice(1).map((r) => r.messages.at(-1) as { content: { text: string }[]; isError: boolean });
-  expect(results.map((r) => r.isError)).toEqual([false, false, false, false, false]);
+  expect(results.map((r) => r.isError)).toEqual([false, false, false, false, false, false]);
   expect(results[0]!.content.at(-1)!.text).toContain("const a = 1;");
   expect(readFileSync(file, "utf8")).toBe("const a = 10;\nconst b = 20;\n");
   expect(results[2]!.content[0]!.text).toContain('tool "str_replace_editor" (command "str_replace") → "edit"');
   expect(results[3]!.content.at(-1)!.text).toContain("const b = 20;");
-  expect(JSON.stringify(results[4])).toContain("shell-ran");
+  expect(results[4]!.content.at(-1)!.text).toContain("const b = 20;");
+  expect(JSON.stringify(results[5])).toContain("shell-ran");
   // The history keeps each call as it ran: the model sees the built-in names and arguments.
   const history = provider.requests.at(-1)!.messages.flatMap((m) => (m.role === "assistant" ? m.content : []));
-  expect(history.map((c) => c.type === "tool_call" && c.name)).toEqual(["read", "edit", "edit", "read", "bash"]);
+  expect(history.map((c) => c.type === "tool_call" && c.name)).toEqual(["read", "edit", "edit", "read", "read", "bash"]);
   expect(history[2]).toMatchObject({ input: { path: file, old_string: "const b = 2;", new_string: "const b = 20;" } });
   expect((history[2] as { input: object }).input).not.toHaveProperty("command");
+  expect((history[4] as { input: object }).input).toEqual({ path: file });
   rmSync(dir, { recursive: true, force: true });
 });

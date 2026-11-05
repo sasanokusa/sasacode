@@ -12,14 +12,18 @@ const NAME_PREFIX = /^(functions|function|tools|tool|default_api|api)[.:/]/i;
 const EDITOR_COMMANDS = new Map([["view", "read"], ["create", "write"], ["str_replace", "edit"]]);
 
 /**
- * The tool a model meant by `name`, among `names`: the name itself, the name without a prefix
- * (`functions.read`), another harness's name for it (`read_file`) or a typo. Undefined unless
- * exactly one tool fits.
+ * The tool a model meant by `name`, among `names`: the name itself, the name with a prefix
+ * (`functions.read`) or without its MCP prefix (`get_file_contents` for
+ * `mcp__github__get_file_contents`), another harness's name for it (`read_file`) or, unless
+ * `typos` is false, a typo. Undefined unless exactly one tool fits.
  */
-export function resolveToolName(name: string, names: string[]): string | undefined {
+export function resolveToolName(name: string, names: string[], typos = true): string | undefined {
   if (names.includes(name)) return name;
   const bare = name.replace(NAME_PREFIX, "");
-  return names.includes(bare) ? bare : closestName(bare, names, TOOL_SYNONYMS);
+  if (names.includes(bare)) return bare;
+  // An MCP tool's own name means that tool, not the built-in another harness calls the same.
+  const mcp = names.filter((n) => n.endsWith(`__${bare}`));
+  return mcp.length ? (mcp.length === 1 ? mcp[0] : undefined) : closestName(bare, names, TOOL_SYNONYMS, typos);
 }
 
 /**
