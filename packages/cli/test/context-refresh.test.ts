@@ -82,11 +82,26 @@ const llamacpp = Bun.serve({
     return new Response("", { status: 404 });
   },
 });
+// A cloud gateway added by hand (no flag): no /api/v0/models, and a /v1/models that leaves out the
+// model in use (an alias it still answers to) or is missing.
+let gwList: "other" | "missing" = "other";
+let gwHits = 0; // everything but chat
+const gateway = Bun.serve({
+  port: 0,
+  async fetch(req) {
+    const path = new URL(req.url).pathname;
+    if (path === "/v1/chat/completions") return reply(req);
+    gwHits++;
+    if (path === "/v1/models" && gwList === "other") return Response.json({ object: "list", data: [{ id: "flash-v2", object: "model", owned_by: "gw" }] });
+    return new Response("", { status: 404 });
+  },
+});
 const studioUrl = `http://localhost:${lmstudio.port}`;
 const root = mkdtempSync(join(tmpdir(), "sasacode-ctx-"));
 afterAll(() => {
-  [ollama, lmstudio, llamacpp].forEach((s) => s.stop(true));
+  [ollama, lmstudio, llamacpp, gateway].forEach((s) => s.stop(true));
   rmSync(root, { recursive: true, force: true });
+  delete process.env.SASACODE_TEST_GW_KEY;
 });
 
 let home = "";
@@ -111,6 +126,8 @@ beforeEach(() => {
   studioBodies = [];
   nativeHits = 0;
   cppListHits = 0;
+  gwList = "other";
+  gwHits = 0;
 });
 
 /** stderr of `fn`, stdout dropped. */
@@ -257,6 +274,25 @@ test("a custom server not told apart that has listed the model is not LM Studio,
   expect(h.agent.model.server).toBeUndefined();
   await h.shutdown();
 });
+
+for (const list of ["other", "missing"] as const)
+  test(`a custom server not told apart whose list ${list === "other" ? "leaves out the model" : "is missing"} is listed again once at a turn's end, not at each (#59)`, async () => {
+    process.env.SASACODE_TEST_GW_KEY = "test-key";
+    configure({}, "gw/flash", { gw: { api: "openai-chat", baseUrl: `http://localhost:${gateway.port}/v1`, apiKeyEnv: "SASACODE_TEST_GW_KEY" } });
+    gwList = list;
+    const h = await setup({ cwd: proj, noSession: true });
+    await h.listModels();
+    const hits = gwHits;
+    await h.agent.prompt("hi"); // it has just answered, so it is up: listed once more
+    expect(gwHits - hits).toBe(2); // /api/v0/models and /v1/models
+    for (const n of [2, 3, 4]) await h.agent.prompt(`turn ${n}`);
+    // Telling a server apart is the provider's: another of its models is not listed again either.
+    h.agent.model = h.resolve("gw/flash-v3");
+    await h.agent.prompt("other model");
+    expect(gwHits - hits).toBe(2);
+    expect(h.agent.model.server).toBeUndefined();
+    await h.shutdown();
+  });
 
 test("headless: LM Studio set up before it was told apart also learns the loaded length", async () => {
   configure({}, "studio/qwen", { studio: { api: "openai-chat", baseUrl: `${studioUrl}/v1` } });

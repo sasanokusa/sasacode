@@ -139,8 +139,10 @@ export async function setup(opts: SetupOptions): Promise<Harness> {
   // threshold already uses the real size (#61). While the size stays unknown (the server was down
   // when listed, the refresh failed, it reported none) it is asked again at the next turns' ends,
   // three times in all. A contextWindow in modelOverrides is the user's: nothing is asked for it.
-  // A custom server not told apart may be LM Studio that was down when listed (#59): it is listed
-  // again while it has not listed the model; one that has, and is still not told apart, is not.
+  // A custom server not told apart may be LM Studio that was down when listed (#59). One that has
+  // listed the model, and is still not told apart, is not. One that has not is listed again once:
+  // it has just answered the turn, so it is up, and one still not told apart then is not asked
+  // again. Telling a server apart is the provider's, so it is counted by the provider's name.
   const asked = new Map<string, number>();
   agent.hooks.on(
     "turn_end",
@@ -148,11 +150,12 @@ export async function setup(opts: SetupOptions): Promise<Harness> {
       const spec = current();
       const name = agent.model.provider;
       const p = providers[name];
-      const n = asked.get(spec) ?? 0;
+      const key = () => (untold(name, p) ? name : spec);
+      const n = asked.get(key()) ?? 0;
       if (!(p?.ollama || p?.lmstudio || untold(name, p)) || n >= 3 || config.modelOverrides?.[spec]?.contextWindow) return;
       const listed = await catalog.entry(spec);
-      const known = listed?.contextWindow || (listed && untold(name, p)) || (await catalog.entry(spec, true))?.contextWindow;
-      asked.set(spec, known ? 3 : n + 1);
+      const done = listed?.contextWindow || (listed && untold(name, p)) || (await catalog.entry(spec, true))?.contextWindow || untold(name, p);
+      asked.set(key(), done ? 3 : n + 1);
       adopt();
     },
     "sasacode",
