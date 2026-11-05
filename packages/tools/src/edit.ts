@@ -51,14 +51,16 @@ export const editTool: ToolDefinition<Args> = {
 };
 
 /**
- * old_string is not in the file as given (#65): look again without read's line numbers (a bare one only at read's 6 columns),
- * then ignoring trailing whitespace and CR (a trailing CR or indentation-only last line is the next line's), then indentation; one
- * place only, overlaps counted. Each indentation in new_string becomes the file's for that old_string indentation, else the one
- * shift all lines share if two depths of old_string or unmoved lines show it, else refused.
+ * old_string is not in the file as given (#65): look again without read's line numbers (a bare one at read's 6 columns only next
+ * to the one before), then ignoring trailing whitespace and CR (a trailing CR or indentation-only last line is the next line's), then
+ * indentation; one place only, overlaps counted. Each indentation in new_string becomes the file's for that old_string indentation,
+ * else the one shift all lines share if two depths of old_string or unmoved lines show it, else refused.
  */
 function loosely(path: string, file: string, old: string, neu: string): string | { after: string; note: string } {
-  const numbered = /^ *\d+\t/m.test(old) && old.split("\n").every((l) => !l.trim() || /^( *\d+\t|(?=.{6}$) *\d+$)/m.test(l));
-  [old, neu] = [old, neu].map((s) => (numbered && /^ *\d+\t/m.test(s) ? s.replace(/^( *\d+\t|(?=.{6}$) *\d+$)/gm, "") : s).replace(/[ \t\r]+$/, ""));
+  // Each line without its number, or [line] if it has none and is not blank: a blank line's bare "     7" only right after line 6.
+  const unnumber = (s: string, n = NaN) => s.split("\n").map((l) => { const m = /^ *(\d+)\t|^(?=.{6}$) *(\d+)$/.exec(l); return m && (m[1] ? (n = +m[1]) + 1 : +m[2] === n + 1 && ++n) ? l.slice(m[0].length) : l.trim() ? [l] : l; });
+  const numbered = /^ *\d+\t/m.test(old) && !unnumber(old).some(Array.isArray);
+  [old, neu] = [old, neu].map((s) => (numbered ? unnumber(s).flat().join("\n") : s).replace(/[ \t\r]+$/, ""));
   let i = 0, find = (re: string) => file.matchAll(new RegExp(`(?=(${re}))`, "gm")).take(2).toArray(), hits = find(RegExp.escape(old));
   for (; !hits.length && i < 2; i++) {
     const lines = old.split("\n").map((l) => l.replace(i ? /^[ \t]+|[ \t\r]+$/g : /[ \t\r]+$/, ""));
