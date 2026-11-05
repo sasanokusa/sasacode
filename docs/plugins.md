@@ -127,7 +127,7 @@ sasanokusa.comのおすすめ一覧に載せたいときは、[リポジトリ](
 | `session.inject(text, "next" \| "now")` | ユーザーメッセージを差し込む。`next`は次のターンか次の入力で、`now`は実行中でなければすぐ実行する |
 | `agent.model()` / `agent.tools()` | 現在のモデル / 登録済みのツール |
 | `agent.run({prompt, systemPrompt?, tools?, excludeTools?, model?, signal?, onProgress?, onStart?})` | 独立した履歴でサブループを実行し、`{text, messages, cause, error?}`を返す（サブエージェント）。`onStart`は実行中のループへの`send(text)`（次のターンで届く）と`stop()`を受け取る。`error`は`cause`が`"error"`のときの理由（1.8.0〜） |
-| `agent.complete({system, messages, model?, maxTokens?, signal?})` | ツールなしで1回だけモデルを呼び、本文を返す。`maxTokens`（既定8192）は、そのモデルのコンテキスト長に残る余地と`maxOutput`を超えないように抑える |
+| `agent.complete({system, messages, model?, maxTokens?, signal?})` | ツールなしで1回だけモデルを呼び、本文を返す。`maxTokens`（既定8192）は、そのモデルのコンテキスト長に残る余地と`maxOutput`を超えないように抑える（残る余地は、送る`system`と`messages`の文字数から見積もる） |
 | `log(...args)` | `SASACODE_DEBUG`が設定されているときだけstderrに出す |
 
 `api`のほかに、`@sasacode/plugin-api`から関数として使えるもの（1.8.0〜）：`sasacodeHome()`（`$SASACODE_HOME`か`~/.sasacode`）、`childEnv(extra?)`（コマンドを実行するときの環境変数。`~/.sasacode/.env`から読んだキーを除く）、`saveOutput(prefix, text)`（長い出力を`~/.sasacode/tmp`に本人だけが読める権限で保存し、パスを返す。1週間より古いものは消す）。コマンドを実行するプラグインは`process.env`ではなく`childEnv()`を渡す。

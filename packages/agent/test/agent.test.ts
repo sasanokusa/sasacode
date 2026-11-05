@@ -306,6 +306,17 @@ test("complete() asks for no more than the window has room for, nor more than th
   expect(await sent({ ...big, maxOutput: 4096 }, "hi")).toBe(4096);
 });
 
+test("complete() sizes max_tokens from what it sends, not from usage reported in the messages it is given (#60)", async () => {
+  // A plugin passing session history: the usage there was the main loop's request (system prompt,
+  // tools), and after a compaction the kept tail still reports the nearly full window it saw.
+  const window: ModelInfo = { ...model, contextWindow: 200_000, maxOutput: 64_000 };
+  const { agent, provider } = setup([reply([say("A title")])], { model: window });
+  const stale = reply([say("Done.")], { usage: { ...emptyUsage(), input: 185_000, output: 500 } });
+  const user = (text: string) => ({ role: "user" as const, timestamp: 0, content: [say(text)] });
+  await agent.complete({ system: "Title it.", messages: [user("[Summary] fixed the parser"), user("and the tests?"), stale, user("thanks")] });
+  expect(provider.requests[0]!.maxTokens).toBe(8192);
+});
+
 test("an attached image counts as an image, not as its base64, when max_tokens is sized", async () => {
   // A 3 MB screenshot is ~4 MB of base64: read as text it looked like a full window, and the
   // reply was squeezed to 1,024 tokens, which a thinking model spends before it says anything.

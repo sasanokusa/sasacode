@@ -291,7 +291,7 @@ export interface CompleteOptions {
   system: string;
   messages: Message[];
   model?: string;
-  /** Default 8192, lowered to the room left in the model's window and to its maxOutput. */
+  /** Default 8192, lowered to the room left in the model's window (estimated from the characters of system and messages) and to its maxOutput. */
   maxTokens?: number;
   signal?: AbortSignal;
 }
