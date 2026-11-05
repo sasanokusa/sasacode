@@ -49,8 +49,11 @@ export function parsePricing(pricing: unknown): ModelInfo["price"] | undefined {
   };
 }
 
-/** GET <baseUrl>/models (the Models API) for one provider. Throws on network or auth errors. */
-export async function listModels(p: ProviderConfig, apiKey: string | undefined, signal?: AbortSignal): Promise<ListedModel[]> {
+/**
+ * GET <baseUrl>/models (the Models API) for one provider. Throws on network or auth errors.
+ * `lmstudio`: LM Studio's native list, when it was just fetched (not asked for again).
+ */
+export async function listModels(p: ProviderConfig, apiKey: string | undefined, signal?: AbortSignal, lmstudio?: LmStudioModel[]): Promise<ListedModel[]> {
   const out: ListedModel[] = [];
   const num = (v: unknown) => (typeof v === "number" && v > 0 ? v : undefined);
   if (p.api === "anthropic") {
@@ -82,7 +85,7 @@ export async function listModels(p: ProviderConfig, apiKey: string | undefined, 
     await Promise.all(chat.map((m) => ollamaDetails(p, m, loaded, signal)));
   }
   if (p.llamacpp) await llamacppContext(p, chat, signal);
-  if (p.lmstudio) await lmstudioContext(p, chat, apiKey, signal);
+  if (p.lmstudio) lmstudioContext(chat, lmstudio ?? (await lmstudioList(p, apiKey, signal)));
   return chat;
 }
 
@@ -127,8 +130,8 @@ export const lmstudioList = (p: ProviderConfig, apiKey: string | undefined, sign
  * (often 4096), not its maximum, so before that the maximum is only shown, as for Ollama without
  * num_ctx, and the size is asked again once the model has answered.
  */
-async function lmstudioContext(p: ProviderConfig, models: ListedModel[], apiKey: string | undefined, signal?: AbortSignal): Promise<void> {
-  const native = new Map((await lmstudioList(p, apiKey, signal))?.map((m) => [m.id, m] as const));
+function lmstudioContext(models: ListedModel[], list: LmStudioModel[] | undefined): void {
+  const native = new Map(list?.map((m) => [m.id, m] as const));
   for (const m of models) {
     const n = native.get(m.id);
     if (n?.loaded_context_length) m.contextWindow = n.loaded_context_length;

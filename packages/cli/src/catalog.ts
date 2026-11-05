@@ -115,9 +115,11 @@ export class ModelCatalog {
     const signal = AbortSignal.timeout(8000);
     // Asked when listed, not at startup: a server that is down delays nothing, and LM Studio with no
     // model downloaded when it was detected is still recognised later. The flag stays on the
-    // provider for the session, so the turn_end refresh asks it too.
-    if (untold(primary, p) && (await lmstudioList(p, key, signal))) p.lmstudio = true;
-    const models: ListedModel[] = impl?.listModels ? await impl.listModels(p, key, signal) : await listModels(p, key, signal);
+    // provider for the session, so the turn_end refresh asks it too. The list that told it apart
+    // is the one the sizes come from.
+    const native = untold(primary, p) ? await lmstudioList(p, key, signal) : undefined;
+    if (native) p.lmstudio = true;
+    const models: ListedModel[] = impl?.listModels ? await impl.listModels(p, key, signal) : await listModels(p, key, signal, native);
     const server = p.ollama ? "ollama" : p.lmstudio ? "lmstudio" : p.llamacpp ? "llamacpp" : undefined;
     const out: ModelChoice[] = [];
     for (const m of models) {

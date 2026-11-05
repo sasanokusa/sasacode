@@ -49,6 +49,7 @@ const ollama = Bun.serve({
 let studioLoaded = false;
 let studioDown = false; // not started yet when sasacode lists the models
 let studioBodies: Record<string, unknown>[] = [];
+let nativeHits = 0;
 const lmstudio = Bun.serve({
   port: 0,
   async fetch(req) {
@@ -57,6 +58,7 @@ const lmstudio = Bun.serve({
     const ids = { qwen: 32768, big: 131072 };
     if (path === "/v1/models") return Response.json({ object: "list", data: Object.keys(ids).map((id) => ({ id, object: "model", owned_by: "organization_owner" })) });
     if (path === "/api/v0/models") {
+      nativeHits++;
       const size = studioLoaded ? { state: "loaded", loaded_context_length: 4096 } : { state: "not-loaded" };
       return Response.json({ object: "list", data: Object.entries(ids).map(([id, max]) => ({ id, object: "model", type: "llm", max_context_length: max, ...size })) });
     }
@@ -107,6 +109,7 @@ beforeEach(() => {
   studioLoaded = false;
   studioDown = false;
   studioBodies = [];
+  nativeHits = 0;
   cppListHits = 0;
 });
 
@@ -214,6 +217,7 @@ for (const [how, studio] of [
     writeFileSync(join(home, "endpoints.json"), JSON.stringify({ [studioUrl]: { api: "openai-chat", baseUrl: `${studioUrl}/v1` } }));
     const h = await setup({ cwd: proj, noSession: true });
     expect((await h.listModels()).find((m) => m.spec === "studio/qwen")).toMatchObject({ maxContext: 32768, server: "lmstudio" });
+    expect(nativeHits).toBe(1); // the list that told it apart is the one the sizes come from
     await h.agent.prompt("hi");
     expect(h.agent.model.contextWindow).toBe(4096);
     await h.shutdown();
