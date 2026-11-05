@@ -57,7 +57,7 @@ export const editTool: ToolDefinition<Args> = {
  */
 function loosely(path: string, file: string, old: string, neu: string): string | { after: string; note: string } {
   const numbered = /^ *\d+\t/m.test(old) && old.split("\n").every((l) => !l.trim() || /^ *\d+(\t|$)/m.test(l));
-  [old, neu] = [old, neu].map((s) => (numbered ? s.replace(/^ *\d+(\t|$)/gm, "") : s).replace(/[ \t\r]+$/, ""));
+  [old, neu] = [old, neu].map((s) => (numbered && /^ *\d+\t/m.test(s) ? s.replace(/^ *\d+(\t|$)/gm, "") : s).replace(/[ \t\r]+$/, ""));
   let i = 0, find = (re: string) => file.matchAll(new RegExp(`(?=(${re}))`, "gm")).take(2).toArray(), hits = find(RegExp.escape(old));
   for (; !hits.length && i < 2; i++) {
     const lines = old.split("\n").map((l) => l.replace(i ? /^[ \t]+|[ \t\r]+$/g : /[ \t\r]+$/, ""));

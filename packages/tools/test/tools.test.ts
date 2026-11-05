@@ -223,6 +223,10 @@ test("edit: read's output is taken as copied, a blank line's bare number and a C
   const bare = await editTool.execute({ path, old_string: "     1\tfunction f() {\n     2\n     3\t  return 1;", new_string: "     1\tfunction f() {\n     2\n     3\t  return 2;" }, ctx());
   expect(out(bare)).toStartWith("[harness matched old_string ignoring line-number prefixes]\n");
   expect(readFileSync(path, "utf8")).toBe("function f() {\n\n  return 2;\n}\n");
+  // A new_string written without numbers keeps its lines of only digits.
+  writeFileSync(path, "a\nb\n");
+  await editTool.execute({ path, old_string: "     1\ta", new_string: "0\na" }, ctx());
+  expect(readFileSync(path, "utf8")).toBe("0\na\nb\n");
   writeFileSync(path, "function f() {\r\n  return 1;\r\n}\r\n");
   await editTool.execute({ path, old_string: "     1\tfunction f() {\r\n     2\t  return 1;\r", new_string: "     1\tfunction f() {\n     2\t  return 2;" }, ctx());
   expect(readFileSync(path, "utf8")).toBe("function f() {\r\n  return 2;\r\n}\r\n");
