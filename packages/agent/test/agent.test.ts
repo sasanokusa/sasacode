@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { type AssistantContent, type AssistantMessage, emptyUsage, INCOMPLETE_STREAM, type ModelInfo, type Provider, registerApi } from "@sasacode/ai";
 import { replayProvider } from "@sasacode/testing";
 import builtinTools, { bashTool, editTool, readTool, writeTool } from "@sasacode/tools";
-import { Agent, type AgentEvent, PermissionPolicy, PluginHost, replyBudget, responseRoom, restore, SessionFile } from "../src/index.ts";
+import { Agent, type AgentEvent, contentChars, PermissionPolicy, PluginHost, replyBudget, responseRoom, restore, SessionFile } from "../src/index.ts";
 
 const dir = mkdtempSync(join(tmpdir(), "sasacode-agent-"));
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
@@ -285,6 +285,36 @@ test("after a compaction, the nearly full usage of a kept message does not squee
   agent.replaceMessages(kept); // what compaction does: a summary, then the kept tail
   await agent.prompt("now write the file");
   expect(provider.requests[0]!.maxTokens).toBeUndefined();
+});
+
+test("complete() asks for no more than the window has room for, nor more than the model's maximum (#60)", async () => {
+  // A side request (a compaction summary) in an 8K window: vLLM rejects input + max_tokens over the window.
+  const ask = (text: string) => [{ role: "user" as const, timestamp: 0, content: [say(text)] }];
+  const sent = async (m: ModelInfo, text: string, o: { maxTokens?: number; model?: string; other?: ModelInfo } = {}) => {
+    const { agent, provider } = setup([reply([say("ok")])], { model: m, resolveModel: () => o.other! });
+    await agent.complete({ system: "s", messages: ask(text), maxTokens: o.maxTokens, model: o.model });
+    return provider.requests[0]!.maxTokens;
+  };
+  const small: ModelInfo = { ...model, contextWindow: 8192, maxOutput: 32_000 };
+  const big: ModelInfo = { ...model, contextWindow: 1_000_000, maxOutput: 64_000 };
+  const long = "x".repeat(20_000);
+  const input = Math.ceil(((1 + contentChars(ask(long)[0]!)) / 4) * 1.1);
+  expect(await sent(small, long)).toBe(8192 - input);
+  expect(await sent(small, long, { maxTokens: 512 })).toBe(512); // a smaller request is kept
+  expect(await sent(big, long, { model: "t/small", other: small })).toBe(8192 - input); // the window of the model it goes to
+  expect(await sent(big, long)).toBe(8192); // a cloud model's window: as before
+  expect(await sent({ ...big, maxOutput: 4096 }, "hi")).toBe(4096);
+});
+
+test("complete() sizes max_tokens from what it sends, not from usage reported in the messages it is given (#60)", async () => {
+  // A plugin passing session history: the usage there was the main loop's request (system prompt,
+  // tools), and after a compaction the kept tail still reports the nearly full window it saw.
+  const window: ModelInfo = { ...model, contextWindow: 200_000, maxOutput: 64_000 };
+  const { agent, provider } = setup([reply([say("A title")])], { model: window });
+  const stale = reply([say("Done.")], { usage: { ...emptyUsage(), input: 185_000, output: 500 } });
+  const user = (text: string) => ({ role: "user" as const, timestamp: 0, content: [say(text)] });
+  await agent.complete({ system: "Title it.", messages: [user("[Summary] fixed the parser"), user("and the tests?"), stale, user("thanks")] });
+  expect(provider.requests[0]!.maxTokens).toBe(8192);
 });
 
 test("an attached image counts as an image, not as its base64, when max_tokens is sized", async () => {

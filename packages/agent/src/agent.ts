@@ -559,7 +559,7 @@ export class Agent {
 
   // ── plugin services ────────────────────────────────────────────────
 
-  /** One model call without tools. */
+  /** One model call without tools, its max_tokens kept within the room left in that model's window (#60), estimated from what it sends: usage in o.messages was another request's. */
   async complete(o: CompleteOptions): Promise<string> {
     const model = o.model ? this.resolve(o.model) : this.model;
     let text = "";
@@ -570,7 +570,7 @@ export class Agent {
       messages: o.messages,
       tools: [],
       thinking: "low",
-      maxTokens: o.maxTokens ?? 8192,
+      maxTokens: Math.min(o.maxTokens ?? 8192, replyBudget(model, o.messages, o.system.length, o.messages.length) ?? model.maxOutput),
       maxRetries: this.opts.maxRetries,
       signal: o.signal,
     })) {

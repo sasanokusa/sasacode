@@ -2,8 +2,8 @@ import { afterAll, beforeAll, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Agent, makeToolSearchTool, PermissionPolicy, PluginHost, SessionFile } from "@sasacode/agent";
-import { type AssistantContent, type AssistantMessage, emptyUsage, type Message, registerApi } from "@sasacode/ai";
+import { Agent, contentChars, makeToolSearchTool, PermissionPolicy, PluginHost, SessionFile } from "@sasacode/agent";
+import { type AssistantContent, type AssistantMessage, emptyUsage, type Message, type ModelInfo, registerApi, type Request } from "@sasacode/ai";
 import { buildSystemPrompt } from "../../agent/src/system-prompt.ts";
 import { replayProvider } from "@sasacode/testing";
 import builtinTools, { bashTool } from "@sasacode/tools";
@@ -28,11 +28,15 @@ const reply = (content: AssistantContent[], extra: Partial<AssistantMessage> = {
 const say = (text: string) => ({ type: "text" as const, text });
 const call = (id: string, name: string, input: Record<string, unknown>) => ({ type: "tool_call" as const, id, name, input });
 
-async function setup(script: AssistantMessage[], names: string[], opts: { cwd?: string; session?: SessionFile; settings?: Record<string, any> } = {}) {
+async function setup(
+  script: AssistantMessage[],
+  names: string[],
+  opts: { cwd?: string; session?: SessionFile; settings?: Record<string, any>; model?: Partial<ModelInfo> } = {},
+) {
   const provider = replayProvider(script);
   registerApi("replay", provider);
   const agent = new Agent({
-    model: { id: "m", provider: "t", api: "replay", contextWindow: 100_000, maxOutput: 1000 },
+    model: { id: "m", provider: "t", api: "replay", contextWindow: 100_000, maxOutput: 1000, ...opts.model },
     cwd: opts.cwd ?? root,
     systemPrompt: "base",
     permissions: new PermissionPolicy("edits"),
@@ -118,11 +122,173 @@ test("compaction: /compact shows that it is summarizing, and an empty summary le
   expect(host.status.size).toBe(0);
 });
 
+/** A session of about `chars` characters: questions, file reads with long results, answers. */
+function readingSession(chars: number): Message[] {
+  const history: Message[] = [];
+  for (let i = 0; history.reduce((n, m) => n + contentChars(m), 0) < chars; i++)
+    history.push(
+      { role: "user", content: [{ type: "text", text: `step ${i}: ${"why ".repeat(150)}` }], timestamp: 0 },
+      reply([say(`reading f${i}.ts`), call(`c${i}`, "read", { path: `f${i}.ts` })]),
+      { role: "tool", toolCallId: `c${i}`, toolName: "read", content: [{ type: "text", text: `const v${i} = 1;\n`.repeat(200) }], isError: false, timestamp: 0 },
+      reply([say(`f${i}.ts sets v${i}. ${"so ".repeat(300)}`)]),
+    );
+  return history;
+}
+
+/** The summarizer's request, estimated as the core sizes replies, leaves room for its max_tokens. */
+function expectFits(req: Request, window: number) {
+  const input = Math.ceil(((req.system.length + req.messages.reduce((n, m) => n + contentChars(m), 0)) / 4) * 1.1);
+  expect(req.tools).toEqual([]);
+  expect(input + req.maxTokens!).toBeLessThanOrEqual(window);
+}
+
+for (const window of [8192, 16_384])
+  test(`compaction: in a ${window}-token window the summary request fits, on context_limit and on /compact (#60)`, async () => {
+    // vLLM and llama.cpp reject input + max_tokens over the window: an 8,192-token summary could not be asked for.
+    const small = { contextWindow: window, maxOutput: 32_000 };
+    const auto = await setup(
+      [reply([call("1", "read", { path: "nope" })], { usage: { ...emptyUsage(), input: window - 300 } }), reply([say("SUMMARY")]), reply([say("continued")])],
+      ["compaction"],
+      { model: small, settings: { compaction: { threshold: 2 } } },
+    );
+    auto.agent.messages = readingSession(window * 4);
+    expect(await auto.agent.prompt("next question")).toBe("done");
+    expect(auto.provider.requests[1]!.maxTokens).toBe(Math.floor(window * 0.15));
+    expectFits(auto.provider.requests[1]!, window);
+    expect(JSON.stringify(auto.agent.messages[0])).toContain("SUMMARY");
+
+    // /compact summarizes all of it: a full window fits with its tool results clipped harder, every step kept.
+    const full = await setup([reply([say("SUMMARY")])], ["compaction"], { model: small });
+    full.agent.messages = readingSession(window * 4);
+    await full.host.commands.find((c) => c.name === "compact")!.run({ args: "" });
+    expect(full.provider.requests[0]!.maxTokens).toBe(Math.floor(window * 0.15));
+    expectFits(full.provider.requests[0]!, window);
+    expect(JSON.stringify(full.provider.requests[0]!.messages)).toContain("step 0:");
+
+    // More than the window holds (a session carried over from a larger model): the oldest part makes way.
+    const manual = await setup([reply([say("SUMMARY")])], ["compaction"], { model: small });
+    const history = readingSession(window * 12);
+    manual.agent.messages = [...history];
+    await manual.host.commands.find((c) => c.name === "compact")!.run({ args: "keep the paths" });
+    const req = manual.provider.requests[0]!;
+    expect(req.maxTokens).toBe(Math.floor(window * 0.15));
+    expectFits(req, window);
+    // The latest step and the instructions are there.
+    const sent = JSON.stringify(req.messages);
+    const last = history.length / 4 - 1;
+    expect(sent).not.toContain("step 0:");
+    expect(sent).toContain(`step ${last}:`);
+    expect(sent).toContain(`f${last}.ts sets v${last}`);
+    expect(sent).toContain("keep the paths");
+    expect(manual.agent.messages).toHaveLength(1);
+    expect(JSON.stringify(manual.agent.messages[0])).toContain("SUMMARY");
+  });
+
+/** A session of about `chars` characters in Japanese, as a Japanese user's is: the files read are code. */
+function japaneseSession(chars: number): Message[] {
+  const history: Message[] = [];
+  for (let i = 0; history.reduce((n, m) => n + contentChars(m), 0) < chars; i++)
+    history.push(
+      { role: "user", content: [{ type: "text", text: `手順${i}：${"このファイルがなぜ必要なのかを調べてください。".repeat(6)}` }], timestamp: 0 },
+      reply([say(`f${i}.tsを読みます。`), call(`c${i}`, "read", { path: `f${i}.ts` })]),
+      { role: "tool", toolCallId: `c${i}`, toolName: "read", content: [{ type: "text", text: `// 設定値${i}\nconst v${i} = 1;\n`.repeat(40) }], isError: false, timestamp: 0 },
+      reply([say(`f${i}.tsはv${i}を設定しています。${"そのため、この値を変えると読み込みの動作が変わります。".repeat(8)}`)]),
+    );
+  return history;
+}
+
+/** Tokens a local tokenizer (Qwen, Gemma, Llama) makes of a request, roughly: 4 ASCII characters a token, a Japanese character a token. */
+function tokens(req: Pick<Request, "system" | "messages">): number {
+  const text = req.system + req.messages.map((m) => m.content.map((c) => (c.type === "text" ? c.text : "")).join("")).join("");
+  const wide = text.replace(/[\x00-\x7f]/g, "").length;
+  return Math.ceil((text.length - wide) / 4 + wide);
+}
+
+for (const window of [8192, 16_384])
+  test(`compaction: a Japanese history more than a ${window}-token window holds is cut to fit, the latest of it kept (#60)`, async () => {
+    // About 4 characters a token undercounts Japanese 3-4 times: the request went over the window.
+    const { agent, host, provider } = await setup([reply([say("要約")])], ["compaction"], { model: { contextWindow: window, maxOutput: 32_000 } });
+    const history = japaneseSession(window * 4);
+    agent.messages = [...history];
+    await host.commands.find((c) => c.name === "compact")!.run({ args: "パスを残して" });
+    const req = provider.requests[0]!;
+    expect(req.maxTokens).toBe(Math.floor(window * 0.15));
+    expect(tokens(req) + req.maxTokens!).toBeLessThanOrEqual(window);
+    expect(tokens(req) + req.maxTokens!).toBeGreaterThan(window * 0.6); // not much more left out than needed
+    const sent = JSON.stringify(req.messages);
+    const last = history.length / 4 - 1;
+    expect(sent).not.toContain("手順0：");
+    expect(sent).toContain(`手順${last}：`);
+    expect(sent).toContain(`f${last}.tsはv${last}を設定しています`);
+    expect(sent).toContain("パスを残して");
+    expect(agent.messages).toHaveLength(1);
+  });
+
+test("compaction: /compact whose instructions take more than half the room leaves the history as it was (#60)", async () => {
+  // A history that must be cut: instructions leaving room for a few characters of it had those
+  // summarized, and the summary replaced every message.
+  const window = 8192;
+  const room = Math.floor(((window - Math.floor(window * 0.15)) / 1.1) * 4) - 278 - 8 - 159; // what instructions can take: the input, less the summary's 15%, the system prompt (278 + 8) and the request's framing (159)
+  for (const length of [Math.floor(room * 0.4), Math.ceil(room * 0.55), room - 600, room * 2]) {
+    const { agent, host, provider } = await setup([reply([say("SUMMARY")])], ["compaction"], { model: { contextWindow: window, maxOutput: 32_000 } });
+    const history = readingSession(window * 12);
+    agent.messages = [...history];
+    const run = Promise.resolve(host.commands.find((c) => c.name === "compact")!.run({ args: "be thorough ".repeat(length).slice(0, length) }));
+    if (length < room / 2) {
+      await run;
+      expectFits(provider.requests[0]!, window);
+      const last = history.length / 4 - 1;
+      expect(JSON.stringify(provider.requests[0]!.messages)).toContain(`f${last}.ts sets v${last}`);
+      expect(agent.messages).toHaveLength(1);
+      continue;
+    }
+    await expect(run).rejects.toThrow(/instructions/);
+    expect(agent.messages).toEqual(history);
+    expect(provider.requests).toHaveLength(0);
+    expect(host.status.size).toBe(0);
+  }
+});
+
+test("compaction: a large window still asks for an 8,192-token summary of everything (#60)", async () => {
+  const { agent, host, provider } = await setup([reply([say("SUMMARY")])], ["compaction"], { model: { contextWindow: 1_000_000, maxOutput: 64_000 } });
+  agent.messages = readingSession(200_000);
+  await host.commands.find((c) => c.name === "compact")!.run({ args: "" });
+  expect(provider.requests[0]!.maxTokens).toBe(8192);
+  expect(JSON.stringify(provider.requests[0]!.messages)).toContain("step 0:");
+  expect(JSON.stringify(provider.requests[0]!.messages)).toContain("… [800 more chars]"); // results clipped as before, at 2,000 characters
+});
+
 test("splitPoint keeps the tail from a user message", () => {
   const u = (t: string): Message => ({ role: "user", content: [{ type: "text", text: t }], timestamp: 0 });
   const msgs: Message[] = [u("a".repeat(400)), reply([say("b")]), u("c"), reply([say("d")])];
   expect(splitPoint(msgs, 50)).toBe(2);
   expect(splitPoint(msgs, 10_000)).toBe(0);
+});
+
+test("splitPoint keeps a Japanese tail within its budget, a Japanese character counted as a token (#60)", () => {
+  // At 4 characters a token the tail was about 3 times the budget, and the window soon filled again.
+  const keep = Math.floor(16_384 * 0.15);
+  const history = japaneseSession(40_000);
+  const tail = history.slice(splitPoint(history, keep));
+  expect(tail[0]!.role).toBe("user");
+  expect(tokens({ system: "", messages: tail })).toBeLessThanOrEqual(keep);
+  expect(tokens({ system: "", messages: tail })).toBeGreaterThan(keep / 2);
+});
+
+test("splitPoint does not read through the base64 of images in the tail (#60)", () => {
+  // Looking for Japanese in each screenshot's megabytes of base64 held up every compaction for about 0.6 s.
+  const session = (data: string) =>
+    Array.from({ length: 40 }, (_, i): Message[] => [
+      { role: "user", content: [{ type: "text", text: `look at shot ${i}` }, { type: "image", mediaType: "image/png", data }], timestamp: 0 },
+      reply([say("ok")]),
+    ]).flat();
+  const shots = session("A".repeat(5_000_000));
+  const t0 = Date.now();
+  const split = splitPoint(shots, 30_000); // the tail kept of a 200K window
+  expect(Date.now() - t0).toBeLessThan(100);
+  expect(split).toBe(splitPoint(session(""), 30_000));
+  expect(split).toBeGreaterThan(0);
+  expect(split).toBeLessThan(shots.length);
 });
 
 test("subagent: task runs a fresh loop and returns its report; no approval needed to start", async () => {
