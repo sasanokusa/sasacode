@@ -73,8 +73,11 @@ export class ModelCatalog {
 
   private listGroup(members: string[], refresh = false): Promise<ModelChoice[]> {
     const key = members.join(" ");
-    let listed = this.lists.get(key);
-    if (refresh || !listed) this.lists.set(key, (listed = this.fetchGroup(members).catch(() => [])));
+    const last = this.lists.get(key);
+    if (!refresh && last) return last;
+    // A refresh that fails keeps what was listed before: the server's models stay in /model.
+    const listed = this.fetchGroup(members).catch(() => last ?? []);
+    this.lists.set(key, listed);
     return listed;
   }
 

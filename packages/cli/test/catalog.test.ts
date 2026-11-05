@@ -49,6 +49,20 @@ test("providers without a key are skipped, and failures just yield nothing", asy
   expect(calls).toBe(2);
 });
 
+test("a refresh that fails keeps the last listing: the server's models stay in /model", async () => {
+  let up = true;
+  const flaky = Bun.serve({ port: 0, fetch: () => (up ? Response.json({ object: "list", data: [{ id: "m", object: "model" }] }) : new Response("", { status: 404 })) });
+  try {
+    const catalog = new ModelCatalog({ svc: { api: "openai-chat", baseUrl: `http://localhost:${flaky.port}/v1` } }, async () => undefined, () => "svc");
+    expect((await catalog.list()).map((m) => m.spec)).toEqual(["svc/m"]);
+    up = false;
+    expect((await catalog.list(true)).map((m) => m.spec)).toEqual(["svc/m"]);
+    expect((await catalog.entry("svc/m", true))?.spec).toBe("svc/m");
+  } finally {
+    flaky.stop(true);
+  }
+});
+
 test("Ollama: num_ctx is the context window, otherwise the trained maximum is shown; OpenAI falls back to known sizes", async () => {
   const ollama = Bun.serve({
     port: 0,
