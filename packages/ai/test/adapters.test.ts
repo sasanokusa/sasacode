@@ -182,3 +182,19 @@ test("a stream cut before the reply finished is an error with what arrived, not 
   expect([m3.stopReason, m3.errorMessage]).toEqual(["error", INCOMPLETE_STREAM]);
   expect(m3.content).toEqual([{ type: "text", text: "par" }]);
 });
+
+const reqFor = (model: ModelInfo, fetch: typeof globalThis.fetch, extra: Partial<Request> = {}): Request => ({ model, system: "", messages: [user("x")], tools, fetch, maxRetries: 0, ...extra });
+const chatChunk = (delta: object, finish: string | null = null) => ({ id: "1", object: "chat.completion.chunk", created: 0, model: "m", choices: [{ index: 0, delta, finish_reason: finish }] });
+
+test("openai-chat: a local server gets max_tokens, a cloud provider keeps max_completion_tokens (#58)", async () => {
+  const base = { id: "m", api: "openai-chat", contextWindow: 1e5, maxOutput: 1000 } as const;
+  const sent = async (model: ModelInfo) => {
+    const f = fakeFetch(sse([chatChunk({ content: "ok" }, "stop")]));
+    await run(openaiChatProvider, reqFor(model, f.fetch, { maxTokens: 500 }));
+    return { max_tokens: f.sent[0].max_tokens, max_completion_tokens: f.sent[0].max_completion_tokens };
+  };
+  const cloud = [["openai", undefined], ["openrouter", "https://openrouter.ai/api/v1"], ["commandcode", "https://api.commandcode.ai/provider/v1"], ["vllm", "http://gpu:8000/v1"]] as const;
+  for (const [provider, baseUrl] of cloud) expect(await sent({ ...base, provider, baseUrl })).toEqual({ max_tokens: undefined, max_completion_tokens: 500 });
+  for (const server of ["ollama", "llamacpp", "lmstudio"] as const)
+    expect(await sent({ ...base, provider: "myollama", baseUrl: "http://host:11434/v1", server })).toEqual({ max_tokens: 500, max_completion_tokens: undefined });
+});

@@ -76,7 +76,8 @@ export const openaiChatProvider: Provider = {
       messages: [{ role: "system", content: req.system }, ...toChatMessages(req.messages, model, req.tools.length > 0)],
       stream: true,
       stream_options: { include_usage: true },
-      ...(model.provider === "ollama" ? { max_tokens: req.maxTokens ?? model.maxOutput } : { max_completion_tokens: req.maxTokens ?? model.maxOutput }),
+      // Local servers read max_tokens (Ollama ignores the other); OpenAI's reasoning models refuse it.
+      ...(model.server ? { max_tokens: req.maxTokens ?? model.maxOutput } : { max_completion_tokens: req.maxTokens ?? model.maxOutput }),
     };
     if (req.tools.length)
       params.tools = req.tools.map((t) => ({

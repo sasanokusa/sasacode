@@ -92,7 +92,7 @@ test("old sessions without endpoint provenance never forward opaque state", asyn
 
 test("local Chat aliases replay their observed reasoning field; Ollama uses supported max_tokens", async () => {
   for (const field of ["reasoning", "reasoning_content"]) {
-    const m = model("openai-chat", "ollama", "http://localhost:11434/v1");
+    const m: ModelInfo = { ...model("openai-chat", "ollama", "http://localhost:11434/v1"), server: "ollama" };
     const first = await ask(m, [user], b => { expect(b.max_tokens).toBe(1000); expect(b.max_completion_tokens).toBeUndefined(); return sse([chat({ [field]: "thought", content: "ok" })]); });
     await ask(m, [user, first.out, user], b => { expect(b.messages[2][field]).toBe("thought"); expect(b.messages[2][field === "reasoning" ? "reasoning_content" : "reasoning"]).toBeUndefined(); return sse([chat({ content: "ok" })]); });
   }

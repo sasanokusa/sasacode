@@ -101,6 +101,8 @@ export function resolveModel(
     // Unknown models are assumed to reason: the effort is sent, and dropped if the server refuses it.
     reasoning: known?.reasoning ?? true,
     images: known?.images ?? true,
+    // Which local server answers, so the adapter can send the fields that server reads (max_tokens and so on).
+    ...(p.ollama ? { server: "ollama" as const } : p.llamacpp ? { server: "llamacpp" as const } : p.lmstudio ? { server: "lmstudio" as const } : {}),
     ...overrides[spec],
   };
 }
