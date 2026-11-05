@@ -247,6 +247,9 @@ test("openai-chat: a tool name sent after the id, and tool calls without an inde
       [{ id: "a", name: "read", input: { path: "a" } }, { name: "read", input: { path: "b" } }]],
     ["no index, no id, name repeated", [tc([{ type: "function", function: { name: "read", arguments: "" } }]), tc([{ function: { name: "read", arguments: '{"path":' } }]), tc([{ function: { name: "read", arguments: '"a"}' } }], "tool_calls")],
       [{ name: "read", input: { path: "a" } }]],
+    // A brace inside a string does not close the arguments: a counter that ignored strings would split this call in two.
+    ["no index, name repeated, brace in a string", [tc([{ id: "a", type: "function", function: { name: "write", arguments: '{"path":"a","content":"}' } }]), tc([{ function: { name: "write", arguments: 'x"}' } }], "tool_calls")],
+      [{ id: "a", name: "write", input: { path: "a", content: "}x" } }]],
     // No index, a name-only chunk after complete arguments: it starts the next call, whose arguments follow without the name.
     ["no index, name first", [tc([{ id: "a", type: "function", function: { name: "read", arguments: '{"path":"a"}' } }]), tc([{ function: { name: "read" } }]), tc([{ function: { arguments: '{"path":"b"}' } }], "tool_calls")],
       [{ id: "a", name: "read", input: { path: "a" } }, { name: "read", input: { path: "b" } }]],
