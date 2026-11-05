@@ -54,7 +54,7 @@ export const editTool: ToolDefinition<Args> = {
  * old_string is not in the file as given (#65): look again without read's line numbers (a bare one only at read's 6 columns),
  * then ignoring trailing whitespace and CR (a trailing CR or indentation-only last line is the next line's), then indentation; one
  * place only, overlaps counted. Each indentation in new_string becomes the file's for that old_string indentation, else the one
- * shift all lines share, else refused.
+ * shift all lines share if two depths of old_string or unmoved lines show it, else refused.
  */
 function loosely(path: string, file: string, old: string, neu: string): string | { after: string; note: string } {
   const numbered = /^ *\d+\t/m.test(old) && old.split("\n").every((l) => !l.trim() || /^( *\d+\t|(?=.{6}$) *\d+$)/m.test(l));
@@ -71,7 +71,7 @@ function loosely(path: string, file: string, old: string, neu: string): string |
   const [{ index, 1: at = "" }] = hits, ws = (l = "") => /^[ \t]*/.exec(l)![0], fl = at.split("\n");
   // Per non-blank line pair: [, a, tail, b] with old_string's indentation a + tail and the matched line's b + tail.
   const sh = old.split("\n").flatMap((l, k) => (l.trim() ? [/^(.*?)(.*)\n(.*?)\2$/.exec(`${ws(l)}\n${ws(fl[k])}`)!] : []));
-  const to = (w: string, own = sh.filter((s) => s[1] + s[2] === w)) => new Set((own.length ? own : sh).map((s) => (w.startsWith(s[1]) ? s[3] + w.slice(s[1].length) : "\n")));
+  const to = (w: string, own = sh.filter((s) => s[1] + s[2] === w)) => new Set((own.length ? own : sh).map((s) => (w.startsWith(s[1]) && (own.length || s[1] === s[3] || new Set(sh.map((s) => s[1] + s[2])).size > 1) ? s[3] + w.slice(s[1].length) : "\n")));
   if (neu.match(/^[ \t]*(?=\S)/gm)?.some((w) => to(w).size > 1 || to(w).has("\n"))) return `old_string matched ${path} ${ignoring}, but new_string's indentation does not map onto the file's; use the file's exact indentation.`;
   neu = neu.replace(/^[ \t]*(?=\S)/gm, (w) => [...to(w)][0] ?? w).replace(/\r?\n/g, file.includes("\r\n") ? "\r\n" : "\n");
   return { after: file.slice(0, index) + neu + file.slice(index + at.length), note: `[harness matched old_string ${ignoring}]\n` };

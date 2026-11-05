@@ -196,6 +196,26 @@ test("edit: lines shallower than the first, and other indentation units, land at
   expect(readFileSync(path, "utf8")).toBe(file);
 });
 
+test("edit: a depth old_string lacks takes the shared shift only when two depths or unmoved lines show it (#65)", async () => {
+  const path = join(dir, "onedepth.py");
+  // One depth shows no unit: "    \tz()", "      z()" and "\t    z()" would be TabError or IndentationError.
+  for (const [file, old_string, new_string] of [
+    ["def f(x):\n    if x:\n        a()\n    return 1\n", "\tif x:", "\tif x:\n\t\tz()"],
+    ["def f(x):\n  if x:\n    a()\n  return 1\n", "    if x:", "    if x:\n        z()"],
+    ["def f(x):\n\tif x:\n\t\ta()\n\treturn 1\n", "    if x:", "    if x:\n        z()"],
+  ]) {
+    writeFileSync(path, file!);
+    const r = await editTool.execute({ path, old_string: old_string!, new_string: new_string! }, ctx());
+    expect(r.isError).toBe(true);
+    expect(out(r)).toContain("indentation does not map onto the file's");
+    expect(readFileSync(path, "utf8")).toBe(file!);
+  }
+  // Matched past line numbers or trailing whitespace, the lines did not move, so a new depth is kept as written.
+  writeFileSync(path, "foo()\n");
+  await editTool.execute({ path, old_string: "     1\tfoo()", new_string: "     1\tfoo()\n     2\t  bar()" }, ctx());
+  expect(readFileSync(path, "utf8")).toBe("foo()\n  bar()\n");
+});
+
 test("edit: a loose match must be unique, replace_all or not; nothing is changed otherwise (#65)", async () => {
   const path = join(dir, "twice.ts");
   writeFileSync(path, "\tfoo();\n  foo();\n");
