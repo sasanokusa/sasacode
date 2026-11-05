@@ -308,6 +308,18 @@ test("edit: an old_string that starts with a blank line is found in time next to
   expect(readFileSync(path, "utf8")).toEndWith("y\nfoo();\n  pin();\n");
 });
 
+test("edit: a long loose edit that adds a depth old_string lacks is mapped in time (#65)", async () => {
+  const path = join(dir, "long.ts"), file: string[] = [], old: string[] = [], neu: string[] = [];
+  // Dedented by one tab, with a line two tabs deeper after each: the shift comes from old_string's two depths.
+  for (let k = 0; k < 300; k++) file.push(`\ta${k}();`, `\t\tb${k}();`), old.push(`a${k}();`, `\tb${k}();`), neu.push(`a${k}();`, `\tb${k}();`, `\t\tc${k}();`);
+  writeFileSync(path, `{\n${file.join("\n")}\n}\n`);
+  const started = performance.now();
+  const r = await editTool.execute({ path, old_string: old.join("\n"), new_string: neu.join("\n") }, ctx());
+  expect(performance.now() - started).toBeLessThan(2000);
+  expect(out(r)).toContain("indentation]");
+  expect(readFileSync(path, "utf8")).toStartWith("{\n\ta0();\n\t\tb0();\n\t\t\tc0();\n\ta1();\n");
+});
+
 test("read stops on a whole line within 100,000 characters and says where to go on (#66)", async () => {
   const lines = Array.from({ length: 2000 }, (_, i) => `line ${i + 1} `.padEnd(200, "x"));
   writeFileSync(join(dir, "wide.txt"), `${lines.join("\n")}\n`);
