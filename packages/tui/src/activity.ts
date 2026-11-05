@@ -1,5 +1,5 @@
 // The line under the conversation while a run is going: what it is doing, for how long, and how
-// many tokens the model has produced so far (counted up as they stream in).
+// many tokens the model has produced so far (counted up as they stream in), and how fast.
 import { Text, type TUI } from "@earendil-works/pi-tui";
 import { currentLang, t } from "@sasacode/host";
 
@@ -70,6 +70,13 @@ export function fmtCount(n: number): string {
   return n < 10_000 ? `${(n / 1000).toFixed(1)}k` : `${Math.round(n / 1000)}k`;
 }
 
+/** A speed measured over less than this would be a burst of buffered chunks, not the model's pace. */
+const RATE_MIN_MS = 500;
+
+export function fmtRate(perSecond: number): string {
+  return perSecond < 10 ? perSecond.toFixed(1) : String(Math.round(perSecond));
+}
+
 function fmtElapsed(ms: number): string {
   const s = Math.floor(ms / 1000);
   return s < 60 ? t("{s}秒", { s }) : t("{m}分{s}秒", { m: Math.floor(s / 60), s: s % 60 });
@@ -78,7 +85,7 @@ function fmtElapsed(ms: number): string {
 export class Activity extends Text {
   private frame = 0;
   private timer?: ReturnType<typeof setInterval>;
-  private readonly started = Date.now();
+  private readonly started: number;
   private phrase = "";
   private replies = 0;
   private detail?: string;
@@ -88,14 +95,21 @@ export class Activity extends Text {
   private streaming = 0;
   /** What the line shows: it climbs toward settled + streaming a step each tick. */
   private shown = 0;
+  /** When the reply streaming now sent its first and its latest delta. */
+  private firstAt?: number;
+  private lastAt = 0;
+  /** Tokens a second of the reply streaming now, or of the last one while tools run. */
+  private rate?: number;
 
   constructor(
     private readonly ui: TUI,
     private readonly spinnerColor: (s: string) => string,
     private readonly textColor: (s: string) => string,
     private readonly random: () => number = Math.random,
+    private readonly now: () => number = Date.now,
   ) {
     super("", 1, 0);
+    this.started = this.now();
     this.nextPhrase();
     this.tick();
     this.timer = setInterval(() => this.tick(), TICK_MS);
@@ -109,11 +123,13 @@ export class Activity extends Text {
   newReply(): void {
     if (this.replies++) this.nextPhrase();
     this.detail = undefined;
+    this.firstAt = undefined;
   }
 
   /** A reply thrown away (cut off, to be asked for again): its tokens no longer count. */
   discardReply(): void {
     this.streaming = 0;
+    this.firstAt = undefined;
   }
 
   private nextPhrase(): void {
@@ -131,12 +147,22 @@ export class Activity extends Text {
 
   streamed(delta: string): void {
     this.streaming += estimateTokens(delta);
+    this.lastAt = this.now();
+    this.firstAt ??= this.lastAt;
+    // From the first delta on: the wait for it is the prompt being read, not output.
+    if (this.lastAt - this.firstAt >= RATE_MIN_MS) this.rate = (this.streaming * 1000) / (this.lastAt - this.firstAt);
   }
 
   /** A reply finished: its real count (when the provider gave one) replaces the estimate. */
   replyDone(outputTokens: number): void {
+    const ms = this.firstAt === undefined ? 0 : this.now() - this.firstAt;
+    // The real count over the same time, unless it holds tokens never streamed (reasoning a provider
+    // keeps to itself, made before the first delta): then the estimate of what was streamed.
+    const counted = outputTokens > 0 && outputTokens <= this.streaming * 2 + 20 ? outputTokens : this.streaming;
+    if (ms >= RATE_MIN_MS) this.rate = (counted * 1000) / ms;
     this.settled += outputTokens > 0 ? outputTokens : Math.round(this.streaming);
     this.streaming = 0;
+    this.firstAt = undefined;
   }
 
   get tokens(): number {
@@ -158,8 +184,9 @@ export class Activity extends Text {
   }
 
   private update(): void {
-    const parts = [fmtElapsed(Date.now() - this.started)];
+    const parts = [fmtElapsed(this.now() - this.started)];
     if (this.shown > 0) parts.push(t("↓ {n} トークン", { n: fmtCount(this.shown) }));
+    if (this.rate !== undefined) parts.push(`${fmtRate(this.rate)} tok/s`);
     parts.push(t("esc で中断"));
     this.setText(`${this.spinnerColor(FRAMES[this.frame]!)} ${this.textColor(this.detail ?? this.phrase)} ${this.textColor(`(${parts.join(" · ")})`)}`);
     this.ui.requestRender();
