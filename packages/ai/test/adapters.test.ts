@@ -196,6 +196,8 @@ test("each server's context overflow is ContextOverflowError, llama.cpp's includ
     { code: 400, message: "the request exceeds the available context size. try increasing the context size or enable context shift", type: "exceed_context_size_error" },
     { code: 400, message: "input (391 tokens) is larger than the max context size (256 tokens). skipping", type: "exceed_context_size_error" },
     { code: 400, message: "prompt too long", type: "exceed_context_size_error" },
+    // The wording alone, for a build or a proxy that drops the type.
+    { code: 400, message: "the request exceeds the available context size. try increasing the context size or enable context shift" },
     { message: "This model's maximum context length is 8192 tokens. However, you requested 9000 tokens", type: "BadRequestError", code: 400 }, // vLLM
     { message: "The number of tokens to keep from the initial prompt is greater than the context length" }, // LM Studio
     { message: "Your input exceeds the context window of this model.", code: "context_length_exceeded" }, // OpenAI
@@ -206,6 +208,9 @@ test("each server's context overflow is ContextOverflowError, llama.cpp's includ
   const chat: ModelInfo = { id: "m", provider: "llama", api: "openai-chat", baseUrl: "http://x/v1", contextWindow: 256, maxOutput: 100, server: "llamacpp" };
   for (const [provider, model] of [[openaiChatProvider, chat], [openaiResponsesProvider, { ...chat, api: "openai-responses" }]] as const)
     await expect(run(provider, reqFor(model, fakeFetch(JSON.stringify({ error: llama }), 400).fetch))).rejects.toBeInstanceOf(ContextOverflowError);
+  // The same error as the first event of a 200 stream, where the SDK's APIError has no status: by its type, and by its wording alone.
+  for (const error of [llama, { message: overflows[4]!.message }])
+    await expect(run(openaiChatProvider, reqFor(chat, fakeFetch(sse([{ error }])).fetch))).rejects.toBeInstanceOf(ContextOverflowError);
 });
 
 test("openai-chat: a local server gets max_tokens, a cloud provider keeps max_completion_tokens (#58)", async () => {
