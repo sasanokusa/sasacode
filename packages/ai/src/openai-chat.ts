@@ -87,6 +87,10 @@ export const openaiChatProvider: Provider = {
     Object.assign(params, samplingFields(req.sampling, ["temperature", "top_p", "frequency_penalty", "presence_penalty"]));
 
     const routerReasoning = (params as unknown as { reasoning?: { effort?: string } }).reasoning;
+    // "off" is sent too: servers such as vLLM think by default unless told "none".
+    const level = (params.reasoning_effort ?? routerReasoning?.effort) !== undefined ? undefined : model.reasoning ? req.thinking : undefined;
+    // llama-server before b10121 ignores reasoning_effort; its templates (Qwen3) read enable_thinking. The caller's kwargs win.
+    if (level === "off" && model.server === "llamacpp") Object.assign(params, { chat_template_kwargs: { enable_thinking: false, ...(params as { chat_template_kwargs?: object }).chat_template_kwargs } });
     const out = newAssistant(model);
     yield { type: "start", partial: out };
     let thinking: ThinkingContent | undefined;
@@ -96,8 +100,7 @@ export const openaiChatProvider: Provider = {
     const calls = new Map<number | string, { block: ToolCall; json: string; index: number }>();
     let ended = false;
     try {
-      // "off" is sent too: servers such as vLLM think by default unless told "none".
-      const stream = await withEffort(replayScope(model), (params.reasoning_effort ?? routerReasoning?.effort) !== undefined ? undefined : model.reasoning ? req.thinking : undefined, async (effort) => {
+      const stream = await withEffort(replayScope(model), level, async (effort) => {
         const s = await client.chat.completions.create({ ...params, ...(effort ? openrouter(model) ? { reasoning: { effort, ...routerReasoning } } : { reasoning_effort: effort as never } : {}) }, { signal: req.signal });
         const it = s[Symbol.asyncIterator]();
         // A refused effort can arrive as the first event of an HTTP 200 stream (vLLM).

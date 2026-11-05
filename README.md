@@ -131,7 +131,7 @@ stdinは1行1件のJSON（JSON Lines）で読む。
 | --- | --- |
 | `/model` | プロバイダーから取得したモデル一覧から選ぶ。文字を打つと絞り込める。`/model <provider/model>` で直接指定、`/model --refresh` で取り直す |
 | `/resume` `/clear` `/fork` `/session` | 過去のセッション / 新しいセッション / 過去のメッセージから分岐 / IDと保存先 |
-| `/effort` | 推論の深さ（`off` / `low` / `medium` / `high` / `xhigh` / `max`）を切り替える。引数なしなら一覧から選ぶ。現在の値はフッターに出る。OpenAI形式のサーバーには `reasoning_effort` として送り、`off` は `none` として送る（vLLMなどは送らないと推論する）。サーバーが受け付けない値なら近い値に替えて送り直し、以後はその値を使う（例：Command Codeは `none` を受け付けないので `off` は `low` になる） |
+| `/effort` | 推論の深さ（`off` / `low` / `medium` / `high` / `xhigh` / `max`）を切り替える。引数なしなら一覧から選ぶ。現在の値はフッターに出る。OpenAI形式のサーバーには `reasoning_effort` として送り、`off` は `none` として送る（vLLMなどは送らないと推論する）。llama.cppでは、b10121より前のllama-serverが `reasoning_effort` を読まないので、`off` のときに `chat_template_kwargs` の `enable_thinking: false` も送る。サーバーが受け付けない値なら近い値に替えて送り直し、以後はその値を使う（例：Command Codeは `none` を受け付けないので `off` は `low` になる） |
 | `/language` | 画面の言語を切り替える（`ja` / `en`。引数なしなら一覧から選ぶ）。その場で切り替わり、`~/.sasacode/config.json` の `lang` にも保存する。切り替え前に表示された文はそのまま |
 | `/copy` | 直前の応答をクリップボードにコピー（pbcopy / wl-copy / xclip、なければ端末経由） |
 | `/permission` `/help` `/exit`（`/quit`） | 権限モード / ヘルプ / 終了 |
