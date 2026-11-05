@@ -13,11 +13,15 @@ beforeAll(() => setLang("en")); // these assertions quote the English strings
 const enc = new TextEncoder();
 let loaded = false;
 let psHits = 0;
+let listHits = 0;
+let listDown = false; // e.g. Ollama started after sasacode, or a refresh that fails
 const ollama = Bun.serve({
   port: 0,
   async fetch(req) {
     const path = new URL(req.url).pathname;
-    if (path === "/v1/models") return Response.json({ object: "list", data: [{ id: "plain", object: "model", owned_by: "library" }, { id: "small-32k", object: "model", owned_by: "library" }] });
+    if (path === "/v1/models" && listDown) return new Response("", { status: 404 });
+    // "ghost" never shows in /api/ps: its size stays unknown.
+    if (path === "/v1/models") return listHits++, Response.json({ object: "list", data: ["plain", "small-32k", "ghost"].map((id) => ({ id, object: "model", owned_by: "library" })) });
     if (path === "/api/show") {
       const { model } = (await req.json()) as { model: string };
       return Response.json({ model_info: { "gemma4.context_length": 131072 }, parameters: model === "small-32k" ? "num_ctx 32768" : "" });
@@ -56,6 +60,8 @@ function configure(extra: object = {}, model = "local/plain") {
 beforeEach(() => {
   loaded = false;
   psHits = 0;
+  listHits = 0;
+  listDown = false;
 });
 
 /** stderr of `fn`, stdout dropped. */
@@ -90,6 +96,30 @@ test("listed before loading, the model plans with the default; after its first r
   const hits = psHits;
   await h.agent.prompt("again");
   expect(psHits).toBe(hits);
+  await h.shutdown();
+});
+
+test("a server that could not list the model yet (down at startup, a failed refresh) is asked again at a later turn's end", async () => {
+  configure();
+  listDown = true;
+  const h = await setup({ cwd: proj, noSession: true });
+  expect((await h.listModels()).find((m) => m.spec === "local/plain")).toBeUndefined();
+  await h.agent.prompt("hi"); // the reply comes, but the refresh at its end fails too
+  expect(h.agent.model.contextWindow).toBe(128_000);
+  listDown = false;
+  await h.agent.prompt("again");
+  expect(h.agent.model.contextWindow).toBe(8192);
+  await h.shutdown();
+});
+
+test("a size that stays unknown is asked at three turns' ends, and no more", async () => {
+  configure({}, "local/ghost");
+  const h = await setup({ cwd: proj, noSession: true });
+  await h.listModels();
+  const hits = listHits;
+  for (const n of [1, 2, 3, 4, 5]) await h.agent.prompt(`turn ${n}`);
+  expect(listHits - hits).toBe(3);
+  expect(h.agent.model.contextWindow).toBe(128_000);
   await h.shutdown();
 });
 

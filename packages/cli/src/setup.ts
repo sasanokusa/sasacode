@@ -133,20 +133,21 @@ export async function setup(opts: SetupOptions): Promise<Harness> {
     if (catalog.discovered.has(current())) agent.model = resolve(current());
   };
   // A model Ollama (without num_ctx) or LM Studio has not loaded yet is listed with its maximum
-  // only; once it has answered, the server says what it was loaded with. Asked once per model, at
-  // the end of its first turn and before the plugins' turn_end hooks (registered later), so that
-  // turn's compaction threshold already uses the real size (#61). A contextWindow in modelOverrides
-  // is the user's: nothing is asked for it (and it would win anyway).
-  const asked = new Set<string>();
+  // only; once it has answered, the server says what it was loaded with. Asked at the end of its
+  // turn and before the plugins' turn_end hooks (registered later), so that turn's compaction
+  // threshold already uses the real size (#61). While the size stays unknown (the server was down
+  // when listed, the refresh failed, it reported none) it is asked again at the next turns' ends,
+  // three times in all. A contextWindow in modelOverrides is the user's: nothing is asked for it.
+  const asked = new Map<string, number>();
   agent.hooks.on(
     "turn_end",
     async () => {
       const spec = current();
       const p = providers[agent.model.provider];
-      if (!(p?.ollama || p?.lmstudio) || asked.has(spec) || config.modelOverrides?.[spec]?.contextWindow) return;
-      asked.add(spec);
-      const listed = await catalog.entry(spec);
-      if (listed && !listed.contextWindow && listed.maxContext) await catalog.entry(spec, true);
+      const n = asked.get(spec) ?? 0;
+      if (!(p?.ollama || p?.lmstudio) || n >= 3 || config.modelOverrides?.[spec]?.contextWindow) return;
+      const known = (await catalog.entry(spec))?.contextWindow || (await catalog.entry(spec, true))?.contextWindow;
+      asked.set(spec, known ? 3 : n + 1);
       adopt();
     },
     "sasacode",
