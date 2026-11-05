@@ -122,7 +122,7 @@ export interface ModelInfo {
   reasoning?: boolean;
   images?: boolean;
   headers?: Record<string, string>;
-  /** The local server behind an OpenAI-style endpoint, from the provider's ollama / llamacpp / lmstudio flag. */
+  /** The local server behind an OpenAI-style endpoint, from the provider's ollama / llamacpp / lmstudio flag (since 1.15.0). */
   server?: "ollama" | "llamacpp" | "lmstudio";
 }
 

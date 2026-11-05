@@ -29,7 +29,7 @@ export type {
   UserContent,
 } from "@sasacode/ai";
 
-export const PLUGIN_API_VERSION = "1.14.0";
+export const PLUGIN_API_VERSION = "1.15.0";
 
 // ── tools ────────────────────────────────────────────────────────────
 
