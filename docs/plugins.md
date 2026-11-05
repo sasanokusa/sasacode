@@ -299,9 +299,9 @@ before_request → stream_delta（生成中、差分ごと） → assistant_mess
 
 ## テキストで書かれたツール呼び出し
 
-同梱の`text-tool-calls`（既定で有効）は、`assistant_message`で応答を書き換え、本文に書かれた呼び出しを`tool_call`ブロックにする（`stopReason`は`tool_use`、idは`textcall`で始まる）。引数のJSONは書かれたままパースし、崩れていれば`rawInput`に入れて、`tool_call_raw`でtool-repairに直させる。名前のまわりまで崩れている（Python風の単一引用符など）ときは、tool-repairと同じ`repairJson`で全体を直してから読む。拾ったことは、その呼び出しの`tool_call_raw`の`note`でモデルに伝える（呼び出しが変わらない`note`だけの結果はモデルに届かないので、`input`を新しいオブジェクトで返している）。前の文に残った呼び出し（後ろに文が続くので拾わなかったもの）があれば、実行しなかったその数も`note`に書く。元の本文はセッションに`text_tool_call`（`{text, calls, agent?}`、`calls`は呼び出しのid）として残る。
+同梱の`text-tool-calls`（既定で有効）は、`assistant_message`で応答を書き換え、本文に書かれた呼び出しを`tool_call`ブロックにする（`stopReason`は`tool_use`、idは`textcall`で始まる）。引数のJSONは書かれたままパースし、崩れていれば`rawInput`に入れて、`tool_call_raw`でtool-repairに直させる。名前のまわりまで崩れている（Python風の単一引用符など）ときは、tool-repairと同じ`repairJson`で全体を直してから読む。拾ったことは、その呼び出しの`tool_call_raw`の`note`でモデルに伝える（呼び出しが変わらない`note`だけの結果はモデルに届かないので、`input`を新しいオブジェクトで返している）。前の文に残った呼び出し（後ろに文が続くので拾わなかったもの）があれば、実行しなかったその数も`note`に書く。コードブロックやインラインコードの中の例と、ほかの呼び出しの引数の中に書かれたものは数えない。元の本文はセッションに`text_tool_call`（`{text, calls, agent?}`、`calls`は呼び出しのid）として残る。
 
-拾った呼び出しのうち`kind`が`read`でないものは、`permission`フックで、権限モードの既定が`allow`のとき（editsモードでの作業ディレクトリ内の書き込みや編集）だけ`ask`にする。例を書いただけの応答で、ファイルが黙って書き換わらないようにするため。autoモード、ユーザーやプラグインのallowルール、`tool_call`の判定は変えない。確認できないヘッドレスのeditsモードでは、その呼び出しは実行されない。
+拾った呼び出しのうち`kind`が`read`でないもの（`asksFirst`）は、autoモード以外で判定が権限モードの既定によるとき、`permission`フックで`ask`にする。editsモードでの作業ディレクトリ内の書き込みや編集も確認に回る。agentモードでは、後で動く`agent-judge`がこの呼び出しを判定しない（`text-tool-calls`が`ask`を返しても`source`は`mode`のままなので、判定させると`allow`に緩められてしまう）。例を書いただけの応答で、ファイルが黙って書き換わらないようにするため。autoモード、ユーザーやプラグインのallowルール、`tool_call`の判定は変えない。確認できないヘッドレス（`sasacode -p`、既定はeditsモード）では、その呼び出しは実行されない。
 
 拾うのは、次をすべて満たす応答だけ。どれかが外れれば、応答はそのまま残す。
 

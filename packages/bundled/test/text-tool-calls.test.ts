@@ -34,10 +34,12 @@ interface RunOptions {
   mode?: PermissionMode;
   settings?: Record<string, unknown>;
   approve?: AgentOptions["approve"];
+  /** Replies after the first, before "done" (a judge's answer). */
+  then?: AssistantMessage[];
 }
 
 async function run(first: AssistantMessage, plugins = ["text-tool-calls"], opts: RunOptions = {}) {
-  const provider = replayProvider([first, say("done")]);
+  const provider = replayProvider([first, ...(opts.then ?? []), say("done")]);
   registerApi("replay", provider);
   const session = SessionFile.create(join(root, "sessions"), root);
   const baseUrl = "baseUrl" in opts ? opts.baseUrl : "http://127.0.0.1:8080/v1";
@@ -85,11 +87,24 @@ test("extractTextCalls: the three formats, and only calls that end the reply", (
   // A tag inside the content of a call that is picked up belongs to that content.
   const nested = { path: "t.md", content: '<tool_call>{"name": "read", "arguments": {"path": "a"}}</tool_call>' };
   expect(extractTextCalls(`\`\`\`json\n${JSON.stringify({ name: "write", arguments: nested })}\n\`\`\``)?.calls).toEqual([call("write", JSON.stringify(nested))]);
+  // … also an opening tag alone, in a call written in the same form.
+  const mention = { path: "README.md", content: "Models write <tool_call> tags." };
+  expect(extractTextCalls(`<tool_call>${JSON.stringify({ name: "write", arguments: mention })}</tool_call>`)?.calls).toEqual([call("write", JSON.stringify(mention))]);
+  expect(extractTextCalls('<function=write>{"path": "a.md", "content": "use <function=name> syntax"}</function>')?.calls).toEqual([
+    call("write", '{"path": "a.md", "content": "use <function=name> syntax"}'),
+  ]);
   // A call followed by more prose stays text when a later one ends the reply; it is counted.
   expect(extractTextCalls('Read a.\n<tool_call>{"name": "read", "arguments": {"path": "a"}}</tool_call>\nAnd b.\n<tool_call>{"name": "read", "arguments": {"path": "b"}}</tool_call>')).toMatchObject({
     calls: [call("read", '{"path":"b"}')],
     skipped: 1,
   });
+  // Examples in a code block or inline code are not counted, nor a call inside another one.
+  const a = '{"name": "read", "arguments": {"path": "a"}}';
+  const last = `<tool_call>${a}</tool_call>`;
+  expect(extractTextCalls(`Example:\n\`\`\`json\n${a}\n\`\`\`\nNow:\n${last}`)?.skipped).toBe(0);
+  expect(extractTextCalls(`See \`<tool_call>${a}</tool_call>\` then\n${last}`)?.skipped).toBe(0);
+  const inner = { path: "t.md", content: `<function=read>{"path": "a"}</function>` };
+  expect(extractTextCalls(`Write it.\n<tool_call>${JSON.stringify({ name: "write", arguments: inner })}</tool_call>\nThen:\n${last}`)?.skipped).toBe(1);
   // Not calls: an example followed by more text, one shown in a code block, a tool definition,
   // a JSON answer after a long explanation, and a call that cannot be read.
   expect(extractTextCalls('Write <tool_call>{"name": "read", "arguments": {"path": "a"}}</tool_call> and it runs.')).toBeUndefined();
@@ -215,4 +230,16 @@ test("text-tool-calls: in edits mode a write picked up from text is asked about;
   const read = await run(say(formats["<tool_call>"]), undefined, { mode: "edits", approve });
   expect(read.results[0]!.isError).toBe(false);
   expect(asked).toHaveLength(1);
+});
+
+test("text-tool-calls: in agent mode a write picked up from text is asked about, not judged", async () => {
+  writeFileSync(target, '{"keep": true}');
+  const asked: string[] = [];
+  const approve: AgentOptions["approve"] = async (req) => (asked.push(req.reason), { decision: "deny" });
+  // A judge asked about the write would answer this, and the write would run unasked.
+  const judge = say('{"safe": true, "reason": "inside the working directory"}');
+  const { results } = await run(example, ["tool-repair", "text-tool-calls", "agent-judge"], { mode: "agent", approve, then: [judge] });
+  expect(asked).toEqual([expect.stringContaining("written as text")]);
+  expect(results[0]!.isError).toBe(true);
+  expect(readFileSync(target, "utf8")).toBe('{"keep": true}');
 });

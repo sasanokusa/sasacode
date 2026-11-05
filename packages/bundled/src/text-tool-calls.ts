@@ -1,6 +1,6 @@
 import { isIP } from "node:net";
 import { parseToolInput } from "@sasacode/ai";
-import type { Plugin, ToolCall } from "@sasacode/plugin-api";
+import type { Plugin, ToolCall, ToolDefinition } from "@sasacode/plugin-api";
 import { repairJson } from "./repair/json.ts";
 import { resolveToolName } from "./tool-repair.ts";
 import { privateAddress } from "./web-search.ts";
@@ -12,11 +12,12 @@ export interface TextCall {
 }
 
 // Strict shapes only. A closing tag may be missing at the very end (some servers stop on it) or
-// before the next call; a body never runs past the next opening tag.
+// before the next call: a body ends at the first `}` followed by a closing tag, the end of the text
+// or the next opening tag. An opening tag elsewhere in a body (in a string argument) is content.
 /** Qwen / Hermes: <tool_call>{"name": …, "arguments": …}</tool_call> */
-const TAG = /<tool_call>\s*(\{(?:(?!<tool_call>)[\s\S])*?\})\s*(?:<\/tool_call>|$|(?=<tool_call>))/g;
+const TAG = /<tool_call>\s*(\{[\s\S]*?\})\s*(?:<\/tool_call>|$|(?=<tool_call>))/g;
 /** Llama 3.x: <function=read>{"path": …}</function> */
-const FUNCTION = /<function=([\w.:-]+)>\s*(\{(?:(?!<function=)[\s\S])*?\})\s*(?:<\/function>|$|(?=<function=))/g;
+const FUNCTION = /<function=([\w.:-]+)>\s*(\{[\s\S]*?\})\s*(?:<\/function>|$|(?=<function=))/g;
 /** A ```json fence holding nothing but {"name": …, "arguments" | "parameters": …} */
 const FENCE = /```json[ \t]*\r?\n\s*(\{[\s\S]*?\})\s*```/g;
 /** Prose a ```json call may follow: ordinary answers end with JSON examples too, after longer text. */
@@ -50,7 +51,8 @@ function envelope(body: string): TextCall | undefined {
  * that is followed by more text, such as an example inside an explanation or a code block, is not
  * one, and neither is a call inside a code block left open. A ```json call also needs the prose
  * before it to be short and to hold no other code block. `skipped` counts the readable calls left
- * in the prose. Undefined when the text does not end with calls, or when one of them cannot be read.
+ * in the prose outside code blocks and inline code. Undefined when the text does not end with
+ * calls, or when one of them cannot be read.
  */
 export function extractTextCalls(text: string): { prose: string; calls: TextCall[]; skipped: number } | undefined {
   const found: { start: number; end: number; call?: TextCall; fence?: boolean }[] = [];
@@ -73,7 +75,11 @@ export function extractTextCalls(text: string): { prose: string; calls: TextCall
   const prose = text.slice(0, end).trimEnd();
   const fences = prose.split("```").length - 1;
   if (fences % 2 || (run.some((f) => f.fence) && (prose.length > FENCE_PROSE || fences))) return undefined;
-  return { prose, calls: run.map((f) => f.call!), skipped: found.slice(i).filter((f) => f.call && f.end <= end).length };
+  // Calls left in the prose, but not examples: one in a code block or `…`, or inside another match.
+  const code = [...prose.matchAll(/```[\s\S]*?```|`[^`\n]+`/g)].map((m) => [m.index, m.index + m[0].length] as const);
+  const left = found.slice(i).filter((f) => f.call && f.end <= end && !code.some(([s, e]) => s <= f.start && f.end <= e));
+  const skipped = left.filter((f) => !found.some((o) => o !== f && o.start <= f.start && f.end <= o.end)).length;
+  return { prose, calls: run.map((f) => f.call!), skipped };
 }
 
 /** A server on this machine or the local network: a private address, or a name without a dot or with a local suffix. */
@@ -88,6 +94,9 @@ function localServer(baseUrl: string | undefined): boolean {
 const ID = "textcall";
 const NOTE = "this call was written as text in your reply and was picked up from there; call tools with native tool calls instead";
 
+/** A call picked up from text that is not a read: it may be an example, so the user decides it (agent-judge does not). */
+export const asksFirst = (call: ToolCall, tool: ToolDefinition): boolean => call.id.startsWith(ID) && tool.kind !== "read";
+
 /**
  * Small models behind servers whose chat template has no tool-call format (llama.cpp and others)
  * sometimes write the call into the reply instead of making it. Such a reply would end the run as
@@ -101,7 +110,8 @@ const NOTE = "this call was written as text in your reply and was picked up from
  * (resolveToolName); otherwise the reply stays as it was. The arguments go in as written: broken
  * JSON is left in `rawInput` for tool-repair. The original text is recorded in the session
  * (`text_tool_call`), and the model is told with each result that native calls are expected.
- * What edits mode would run unasked (a write inside the working directory) is asked about first.
+ * Outside auto mode, a call that is not a read is asked about first (asksFirst), also where edits
+ * mode would run it unasked (a write inside the working directory) or agent mode would judge it.
  *
  * settings: { always?: boolean (default false) }
  */
@@ -149,9 +159,11 @@ const textToolCalls: Plugin = (api) => {
     return rawInput !== undefined ? { name: rename, note } : { name: rename, input: { ...input }, note };
   });
 
-  // A call picked up from text may be an example: edits mode does not run it unasked.
+  // What the mode itself decides becomes a question: edits mode would run a write inside the working
+  // directory unasked, and in agent mode agent-judge leaves the call to the user (asksFirst). auto
+  // mode, rules and other plugins' decisions stay as they are.
   api.on("permission", ({ call, tool, mode, verdict }) => {
-    if (call.id.startsWith(ID) && tool.kind !== "read" && mode !== "auto" && verdict.source === "mode" && verdict.decision === "allow")
+    if (asksFirst(call, tool) && mode !== "auto" && verdict.source === "mode")
       return { decision: "ask", reason: "a tool call written as text in the reply, which may be an example" };
   });
 };
