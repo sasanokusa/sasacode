@@ -59,15 +59,15 @@ export const editTool: ToolDefinition<Args> = {
 function loosely(path: string, file: string, old: string, neu: string): string | { after: string; note: string } {
   // Each line without its number, or [line] if it has none and is not blank: a blank line's bare "     7" only right after line 6.
   const unnumber = (s: string, n = NaN) => s.split("\n").map((l) => { const m = /^ *(\d+)\t|^(?=.{6}$) *(\d+)$/.exec(l); return m && (m[1] ? (n = +m[1]) + 1 : +m[2] === n + 1 && ++n) ? l.slice(m[0].length) : l.trim() ? [l] : l; });
-  const numbered = /^ *\d+\t/m.test(old) && !unnumber(old).some(Array.isArray);
-  [old, neu] = [old, neu].map((s) => (numbered ? unnumber(s).flat().join("\n") : s).replace(/[ \t\r]+$/, ""));
+  const numbered = /^ *\d+\t/m.test(old) && !unnumber(old).some(Array.isArray), [bare, plain] = [old, neu].map((s) => (numbered ? unnumber(s).flat().join("\n") : s));
+  [old, neu] = [bare, plain].map((s) => s.replace(/[ \t\r]+$/, ""));
   let i = 0, find = (re: string) => file.matchAll(new RegExp(`(?=(${re}))`, "gm")).take(2).toArray(), hits = find(RegExp.escape(old));
   for (; !hits.length && i < 2; i++) {
     const lines = old.split("\n").map((l) => l.replace(i ? /^[ \t]+|[ \t\r]+$/g : /[ \t\r]+$/, ""));
     // A blank first line may start only where a run of blanks does: scanning the run from each of its places is quadratic.
     hits = find((lines[0] ? "" : "(?<![ \\t])") + lines.map((l) => (i && l ? "^[ \\t]*" : "") + RegExp.escape(l)).join("[ \\t]*\\r?\\n"));
   }
-  const ignoring = `ignoring ${[numbered && "line-number prefixes", ...["trailing whitespace and line endings", "indentation"].slice(0, i || +!numbered)].filter(Boolean).join(", ")}`;
+  const ignoring = `ignoring ${[numbered && "line-number prefixes", ...["trailing whitespace and line endings", "indentation"].slice(0, i || +(old !== bare))].filter(Boolean).join(", ")}`;
   if (!hits.length) return `old_string not found in ${path}, even ${ignoring}. Re-read the file and match it exactly.`;
   if (hits.length > 1) return `old_string appears more than once in ${path}, ${ignoring}. Add surrounding context to make it unique.`;
   const [{ index, 1: at = "" }] = hits, ws = (l = "") => /^[ \t]*/.exec(l)![0], fl = at.split("\n");

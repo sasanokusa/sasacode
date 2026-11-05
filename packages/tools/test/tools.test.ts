@@ -156,6 +156,10 @@ test("edit: trailing whitespace and CRLF are ignored both ways, and the file kee
   const end = await editTool.execute({ path: lf, old_string: "Y\nz  ", new_string: "Y\nZ" }, ctx());
   expect(out(end)).toStartWith("[harness matched old_string ignoring trailing whitespace and line endings]\n");
   expect(readFileSync(lf, "utf8")).toBe("x\nY\nZ\n");
+  // The same past line numbers: both are named.
+  const numbered = await editTool.execute({ path: lf, old_string: "     1\tx  ", new_string: "     1\tX" }, ctx());
+  expect(out(numbered)).toStartWith("[harness matched old_string ignoring line-number prefixes, trailing whitespace and line endings]\n");
+  expect(readFileSync(lf, "utf8")).toBe("X\nY\nZ\n");
 });
 
 test("edit: other indentation is ignored, and new_string takes the file's (#65)", async () => {
