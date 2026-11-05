@@ -536,7 +536,8 @@ sasacode -m pgx/&lt;モデル名&gt;</code></pre>
         <tr><th>プラグイン</th><th>設定</th><th>既定</th><th>内容</th></tr>
         <tr><td rowspan="3"><code>tool-repair</code></td><td><code>json</code></td><td><code>true</code></td><td>不正なJSON（末尾カンマ、閉じ括弧、クォートのないキー、<code>True</code>/<code>None</code>、コードフェンス、二重エンコード）を直す</td></tr>
         <tr><td><code>schema</code></td><td><code>true</code></td><td>キー名（<code>file</code> → <code>path</code>）と型（<code>"20"</code> → <code>20</code>）を直す</td></tr>
-        <tr><td><code>names</code></td><td><code>true</code></td><td>ツール名のtypoを直す（候補が1つのときだけ）</td></tr>
+        <tr><td><code>names</code></td><td><code>true</code></td><td>ツール名のtypoと、ほかのハーネスでの組み込みツールの名前（<code>read_file</code>、<code>str_replace_editor</code>、<code>run_command</code> など）を直す（候補が1つのときだけ）</td></tr>
+        <tr><td><code>text-tool-calls</code></td><td><code>always</code></td><td><code>false</code></td><td>本文に書かれたツール呼び出し（<code>&lt;tool_call&gt;…&lt;/tool_call&gt;</code>、<code>json</code> のコードフェンス、<code>&lt;function=名前&gt;…&lt;/function&gt;</code>）を拾って実行する。対象はこのマシンかローカルネットワークのモデルだけで、<code>true</code> にするとどのモデルからも拾う。本文の末尾の呼び出しだけを拾い、読み取り以外はautoモード以外では先に確認する</td></tr>
         <tr><td rowspan="3"><code>loop-guard</code></td><td><code>noteAt</code></td><td><code>3</code></td><td>同じ呼び出し（か3手までの周期）が同じ結果で続いたら、この回で注意を添える</td></tr>
         <tr><td><code>blockAt</code></td><td><code>5</code></td><td>この回から、その周期の呼び出しを止める（ファイルの変更か次の依頼で解除）</td></tr>
         <tr><td><code>noProgressTurns</code></td><td><code>5</code></td><td>ツールが1件も実行されないターンがこの回数続いたら実行を止める（0 で無効）</td></tr>

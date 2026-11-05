@@ -14,6 +14,7 @@ import openaiCodex from "./openai-codex/index.ts";
 import permissionPresets from "./permission-presets.ts";
 import repetitionGuard from "./repetition-guard.ts";
 import subagent from "./subagent.ts";
+import textToolCalls from "./text-tool-calls.ts";
 import todo from "./todo.ts";
 import toolRepair from "./tool-repair.ts";
 import usage from "./usage.ts";
@@ -24,7 +25,8 @@ export { agentsFiles } from "./agents-md.ts";
 export { compact, splitPoint, transcript } from "./compaction.ts";
 export { PRESETS } from "./permission-presets.ts";
 export { detectRepetition } from "./repetition-guard.ts";
-export { closestName, editDistance, fitToSchema, repairJson } from "./tool-repair.ts";
+export { closestName, editDistance, fitToSchema, repairJson, resolveToolName, TOOL_SYNONYMS } from "./tool-repair.ts";
+export { extractTextCalls } from "./text-tool-calls.ts";
 export { htmlToText, readable, readCapped } from "./web-fetch.ts";
 export { formatResults, matchesQuery, privateAddress } from "./web-search.ts";
 export { installRustxng, managedRustxng, rustxngTarget } from "./rustxng-install.ts";
@@ -34,6 +36,8 @@ export { codexLogin, codexLogout, codexStatus, readCodexAuth } from "./openai-co
 /** Officially shipped plugins. Each can be turned off with plugins.disabled. */
 export const bundledPlugins: Record<string, Plugin> = {
   "tool-repair": toolRepair,
+  // After tool-repair: hooks run in load order, and tool-repair mends the calls this one makes.
+  "text-tool-calls": textToolCalls,
   "repetition-guard": repetitionGuard,
   "loop-guard": loopGuard,
   "agents-md": agentsMd,
