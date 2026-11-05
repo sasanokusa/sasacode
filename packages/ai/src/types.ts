@@ -122,6 +122,8 @@ export interface ModelInfo {
   reasoning?: boolean;
   images?: boolean;
   headers?: Record<string, string>;
+  /** The local server behind an OpenAI-style endpoint, from the provider's ollama / llamacpp / lmstudio flag (since 1.15.0). */
+  server?: "ollama" | "llamacpp" | "lmstudio";
 }
 
 /** Sampling knobs. Each adapter sends what its API understands; `extraBody` is merged into the request as-is. */
@@ -261,4 +263,6 @@ export interface ProviderConfig {
   ollama?: boolean;
   /** The server is llama.cpp's llama-server: the context size comes from its /props. */
   llamacpp?: boolean;
+  /** The server is LM Studio: the context length comes from its native /api/v0/models. */
+  lmstudio?: boolean;
 }

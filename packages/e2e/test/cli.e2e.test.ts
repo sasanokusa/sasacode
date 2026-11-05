@@ -51,6 +51,30 @@ test("a task that writes a file and checks it runs the real tools, and -r contin
   expect(JSON.stringify(server.requests[3].messages)).toContain("make hello.txt");
 });
 
+test("tool calls streamed without an index, or with the name after the id, still run (#62)", async () => {
+  const { server, box } = setup(
+    [
+      {
+        toolCalls: [
+          { name: "write", args: { path: "a.txt", content: "first\n" } },
+          { name: "write", args: { path: "b.txt", content: "second\n" } },
+        ],
+        toolCallShape: "no-index",
+      },
+      { toolCalls: [{ name: "read", args: { path: "b.txt" } }], toolCallShape: "name-later" },
+      { text: "Both written." },
+    ],
+    { permissions: { mode: "edits" } },
+  );
+  const r = await box.run(["-p", "write a.txt and b.txt"]);
+  expect(r.code).toBe(0);
+  expect(r.stdout).toContain("Both written.");
+  expect(readFileSync(join(box.project, "a.txt"), "utf8")).toBe("first\n");
+  expect(readFileSync(join(box.project, "b.txt"), "utf8")).toBe("second\n");
+  expect(roles(server.requests[1])).toEqual(["system", "user", "assistant", "tool", "tool"]);
+  expect(JSON.stringify(server.requests[2].messages.at(-1))).toContain("second");
+});
+
 test("a reply cut off mid-stream is asked for again instead of ending the turn in silence", async () => {
   const { server, box } = setup([{ reasoning: "Let me think about the fi", cut: true }, { text: "The answer is 42." }]);
   const r = await box.run(["-p", "question"]);

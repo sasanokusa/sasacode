@@ -131,7 +131,7 @@ stdinは1行1件のJSON（JSON Lines）で読む。
 | --- | --- |
 | `/model` | プロバイダーから取得したモデル一覧から選ぶ。文字を打つと絞り込める。`/model <provider/model>` で直接指定、`/model --refresh` で取り直す |
 | `/resume` `/clear` `/fork` `/session` | 過去のセッション / 新しいセッション / 過去のメッセージから分岐 / IDと保存先 |
-| `/effort` | 推論の深さ（`off` / `low` / `medium` / `high` / `xhigh` / `max`）を切り替える。引数なしなら一覧から選ぶ。現在の値はフッターに出る。OpenAI形式のサーバーには `reasoning_effort` として送り、`off` は `none` として送る（vLLMなどは送らないと推論する）。サーバーが受け付けない値なら近い値に替えて送り直し、以後はその値を使う（例：Command Codeは `none` を受け付けないので `off` は `low` になる） |
+| `/effort` | 推論の深さ（`off` / `low` / `medium` / `high` / `xhigh` / `max`）を切り替える。引数なしなら一覧から選ぶ。現在の値はフッターに出る。OpenAI形式のサーバーには `reasoning_effort` として送り、`off` は `none` として送る（vLLMなどは送らないと推論する）。llama.cppでは、b10121より前のllama-serverが `reasoning_effort` を読まないので、`off` のときに `chat_template_kwargs` の `enable_thinking: false` も送る。サーバーが受け付けない値なら近い値に替えて送り直し、以後はその値を使う（例：Command Codeは `none` を受け付けないので `off` は `low` になる） |
 | `/language` | 画面の言語を切り替える（`ja` / `en`。引数なしなら一覧から選ぶ）。その場で切り替わり、`~/.sasacode/config.json` の `lang` にも保存する。切り替え前に表示された文はそのまま |
 | `/copy` | 直前の応答をクリップボードにコピー（pbcopy / wl-copy / xclip、なければ端末経由） |
 | `/permission` `/help` `/exit`（`/quit`） | 権限モード / ヘルプ / 終了 |
@@ -319,7 +319,7 @@ export default ((api) => {
 }) satisfies Plugin;
 ```
 
-公開API（現在 1.14.0。1.4.0 で締め切り、1.xの間は追加だけ。[互換性の約束](docs/plugins.md#互換性の約束140-で確定)）でできることは次のとおり。
+公開API（現在 1.15.0。1.4.0 で締め切り、1.xの間は追加だけ。[互換性の約束](docs/plugins.md#互換性の約束140-で確定)）でできることは次のとおり。
 
 - **登録**：ツール（別のツールの権限ルールを当てる `permissionsAs` つき）、スラッシュコマンド（引数の補完つき）、プロバイダー（モデル一覧の取得、通信の差し替え）、権限ルール（`softDeny` を含む）
 - **フック**：`session_start/end`、`user_prompt`、`system_prompt`、`before_request`、`stream_delta`、`assistant_message`、`tool_call_raw`、`tool_call`、`permission`、`tool_result`、`turn_end`、`agent_end`、`context_limit`

@@ -1,9 +1,10 @@
 // The three adapters, without a model: a fake fetch records what is sent and replays a recorded
 // stream. Covers the conversion of the history and the parsing of the stream.
 import { expect, test } from "bun:test";
+import OpenAI from "openai";
 import { anthropicProvider } from "../src/anthropic.ts";
-import { type AssistantMessage, emptyUsage, replayScope, INCOMPLETE_STREAM, type Message, type ModelInfo, type Request, type StreamEvent } from "../src/index.ts";
-import { openaiChatProvider } from "../src/openai-chat.ts";
+import { type AssistantMessage, ContextOverflowError, emptyUsage, replayScope, INCOMPLETE_STREAM, type Message, type ModelInfo, type Request, type StreamEvent } from "../src/index.ts";
+import { isContextOverflow, openaiChatProvider } from "../src/openai-chat.ts";
 import { openaiResponsesProvider } from "../src/openai-responses.ts";
 
 function fakeFetch(body: string, status = 200) {
@@ -181,4 +182,122 @@ test("a stream cut before the reply finished is an error with what arrived, not 
   const m3 = (await run(anthropicProvider, { ...req(claude, cutClaude.fetch), apiKey: "k" })).message;
   expect([m3.stopReason, m3.errorMessage]).toEqual(["error", INCOMPLETE_STREAM]);
   expect(m3.content).toEqual([{ type: "text", text: "par" }]);
+});
+
+const reqFor = (model: ModelInfo, fetch: typeof globalThis.fetch, extra: Partial<Request> = {}): Request => ({ model, system: "", messages: [user("x")], tools, fetch, maxRetries: 0, ...extra });
+const chatChunk = (delta: object, finish: string | null = null) => ({ id: "1", object: "chat.completion.chunk", created: 0, model: "m", choices: [{ index: 0, delta, finish_reason: finish }] });
+
+test("each server's context overflow is ContextOverflowError, llama.cpp's included (#57)", async () => {
+  const err = (error: object) => OpenAI.APIError.generate(400, { error }, undefined, new Headers());
+  // As llama-server b9860 answered a prompt longer than its slot; then the wording of llama.cpp PR 15780.
+  const llama = { code: 400, message: "request (391 tokens) exceeds the available context size (256 tokens), try increasing it", type: "exceed_context_size_error", n_prompt_tokens: 391, n_ctx: 256 };
+  const overflows = [
+    llama,
+    { code: 400, message: "the request exceeds the available context size. try increasing the context size or enable context shift", type: "exceed_context_size_error" },
+    { code: 400, message: "input (391 tokens) is larger than the max context size (256 tokens). skipping", type: "exceed_context_size_error" },
+    { code: 400, message: "prompt too long", type: "exceed_context_size_error" },
+    // The wording alone, for a build or a proxy that drops the type.
+    { code: 400, message: "the request exceeds the available context size. try increasing the context size or enable context shift" },
+    { message: "This model's maximum context length is 8192 tokens. However, you requested 9000 tokens", type: "BadRequestError", code: 400 }, // vLLM
+    { message: "The number of tokens to keep from the initial prompt is greater than the context length" }, // LM Studio
+    { message: "Your input exceeds the context window of this model.", code: "context_length_exceeded" }, // OpenAI
+  ];
+  for (const error of overflows) expect([error.message, isContextOverflow(err(error))]).toEqual([error.message, true]);
+  expect(isContextOverflow(err({ message: "Unsupported value: 'reasoning_effort'", type: "invalid_request_error" }))).toBe(false);
+  // Both OpenAI-style adapters turn llama-server's 400 into the error the agent compacts on.
+  const chat: ModelInfo = { id: "m", provider: "llama", api: "openai-chat", baseUrl: "http://x/v1", contextWindow: 256, maxOutput: 100, server: "llamacpp" };
+  for (const [provider, model] of [[openaiChatProvider, chat], [openaiResponsesProvider, { ...chat, api: "openai-responses" }]] as const)
+    await expect(run(provider, reqFor(model, fakeFetch(JSON.stringify({ error: llama }), 400).fetch))).rejects.toBeInstanceOf(ContextOverflowError);
+  // The same error as the first event of a 200 stream, where the SDK's APIError has no status: by its type, and by its wording alone.
+  for (const error of [llama, { message: overflows[4]!.message }])
+    await expect(run(openaiChatProvider, reqFor(chat, fakeFetch(sse([{ error }])).fetch))).rejects.toBeInstanceOf(ContextOverflowError);
+});
+
+test("openai-chat: a local server gets max_tokens, a cloud provider keeps max_completion_tokens (#58)", async () => {
+  const base = { id: "m", api: "openai-chat", contextWindow: 1e5, maxOutput: 1000 } as const;
+  const sent = async (model: ModelInfo) => {
+    const f = fakeFetch(sse([chatChunk({ content: "ok" }, "stop")]));
+    await run(openaiChatProvider, reqFor(model, f.fetch, { maxTokens: 500 }));
+    return { max_tokens: f.sent[0].max_tokens, max_completion_tokens: f.sent[0].max_completion_tokens };
+  };
+  const cloud = [["openai", undefined], ["openrouter", "https://openrouter.ai/api/v1"], ["commandcode", "https://api.commandcode.ai/provider/v1"], ["vllm", "http://gpu:8000/v1"]] as const;
+  for (const [provider, baseUrl] of cloud) expect(await sent({ ...base, provider, baseUrl })).toEqual({ max_tokens: undefined, max_completion_tokens: 500 });
+  for (const server of ["ollama", "llamacpp", "lmstudio"] as const)
+    expect(await sent({ ...base, provider: "myollama", baseUrl: "http://host:11434/v1", server })).toEqual({ max_tokens: 500, max_completion_tokens: undefined });
+});
+
+test("openai-chat: a tool name sent after the id, and tool calls without an index, are kept apart and named (#62)", async () => {
+  const model: ModelInfo = { id: "m", provider: "local", api: "openai-chat", baseUrl: "http://x/v1", contextWindow: 1e5, maxOutput: 1000 };
+  const tc = (calls: object[], finish: string | null = null) => chatChunk({ tool_calls: calls }, finish);
+  const streams: [string, object[], { id?: string; name: string; input: Record<string, unknown> }[]][] = [
+    // The OpenAI shape: the name in the first chunk, an index on every chunk. Unchanged.
+    ["openai", [tc([{ index: 0, id: "a", type: "function", function: { name: "read", arguments: '{"path":' } }]), tc([{ index: 0, function: { arguments: '"a"}' } }]), tc([{ index: 1, id: "b", type: "function", function: { name: "read", arguments: '{"path":"b"}' } }], "tool_calls")],
+      [{ id: "a", name: "read", input: { path: "a" } }, { id: "b", name: "read", input: { path: "b" } }]],
+    // The first chunk carries only the id and type; the name follows.
+    ["name later", [tc([{ index: 0, id: "a", type: "function", function: { arguments: "" } }]), tc([{ index: 0, function: { name: "read" } }]), tc([{ index: 0, function: { arguments: '{"path":"a"}' } }], "tool_calls")],
+      [{ id: "a", name: "read", input: { path: "a" } }]],
+    // No index: two calls told apart by their ids, the second one's arguments arriving by id.
+    ["ids, no index", [tc([{ id: "a", type: "function", function: { name: "read", arguments: '{"path":"a"}' } }]), tc([{ id: "b", type: "function", function: { name: "ls", arguments: '{"path":' } }]), tc([{ id: "b", function: { arguments: '"b"}' } }], "tool_calls")],
+      [{ id: "a", name: "read", input: { path: "a" } }, { id: "b", name: "ls", input: { path: "b" } }]],
+    // Neither index nor id: arguments continue the latest call; a second name starts the next.
+    ["no index, no id", [tc([{ function: { name: "read", arguments: '{"path"' } }]), tc([{ function: { arguments: ':"a"}' } }]), tc([{ function: { name: "ls", arguments: '{"path":"b"}' } }], "tool_calls")],
+      [{ name: "read", input: { path: "a" } }, { name: "ls", input: { path: "b" } }]],
+    // No index, the name repeated on every chunk: one call while its arguments are unfinished, the next once they are.
+    ["no index, name repeated", [tc([{ id: "a", type: "function", function: { name: "read", arguments: '{"path":' } }]), tc([{ function: { name: "read", arguments: '"a"}' } }]), tc([{ function: { name: "read", arguments: '{"path":"b"}' } }], "tool_calls")],
+      [{ id: "a", name: "read", input: { path: "a" } }, { name: "read", input: { path: "b" } }]],
+    ["no index, no id, name repeated", [tc([{ type: "function", function: { name: "read", arguments: "" } }]), tc([{ function: { name: "read", arguments: '{"path":' } }]), tc([{ function: { name: "read", arguments: '"a"}' } }], "tool_calls")],
+      [{ name: "read", input: { path: "a" } }]],
+    // A brace inside a string does not close the arguments: a counter that ignored strings would split this call in two.
+    ["no index, name repeated, brace in a string", [tc([{ id: "a", type: "function", function: { name: "write", arguments: '{"path":"a","content":"}' } }]), tc([{ function: { name: "write", arguments: 'x"}' } }], "tool_calls")],
+      [{ id: "a", name: "write", input: { path: "a", content: "}x" } }]],
+    // No index, a name-only chunk after complete arguments: it starts the next call, whose arguments follow without the name.
+    ["no index, name first", [tc([{ id: "a", type: "function", function: { name: "read", arguments: '{"path":"a"}' } }]), tc([{ function: { name: "read" } }]), tc([{ function: { arguments: '{"path":"b"}' } }], "tool_calls")],
+      [{ id: "a", name: "read", input: { path: "a" } }, { name: "read", input: { path: "b" } }]],
+    // The trade-off of that rule: a server that ended a call with a name-only chunk would get an extra call with no
+    // arguments (main folded it into the call). No server is known to send one.
+    ["no index, trailing name", [tc([{ id: "a", type: "function", function: { name: "read", arguments: '{"path":"a"}' } }]), tc([{ function: { name: "read", arguments: "" } }], "tool_calls")],
+      [{ id: "a", name: "read", input: { path: "a" } }, { name: "read", input: {} }]],
+    // An empty id is no id: it neither matches the earlier call nor becomes the new one's id.
+    ["no index, empty ids", [tc([{ id: "", type: "function", function: { name: "read", arguments: '{"path":"a"}' } }]), tc([{ id: "", type: "function", function: { name: "read", arguments: '{"path":"b"}' } }], "tool_calls")],
+      [{ name: "read", input: { path: "a" } }, { name: "read", input: { path: "b" } }]],
+    // Two index-less calls in one chunk.
+    ["no index, one chunk", [tc([{ function: { name: "read", arguments: '{"path":"a"}' } }, { function: { name: "ls", arguments: '{"path":"b"}' } }], "tool_calls")],
+      [{ name: "read", input: { path: "a" } }, { name: "ls", input: { path: "b" } }]],
+  ];
+  for (const [label, chunks, want] of streams) {
+    const { message, events } = await run(openaiChatProvider, reqFor(model, fakeFetch(sse(chunks)).fetch));
+    const got = message.content.filter((c) => c.type === "tool_call");
+    expect([label, got.map(({ name, input, rawInput }) => ({ name, input, rawInput }))]).toEqual([label, want.map(({ name, input }) => ({ name, input, rawInput: undefined }))]);
+    for (const [i, w] of want.entries()) if (w.id) expect(got[i]!.id).toBe(w.id);
+    expect([label, new Set(got.map((c) => c.id || undefined).filter(Boolean)).size]).toEqual([label, got.length]);
+    // One start per call, ahead of its deltas, at the call's own place in the content.
+    const starts: number[] = [];
+    for (const e of events)
+      if (e.type === "toolcall_start") starts.push(e.index);
+      else if (e.type === "toolcall_delta") expect(starts).toContain(e.index);
+    expect(starts).toEqual(got.map((c) => message.content.indexOf(c)));
+    expect(message.stopReason).toBe("tool_use");
+  }
+});
+
+test("openai-chat: an index-less call that repeats its name is not parsed again on every chunk (#62)", async () => {
+  const model: ModelInfo = { id: "m", provider: "local", api: "openai-chat", baseUrl: "http://x/v1", contextWindow: 1e5, maxOutput: 1000 };
+  // About 20 KB of code with braces, quotes and backslashes inside the string, in 3-character chunks that split its escapes.
+  const content = 'if (a) { s = "}\\"{\\\\"; }\n'.repeat(800);
+  const pieces = JSON.stringify({ path: "a.js", content }).match(/[^]{1,3}/g)!;
+  const write = (args: string, id?: string) => chatChunk({ tool_calls: [{ ...(id ? { id, type: "function" } : {}), function: { name: "write", arguments: args } }] });
+  const chunks = [write(pieces[0]!, "a"), ...pieces.slice(1).map((p) => write(p)), write('{"path":"b"}'), chatChunk({}, "tool_calls")];
+  const parse = JSON.parse;
+  let large = 0; // SSE lines and the request body are small; only the arguments of the first call are this long
+  JSON.parse = ((text: string, reviver?: (key: string, value: unknown) => unknown) => {
+    if (String(text).length > 4096) large++;
+    return parse(text, reviver);
+  }) as typeof JSON.parse;
+  try {
+    const { message } = await run(openaiChatProvider, reqFor(model, fakeFetch(sse(chunks)).fetch));
+    expect(message.content.filter((c) => c.type === "tool_call").map(({ name, input }) => ({ name, input }))).toEqual([{ name: "write", input: { path: "a.js", content } }, { name: "write", input: { path: "b" } }]);
+  } finally {
+    JSON.parse = parse;
+  }
+  expect(large).toBe(1); // the final parse of the first call's arguments
 });

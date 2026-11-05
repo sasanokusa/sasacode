@@ -66,3 +66,29 @@ test("a model known not to reason is sent no effort", async () => {
   await ask(s.fetch, "high", model({ reasoning: false }));
   expect(s.sent).toEqual([undefined]);
 });
+
+test("off on llama.cpp also turns the template's enable_thinking off, on every attempt; the caller's kwargs win (#67)", async () => {
+  /** What each request sent as [reasoning_effort, chat_template_kwargs], from a server taking only `accepts`. */
+  async function sent(thinking: ThinkingLevel, m: ModelInfo, accepts: (string | undefined)[] = ["none"], extraBody?: Record<string, unknown>) {
+    const bodies: [unknown, unknown][] = [];
+    const fetch = (async (_url: string, init: RequestInit) => {
+      const b = JSON.parse(String(init.body));
+      bodies.push([b.reasoning_effort, b.chat_template_kwargs]);
+      return accepts.includes(b.reasoning_effort) ? ok() : refuse('Invalid option: expected one of "low"|"high" (reasoning_effort)');
+    }) as unknown as typeof globalThis.fetch;
+    const req: Request = { model: m, system: "s", messages: [{ role: "user", content: [{ type: "text", text: "q" }], timestamp: 0 }], tools: [], thinking, fetch, maxRetries: 0, sampling: extraBody && { extraBody } };
+    for await (const _ of getProvider("openai-chat").stream(req)) { /* drain */ }
+    return bodies;
+  }
+  const off = { enable_thinking: false };
+  expect(await sent("off", model({ server: "llamacpp" }))).toEqual([["none", off]]);
+  // A refused effort is retried with the next one; the kwarg stays on each try.
+  expect(await sent("off", model({ server: "llamacpp" }), ["low"])).toEqual([["none", off], ["minimal", off], ["low", off]]);
+  expect(await sent("off", model({ server: "llamacpp" }), ["none"], { chat_template_kwargs: { foo: 1 } })).toEqual([["none", { enable_thinking: false, foo: 1 }]]);
+  expect(await sent("off", model({ server: "llamacpp" }), ["none"], { chat_template_kwargs: { enable_thinking: true } })).toEqual([["none", { enable_thinking: true }]]);
+  // Only for off, only on llama.cpp, and only when an effort is sent at all.
+  expect(await sent("high", model({ server: "llamacpp" }), ["high"])).toEqual([["high", undefined]]);
+  expect(await sent("off", model({ server: "ollama" }))).toEqual([["none", undefined]]);
+  expect(await sent("off", model())).toEqual([["none", undefined]]);
+  expect(await sent("off", model({ server: "llamacpp", reasoning: false }), [undefined])).toEqual([[undefined, undefined]]);
+});

@@ -131,7 +131,7 @@ At start it asks the terminal how many cells it draws East Asian Ambiguous chara
 | --- | --- |
 | `/model` | Pick from the models your providers list; type to filter. `/model <provider/model>` sets one directly, `/model --refresh` fetches the lists again |
 | `/resume` `/clear` `/fork` `/session` | Earlier sessions / a new session / branch from an earlier message / id and file |
-| `/effort` | Reasoning effort (`off` / `low` / `medium` / `high` / `xhigh` / `max`); without an argument, pick from a list. Shown in the footer. OpenAI-style servers receive it as `reasoning_effort`, and `off` is sent as `none` (servers such as vLLM think unless told so). A value a server refuses is replaced with the closest one it takes and remembered (Command Code refuses `none`, so `off` becomes `low` there) |
+| `/effort` | Reasoning effort (`off` / `low` / `medium` / `high` / `xhigh` / `max`); without an argument, pick from a list. Shown in the footer. OpenAI-style servers receive it as `reasoning_effort`, and `off` is sent as `none` (servers such as vLLM think unless told so). On llama.cpp, `off` also sends `chat_template_kwargs` with `enable_thinking: false`, since llama-server builds before b10121 ignore `reasoning_effort`. A value a server refuses is replaced with the closest one it takes and remembered (Command Code refuses `none`, so `off` becomes `low` there) |
 | `/language` | Switch the interface language (`ja` / `en`; without an argument, pick from a list). It switches at once and is saved as `lang` in `~/.sasacode/config.json`. Text already on screen stays as it was |
 | `/copy` | Copy the last answer (pbcopy / wl-copy / xclip, else through the terminal) |
 | `/permission` `/help` `/exit` (`/quit`) | Permission mode / help / quit |
@@ -319,7 +319,7 @@ export default ((api) => {
 }) satisfies Plugin;
 ```
 
-What the public API (now 1.14.0; frozen at 1.4.0, so 1.x only adds; [compatibility promise](docs/plugins.md#互換性の約束140-で確定)) offers:
+What the public API (now 1.15.0; frozen at 1.4.0, so 1.x only adds; [compatibility promise](docs/plugins.md#互換性の約束140-で確定)) offers:
 
 - **Registration**: tools (with `permissionsAs` to apply another tool's permission rules), slash commands (with argument completion), providers (model lists, custom fetch), permission rules (including `softDeny`)
 - **Hooks**: `session_start/end`, `user_prompt`, `system_prompt`, `before_request`, `stream_delta`, `assistant_message`, `tool_call_raw`, `tool_call`, `permission`, `tool_result`, `turn_end`, `agent_end`, `context_limit`

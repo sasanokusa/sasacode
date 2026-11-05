@@ -39,7 +39,7 @@ export function openaiClient(req: Request): OpenAI {
 
 export function isContextOverflow(e: unknown): boolean {
   if (!(e instanceof OpenAI.APIError)) return false;
-  return e.code === "context_length_exceeded" || /context length|context window|too many tokens|maximum context/i.test(e.message);
+  return e.code === "context_length_exceeded" || e.type === "exceed_context_size_error" || /context length|context window|context size|too many tokens|maximum context/i.test(e.message);
 }
 /** A Chat Completions usage object: the standard counts, plus fields vendors add on. */
 export interface ChatUsage {
@@ -76,7 +76,8 @@ export const openaiChatProvider: Provider = {
       messages: [{ role: "system", content: req.system }, ...toChatMessages(req.messages, model, req.tools.length > 0)],
       stream: true,
       stream_options: { include_usage: true },
-      ...(model.provider === "ollama" ? { max_tokens: req.maxTokens ?? model.maxOutput } : { max_completion_tokens: req.maxTokens ?? model.maxOutput }),
+      // Local servers read max_tokens (Ollama ignores the other); OpenAI's reasoning models refuse it.
+      ...(model.server ? { max_tokens: req.maxTokens ?? model.maxOutput } : { max_completion_tokens: req.maxTokens ?? model.maxOutput }),
     };
     if (req.tools.length)
       params.tools = req.tools.map((t) => ({
@@ -86,17 +87,20 @@ export const openaiChatProvider: Provider = {
     Object.assign(params, samplingFields(req.sampling, ["temperature", "top_p", "frequency_penalty", "presence_penalty"]));
 
     const routerReasoning = (params as unknown as { reasoning?: { effort?: string } }).reasoning;
+    // "off" is sent too: servers such as vLLM think by default unless told "none".
+    const level = (params.reasoning_effort ?? routerReasoning?.effort) !== undefined ? undefined : model.reasoning ? req.thinking : undefined;
+    // llama-server before b10121 ignores reasoning_effort; its templates (Qwen3) read enable_thinking. The caller's kwargs win.
+    if (level === "off" && model.server === "llamacpp") Object.assign(params, { chat_template_kwargs: { enable_thinking: false, ...(params as { chat_template_kwargs?: object }).chat_template_kwargs } });
     const out = newAssistant(model);
     yield { type: "start", partial: out };
     let thinking: ThinkingContent | undefined;
     let detailsBlock: ThinkingContent | undefined;
     const details: unknown[] = [];
     let text: { type: "text"; text: string } | undefined;
-    const calls = new Map<number, { block: ToolCall; json: string; index: number }>();
+    const calls = new Map<number | string, { block: ToolCall; json: string; index: number; depth: number; str?: boolean; esc?: boolean }>();
     let ended = false;
     try {
-      // "off" is sent too: servers such as vLLM think by default unless told "none".
-      const stream = await withEffort(replayScope(model), (params.reasoning_effort ?? routerReasoning?.effort) !== undefined ? undefined : model.reasoning ? req.thinking : undefined, async (effort) => {
+      const stream = await withEffort(replayScope(model), level, async (effort) => {
         const s = await client.chat.completions.create({ ...params, ...(effort ? openrouter(model) ? { reasoning: { effort, ...routerReasoning } } : { reasoning_effort: effort as never } : {}) }, { signal: req.signal });
         const it = s[Symbol.asyncIterator]();
         // A refused effort can arrive as the first event of an HTTP 200 stream (vLLM).
@@ -136,16 +140,22 @@ export const openaiChatProvider: Provider = {
           yield { type: "text_delta", index: out.content.indexOf(text), delta: prose, partial: out };
         }
         for (const tc of delta.tool_calls ?? []) {
-          let c = calls.get(tc.index);
+          const name = tc.function?.name, known = [...calls.values()], last = known.at(-1);
+          // Without an index (some servers), match by a non-empty id, else continue the latest call unless this one starts
+          // another: a new id, or a name after a call with another name or with complete arguments.
+          let c = tc.index != null ? calls.get(tc.index) : (tc.id && known.find((k) => k.block.id === tc.id)) || (tc.id || (name && last?.block.name && (name !== last.block.name || (last.json && !last.depth))) ? undefined : last);
           if (!c) {
-            const block: ToolCall = { type: "tool_call", id: tc.id ?? `call_${tc.index}`, name: tc.function?.name ?? "", input: {} };
+            const block: ToolCall = { type: "tool_call", id: tc.id || `call_${tc.index ?? calls.size}`, name: name ?? "", input: {} };
             out.content.push(block);
-            c = { block, json: "", index: out.content.length - 1 };
-            calls.set(tc.index, c);
+            c = { block, json: "", index: out.content.length - 1, depth: 0 };
+            calls.set(tc.index ?? block.id, c);
             yield { type: "toolcall_start", index: c.index, id: block.id, name: block.name, partial: out };
-          }
+          } else if (name && !c.block.name) c.block.name = name; // the name came after the id
           if (tc.function?.arguments) {
             c.json += tc.function.arguments;
+            // Braces open outside strings, counted chunk by chunk: back to 0 once the arguments are complete, so the
+            // check above never re-parses the whole string on every chunk.
+            for (const ch of tc.function.arguments) if (c.esc) c.esc = false; else if (c.str) c.esc = ch === "\\", c.str = ch !== '"'; else if (ch === '"') c.str = true; else c.depth += ch === "{" ? 1 : ch === "}" ? -1 : 0;
             yield { type: "toolcall_delta", index: c.index, delta: tc.function.arguments, partial: out };
           }
         }

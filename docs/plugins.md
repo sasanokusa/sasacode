@@ -46,7 +46,7 @@ npmのパッケージは`bun run pack:plugin-api`で`dist/plugin-api`に作る�
 }
 ```
 
-- `apiVersion`がホストのAPI（現在1.14.0）と互換でなければ、警告を出して読み込まない。
+- `apiVersion`がホストのAPI（現在1.15.0）と互換でなければ、警告を出して読み込まない。
 - `skills`は`SKILL.md`を含むフォルダが並ぶディレクトリ。
 - `mcpServers`は設定ファイルの`mcpServers`と同じ形式。`${VAR}`は環境変数から展開される。
 
@@ -82,7 +82,7 @@ sasacode plugin publish my-tool.ts --license MIT             # npm publish（npm
 - `package.json`には、`sasacode`フィールド（マニフェスト）、検索用のキーワード`sasacode-plugin`、ピア依存の`@sasacode/plugin-api`を入れる。READMEはファイル先頭のコメントから作る。
 - 版は、npmに出ている最新版の次のパッチ（初回は0.1.0）。`--version`で指定できる。
 - 説明文は、ファイルの最初のコメントから取る（`--description`で指定できる）。
-- `apiVersion`は、使っている機能から決める（`agent_end`の`error`なら ^1.14.0、`usage`フックなら ^1.13.0、`ui.onPaste`なら ^1.12.0、`before_request.fetch`なら ^1.11.0、`ui.input`・`ui.selectMany`なら ^1.10.0、`callTool`・`showText`・`defineSettings`なら ^1.9.0、フックの`ctx`や`session_end`の`reason`なら ^1.8.0、`permission`フックや`softDeny`なら ^1.7.0、`permissionsAs`なら ^1.6.0、など）。`--api`で指定できる。
+- `apiVersion`は、使っている機能から決める（`ModelInfo.server`なら ^1.15.0、`agent_end`の`error`なら ^1.14.0、`usage`フックなら ^1.13.0、`ui.onPaste`なら ^1.12.0、`before_request.fetch`なら ^1.11.0、`ui.input`・`ui.selectMany`なら ^1.10.0、`callTool`・`showText`・`defineSettings`なら ^1.9.0、フックの`ctx`や`session_end`の`reason`なら ^1.8.0、`permission`フックや`softDeny`なら ^1.7.0、`permissionsAs`なら ^1.6.0、など）。`--api`で指定できる。
 - 同じフォルダのほかのファイルをimportしていると、それは含まれない（注意を出す）。そういうプラグインは、`package.json`に`sasacode`フィールドを書いたディレクトリごと`sasacode plugin publish <ディレクトリ>`で出す（キーワードがなければ足す）。
 - ライセンスを付けないと、ほかの人は再利用できない。`--license MIT`のように付ける。
 
@@ -96,7 +96,7 @@ sasanokusa.comのおすすめ一覧に載せたいときは、[リポジトリ](
 
 ## API リファレンス
 
-公開APIは`@sasacode/plugin-api`の`PluginAPI`で、現在の版は1.14.0。変更の履歴は[最後の表](#api-の版)にある。
+公開APIは`@sasacode/plugin-api`の`PluginAPI`で、現在の版は1.15.0。変更の履歴は[最後の表](#api-の版)にある。
 
 ### PluginAPI
 
@@ -260,6 +260,7 @@ before_request → stream_delta（生成中、差分ごと） → assistant_mess
 | 1.12.0 | `PluginUI.onPaste`（貼り付け・ドロップの差し替え）、型`PasteHandler` |
 | 1.13.0 | `usage`フック（サブエージェント・`agent.complete`・捨てられた応答の使用量）、型`Spend` |
 | 1.14.0 | `agent_end`の`error`（エラーで止まったときのエラーの文） |
+| 1.15.0 | `ModelInfo.server`（OpenAI形式のエンドポイントの裏にあるローカルサーバー：`"ollama"` / `"llamacpp"` / `"lmstudio"`。プロバイダーの設定から入り、`modelOverrides`でも指定できる）と`ProviderConfig.lmstudio` |
 
 どれも既存のプラグインを壊さない追加。ただし1.4.0から、`tool_result`を「実行された」合図として数えているプラグインは`ran`を見る必要がある。
 
