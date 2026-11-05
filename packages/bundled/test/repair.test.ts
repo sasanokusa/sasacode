@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Agent, PermissionPolicy, PluginHost } from "@sasacode/agent";
@@ -47,6 +47,8 @@ test("fitToSchema: rename, convert and drop only when unambiguous", () => {
     value: { path: "a", content: "x", overwrite: false },
     fixes: ['argument "file" → "path"'],
   });
+  // Anthropic's text editor calls the content file_text.
+  expect(fitToSchema({ path: "a", file_text: "x" }, writeTool.parameters).value).toEqual({ path: "a", content: "x" });
   // "20abc" is not a number: left for validation to report.
   expect(fitToSchema({ path: "a", limit: "20abc" }, readTool.parameters).value).toEqual({ path: "a", limit: "20abc" });
   // Nested objects, arrays and enums.
@@ -207,4 +209,5 @@ test("tool-repair: another harness's tool and argument names run as the built-in
   expect(history.map((c) => c.type === "tool_call" && c.name)).toEqual(["read", "edit", "edit", "read", "bash"]);
   expect(history[2]).toMatchObject({ input: { path: file, old_string: "const b = 2;", new_string: "const b = 20;" } });
   expect((history[2] as { input: object }).input).not.toHaveProperty("command");
+  rmSync(dir, { recursive: true, force: true });
 });
