@@ -161,10 +161,39 @@ test("edit: other indentation is ignored, and new_string takes the file's (#65)"
   const r = await editTool.execute({ path, old_string: "if (x) {\n\treturn 1;\n}", new_string: "if (x) {\n\treturn 2;\n}" }, ctx());
   expect(out(r)).toStartWith("[harness matched old_string ignoring trailing whitespace and line endings, indentation]\n");
   expect(readFileSync(path, "utf8")).toBe("function f() {\n\tif (x) {\n\t\treturn 2;\n\t}\n}\n");
-  // Spaces for tabs: old_string's first-line indentation becomes the file's where a line starts with it.
+  // Spaces for tabs: each indentation old_string has becomes the file's for it, at every depth.
   const spaces = { path, old_string: "    if (x) {\n        return 2;\n    }\n", new_string: "    if (y) {\n        return 3;\n    }\n" };
   expect((await editTool.execute(spaces, ctx())).isError).toBeFalsy();
-  expect(readFileSync(path, "utf8")).toBe("function f() {\n\tif (y) {\n\t    return 3;\n\t}\n}\n");
+  expect(readFileSync(path, "utf8")).toBe("function f() {\n\tif (y) {\n\t\treturn 3;\n\t}\n}\n");
+});
+
+test("edit: lines shallower than the first, and other indentation units, land at the file's depths (#65)", async () => {
+  const cases = [
+    // A whole snippet dedented by one level that runs past the end of a block.
+    ["def f(a):\n    if a:\n        x = 1\n    y = 2\n    return x + y\n", "    x = 1\ny = 2", "    x = 3\ny = 2", "        x = 3\n    y = 2\n    return x + y\n"],
+    ["function f() {\n  if (a) {\n    return 1;\n  }\n}\n", "  return 1;\n}", "  return 2;\n}", "    return 2;\n  }\n}\n"],
+    // A depth old_string does not have takes the one shift its lines share.
+    ["function f() {\n  if (a) {\n    return 1;\n  }\n}\n", "  return 1;\n}", "  if (b)\n    return 2;\n}", "    if (b)\n      return 2;\n  }\n}\n"],
+    // Tabs in a file of spaces, four spaces in a file of tabs, two spaces in a file of four.
+    ["def f(x):\n    if x:\n        a()\n        b()\n", "\tif x:\n\t\ta()", "\tif x:\n\t\ta2()", "    if x:\n        a2()\n        b()\n"],
+    ["def f(x):\n\tif x:\n\t\ta()\n\t\tb()\n", "    if x:\n        a()", "    if x:\n        a2()", "\tif x:\n\t\ta2()\n\t\tb()\n"],
+    ["def f(x):\n    if x:\n        a()\n        b()\n", "  if x:\n    a()", "  if x:\n    a2()", "    if x:\n        a2()\n        b()\n"],
+    ["class A:\n    def f(self):\n        return x\n\n    def g(self):\n", "    return x\n\n  def g(self):", "    return y\n\n  def g(self):", "        return y\n\n    def g(self):\n"],
+  ];
+  for (const [file, old_string, new_string, tail] of cases) {
+    const path = join(dir, "depths.txt");
+    writeFileSync(path, file!);
+    expect(out(await editTool.execute({ path, old_string: old_string!, new_string: new_string! }, ctx()))).toContain("ignoring trailing whitespace and line endings, indentation]");
+    expect(readFileSync(path, "utf8")).toEndWith(tail!);
+  }
+  // A depth old_string does not have, with no one shift for all its lines: refused rather than guessed.
+  const path = join(dir, "depths.txt"), file = "f() {\n\tif (x) {\n\t\treturn 1;\n\t}\n}\n";
+  writeFileSync(path, file);
+  const deeper = { path, old_string: "    if (x) {\n        return 1;\n    }", new_string: "    if (x) {\n        if (y)\n            log();\n        return 1;\n    }" };
+  const r = await editTool.execute(deeper, ctx());
+  expect(r.isError).toBe(true);
+  expect(out(r)).toContain("indentation does not map onto the file's");
+  expect(readFileSync(path, "utf8")).toBe(file);
 });
 
 test("edit: a loose match must be unique, replace_all or not; nothing is changed otherwise (#65)", async () => {
@@ -180,6 +209,46 @@ test("edit: a loose match must be unique, replace_all or not; nothing is changed
   // Blank once trailing whitespace is ignored: that is everywhere, so it is refused as ambiguous.
   expect(out(await editTool.execute({ path, old_string: " \t ", new_string: "x" }, ctx()))).toContain("appears more than once");
   expect(readFileSync(path, "utf8")).toBe("\tfoo();\n  foo();\n");
+  // Overlapping places count too: with indentation ignored, nested closers fit at lines 3-4 and at 4-5.
+  for (const [file, old_string] of [["func f() {\n\tif x {\n\t\t}\n\t}\n}\n", "    }\n}"], ["a \na \na \n", "a\na"]]) {
+    writeFileSync(path, file!);
+    expect(out(await editTool.execute({ path, old_string: old_string!, new_string: "z" }, ctx()))).toContain("appears more than once");
+    expect(readFileSync(path, "utf8")).toBe(file!);
+  }
+});
+
+test("edit: read's output is taken as copied, a blank line's bare number and a CRLF file's CRs too (#65)", async () => {
+  const path = join(dir, "copied.ts");
+  writeFileSync(path, "function f() {\n\n  return 1;\n}\n");
+  const bare = await editTool.execute({ path, old_string: "     1\tfunction f() {\n     2\n     3\t  return 1;", new_string: "     1\tfunction f() {\n     2\n     3\t  return 2;" }, ctx());
+  expect(out(bare)).toStartWith("[harness matched old_string ignoring line-number prefixes]\n");
+  expect(readFileSync(path, "utf8")).toBe("function f() {\n\n  return 2;\n}\n");
+  writeFileSync(path, "function f() {\r\n  return 1;\r\n}\r\n");
+  await editTool.execute({ path, old_string: "     1\tfunction f() {\r\n     2\t  return 1;\r", new_string: "     1\tfunction f() {\n     2\t  return 2;" }, ctx());
+  expect(readFileSync(path, "utf8")).toBe("function f() {\r\n  return 2;\r\n}\r\n");
+  // A last line of only indentation is where the next line starts, so that line keeps its own.
+  writeFileSync(path, "foo \n  next\n");
+  await editTool.execute({ path, old_string: "foo\n  ", new_string: "bar\n  " }, ctx());
+  expect(readFileSync(path, "utf8")).toBe("bar\n  next\n");
+});
+
+test("edit: a loose match that would change nothing is an error, so loop-guard sees no change (#65)", async () => {
+  const path = join(dir, "same.txt");
+  writeFileSync(path, "a\nb\n");
+  const r = await editTool.execute({ path, old_string: "     1\ta", new_string: "a" }, ctx());
+  expect(r.isError).toBe(true);
+  expect(out(r)).toContain("identical");
+  expect(r.details?.changed).toBeUndefined();
+});
+
+test("edit: an old_string that starts with a blank line is found in time next to a long run of spaces (#65)", async () => {
+  const path = join(dir, "padded.txt");
+  writeFileSync(path, `x${" ".repeat(100_000)}y\nfoo();\n  needle();\n`);
+  const started = performance.now();
+  const r = await editTool.execute({ path, old_string: "\n    needle();", new_string: "\n    pin();" }, ctx());
+  expect(performance.now() - started).toBeLessThan(2000);
+  expect(r.isError).toBeFalsy();
+  expect(readFileSync(path, "utf8")).toEndWith("y\nfoo();\n  pin();\n");
 });
 
 test("read stops on a whole line within 100,000 characters and says where to go on (#66)", async () => {
