@@ -30,17 +30,40 @@ export class UserView extends Text {
   }
 }
 
+/**
+ * Lines kept while what they are made from stays the same (compared with ===). The whole transcript
+ * is rendered each frame, the spinner's every 80 ms: expanded (ctrl+o), every line of every tool
+ * output and thinking was wrapped again each time, and 50,000 lines took 110 ms a frame.
+ */
+class LineCache {
+  private key: readonly unknown[] = [];
+  private lines?: string[];
+  get(key: readonly unknown[], make: () => string[]): string[] {
+    if (this.lines && key.length === this.key.length && key.every((k, i) => k === this.key[i])) return this.lines;
+    this.key = key;
+    return (this.lines = make());
+  }
+  clear(): void {
+    this.lines = undefined;
+  }
+}
+
 class ThinkingView implements Component {
   text = "";
+  private cache = new LineCache();
   render(width: number): string[] {
-    const lines = plain(this.text).trim().split("\n").filter((l) => l.trim());
-    if (!this.text.trim()) return [];
-    const shown = display.expanded ? lines : lines.slice(-2);
-    const out = new Text(c.dim(c.italic(`∴ ${shown.join("\n  ")}`)), 0, 0).render(width);
-    if (!display.expanded && lines.length > 2) out.unshift(truncateToWidth(c.gray(`∴ thinking… (${lines.length} lines, ctrl+o)`), width));
-    return out;
+    return this.cache.get([width, display.expanded, this.text], () => {
+      const lines = plain(this.text).trim().split("\n").filter((l) => l.trim());
+      if (!this.text.trim()) return [];
+      const shown = display.expanded ? lines : lines.slice(-2);
+      const out = new Text(c.dim(c.italic(`∴ ${shown.join("\n  ")}`)), 0, 0).render(width);
+      if (!display.expanded && lines.length > 2) out.unshift(truncateToWidth(c.gray(`∴ thinking… (${lines.length} lines, ctrl+o)`), width));
+      return out;
+    });
   }
-  invalidate() {}
+  invalidate() {
+    this.cache.clear();
+  }
 }
 
 /** An assistant turn: thinking, markdown text, and tool calls in stream order. */
@@ -131,6 +154,8 @@ export class ToolView implements Component {
   /** Characters of arguments streamed so far; the input is parsed only when the call is complete. */
   received = 0;
 
+  private cache = new LineCache();
+
   constructor(public call: ToolCall) {}
 
   render(width: number): string[] {
@@ -139,7 +164,15 @@ export class ToolView implements Component {
     const summary = streaming ? t("受信中… {n} 字", { n: this.received.toLocaleString("en-US") }) : oneLine(plain(this.summary || argPreview(this.call.input)));
     const lines = [truncateToWidth(`${dot} ${c.bold(this.call.name)}${c.gray(`(${summary})`)}`, width)];
     if (this.repairNote) lines.push(truncateToWidth(c.gray(`  ↻ ${t("修復: {note}", { note: plain(this.repairNote) })}`), width));
-    const body = plain(this.status === "running" ? this.live : this.output);
+    const text = this.status === "running" ? this.live : this.output;
+    // The input too: a tool_call_raw repair sets the call's input in place.
+    const key = [width, display.expanded, this.status, text, this.diff, this.renderer, this.call, this.call.input, this.result];
+    return lines.concat(this.cache.get(key, () => this.body(width, plain(text))));
+  }
+
+  /** What is under the header: the tool's own rendering, a diff, or its output. */
+  private body(width: number, body: string): string[] {
+    const lines: string[] = [];
     let custom: string[] | undefined;
     if (this.renderer && this.status !== "running")
       try {
@@ -159,7 +192,9 @@ export class ToolView implements Component {
     return lines;
   }
 
-  invalidate() {}
+  invalidate() {
+    this.cache.clear();
+  }
 }
 
 /** A tool's summary on its one header line: a multi-line command (a heredoc) would otherwise break the screen apart. */
@@ -206,6 +241,9 @@ const PROMPT_MARK = /^\x1b\]133;A(?:\x07|\x1b\\)/;
 
 /** Margins around a component, so text does not run into the terminal's edges or the scrollbar. */
 export class Padded implements Component {
+  /** The child's lines last frame and what they became: most of a long transcript is the same each frame. */
+  private last?: { width: number; from: string[]; to: string[] };
+
   constructor(
     private child: Component,
     private left: number,
@@ -217,15 +255,20 @@ export class Padded implements Component {
   render(width: number): string[] {
     const inner = Math.max(10, width - this.left - this.right);
     const pad = " ".repeat(Math.max(0, Math.min(this.left, width - inner)));
+    const from = this.child.render(inner);
+    const last = this.last?.width === width ? this.last : undefined;
     // A prompt mark (OSC 133) must stay at the start of the line to be found.
-    const lines = this.child.render(inner).map((l) => {
+    const lines = from.map((l, i) => {
+      if (last && last.from[i] === l) return last.to[i]!;
       l = safeLine(l);
       const mark = PROMPT_MARK.exec(l)?.[0];
       return mark ? mark + pad + l.slice(mark.length) : pad + l;
     });
+    this.last = { width, from, to: lines };
     return [...Array<string>(this.top).fill(""), ...lines, ...Array<string>(this.bottom).fill("")];
   }
   invalidate(): void {
+    this.last = undefined;
     this.child.invalidate();
   }
 }

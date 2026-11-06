@@ -111,3 +111,79 @@ test("approval: on a short screen, or with a long reason, the choices and how to
     }
   }
 });
+
+test("expanded (ctrl+o), a long transcript is not wrapped again each frame", async () => {
+  // The spinner renders the whole transcript every 80 ms: 50,000 expanded lines took 110 ms a frame.
+  const { Container } = await import("@earendil-works/pi-tui");
+  const { display } = await import("../src/views.ts");
+  const build = () => {
+    const chat = new Container();
+    for (let i = 0; i < 100; i++) {
+      const v = new ToolView({ type: "tool_call", id: `c${i}`, name: "bash", input: { command: `run ${i}` } } as ToolCall);
+      v.status = "done";
+      v.output = Array.from({ length: 500 }, (_, j) => `line ${j}: R=${5000 - j} 日本語の出力`).join("\n");
+      chat.addChild(v);
+    }
+    return new Padded(chat, 2, 2);
+  };
+  const root = build();
+  display.expanded = true;
+  try {
+    const first = root.render(120);
+    expect(first.length).toBeGreaterThan(50_000);
+    const t0 = performance.now();
+    for (let i = 0; i < 10; i++) root.render(120);
+    expect(performance.now() - t0).toBeLessThan(400);
+    // What a frame shows is what a fresh render shows.
+    expect(root.render(120)).toEqual(build().render(120));
+  } finally {
+    display.expanded = false;
+  }
+});
+
+test("a tool view shows what changed since its last frame", async () => {
+  const { display } = await import("../src/views.ts");
+  const call: ToolCall = { type: "tool_call", id: "1", name: "bash", input: { command: "ls" } };
+  const view = new ToolView(call);
+  view.status = "running";
+  view.live = "one";
+  expect(plain(view.render(60).join("\n"))).toContain("one");
+  view.live = "one\ntwo";
+  expect(plain(view.render(60).join("\n"))).toContain("two");
+  view.status = "done";
+  view.output = Array.from({ length: 10 }, (_, i) => `out ${i}`).join("\n");
+  expect(plain(view.render(60).join("\n"))).toContain("+4 lines");
+  display.expanded = true;
+  try {
+    expect(plain(view.render(60).join("\n"))).toContain("out 9");
+  } finally {
+    display.expanded = false;
+  }
+  expect(plain(view.render(60).join("\n"))).not.toContain("out 9");
+  view.output = `${"y".repeat(50)}TAIL`;
+  expect(plain(view.render(30).join(""))).toContain("TAIL"); // wrapped again at the new width
+  view.status = "error";
+  expect(view.render(30).join("")).toContain("\x1b[31m");
+
+  // A tool's own renderer runs once for frames that show the same thing, again when its input is set in place.
+  const seen: unknown[] = [];
+  const custom = new ToolView({ type: "tool_call", id: "2", name: "write", input: {} } as ToolCall);
+  custom.renderer = (c) => (seen.push(c.input), [`path ${(c.input as { path?: string }).path ?? "?"}`]);
+  custom.render(60);
+  custom.render(60);
+  expect(seen).toHaveLength(1);
+  custom.call.input = { path: "a.ts" };
+  expect(plain(custom.render(60).join("\n"))).toContain("path a.ts");
+  expect(seen).toHaveLength(2);
+});
+
+test("padding a transcript reuses the lines that did not change, and redoes them at a new width", () => {
+  let lines = ["a", "b\tc", "d"];
+  const child = { render: () => lines, invalidate() {} };
+  const padded = new Padded(child, 2, 2);
+  expect(padded.render(40)).toEqual(["  a", "  b   c", "  d"]);
+  lines = ["a", "b\tc", "e"];
+  expect(padded.render(40)).toEqual(["  a", "  b   c", "  e"]);
+  const narrow = new Padded(child, 2, 2);
+  expect(padded.render(12)).toEqual(narrow.render(12));
+});
