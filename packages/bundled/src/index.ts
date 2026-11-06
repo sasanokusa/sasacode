@@ -20,6 +20,7 @@ import toolRepair from "./tool-repair.ts";
 import usage from "./usage.ts";
 import webFetch from "./web-fetch.ts";
 import webSearch from "./web-search.ts";
+import writeGuard from "./write-guard.ts";
 
 export { agentsFiles } from "./agents-md.ts";
 export { compact, splitPoint, transcript } from "./compaction.ts";
@@ -29,6 +30,7 @@ export { closestName, editDistance, fitToSchema, repairJson, resolveToolName, TO
 export { extractTextCalls } from "./text-tool-calls.ts";
 export { htmlToText, readable, readCapped } from "./web-fetch.ts";
 export { formatResults, matchesQuery, privateAddress } from "./web-search.ts";
+export { stripLineNumbers } from "./write-guard.ts";
 export { installRustxng, managedRustxng, rustxngTarget } from "./rustxng-install.ts";
 export { byDay, graph, planLines, readRecords } from "./usage.ts";
 export { codexLogin, codexLogout, codexStatus, readCodexAuth } from "./openai-codex/index.ts";
@@ -40,6 +42,8 @@ export const bundledPlugins: Record<string, Plugin> = {
   "text-tool-calls": textToolCalls,
   "repetition-guard": repetitionGuard,
   "loop-guard": loopGuard,
+  // After tool-repair: it strips line numbers from the repaired write.
+  "write-guard": writeGuard,
   "agents-md": agentsMd,
   compaction,
   diagnostics,
