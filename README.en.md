@@ -36,7 +36,7 @@ irm https://sasanokusa.com/sasacode/install.ps1 | iex
 - Single binaries for macOS (arm64 / x64), Linux (x64 / arm64, glibc / musl, and a baseline build for CPUs without AVX2) and Windows (x64 / arm64, and an x64 baseline build). Bun is not needed.
 - The installer and the binary come from the latest [GitHub release](https://github.com/sasanokusa/sasacode/releases) and are checked against SHA256. The sasanokusa.com URLs redirect to the latest release's `install.sh` / `install.ps1`.
 - SHA256 only catches a broken download. That a file was built by this repository's GitHub Actions is proved by the signed provenance attached to releases from v0.9.8: `gh attestation verify sasacode-darwin-arm64.tar.gz --repo sasanokusa/sasacode` (on a file downloaded from the release; `install.sh` too).
-- `SASACODE_VERSION=v0.14.1` pins a version and `SASACODE_INSTALL_DIR` changes where it goes (both installers).
+- `SASACODE_VERSION=v0.14.2` pins a version and `SASACODE_INSTALL_DIR` changes where it goes (both installers).
 - `sasacode update` updates in place (the same checks as the installer; `--check` only reports). A newer version is mentioned quietly once at startup (`"updateCheck": false` turns it off). From a source checkout, use `git pull` and `bun install`.
 - RustXNG, which web search (`web_search`) uses, installs with `sasacode web-search install` (`/web-search install` in the TUI): the official release, checksum-checked, into `~/.sasacode/bin`, usable without a restart. Running it again updates to the newest release.
 
