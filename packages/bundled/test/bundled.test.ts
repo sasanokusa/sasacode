@@ -260,9 +260,64 @@ test("compaction: a large window still asks for an 8,192-token summary of everyt
 
 test("splitPoint keeps the tail from a user message", () => {
   const u = (t: string): Message => ({ role: "user", content: [{ type: "text", text: t }], timestamp: 0 });
-  const msgs: Message[] = [u("a".repeat(400)), reply([say("b")]), u("c"), reply([say("d")])];
+  const msgs: Message[] = [u("a".repeat(400)), reply([say("b")]), u("c".repeat(100)), reply([say("d")])];
   expect(splitPoint(msgs, 50)).toBe(2);
   expect(splitPoint(msgs, 10_000)).toBe(0);
+  // From the last user message the tail would keep less than half the budget: it starts at the assistant turn before.
+  const short: Message[] = [u("a".repeat(400)), reply([say("b")]), u("c"), reply([say("d")])];
+  expect(splitPoint(short, 50)).toBe(1);
+});
+
+/** One prompt and then `steps` tool calls, as an agent working on its own makes: no user message after the first. */
+function autonomousRun(steps: number, interrupt = false): Message[] {
+  const history: Message[] = [{ role: "user", content: [{ type: "text", text: "build the simulator" }], timestamp: 0 }];
+  for (let i = 0; i < steps; i++) {
+    if (interrupt && i === steps - 1) history.push({ role: "user", content: [{ type: "text", text: "how is it going?" }], timestamp: 0 });
+    history.push(
+      reply([say(`step ${i}: patching web/sim${i}.js`), call(`c${i}`, "bash", { command: `python3 patch${i}.py` })]),
+      { role: "tool", toolCallId: `c${i}`, toolName: "bash", content: [{ type: "text", text: `ok ${i}\n${"x".repeat(2_000)}` }], isError: false, timestamp: 0 },
+    );
+  }
+  return history;
+}
+
+test("splitPoint keeps the latest steps of a long run of tool calls after one prompt", () => {
+  // No user message within the budget: the whole history was summarized, nothing of the latest
+  // steps kept, and the model then made up what those steps had done (session 4d674043).
+  const keep = 10_000;
+  const history = autonomousRun(200);
+  const split = splitPoint(history, keep);
+  const tail = history.slice(split);
+  expect(split).toBeLessThan(history.length);
+  expect(tail[0]!.role).toBe("assistant");
+  expect(tokens({ system: "", messages: tail })).toBeLessThanOrEqual(keep);
+  expect(tokens({ system: "", messages: tail })).toBeGreaterThan(keep / 2);
+  // Every tool result kept has its call kept before it.
+  const calls = new Set(tail.flatMap((m) => (m.role === "assistant" ? m.content.flatMap((c) => (c.type === "tool_call" ? [c.id] : [])) : [])));
+  for (const m of tail) if (m.role === "tool") expect(calls.has(m.toolCallId)).toBe(true);
+  expect(JSON.stringify(tail.at(-1))).toContain("ok 199");
+
+  // A short message from the user at the end of such a run does not leave only itself and what came after.
+  const interrupted = autonomousRun(200, true);
+  const after = interrupted.slice(splitPoint(interrupted, keep));
+  expect(after[0]!.role).toBe("assistant");
+  expect(tokens({ system: "", messages: after })).toBeGreaterThan(keep / 2);
+  expect(JSON.stringify(after)).toContain("how is it going?");
+});
+
+test("compaction: on context_limit in a long run of tool calls, the latest steps are kept as they were", async () => {
+  const { agent, provider } = await setup(
+    [reply([call("x", "read", { path: "nope" })], { usage: { ...emptyUsage(), input: 99_500 } }), reply([say("SUMMARY")]), reply([say("continued")])],
+    ["compaction"],
+    { settings: { compaction: { threshold: 2 } } },
+  );
+  agent.messages = autonomousRun(200);
+  expect(await agent.prompt("next question")).toBe("done");
+  const retried = provider.requests[2]!.messages;
+  expect(JSON.stringify(retried[0])).toContain("SUMMARY");
+  expect(retried[1]!.role).toBe("assistant");
+  expect(retried.length).toBeGreaterThan(10);
+  expect(JSON.stringify(retried)).toContain("ok 199");
 });
 
 test("splitPoint keeps a Japanese tail within its budget, a Japanese character counted as a token (#60)", () => {
