@@ -181,6 +181,12 @@ export const TO_EN: Record<string, string> = {
   "[undo] 戻せる変更（新しい順）:": "[undo] Changes that can be undone (newest first):",
   "[undo] {path} の変更が見つかりません": "[undo] No change to {path} found",
   "[undo] 戻しました:": "[undo] Restored:",
+  // ── bundled: image-slim ───────────────────────────────────────────────
+  "画像を縮め、古い画像を送らない処理の状態を出す": "Show what image-slim did to the last request",
+  "いまのモデル（{id}）に効きます。": "Active for {id}.",
+  "いまのモデル（{id}）には効きません（対象: {models}）。": "Not active for {id} (targets: {models}).",
+  "直近のリクエスト: 画像{total}枚のうち{sent}枚を送り、{omitted}枚は省きました（送った画像は計{size}）。": "Last request: sent {sent} of {total} images, left out {omitted} ({size} of images sent).",
+  "読んだ画像を縮めた数: {count}枚（{before} → {after}）": "Images shrunk when read: {count} ({before} -> {after})",
   // ── bundled: auto-reconnect ───────────────────────────────────────────
   "オンラインです。接続に問題ありません。": "Online. The connection is fine.",
   "オフライン — ネットワーク復旧待ち": "offline — waiting for the network",
