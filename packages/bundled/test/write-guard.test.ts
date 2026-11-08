@@ -56,7 +56,7 @@ test("a fragment over a long file is refused; the same write again goes through"
   const fragment = "    const diff = lineDiff(before, after);\n    return {\n      content: [text(`Edited ${path} (1 replacement).`)],\n      details: { path, changed: true, diff },\n    };";
   const [first, again] = await run([write("1", "edit.ts", fragment), write("2", "edit.ts", fragment)]);
   expect(first!.isError).toBe(true);
-  expect(first!.text).toContain("write-guard: edit.ts has 81 lines and this content has 5");
+  expect(first!.text).toContain(`write-guard: edit.ts has ${text.split("\n").length - 1} lines and this content has 5`); // edit.ts changes
   expect(first!.text).toContain("use edit");
   expect(again!.text).toContain("Overwrote");
   expect(readFileSync(file, "utf8")).toBe(fragment);

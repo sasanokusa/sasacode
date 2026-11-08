@@ -142,6 +142,19 @@ test("edit: read's line numbers are ignored when every line of old_string has on
   expect(readFileSync(path, "utf8")).toBe("function f() {\n  return 2;\n}\n");
 });
 
+test("edit: a TSV row's \"123\\t\" is the file's text, not read's 6-column line number (#84)", async () => {
+  const path = join(dir, "rows.tsv");
+  writeFileSync(path, "123\tfoo\n456\tbar\nfoo\nbar\n");
+  // A space too many at the end: matched ignoring it, on the TSV rows, not on the plain lines below.
+  const r = await editTool.execute({ path, old_string: "123\tfoo \n456\tbar", new_string: "123\tFOO\n456\tBAR" }, ctx());
+  expect(out(r)).toStartWith("[harness matched old_string ignoring trailing whitespace and line endings]\n");
+  expect(readFileSync(path, "utf8")).toBe("123\tFOO\n456\tBAR\nfoo\nbar\n");
+  // read's own numbers on such a row are still taken off.
+  const read = await editTool.execute({ path, old_string: "     1\t123\tFOO", new_string: "     1\t123\tF" }, ctx());
+  expect(out(read)).toStartWith("[harness matched old_string ignoring line-number prefixes]\n");
+  expect(readFileSync(path, "utf8")).toBe("123\tF\n456\tBAR\nfoo\nbar\n");
+});
+
 test("edit: trailing whitespace and CRLF are ignored both ways, and the file keeps its line endings (#65)", async () => {
   const crlf = join(dir, "crlf.txt");
   writeFileSync(crlf, "a\r\nb  \r\nc\r\n");

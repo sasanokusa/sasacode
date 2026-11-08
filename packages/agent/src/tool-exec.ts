@@ -64,13 +64,15 @@ export async function repairCalls(ctx: ToolRunContext, message: AssistantMessage
         if (r.note) notes.push(r.note);
       },
     );
-    if (name === call.name && input === call.input && rawInput === call.rawInput) continue;
+    // A note alone (no change) still reaches the model with the result (#85); the stored call stays as it was.
+    const changed = name !== call.name || input !== call.input || rawInput !== call.rawInput;
+    if (!changed && !notes.length) continue;
     const note = notes.join("; ") || (name !== call.name ? `tool "${call.name}" → "${name}"` : "arguments repaired");
     const original = { name: call.name, input: call.input, rawInput: call.rawInput };
     ctx.session?.append({ type: "tool_repair", callId: call.id, original, repaired: { name, input }, note });
     ctx.events.emit({ type: "tool_repaired", call, from: original, note });
     repairs.set(call.id, { name, input, rawInput, note });
-    if (rewrite) {
+    if (rewrite && changed) {
       call.name = name;
       call.input = input;
       delete call.rawInput;

@@ -155,6 +155,35 @@ test("text-tool-calls: broken JSON and another harness's names in a text call ar
   expect(entries).toContainEqual(expect.objectContaining({ type: "tool_repair", original: { name: "read_file", input: {}, rawInput: expect.stringContaining("limit: '1',") } }));
 });
 
+test("text-tool-calls: a write cut off where the server stopped on a closing tag in its content does not run (#82)", async () => {
+  const out = join(root, "cut.txt");
+  writeFileSync(out, "before\n");
+  const content = 'Example:\n<tool_call>{"name": "read", "arguments": {"path": "a"}}</tool_call>\nDone.';
+  const whole = `<tool_call>${JSON.stringify({ name: "write", arguments: { path: out, content } })}</tool_call>`;
+  // The server stops on the inner </tool_call> (and drops it): the reply ends inside the content string.
+  const cut = whole.slice(0, whole.indexOf("</tool_call>"));
+  expect(extractTextCalls(cut)).toBeUndefined();
+  const { stored, results } = await run(say(cut), ["tool-repair", "text-tool-calls"]);
+  expect(results).toEqual([]);
+  expect(stored.content).toEqual([{ type: "text", text: cut }]);
+  expect(readFileSync(out, "utf8")).toBe("before\n");
+  // Whole, the tags in its content make it no call either: left alone, as before.
+  expect(extractTextCalls(whole)).toBeUndefined();
+  // Without its closing tag at the end, a complete body still runs, also one that is only badly quoted.
+  expect(extractTextCalls('<tool_call>{"name": "read", "arguments": {"path": "a"}}')?.calls[0]?.name).toBe("read");
+  expect(extractTextCalls("<tool_call>{'name': 'read', 'arguments': {'path': 'a'}}")?.calls[0]?.name).toBe("read");
+  expect(extractTextCalls('<function=write>{"path": "f", "content": "x <function=read>{\\"path\\": \\"a\\"}')).toBeUndefined();
+});
+
+test("text-tool-calls: a call whose JSON cannot be mended still tells the model to call natively (#85)", async () => {
+  const { results } = await run(say(`<tool_call>{"name": "read", "arguments": {"path": ${at}, "limit": }}</tool_call>`));
+  expect(results).toHaveLength(1);
+  expect(results[0]!.isError).toBe(true);
+  const text = JSON.stringify(results[0]!.content);
+  expect(text).toContain("not valid JSON");
+  expect(text).toContain("call tools with native tool calls");
+});
+
 test("text-tool-calls: without tool-repair, another harness's tool name still resolves", async () => {
   const { stored, results } = await run(say(`<tool_call>{"name": "read_file", "arguments": {"path": ${at}}}</tool_call>`));
   expect(stored.content).toMatchObject([{ type: "tool_call", name: "read", input: { path: file } }]);
