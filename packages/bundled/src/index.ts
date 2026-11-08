@@ -9,6 +9,7 @@ import compaction from "./compaction.ts";
 import diagnostics from "./diagnostics.ts";
 import goal from "./goal.ts";
 import imageAttach from "./image-attach.ts";
+import imageSlim from "./image-slim.ts";
 import loopGuard from "./loop-guard.ts";
 import openaiCodex from "./openai-codex/index.ts";
 import permissionPresets from "./permission-presets.ts";
@@ -32,6 +33,7 @@ export { extractTextCalls } from "./text-tool-calls.ts";
 export { htmlToText, readable, readCapped } from "./web-fetch.ts";
 export { formatResults, matchesQuery, privateAddress } from "./web-search.ts";
 export { stripLineNumbers } from "./write-guard.ts";
+export { omit as omitImages, probe as probeImage, shrink as shrinkImage } from "./image-slim.ts";
 export { installRustxng, managedRustxng, rustxngTarget } from "./rustxng-install.ts";
 export { byDay, graph, planLines, readRecords } from "./usage.ts";
 export { codexLogin, codexLogout, codexStatus, readCodexAuth } from "./openai-codex/index.ts";
@@ -63,4 +65,6 @@ export const bundledPlugins: Record<string, Plugin> = {
   "auto-reconnect": autoReconnect,
   checkpoints,
   "image-attach": imageAttach,
+  // After image-attach: it shrinks the images that one adds.
+  "image-slim": imageSlim,
 };
