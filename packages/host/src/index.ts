@@ -3,4 +3,5 @@
 // part of the core (ai, agent, plugin-api, tools), whose size is kept small.
 export * from "./i18n.ts";
 export * from "./models.ts";
+export * from "./notes.ts";
 export * from "./sessions.ts";

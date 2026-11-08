@@ -1,5 +1,5 @@
+import { harnessNote } from "@sasacode/host";
 import type { Plugin } from "@sasacode/plugin-api";
-import { withReminder } from "./reminder.ts";
 
 const GUIDANCE = [
   "Keep the user informed while you work. They see the text you write, not your reasoning and not every tool's output:",
@@ -12,7 +12,10 @@ const GUIDANCE = [
  * The text a model writes beside its tool calls is all the user sees of its work, and most models
  * write none unless told (in the session logs, Qwen3.8 Flash Next wrote text with 3% of 740 tool-call
  * replies, DeepSeek V4.1 Flash with 15%). The system prompt asks for short progress lines, and after
- * `remindAfter` tool-call replies in a row without text the next request carries a reminder.
+ * `remindAfter` tool-call replies in a row without text a reminder follows the tool results. It stays in
+ * the history: a note on one request only made the next request differ from it, so a local server read
+ * everything after it again (and a chat template that keeps reasoning only after the last user turn,
+ * as Qwen's do, changed the history before it too).
  *
  * settings: { remindAfter?: number (default 5, 0 = no reminder) }
  */
@@ -27,13 +30,14 @@ const progressNotes: Plugin = (api) => {
     if (ctx.agent) return;
     const said = message.content.some((b) => b.type === "text" && b.text.trim());
     silent = said || !message.content.some((b) => b.type === "tool_call") ? 0 : silent + 1;
-  });
-  api.on("before_request", ({ messages }, ctx) => {
-    if (ctx.agent || !remindAfter || silent < remindAfter) return;
+    if (!remindAfter || silent < remindAfter) return;
     const replies = silent;
     silent = 0;
-    const note = `Your last ${replies} replies were tool calls with no text, so the user cannot tell what you are doing. Keep working, and with your next tool call write one or two sentences: what you have found so far and what you are doing next.`;
-    return { messages: withReminder(messages, note) };
+    return {
+      inject: harnessNote(
+        `Your last ${replies} replies were tool calls with no text, so the user cannot tell what you are doing. Keep working, and with your next tool call write one or two sentences: what you have found so far and what you are doing next.`,
+      ),
+    };
   });
 };
 export default progressNotes;

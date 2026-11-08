@@ -9,7 +9,6 @@ import { replayProvider } from "@sasacode/testing";
 import builtinTools, { bashTool } from "@sasacode/tools";
 import { agentsFiles, bundledPlugins, formatResults, htmlToText, matchesQuery, privateAddress, readable, readCapped, splitPoint } from "../src/index.ts";
 import { setLang } from "@sasacode/host";
-import { withReminder } from "../src/reminder.ts";
 
 beforeAll(() => setLang("ja")); // these assertions quote the Japanese strings (another test file may have switched)
 
@@ -740,7 +739,7 @@ test("web_search steps aside while browsr's search is connected", async () => {
   await agent.hooks.run("session_end", {});
 });
 
-test("todo: a list with unfinished items that goes remindAfter tool calls without an update gets a reminder on the next request, once", async () => {
+test("todo: a list with unfinished items that goes remindAfter tool calls without an update gets a reminder after the results, once", async () => {
   writeFileSync(join(root, "todo-nudge.txt"), "x\n");
   const read = (id: string) => call(id, "read", { path: "todo-nudge.txt" });
   const open = [
@@ -757,8 +756,10 @@ test("todo: a list with unfinished items that goes remindAfter tool calls withou
   expect(JSON.stringify(last(3))).toContain(
     "[Reminder from sasacode, not from the user] Your task list has not been updated for 3 tool calls and still reads: ☑ write tests, ◐ fix bug. If a step is done",
   );
+  // Kept in the history, so the requests after it start the same way (a local server's cache holds).
+  expect(JSON.stringify(provider.requests[4]!.messages)).toContain("has not been updated");
   expect(JSON.stringify(last(4))).not.toContain("has not been updated"); // the count starts over after a reminder
-  expect(JSON.stringify(agent.messages)).not.toContain("has not been updated"); // for that request only, never stored
+  expect(agent.messages.filter((m) => JSON.stringify(m).includes("has not been updated")).length).toBe(1);
 
   // Nothing left to do: no reminder. Off with 0.
   const done = open.map((t) => ({ ...t, status: "completed" }));
@@ -782,21 +783,11 @@ test("progress-notes: the system prompt asks for progress lines, and silent tool
   expect(last(2)).toContain("[Reminder from sasacode, not from the user] Your last 2 replies were tool calls with no text");
   expect(last(3)).not.toContain("with no text"); // the reply said something: the count starts over
   expect(last(4)).not.toContain("with no text");
-  expect(JSON.stringify(agent.messages)).not.toContain("with no text");
+  expect(agent.messages.filter((m) => JSON.stringify(m).includes("with no text")).length).toBe(1);
+  expect(agent.messages.at(-1)).toMatchObject({ role: "assistant" }); // the final answer gets no reminder after it
 
   const off = await setup(structuredClone(script), ["progress-notes"], { settings: { "progress-notes": { remindAfter: 0 } } });
   await off.agent.prompt("go");
   expect(JSON.stringify(off.provider.requests)).not.toContain("with no text");
   expect(off.provider.requests[0]!.system).toContain("Keep the user informed"); // 0 turns off only the reminder
-});
-
-test("withReminder: notes from several plugins share one user turn after the history", () => {
-  const history: Message[] = [{ role: "tool", toolCallId: "1", toolName: "read", content: [say("x")], isError: false, timestamp: 0 }];
-  const once = withReminder(history, "a");
-  const twice = withReminder(once, "b");
-  expect(twice.length).toBe(2);
-  expect(twice[1]!.role).toBe("user");
-  expect((twice[1]!.content as { text: string }[]).map((c) => c.text)).toEqual(["[Reminder from sasacode, not from the user] a", "[Reminder from sasacode, not from the user] b"]);
-  expect(history.length).toBe(1);
-  expect(once[1]!.content.length).toBe(1); // the earlier array is left as it was
 });

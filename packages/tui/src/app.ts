@@ -18,7 +18,7 @@ import {
   VStack,
 } from "@earendil-works/pi-tui";
 import { type Agent, type AgentEvent, type ApprovalAnswer, type ApprovalRequest, PERMISSION_MODE_LABELS, PERMISSION_MODES, type PermissionMode, type PluginHost, type UIBridge } from "@sasacode/agent";
-import { type Lang, listSessions, retranslate, setLang, t } from "@sasacode/host";
+import { type Lang, listSessions, noteText, retranslate, setLang, t } from "@sasacode/host";
 import { fmtTokens, type Message, type ModelInfo, textOf, type ThinkingLevel, type ToolCall } from "@sasacode/ai";
 import type { CommandDefinition, SelectOption, ShowTextOptions, UserContent } from "@sasacode/plugin-api";
 import { matchAmbiguousWidth } from "./ambiguous.ts";
@@ -28,7 +28,7 @@ import { TextViewer } from "./text-viewer.ts";
 import { copyToClipboard } from "./clipboard.ts";
 import { exitSummary, UsageTally } from "./summary.ts";
 import { c, editorTheme } from "./theme.ts";
-import { AssistantView, display, Notice, Padded, plain, ToolView, UserView } from "./views.ts";
+import { AssistantView, display, NoteView, Notice, Padded, plain, ToolView, UserView } from "./views.ts";
 
 const EFFORTS: ThinkingLevel[] = ["off", "low", "medium", "high", "xhigh", "max"];
 const EFFORT_LABELS: Record<ThinkingLevel, string> = {
@@ -462,8 +462,7 @@ class App {
           // one whose text a plugin changed, an image path for one).
           const qi = this.queued.findIndex((q) => q.content?.length && q.content.every((b) => m.content.includes(b)));
           if (qi >= 0) this.queued.splice(qi, 1);
-          this.chat.addChild(new Spacer(1));
-          this.chat.addChild(new UserView(m.content));
+          this.addUser(m.content);
           this.renderStatus();
         } else if (m.role === "assistant") {
           this.current?.update(m);
@@ -1043,16 +1042,21 @@ class App {
     this.tui.requestRender(true);
   }
 
+  private addUser(content: UserContent[]): void {
+    const note = noteText(content);
+    if (note !== undefined) return void this.chat.addChild(new NoteView(note));
+    this.chat.addChild(new Spacer(1));
+    this.chat.addChild(new UserView(content));
+  }
+
   /**
    * Rebuild the transcript from agent.messages; `loaded` (on startup with -c, after /resume): from
    * everything said in the session, also what a compaction summarized for the model.
    */
   private renderHistory(loaded = false): void {
     for (const m of (loaded && this.host.transcript?.()) || this.host.agent.messages) {
-      if (m.role === "user") {
-        this.chat.addChild(new Spacer(1));
-        this.chat.addChild(new UserView(m.content));
-      } else if (m.role === "assistant") {
+      if (m.role === "user") this.addUser(m.content);
+      else if (m.role === "assistant") {
         const view = new AssistantView((call, v) => this.trackTool(call, v), this.host.agent.cwd);
         this.chat.addChild(new Spacer(1));
         this.chat.addChild(view);
