@@ -1,4 +1,5 @@
 import type { Plugin } from "@sasacode/plugin-api";
+import { withReminder } from "./reminder.ts";
 
 type Status = "pending" | "in_progress" | "completed";
 interface Todo {
@@ -11,15 +12,16 @@ const MARK: Record<Status, string> = { pending: "☐", in_progress: "◐", compl
 /**
  * A task list the model maintains; kept in the session log and shown in the status line.
  * Models of every size write the list and then forget it: when unfinished items sit through
- * `remindAfter` tool calls without an update, the next result carries a one-line reminder.
+ * `remindAfter` tool calls without an update, the next request carries a reminder.
  *
- * settings: { remindAfter?: number (default 15, 0 = off) }
+ * settings: { remindAfter?: number (default 10, 0 = off) }
  */
 const todo: Plugin = (api) => {
-  const remindAfter = typeof api.settings.remindAfter === "number" ? api.settings.remindAfter : 15;
+  const remindAfter = typeof api.settings.remindAfter === "number" ? api.settings.remindAfter : 10;
   let todos: Todo[] = [];
   /** Tool calls of the main agent since the list was last written. */
   let sinceUpdate = 0;
+  let due = false;
   const show = () => {
     if (!todos.length) return api.ui.setStatus("todos", undefined);
     const done = todos.filter((t) => t.status === "completed").length;
@@ -29,17 +31,22 @@ const todo: Plugin = (api) => {
   api.on("session_start", () => {
     todos = (api.session.entries("todos").at(-1) as Todo[] | undefined) ?? [];
     sinceUpdate = 0;
+    due = false;
     show();
   });
-  api.on("tool_result", ({ call, result }, ctx) => {
+  api.on("tool_result", ({ call }, ctx) => {
     // Subagents have no list of their own (todo_write is kept from them).
     if (ctx.agent || !remindAfter) return;
-    if (call.name === "todo_write") return void (sinceUpdate = 0);
-    if (!todos.some((t) => t.status !== "completed") || ++sinceUpdate < remindAfter) return;
-    sinceUpdate = 0;
+    if (call.name === "todo_write") return void (sinceUpdate = 0, due = false);
+    if (todos.some((t) => t.status !== "completed") && ++sinceUpdate >= remindAfter) due = true;
+  });
+  api.on("before_request", ({ messages }, ctx) => {
+    if (ctx.agent || !due) return;
+    due = false;
     const list = todos.map((t) => `${MARK[t.status]} ${t.content}`).join(", ");
-    const note = `[harness] Your task list has not been updated for ${remindAfter} tool calls: ${list}. Update it with todo_write if the state changed.`;
-    return { result: { ...result, content: [...result.content, { type: "text", text: note }] } };
+    const note = `Your task list has not been updated for ${sinceUpdate} tool calls and still reads: ${list}. If a step is done or another has started, call todo_write now to update it; otherwise carry on.`;
+    sinceUpdate = 0;
+    return { messages: withReminder(messages, note) };
   });
   api.permissions.addRules({ allow: ["todo_write"] });
   api.registerTool({
