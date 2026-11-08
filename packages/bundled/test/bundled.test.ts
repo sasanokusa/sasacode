@@ -665,6 +665,9 @@ test("privateAddress: loopback, private, link-local and the like, IPv4 and IPv6"
   ];
   for (const ip of internal) expect([ip, privateAddress(ip)]).toEqual([ip, true]);
   for (const ip of ["8.8.8.8", "172.32.0.1", "1.1.1.1", "2606:4700::1111", "::ffff:8.8.8.8", "::ffff:100:63", "::ffff:a9fd:1", "::ffff:c0a7:1"]) expect([ip, privateAddress(ip)]).toEqual([ip, false]);
+  // NAT64 (#83): the well-known prefix is judged by the IPv4 it carries, the local-use one is the site's own; 6to4 likewise.
+  for (const ip of ["64:ff9b::127.0.0.1", "64:ff9b::7f00:1", "64:ff9b::a9fe:a9fe", "64:ff9b::c0a8:101", "64:ff9b:1::8.8.8.8", "2002:7f00:1::1", "2002:a00:1::"]) expect([ip, privateAddress(ip)]).toEqual([ip, true]);
+  for (const ip of ["64:ff9b::8.8.8.8", "64:ff9b::808:808", "2002:808:808::1", "64:ff9b:2::7f00:1"]) expect([ip, privateAddress(ip)]).toEqual([ip, false]);
 });
 
 test("web_search include_text: a result page addressed as IPv4 inside hexadecimal IPv6 is internal too", async () => {

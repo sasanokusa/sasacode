@@ -84,10 +84,17 @@ function ipv6Words(ip: string): number[] | undefined {
 function carriedIPv4(ip: string): string | undefined {
   if (isIP(ip) === 4) return ip;
   const w = ipv6Words(ip);
+  if (!w) return undefined;
+  const v4 = (hi: number, lo: number) => `${hi >> 8}.${hi & 0xff}.${lo >> 8}.${lo & 0xff}`;
   // An IPv4-mapped (`::ffff:`) address, or the older IPv4-compatible one (all zero): a fetch to
   // either goes to the IPv4 they carry, so both are judged as that address.
-  if (!w || w.slice(0, 5).some((x) => x !== 0) || (w[5] !== 0xffff && w[5] !== 0)) return undefined;
-  return `${w[6] >> 8}.${w[6] & 0xff}.${w[7] >> 8}.${w[7] & 0xff}`;
+  if (w.slice(0, 5).every((x) => x === 0) && (w[5] === 0xffff || w[5] === 0)) return v4(w[6]!, w[7]!);
+  // NAT64's well-known prefix (64:ff9b::/96, RFC 6052): a NAT64 gateway connects to the IPv4 in the
+  // last 32 bits, and DNS64 answers a name with such an address (#83).
+  if (w[0] === 0x64 && w[1] === 0xff9b && w.slice(2, 6).every((x) => x === 0)) return v4(w[6]!, w[7]!);
+  // 6to4 (2002::/16) carries its IPv4 in bits 16-47.
+  if (w[0] === 0x2002) return v4(w[1]!, w[2]!);
+  return undefined;
 }
 
 /** Loopback, private, link-local (cloud metadata), shared, unspecified and multicast addresses. */
@@ -97,9 +104,10 @@ export function privateAddress(ip: string): boolean {
     const [a = 0, b = 0] = v4.split(".").map(Number);
     return a === 0 || a === 10 || a === 127 || a >= 224 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 100 && b >= 64 && b <= 127);
   }
-  const v = ip.toLowerCase();
-  // A real IPv6, then: unspecified and loopback, unique local (fc/fd), link-local (fe80..) and multicast (ff).
-  return v === "::" || v === "::1" || /^(fc|fd|fe[89ab]|ff)/.test(v);
+  const v = ip.toLowerCase(), w = ipv6Words(ip);
+  // A real IPv6, then: unspecified and loopback, unique local (fc/fd), link-local (fe80..), multicast (ff),
+  // and NAT64's local-use prefix (64:ff9b:1::/48, RFC 8215), whose IPv4 are the site's own.
+  return v === "::" || v === "::1" || /^(fc|fd|fe[89ab]|ff)/.test(v) || (!!w && w[0] === 0x64 && w[1] === 0xff9b && w[2] === 1);
 }
 
 /** Whether a URL's host is on the public internet (what a page an engine returned may be read from). */
