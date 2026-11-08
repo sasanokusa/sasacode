@@ -46,6 +46,13 @@ function envelope(body: string): TextCall | undefined {
 }
 
 /**
+ * JSON that parses only once a string or bracket is closed for it. A call that ends the reply
+ * without its closing tag may have been cut off where a server stopped on a closing tag inside its
+ * arguments (an example written into a file): repaired, it ran with what was left (#82).
+ */
+const cutOff = (json: string) => repairJson(json)?.fixes.some((f) => f.startsWith("closed")) ?? true;
+
+/**
  * The tool calls a reply writes as text, when they end it: the matches at the very end of `text`,
  * with nothing but whitespace after and between them. Prose before them stays (`prose`); a call
  * that is followed by more text, such as an example inside an explanation or a code block, is not
@@ -57,8 +64,10 @@ function envelope(body: string): TextCall | undefined {
 export function extractTextCalls(text: string): { prose: string; calls: TextCall[]; skipped: number } | undefined {
   const found: { start: number; end: number; call?: TextCall; fence?: boolean }[] = [];
   const add = (m: RegExpExecArray, call: TextCall | undefined, fence = false) => found.push({ start: m.index, end: m.index + m[0].length, call, fence });
-  for (const m of text.matchAll(TAG)) add(m, envelope(m[1]!));
-  for (const m of text.matchAll(FUNCTION)) add(m, { name: m[1]!, args: m[2]! });
+  // Ends the text without its closing tag, and its JSON had to be closed: cut off, not a call.
+  const open = (m: RegExpExecArray, close: string, json: string) => m.index + m[0].length === text.length && !m[0].trimEnd().endsWith(close) && cutOff(json);
+  for (const m of text.matchAll(TAG)) add(m, open(m, "</tool_call>", m[1]!) ? undefined : envelope(m[1]!));
+  for (const m of text.matchAll(FUNCTION)) add(m, open(m, "</function>", m[2]!) ? undefined : { name: m[1]!, args: m[2]! });
   for (const m of text.matchAll(FENCE)) add(m, envelope(m[1]!), true);
   found.sort((a, b) => b.end - a.end);
   const run: typeof found = [];
@@ -147,16 +156,15 @@ const textToolCalls: Plugin = (api) => {
     return { message: { ...message, content: [...content, ...calls], stopReason: "tool_use" } };
   });
 
-  api.on("tool_call_raw", ({ call, name, input, rawInput, tools }) => {
+  api.on("tool_call_raw", ({ call, name, tools }) => {
     if (!call.id.startsWith(ID)) return;
     // tool-repair (loaded before) has already renamed it; without tool-repair this does.
     const rename = tools.some((t) => t.name === name) ? undefined : resolveToolName(name, tools.map((t) => t.name), false);
     const n = skipped.get(call.id);
     skipped.delete(call.id);
     const note = n ? `${NOTE}; ${n} other call${n > 1 ? "s" : ""} written earlier in the text did not run` : NOTE;
-    // Still broken JSON: validation reports it. Otherwise a fresh input object, since a note alone
-    // (no change to the call) is not passed on to the model.
-    return rawInput !== undefined ? { name: rename, note } : { name: rename, input: { ...input }, note };
+    // Still broken JSON: validation reports it, with the note.
+    return { name: rename, note };
   });
 
   // What the mode itself decides becomes a question: edits mode would run a write inside the working
