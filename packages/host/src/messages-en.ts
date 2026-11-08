@@ -271,6 +271,7 @@ export const TO_EN: Record<string, string> = {
   // ── the activity line and /language ───────────────────────────────
   "↓ {n} トークン": "↓ {n} tokens",
   "esc で中断": "esc to interrupt",
+  "sasacode からモデルへ: {text}": "sasacode to the model: {text}",
   "一致するものがありません": "No matches",
   "会話内を検索": "Find in transcript",
   "表示言語を切り替える（日本語 / English）": "switch the interface language (日本語 / English)",

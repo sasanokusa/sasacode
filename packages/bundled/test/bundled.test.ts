@@ -7,6 +7,7 @@ import { type AssistantContent, type AssistantMessage, emptyUsage, type Message,
 import { buildSystemPrompt } from "../../agent/src/system-prompt.ts";
 import { replayProvider } from "@sasacode/testing";
 import builtinTools, { bashTool } from "@sasacode/tools";
+import { promptLanguage } from "../src/progress-notes.ts";
 import { agentsFiles, bundledPlugins, formatResults, htmlToText, matchesQuery, privateAddress, readable, readCapped, splitPoint } from "../src/index.ts";
 import { setLang } from "@sasacode/host";
 
@@ -739,7 +740,7 @@ test("web_search steps aside while browsr's search is connected", async () => {
   await agent.hooks.run("session_end", {});
 });
 
-test("todo: a list with unfinished items that goes remindAfter tool calls without an update gets a one-line reminder, once", async () => {
+test("todo: a list with unfinished items that goes remindAfter tool calls without an update gets a reminder after the results, once", async () => {
   writeFileSync(join(root, "todo-nudge.txt"), "x\n");
   const read = (id: string) => call(id, "read", { path: "todo-nudge.txt" });
   const open = [
@@ -749,10 +750,17 @@ test("todo: a list with unfinished items that goes remindAfter tool calls withou
   const script = (todos: unknown[]) => [reply([call("1", "todo_write", { todos })]), reply([read("2"), read("3")]), reply([read("4")]), reply([read("5")]), reply([say("ok")])];
   const { agent, provider } = await setup(script(open), ["todo"], { settings: { todo: { remindAfter: 3 } } });
   await agent.prompt("go");
-  const last = (i: number) => JSON.stringify(provider.requests[i]!.messages.at(-1));
-  expect(last(2)).not.toContain("has not been updated"); // two calls since the list was written
-  expect(last(3)).toContain("has not been updated for 3 tool calls: ☑ write tests, ◐ fix bug. Update it with todo_write");
-  expect(last(4)).not.toContain("has not been updated"); // the count starts over after a reminder
+  const last = (i: number) => provider.requests[i]!.messages.at(-1)!;
+  expect(JSON.stringify(last(2))).not.toContain("has not been updated"); // two calls since the list was written
+  // A user turn of its own after the tool results: in the tool's output it was read as output and passed over.
+  expect(last(3).role).toBe("user");
+  expect(JSON.stringify(last(3))).toContain(
+    "[Reminder from sasacode, not from the user] Your task list has not been updated for 3 tool calls and still reads: ☑ write tests, ◐ fix bug. If a step is done",
+  );
+  // Kept in the history, so the requests after it start the same way (a local server's cache holds).
+  expect(JSON.stringify(provider.requests[4]!.messages)).toContain("has not been updated");
+  expect(JSON.stringify(last(4))).not.toContain("has not been updated"); // the count starts over after a reminder
+  expect(agent.messages.filter((m) => JSON.stringify(m).includes("has not been updated")).length).toBe(1);
 
   // Nothing left to do: no reminder. Off with 0.
   const done = open.map((t) => ({ ...t, status: "completed" }));
@@ -762,4 +770,37 @@ test("todo: a list with unfinished items that goes remindAfter tool calls withou
   const off = await setup(script(open), ["todo"], { settings: { todo: { remindAfter: 0 } } });
   await off.agent.prompt("go");
   expect(JSON.stringify(off.provider.requests)).not.toContain("has not been updated");
+});
+
+test("progress-notes: the system prompt asks for progress lines, and silent tool-call replies get a reminder", async () => {
+  writeFileSync(join(root, "progress.txt"), "x\n");
+  const read = (id: string) => call(id, "read", { path: "progress.txt" });
+  const script = [reply([read("1")]), reply([read("2")]), reply([say("Found it; fixing now."), read("3")]), reply([read("4")]), reply([say("done")])];
+  const { agent, provider } = await setup(script, ["progress-notes"], { settings: { "progress-notes": { remindAfter: 2 } } });
+  await agent.prompt("直して");
+  expect(provider.requests[0]!.system).toContain("Keep the user informed while you work");
+  // Named: asked for "the user's language", DeepSeek wrote English lines to a Japanese prompt.
+  expect(provider.requests[0]!.system).toContain("like your final answer, in Japanese, the language the user writes in");
+  const last = (i: number) => JSON.stringify(provider.requests[i]!.messages.at(-1));
+  expect(last(1)).not.toContain("replies were tool calls with no text");
+  expect(last(2)).toContain("[Reminder from sasacode, not from the user] Your last 2 replies were tool calls with no text");
+  expect(last(2)).toContain("one or two sentences in Japanese:");
+  expect(last(3)).not.toContain("with no text"); // the reply said something: the count starts over
+  expect(last(4)).not.toContain("with no text");
+  expect(agent.messages.filter((m) => JSON.stringify(m).includes("with no text")).length).toBe(1);
+  expect(agent.messages.at(-1)).toMatchObject({ role: "assistant" }); // the final answer gets no reminder after it
+
+  const off = await setup(structuredClone(script), ["progress-notes"], { settings: { "progress-notes": { remindAfter: 0 } } });
+  await off.agent.prompt("go");
+  expect(JSON.stringify(off.provider.requests)).not.toContain("with no text");
+  expect(off.provider.requests[0]!.system).toContain("in the language the user writes in."); // "go" names none
+  expect(off.provider.requests[0]!.system).toContain("Keep the user informed"); // 0 turns off only the reminder
+});
+
+test("promptLanguage names the language a prompt's script tells", () => {
+  expect(promptLanguage("テストを直して")).toBe("Japanese");
+  expect(promptLanguage("修正 bug in 関数を")).toBe("Japanese"); // kana decides over the kanji they share with Chinese
+  expect(promptLanguage("修复这个错误")).toBe("Chinese");
+  expect(promptLanguage("버그를 고쳐 줘")).toBe("Korean");
+  expect(promptLanguage("fix the failing test")).toBeUndefined();
 });

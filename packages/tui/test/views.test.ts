@@ -1,7 +1,7 @@
 import { beforeAll, expect, test } from "bun:test";
 import { type AssistantMessage, emptyUsage, type ToolCall } from "@sasacode/ai";
-import { AssistantView, Padded, ToolView } from "../src/views.ts";
-import { setLang } from "@sasacode/host";
+import { AssistantView, NoteView, Padded, ToolView } from "../src/views.ts";
+import { harnessNote, noteText, setLang } from "@sasacode/host";
 
 beforeAll(() => setLang("ja")); // these assertions quote the Japanese strings (another test file may have switched)
 
@@ -186,4 +186,14 @@ test("padding a transcript reuses the lines that did not change, and redoes them
   expect(padded.render(40)).toEqual(["  a", "  b   c", "  e"]);
   const narrow = new Padded(child, 2, 2);
   expect(padded.render(12)).toEqual(narrow.render(12));
+});
+
+test("a bundled plugin's note to the model is one dim line, and only a message made of such notes is one", () => {
+  const note = { type: "text" as const, text: harnessNote("Your task list has not been updated for 10 tool calls\nand still reads: ◐ fix bug.") };
+  expect(noteText([note, note])).toStartWith("Your task list");
+  expect(noteText([note, { type: "text", text: "fix the bug" }])).toBeUndefined(); // the user's own words: a prompt
+  expect(noteText([])).toBeUndefined();
+  const lines = new NoteView(noteText([note])!).render(40);
+  expect(lines.length).toBe(1);
+  expect(plain(lines[0]!)).toStartWith("  ↳ sasacode からモデルへ: Your task");
 });

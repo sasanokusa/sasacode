@@ -220,6 +220,15 @@ function renderDiff(diff: string, width: number): string[] {
   return out;
 }
 
+/** A bundled plugin's note to the model (a todo or progress reminder): one dim line, not a prompt. */
+export class NoteView implements Component {
+  constructor(private readonly text: string) {}
+  render(width: number): string[] {
+    return [truncateToWidth(c.gray(`  ↳ ${t("sasacode からモデルへ: {text}", { text: this.text.replace(/\s+/g, " ") })}`), width)];
+  }
+  invalidate(): void {}
+}
+
 export class Notice extends Text {
   constructor(text: string, color: (s: string) => string = c.gray) {
     super(color(text), 0, 0);

@@ -12,6 +12,7 @@ import imageAttach from "./image-attach.ts";
 import loopGuard from "./loop-guard.ts";
 import openaiCodex from "./openai-codex/index.ts";
 import permissionPresets from "./permission-presets.ts";
+import progressNotes from "./progress-notes.ts";
 import repetitionGuard from "./repetition-guard.ts";
 import subagent from "./subagent.ts";
 import textToolCalls from "./text-tool-calls.ts";
@@ -49,6 +50,7 @@ export const bundledPlugins: Record<string, Plugin> = {
   diagnostics,
   subagent,
   todo,
+  "progress-notes": progressNotes,
   "web-fetch": webFetch,
   "web-search": webSearch,
   "permission-presets": permissionPresets,

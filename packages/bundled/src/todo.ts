@@ -1,3 +1,4 @@
+import { harnessNote } from "@sasacode/host";
 import type { Plugin } from "@sasacode/plugin-api";
 
 type Status = "pending" | "in_progress" | "completed";
@@ -11,12 +12,14 @@ const MARK: Record<Status, string> = { pending: "☐", in_progress: "◐", compl
 /**
  * A task list the model maintains; kept in the session log and shown in the status line.
  * Models of every size write the list and then forget it: when unfinished items sit through
- * `remindAfter` tool calls without an update, the next result carries a one-line reminder.
+ * `remindAfter` tool calls without an update, a reminder follows the tool results: a user turn of its
+ * own, kept in the history. At the end of a tool's output it was read as output and passed over (17
+ * reminders in the session logs, one update right after).
  *
- * settings: { remindAfter?: number (default 15, 0 = off) }
+ * settings: { remindAfter?: number (default 10, 0 = off) }
  */
 const todo: Plugin = (api) => {
-  const remindAfter = typeof api.settings.remindAfter === "number" ? api.settings.remindAfter : 15;
+  const remindAfter = typeof api.settings.remindAfter === "number" ? api.settings.remindAfter : 10;
   let todos: Todo[] = [];
   /** Tool calls of the main agent since the list was last written. */
   let sinceUpdate = 0;
@@ -31,15 +34,23 @@ const todo: Plugin = (api) => {
     sinceUpdate = 0;
     show();
   });
-  api.on("tool_result", ({ call, result }, ctx) => {
+  api.on("tool_result", ({ call }, ctx) => {
     // Subagents have no list of their own (todo_write is kept from them).
     if (ctx.agent || !remindAfter) return;
-    if (call.name === "todo_write") return void (sinceUpdate = 0);
-    if (!todos.some((t) => t.status !== "completed") || ++sinceUpdate < remindAfter) return;
-    sinceUpdate = 0;
+    if (call.name === "todo_write") sinceUpdate = 0;
+    else if (todos.some((t) => t.status !== "completed")) sinceUpdate++;
+  });
+  api.on("turn_end", ({ message }, ctx) => {
+    // After a reply that called tools only: an inject after the final answer would start another turn.
+    if (ctx.agent || !remindAfter || sinceUpdate < remindAfter || !message.content.some((b) => b.type === "tool_call")) return;
     const list = todos.map((t) => `${MARK[t.status]} ${t.content}`).join(", ");
-    const note = `[harness] Your task list has not been updated for ${remindAfter} tool calls: ${list}. Update it with todo_write if the state changed.`;
-    return { result: { ...result, content: [...result.content, { type: "text", text: note }] } };
+    const calls = sinceUpdate;
+    sinceUpdate = 0;
+    return {
+      inject: harnessNote(
+        `Your task list has not been updated for ${calls} tool calls and still reads: ${list}. If a step is done or another has started, call todo_write now to update it; otherwise carry on.`,
+      ),
+    };
   });
   api.permissions.addRules({ allow: ["todo_write"] });
   api.registerTool({
