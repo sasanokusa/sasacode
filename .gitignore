@@ -11,3 +11,4 @@ dist/
 bench/
 .DS_Store
 .claude/worktrees/
+.agents
