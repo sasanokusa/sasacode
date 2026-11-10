@@ -133,6 +133,19 @@ test("compaction: a summary whose stream was cut leaves the history as it was (#
   expect(agent.messages).toEqual(history);
 });
 
+test("compaction: a tool result clipped in the middle of an emoji is sent well-formed (#88)", async () => {
+  const { agent, host, provider } = await setup([reply([say("SUMMARY")])], ["compaction"]);
+  agent.messages = [
+    { role: "user", content: [say("look")], timestamp: 0 },
+    reply([call("c1", "read", { path: "e.txt" })]),
+    { role: "tool", toolCallId: "c1", toolName: "read", content: [say(`${"x".repeat(1999)}${"😀".repeat(10)}`)], isError: false, timestamp: 0 },
+    reply([say("ok")]),
+  ];
+  await host.commands.find((c) => c.name === "compact")!.run({ args: "" });
+  const sent = provider.requests[0]!.messages[0]!.content[0] as { text: string };
+  expect(sent.text.isWellFormed()).toBe(true);
+});
+
 /** A session of about `chars` characters: questions, file reads with long results, answers. */
 function readingSession(chars: number): Message[] {
   const history: Message[] = [];

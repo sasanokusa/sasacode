@@ -59,7 +59,7 @@ export const bashTool: ToolDefinition<Args> = {
         size += s.length;
         if (file) appendFileSync(file, s);
         else if (size > MAX_OUTPUT) file = saveOutput("bash", tail + s);
-        tail = (tail + s).slice(-MAX_OUTPUT);
+        tail = (tail + s).slice(-MAX_OUTPUT).replace(/^[\udc00-\udfff]/, ""); // not half a surrogate pair (#88)
         ctx.onUpdate?.(s);
       };
       // Decoded per stream: a character split across two reads is not broken in two.

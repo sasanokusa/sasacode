@@ -52,7 +52,8 @@ function summaryRequest(model: ModelInfo, head: readonly Message[], instructions
   const maxTokens = Math.min(8192, responseRoom(model));
   const maxChars = Math.floor(((model.contextWindow - maxTokens) / 1.1) * 4) - SYSTEM.length - 8;
   const ask = `\n\n---\nSummarize the session above.${instructions ? ` ${instructions}` : ""}`;
-  const message = (text: string): Message => ({ role: "user", timestamp: Date.now(), content: [{ type: "text", text: text + ask }] });
+  // Well-formed: clipping a result or dropping the oldest part can cut a surrogate pair in half (#88).
+  const message = (text: string): Message => ({ role: "user", timestamp: Date.now(), content: [{ type: "text", text: (text + ask).toWellFormed() }] });
   const size = (text: string) => contentChars(message(text)) + 3 * wide(text + ask);
   let text = transcript(head);
   if (size(text) > maxChars) text = transcript(head, 200, 100);

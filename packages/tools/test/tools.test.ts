@@ -368,3 +368,12 @@ test("edit refuses a file that is not UTF-8 and leaves its bytes as they were; r
   expect(out(await readTool.execute({ path: "utf8.js" }, ctx()))).not.toContain("UTF-8");
   expect((await editTool.execute({ path: "utf8.js", old_string: "const x = 1;", new_string: "const x = 2;" }, ctx())).isError).toBeFalsy();
 });
+
+test("read and bash never cut a surrogate pair in half (#88)", async () => {
+  writeFileSync(join(dir, "emoji.txt"), `${"x".repeat(1999)}${"😀".repeat(50)}\n`);
+  const r = out(await readTool.execute({ path: "emoji.txt" }, ctx()));
+  expect(r.isWellFormed()).toBe(true);
+  expect(r).toContain("x… [line truncated");
+  const b = out(await bashTool.execute({ command: "for i in $(seq 1 20000); do printf '😀'; done; echo; echo o" }, ctx()));
+  expect(b.isWellFormed()).toBe(true);
+});

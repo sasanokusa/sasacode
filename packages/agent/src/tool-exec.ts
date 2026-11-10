@@ -116,8 +116,8 @@ export async function executeTools(
       role: "tool",
       toolCallId: job.call.id,
       toolName: job.name,
-      // Tell the model briefly what was fixed, so it can produce the right form next time.
-      content: job.note ? [{ type: "text", text: `[harness repaired this call: ${job.note}]` }, ...result.content] : result.content,
+      // Tell the model briefly what was fixed, so it can produce the right form next time. Well-formed: a lone surrogate (half an emoji) fails every later request (#88).
+      content: (job.note ? [{ type: "text" as const, text: `[harness repaired this call: ${job.note}]` }, ...result.content] : result.content).map((c) => (c.type === "text" ? { ...c, text: c.text.toWellFormed() } : c)),
       isError: !!result.isError,
       timestamp: Date.now(),
     });

@@ -378,3 +378,18 @@ test("an approval that fails is a refused call; a concurrent call already runnin
   const results = agent.messages.filter((m) => m.role === "tool");
   expect(results.map((m) => JSON.stringify(m.content))).toEqual([expect.stringContaining("slow done"), expect.stringContaining("UI bridge died")]);
 });
+
+test("a tool result with a lone surrogate goes into the history well-formed (#88)", async () => {
+  const half: import("@sasacode/plugin-api").ToolDefinition<{}> = {
+    name: "half",
+    description: "cuts an emoji in half",
+    kind: "read",
+    parameters: { type: "object", properties: {} },
+    execute: async () => ({ content: [{ type: "text", text: "xx😀".slice(0, 3) }] }),
+  };
+  const { agent, provider } = setup([reply([call("1", "half", {})]), reply([say("ok")])], { tools: [half], permissions: new PermissionPolicy("auto") });
+  await agent.prompt("go");
+  const sent = JSON.stringify(provider.requests[1]!.messages.at(-1));
+  expect(sent).not.toContain("\\ud83d");
+  expect(sent).toContain("xx�");
+});
