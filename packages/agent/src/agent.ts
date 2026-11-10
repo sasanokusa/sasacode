@@ -497,6 +497,7 @@ export class Agent {
     const request = new AbortController();
     const forward = () => request.abort();
     signal.addEventListener("abort", forward, { once: true });
+    if (signal.aborted) forward(); // it came in between requests (a backoff, a hook): the listener never hears it (#96)
     const watchDeltas = this.hooks.has("stream_delta");
     const toolJson = new Map<number, string>();
     let stopped: { plugin: string; reason: string } | undefined;

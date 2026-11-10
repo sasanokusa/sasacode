@@ -402,3 +402,14 @@ test("a refusal's tool calls are not kept: the next request has no call without 
   expect(sent.flatMap((m) => (m.role === "assistant" ? m.content.filter((c) => c.type === "tool_call") : []))).toEqual([]);
   expect(sent[1]).toMatchObject({ role: "assistant", content: [say("I can't")] });
 });
+
+test("an abort that comes in between requests stops the next one: no reply is taken after it (#96)", async () => {
+  const { agent, provider } = setup([reply([say("generated after the abort")])]);
+  agent.hooks.on("before_request", async () => {
+    agent.abort();
+    await Bun.sleep(1);
+  });
+  expect(await agent.prompt("hi")).toBe("aborted");
+  expect(provider.requests).toHaveLength(1);
+  expect(JSON.stringify(agent.messages)).not.toContain("generated after the abort");
+});
