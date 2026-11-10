@@ -150,6 +150,7 @@ export const TO_JA: Record<string, string> = {
   "{name}  [{scope}]  not a sasacode plugin, never loaded: sasacode plugin remove {name}{flag}":
     "{name}  [{scope}]  sasacode のプラグインではなく、読み込まれていない: sasacode plugin remove {name}{flag}",
   "(range {range}: the newest match is installed)": "（{range} のうち最新をインストール）",
+  "no version of {name} matches {range}": "{name}には{range}に合う版がない",
   "published by {people}": "公開者: {people}",
   "on {date}": "（{date}）",
   "{count} files, {size}": "{count} ファイル、{size}",

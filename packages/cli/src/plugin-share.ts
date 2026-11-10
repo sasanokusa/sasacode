@@ -107,10 +107,16 @@ export function describeLocal(dir: string): string[] {
 export async function describeNpm(spec: string, doFetch: typeof fetch = fetch): Promise<string[]> {
   const { name, range } = parseSpec(spec);
   const doc = await getJson(`${registry()}/${name.replace("/", "%2f")}`, doFetch);
-  const version = range && doc.versions?.[range] ? range : range && doc["dist-tags"]?.[range] ? doc["dist-tags"][range] : doc["dist-tags"]?.latest;
+  const latest = doc["dist-tags"]?.latest;
+  const isRange = !!range && !doc.versions?.[range] && !doc["dist-tags"]?.[range];
+  // A range: the version that will be installed, as npm and bun pick it (latest when it fits,
+  // else the newest that does), so what is shown and checked is what arrives (#108).
+  const matching = isRange ? Object.keys(doc.versions ?? {}).filter((x) => Bun.semver.satisfies(x, range!)) : [];
+  const version = !range ? latest : !isRange ? (doc.versions?.[range] ? range : doc["dist-tags"][range]) : matching.includes(latest) ? latest : matching.sort(Bun.semver.order).at(-1);
+  if (isRange && !version) throw new Error(t("no version of {name} matches {range}", { name, range: range! }));
   const v = doc.versions?.[version] ?? {};
   if (!v.sasacode) throw await notAPlugin(name, doFetch);
-  const head = `${name}@${version ?? "?"}${range && !doc.versions?.[range] && !doc["dist-tags"]?.[range] ? ` ${t("(range {range}: the newest match is installed)", { range })}` : ""}`;
+  const head = `${name}@${version ?? "?"}${isRange ? ` ${t("(range {range}: the newest match is installed)", { range: range! })}` : ""}`;
   const lines = [head];
   if (v.description) lines.push(`  ${v.description}`);
   const people = (v.maintainers ?? doc.maintainers ?? []).map((m: { name?: string }) => m.name).filter(Boolean);
@@ -130,15 +136,29 @@ export async function describeNpm(spec: string, doFetch: typeof fetch = fetch): 
 
 // ── publishing ──────────────────────────────────────────────────────
 
+/**
+ * Features by the plugin API version that added them, newest first (docs/plugins.md, "API の版").
+ * A new API version adds its row here: a test checks that the first row is PLUGIN_API_VERSION.
+ */
+export const API_FEATURES: [range: string, uses: RegExp][] = [
+  // ModelInfo.server (model.server, or compared with a server's name; not any `.server`), ProviderConfig.lmstudio
+  ["^1.15.0", /\bmodel\w*\??\.server\b|\.server\s*[!=]==?|\blmstudio\b/i],
+  // agent_end's error: e.error or ({ cause, error }), not `cause === "error"` (older) or console.error
+  ["^1.14.0", /["']agent_end["'][\s\S]*((?<!console)\.error\b|\(\s*\{[^}]*\berror\b)/],
+  ["^1.13.0", /on\(\s*["']usage["']|\bSpend\b/],
+  ["^1.12.0", /\b(onPaste|PasteHandler)\b/],
+  ["^1.11.0", /["']before_request["'][\s\S]*\bfetch\b/],
+  ["^1.10.0", /ui\.input\b|\b(selectMany|InputOptions|SelectManyOptions)\b/],
+  ["^1.9.0", /\b(callTool|showText|defineSettings|ShowTextOptions|SettingsDefinition)\b/],
+  ["^1.8.0", /ctx\.agent|["']switch["']|HookContext/],
+  ["^1.7.0", /on\(\s*["']permission["']|softDeny/],
+  ["^1.6.0", /permissionsAs/],
+  ["^1.5.0", /listModels|registerProvider[\s\S]*fetch/],
+];
+
 /** The lowest plugin API a file needs, judged by the features it mentions. */
 export function apiRangeFor(source: string): string {
-  if (/ui\.input\b|\b(selectMany|InputOptions|SelectManyOptions)\b/.test(source)) return "^1.10.0";
-  if (/\b(callTool|showText|defineSettings|ShowTextOptions|SettingsDefinition)\b/.test(source)) return "^1.9.0";
-  if (/ctx\.agent|["']switch["']|HookContext/.test(source)) return "^1.8.0";
-  if (/on\(\s*["']permission["']|softDeny/.test(source)) return "^1.7.0";
-  if (/permissionsAs/.test(source)) return "^1.6.0";
-  if (/listModels|registerProvider[\s\S]*fetch/.test(source)) return "^1.5.0";
-  return "^1.4.0";
+  return API_FEATURES.find(([, uses]) => uses.test(source))?.[0] ?? "^1.4.0";
 }
 
 /**
@@ -155,6 +175,12 @@ export function describeSource(source: string, name?: string): string | undefine
 }
 
 const NPM_NAME = /^(@[a-z0-9][\w.-]*\/)?[a-z0-9][\w.-]*$/;
+
+/** The npm name a single-file plugin is published under without --name: my_tool.ts → sasacode-plugin-my-tool. */
+export const packageNameFor = (file: string) => `sasacode-plugin-${basename(file, extname(file)).toLowerCase().replace(/[^a-z0-9.-]+/g, "-")}`;
+
+/** The latest published version of what `stagePackage(file, { name })` publishes, to follow it. */
+export const publishedLatest = (file: string, name?: string, doFetch: typeof fetch = fetch) => latestVersion(name ?? packageNameFor(file), doFetch);
 
 export interface StageOptions {
   name?: string;
@@ -175,7 +201,7 @@ export function stagePackage(file: string, o: StageOptions = {}): { dir: string;
   const ext = extname(file);
   if (![".ts", ".js", ".mjs"].includes(ext)) throw new Error(t("{file}: a plugin file ends in .ts, .js or .mjs", { file }));
   const base = basename(file, ext);
-  const name = o.name ?? `sasacode-plugin-${base.toLowerCase().replace(/[^a-z0-9.-]+/g, "-")}`;
+  const name = o.name ?? packageNameFor(file);
   if (!NPM_NAME.test(name)) throw new Error(t('"{name}" is not a valid npm package name; pass --name', { name }));
   const notes: string[] = [];
   if (/from\s+["']\.\.?\//.test(source)) notes.push(t("it imports other local files, which are not included: publish its directory instead"));

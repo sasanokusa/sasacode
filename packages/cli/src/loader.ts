@@ -8,7 +8,7 @@ import * as pluginApi from "@sasacode/plugin-api";
 import { isCompatible, type Plugin } from "@sasacode/plugin-api";
 import { type McpServerConfig, sasacodeHome } from "./config.ts";
 import { readJsonOr } from "./json.ts";
-import { checkPackageDir, describeLocal, describeNpm, NotAPlugin, formatListings, isDir, latestVersion, parseSpec, searchPlugins, stagePackage } from "./plugin-share.ts";
+import { checkPackageDir, describeLocal, describeNpm, NotAPlugin, formatListings, isDir, parseSpec, publishedLatest, searchPlugins, stagePackage } from "./plugin-share.ts";
 
 export interface Manifest {
   name: string;
@@ -298,7 +298,8 @@ export async function pluginCommand(args: string[], cwd: string): Promise<number
         target = spec;
       } else {
         const name = v.name;
-        const latest = v.version ? undefined : await latestVersion(name ?? `sasacode-plugin-${basename(spec).replace(/\.(ts|js|mjs)$/, "").toLowerCase()}`);
+        // The name it will be published under, so the next version follows the last one (#108).
+        const latest = v.version ? undefined : await publishedLatest(spec, name);
         ({ dir: target, pkg, notes } = stagePackage(spec, { name, version: v.version, api: v.api, license: v.license, description: v.description, latest }));
       }
       console.log(t("{name}@{version}  (plugin API {api})\n  {dir}", { name: pkg.name, version: pkg.version, api: pkg.sasacode?.apiVersion ?? "?", dir: target }));
