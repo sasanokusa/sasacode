@@ -184,6 +184,9 @@ async function connect(api: PluginAPI, name: string, cfg: McpServerConfig, state
       // Shown in notices: the server's escape sequences must not reach the terminal.
       transport.stderr?.on("data", (d: Buffer) => (state.stderr = (state.stderr + d.toString().replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, "")).slice(-2000)));
     client.onclose = () => {
+      // A connection that was replaced (/mcp reconnect, a reconnect after a failure) may take its
+      // time to close: its end says nothing about the client of the moment (#101).
+      if (state.client !== client) return;
       // A close we asked for (exit, /mcp reconnect) has already moved the state on.
       if (state.status !== "connected") return;
       state.status = "closed";
@@ -195,7 +198,6 @@ async function connect(api: PluginAPI, name: string, cfg: McpServerConfig, state
     await client.connect(transport);
     state.client = client;
     state.status = "connected";
-    state.attempts = 0;
     await registerTools(api, name, cfg, client, state);
     if (client.getServerCapabilities()?.tools?.listChanged)
       client.setNotificationHandler(ToolListChangedNotificationSchema, () => {
@@ -210,8 +212,13 @@ async function connect(api: PluginAPI, name: string, cfg: McpServerConfig, state
         );
       });
     if (client.getServerCapabilities()?.prompts) await registerPrompts(api, name, client);
+    // Counted as up only now: a server that connects and then fails its tools/list must still run
+    // out of reconnects (#101).
+    state.attempts = 0;
   } catch (e) {
     state.status = "failed";
+    // Its process would otherwise keep running beside the next attempt's (#101).
+    void client.close().catch(() => {});
     state.error = (e instanceof Error ? e.message : String(e)) + (state.stderr ? ` — ${state.stderr.trim().split("\n").slice(-1)[0]}` : "");
     // Repeats are the reconnect loop's own business; one notice is enough to explain a dead server.
     if (!state.attempts)
@@ -239,7 +246,10 @@ async function allPages<T>(list: (cursor?: string) => Promise<{ items: T[]; next
 
 /** Brings the model's tool list in line with what the server offers right now (also on list changes). */
 async function registerTools(api: PluginAPI, server: string, cfg: McpServerConfig, client: Client, state: ServerState) {
-  const tools = await allPages((cursor) => client.listTools(cursor ? { cursor } : undefined).then((p) => ({ items: p.tools, nextCursor: p.nextCursor })));
+  // A server without tools (prompts or resources only) answers tools/list with "Method not found" (#101).
+  const tools = client.getServerCapabilities()?.tools
+    ? await allPages((cursor) => client.listTools(cursor ? { cursor } : undefined).then((p) => ({ items: p.tools, nextCursor: p.nextCursor })))
+    : [];
   state.tools = tools.map((t) => t.name);
   // A tool the server no longer offers must come off the model's list: it would only keep failing.
   const names = tools.map((t) => (cfg.toolNames === "plain" ? t.name : toolName(server, t.name)));

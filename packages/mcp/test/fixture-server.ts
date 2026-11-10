@@ -1,4 +1,5 @@
 // A small MCP server for tests: `bun fixture-server.ts` speaks stdio; import makeServer() for HTTP.
+import { appendFileSync } from "node:fs";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
@@ -8,12 +9,19 @@ import {
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 
+const broken = (): never => {
+  throw new Error("tools are broken");
+};
+
 export function makeServer(): Server {
   // `toggle` lists and unlists the `late` tool, announcing the change like a real server would.
   let late = false;
-  const server = new Server({ name: "fixture", version: "1.0.0" }, { capabilities: { tools: { listChanged: true }, prompts: {} } });
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: [
+  // FIXTURE_NO_TOOLS: prompts only, so there is no tools/list to answer (#101).
+  const noTools = !!process.env.FIXTURE_NO_TOOLS;
+  const server = new Server({ name: "fixture", version: "1.0.0" }, { capabilities: noTools ? { prompts: {} } : { tools: { listChanged: true }, prompts: {} } });
+  // FIXTURE_TOOLS_FAIL: connects, then cannot list its tools (#101).
+  if (!noTools) server.setRequestHandler(ListToolsRequestSchema, async () => ({
+    tools: process.env.FIXTURE_TOOLS_FAIL ? broken() : [
       {
         name: "add",
         description: "Add two numbers",
@@ -26,7 +34,7 @@ export function makeServer(): Server {
       ...(late ? [{ name: "late", description: "Listed after toggle", inputSchema: { type: "object", properties: {} } }] : []),
     ],
   }));
-  server.setRequestHandler(CallToolRequestSchema, async (req) => {
+  if (!noTools) server.setRequestHandler(CallToolRequestSchema, async (req) => {
     const args = (req.params.arguments ?? {}) as { a: number; b: number };
     if (req.params.name === "add") return { content: [{ type: "text", text: String(args.a + args.b) }] };
     if (req.params.name === "big") return { content: [{ type: "text", text: "x".repeat(150_000) }] };
@@ -62,4 +70,12 @@ export function makeServer(): Server {
   return server;
 }
 
-if (import.meta.main) await makeServer().connect(new StdioServerTransport());
+if (import.meta.main) {
+  // FIXTURE_LOG: a line for every process started and ended, to count them (#101).
+  const log = (what: string) => process.env.FIXTURE_LOG && appendFileSync(process.env.FIXTURE_LOG, `${what} ${process.pid}\n`);
+  log("start");
+  // FIXTURE_SLOW_EXIT: takes this many ms to shut down once the client goes away, as a server that
+  // closes a browser or writes out a database does.
+  process.stdin.on("end", () => setTimeout(() => (log("exit"), process.exit(0)), Number(process.env.FIXTURE_SLOW_EXIT ?? 0)));
+  await makeServer().connect(new StdioServerTransport());
+}
