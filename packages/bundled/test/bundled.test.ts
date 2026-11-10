@@ -563,6 +563,18 @@ test("web_fetch reads at most 10 MB of a response", async () => {
   }
 });
 
+test("htmlToText keeps table cells and definition terms apart, and a <pre>'s indentation; a Shift_JIS page is read as one (#120)", async () => {
+  const table = "<table><tr><th>Version</th><th>Node</th></tr><tr><td>1.2</td><td>18.4</td><td>2024-01-05</td></tr></table><dl><dt>timeout</dt><dd>30</dd></dl>";
+  expect(htmlToText(table).text.split("\n")).toEqual(["Version | Node", "1.2 | 18.4 | 2024-01-05", "", "timeout", "30"]);
+  const code = "<p>Example:</p><pre><code>def f(x):\n    if x &lt; 1:\n        return 1\n    return 0</code></pre><p>after   it</p>";
+  expect(htmlToText(readable(`<html><body><main>${code}</main></body></html>`)).text).toBe("Example:\n\ndef f(x):\n    if x < 1:\n        return 1\n    return 0\nafter it");
+  const sjis = Buffer.from("93fa967b8cea82cc8379815b835782c582b78142", "hex"); // 日本語のページです。
+  expect((await readCapped(new Response(sjis, { headers: { "content-type": "text/html; charset=Shift_JIS" } }), 1000)).text).toBe("日本語のページです。");
+  const meta = Buffer.concat([Buffer.from('<meta charset="euc-jp">'), Buffer.from("c6fccbdcb8ec", "hex")]); // 日本語
+  expect((await readCapped(new Response(meta, { headers: { "content-type": "text/html" } }), 1000)).text).toBe('<meta charset="euc-jp">日本語');
+  expect((await readCapped(new Response("ok", { headers: { "content-type": "text/html; charset=no-such" } }), 1000)).text).toBe("ok");
+});
+
 test("htmlToText leaves a numeric reference it cannot decode as written (#44)", () => {
   expect(htmlToText("<p>a &#x110000; b</p>").text).toBe("a &#x110000; b");
   expect(htmlToText("<p>a &#99999999; b</p>").text).toBe("a &#99999999; b");
