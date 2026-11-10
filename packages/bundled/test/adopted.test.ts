@@ -72,11 +72,12 @@ test("background-sessions: a job runs detached and its exit code and output come
   process.env.SASACODE_HOME = home;
   try {
     const b = fake(backgroundSessions, { pollMs: 50 });
-    const started = await b.tools.bg_start.execute({ command: "echo from-the-job; exit 3" }, { cwd: root });
+    // The output is not the command's text: the notice quotes the command, so it must come from the log.
+    const started = await b.tools.bg_start.execute({ command: "echo from-the-$((1+1))-job; exit 3" }, { cwd: root });
     expect(started.details.logPath.startsWith(home)).toBe(true);
     for (let i = 0; i < 100 && !b.injected.length; i++) await Bun.sleep(20);
     expect(b.injected[0]).toContain("exit 3");
-    expect(b.injected[0]).toContain("from-the-job");
+    expect(b.injected[0]).toContain("from-the-2-job"); // on Windows the log stayed empty (#128)
     expect(b.tools.bg_start.permissionsAs).toBe("bash");
 
     const long = await b.tools.bg_start.execute({ command: "sleep 30" }, { cwd: root });
@@ -105,12 +106,11 @@ test("background-sessions: a job two sessions watched is reported once, not agai
     const s3 = fake(backgroundSessions, { pollMs: 20 });
     await Bun.sleep(200);
     expect(s3.injected).toEqual([]);
-    // A finished job whose log holds 250 lines, written here: a command printing them gave an empty
-    // log on Windows' runner, and what is tested is how bg_output pages the log.
-    const lines = await s3.tools.bg_start.execute({ command: "exit 0" }, { cwd: root });
+    // bash's own printf, not seq (which Windows' Git Bash may lack); a job starts slowly there, so wait for its end.
+    const lines = await s3.tools.bg_start.execute({ command: "printf '%s\\n' {1..250}" }, { cwd: root });
     for (let i = 0; i < 500 && !s3.injected.length; i++) await Bun.sleep(20);
-    expect(s3.injected.length).toBe(1);
-    writeFileSync(lines.details.logPath, Array.from({ length: 250 }, (_, i) => `${i + 1}\n`).join(""));
+    expect(s3.injected[0]).toContain("exit 0"); // writing to the log failed on Windows: exit 1 (#128)
+    expect(await Bun.file(lines.details.logPath).text()).toEndWith("249\n250\n");
     const out = await s3.tools.bg_output.execute({ id: lines.details.id }, { cwd: root });
     expect(out.content[0].text).toContain("Use from_line=1 to read from the start.");
     expect(out.content[0].text).not.toContain("from_line=-");

@@ -563,26 +563,24 @@ const plugin: Plugin = (api) => {
       // The wrapper records the exit code to a file via `trap … EXIT`, so even a command that
       // leaves with `exit 3` (or sets its own EXIT trap: it runs in its own bash -c) is recorded
       // and completion is detectable after a restart of sasacode. detached: the job gets its own
-      // process group and outlives us.
-      const script = `trap 'code=$?; printf "%s\\n" "$code" > "$1"' EXIT\nbash -c "$2"\nexit $?`;
+      // process group and outlives us. The wrapper opens the log itself: on Windows a detached
+      // child could not write to a file handle passed in stdio, and every job's log stayed empty (#128).
+      const script = `exec >>"$3" 2>&1\ntrap 'code=$?; printf "%s\\n" "$code" > "$1"' EXIT\nbash -c "$2"\nexit $?`;
       let child: ReturnType<typeof spawn>;
-      const fd = openSync(job.logPath, "a");
       try {
         // On Windows too: a child that is not detached is ended with sasacode (a kill-on-close job object).
-        child = spawn(bashPath(), ["-c", script, "bg-job", job.exitPath, args.command], {
+        child = spawn(bashPath(), ["-c", script, "bg-job", job.exitPath, args.command, job.logPath], {
           cwd: runCwd,
           detached: true,
           windowsHide: true,
-          stdio: ["ignore", fd, fd],
+          stdio: "ignore",
           env: childEnv({ PAGER: "cat", GIT_PAGER: "cat", SASACODE: "1" }),
         });
       } catch (e) {
-        closeSync(fd);
         job.spawnError = String(e);
         finalize(job, null);
         return errorResult(`failed to start \`${args.command}\`: ${e}`);
       }
-      closeSync(fd);
       job.child = child;
       job.pid = child.pid ?? 0;
       save(job);
