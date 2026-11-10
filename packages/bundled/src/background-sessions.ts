@@ -224,6 +224,9 @@ const plugin: Plugin = (api) => {
     if (job.sessionId !== undefined) meta.sessionId = job.sessionId;
     if (job.exitCode !== undefined) meta.exitCode = job.exitCode;
     if (job.finishedAt !== undefined) meta.finishedAt = job.finishedAt;
+    // Another sasacode in this directory may have reported it meanwhile: written back without it, the next start
+    // reported the job again (#121).
+    if (job.notified === undefined && readMeta(job.dir)?.notified) job.notified = true;
     if (job.notified !== undefined) meta.notified = job.notified;
     if (job.killed !== undefined) meta.killed = job.killed;
     if (job.spawnError !== undefined) meta.spawnError = job.spawnError;
@@ -684,7 +687,7 @@ const plugin: Plugin = (api) => {
         to = total;
         from = Math.max(0, total - want);
         note = `[Showing the last ${to - from} of ${total} lines of ${meta.id}'s log${meta.status === "running" ? " (job still running)" : ""}. ${
-          from > 0 ? `Use from_line=1 to read from the start (or from_line=${from + 1 - want} for the previous chunk).` : ""
+          from > 0 ? `Use from_line=1 to read from the start${from + 1 - want > 1 ? ` (or from_line=${from + 1 - want} for the previous chunk)` : ""}.` : ""
         } Full log: ${path}]`;
       }
       return {

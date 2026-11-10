@@ -90,6 +90,31 @@ test("background-sessions: a job runs detached and its exit code and output come
   }
 });
 
+test("background-sessions: a job two sessions watched is reported once, not again at the next start; bg_output never offers a from_line below 1 (#121)", async () => {
+  const home = join(root, "home-twice");
+  process.env.SASACODE_HOME = home;
+  try {
+    const s1 = fake(backgroundSessions, { pollMs: 20 });
+    const started = await s1.tools.bg_start.execute({ command: "sleep 0.3; echo built" }, { cwd: root });
+    const s2 = fake(backgroundSessions, { pollMs: 400 }); // adopts the running job, and sees its end later
+    for (let i = 0; i < 100 && !s1.injected.length; i++) await Bun.sleep(20);
+    await Bun.sleep(600);
+    const meta = JSON.parse((await Bun.file(join(dirname(started.details.logPath), "meta.json")).text()) as string);
+    expect(meta.notified).toBe(true);
+    expect(s1.injected.length + s2.injected.length).toBe(1);
+    const s3 = fake(backgroundSessions, { pollMs: 20 });
+    await Bun.sleep(200);
+    expect(s3.injected).toEqual([]);
+    const lines = await s3.tools.bg_start.execute({ command: "seq 1 250" }, { cwd: root });
+    for (let i = 0; i < 100 && !s3.injected.length; i++) await Bun.sleep(20);
+    const out = await s3.tools.bg_output.execute({ id: lines.details.id }, { cwd: root });
+    expect(out.content[0].text).toContain("Use from_line=1 to read from the start.");
+    expect(out.content[0].text).not.toContain("from_line=-");
+  } finally {
+    delete process.env.SASACODE_HOME;
+  }
+});
+
 test("auto-reconnect: after an error while the endpoint is down, it waits and resumes the work once it answers", async () => {
   const server = Bun.serve({ port: 0, fetch: () => new Response("ok") });
   const port = server.port;
