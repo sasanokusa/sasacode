@@ -35,6 +35,21 @@ export function detectRepetition(text: string, limits: RepetitionLimits): Repeti
   return count >= limits.minRepeats && span >= limits.minSpan ? { unit, count } : undefined;
 }
 
+/**
+ * `text` with the run of `unit` it ends in cut to one copy: the run at the end, not the first two copies anywhere,
+ * which for a unit of "\n" was the answer's first paragraph break (#119). A text that does not end in the run is kept.
+ */
+export function trimRun(text: string, unit: string): string {
+  const n = unit.length, at = text.lastIndexOf(unit + unit);
+  if (!n || at < 0) return text;
+  let end = at + 2 * n;
+  while (text.startsWith(unit, end)) end += n;
+  if (!unit.startsWith(text.slice(end))) return text; // the run is not at the end: what follows it was not repeated
+  let start = at;
+  while (start >= n && text.startsWith(unit, start - n)) start -= n;
+  return text.slice(0, start + n);
+}
+
 const INJECT =
   "[harness] Your previous response was stopped because it kept repeating the same text. Do not repeat it; continue the task from where it was still useful.";
 
@@ -99,9 +114,7 @@ const repetitionGuard: Plugin = (api) => {
     // Keep one copy of the repeated unit. Thinking and tool-call blocks were already dropped by the core.
     if (rep)
       for (const block of message.content) {
-        if (block.type !== "text") continue;
-        const at = block.text.indexOf(rep.unit + rep.unit);
-        if (at >= 0) block.text = block.text.slice(0, at + rep.unit.length);
+        if (block.type === "text") block.text = trimRun(block.text, rep.unit);
       }
     return stops <= maxStops ? { message, inject: INJECT } : { message };
   });

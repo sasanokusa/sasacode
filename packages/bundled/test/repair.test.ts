@@ -139,6 +139,14 @@ test("repetition-guard: stops the loop, keeps one copy, and tells the model", as
   expect(agent.messages.at(-1)).toMatchObject({ content: [{ text: "Reading it now." }] });
 });
 
+test("repetition-guard: a run of newlines is cut where it starts at the end, not at the answer's first paragraph break (#119)", async () => {
+  const answer = "## Findings\n\nFirst, src/config.ts parses the port as a string, which is the bug.\n\nSecond, the fix is to wrap it in Number().\n\nThird, a test for it goes in config.test.ts.\n";
+  const { agent } = await run([reply([{ type: "text", text: answer + "\n".repeat(900) }], 333), reply([{ type: "text", text: "Done." }], 444)], "repetition-guard");
+  const kept = agent.messages[1] as AssistantMessage;
+  expect(kept.stopReason).toBe("stopped");
+  expect(kept.content).toEqual([{ type: "text", text: answer }]);
+});
+
 test("detectRepetition: short units need a long run; code and tables do not trip it", () => {
   const limits = { minRepeats: 4, minSpan: 200, minUnit: 10, shortMinSpan: 400 };
   expect(detectRepetition("なるほど。".repeat(100), limits)).toMatchObject({ unit: "なるほど。", count: 100 });
