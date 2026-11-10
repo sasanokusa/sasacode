@@ -148,3 +148,16 @@ test("where the file system folds case, a deny rule holds for the path in any ca
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("\"always allow\" covers the command as shown: chained, piped, or with spaces around it (#100)", async () => {
+  for (const command of ["cd packages/ai && bun test", "git log --oneline | head -5", "bun test; echo done", "git status\ngit diff", " ls", "ls ", "chmod -R 755 *", "ls > out.txt"]) {
+    const p = new PermissionPolicy("edits");
+    expect((await p.check(bash(command))).decision).toBe("ask");
+    p.addRules({ allow: PermissionPolicy.rulesFor(bash(command)) });
+    expect([command, (await p.check(bash(command))).decision]).toEqual([command, "allow"]);
+    // Only that command: nothing chained after it, and a wildcard rule still has to cover every piece.
+    expect((await p.check(bash(`${command} && rm -rf ~`))).decision).toBe("ask");
+  }
+  const wild = new PermissionPolicy("edits", { allow: ["bash(a\\\\*)"] }); // a literal backslash, then a wildcard
+  expect((await wild.check(bash("a\\ && rm -rf ~"))).decision).toBe("ask");
+});

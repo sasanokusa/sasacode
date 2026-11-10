@@ -321,6 +321,7 @@ function allowedByRules(rules: ParsedRule[], c: PermissionCheck): boolean {
   if (mine.some((r) => r.pattern === undefined)) return true;
   const target = c.tool.matchTarget?.(c.args);
   if (target === undefined) return mine.some((r) => ruleMatches(r, c, true));
+  if (mine.some((r) => !r.pattern!.replace(/\\[\\*]/g, "").includes("*") && wildcard(r.pattern!).test(target))) return true; // a rule without a wildcard ("always allow" adds one for the command shown) covers it whole, chained or not (#100)
   if (SUBSTITUTION.test(target)) return false;
   return segments(target).every((s) => mine.some((r) => wildcard(r.pattern!).test(s)));
 }
