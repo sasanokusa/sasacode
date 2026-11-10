@@ -4,6 +4,8 @@ import { childEnv, saveOutput, text, type ToolDefinition } from "@sasacode/plugi
 import { bashPath, killTree } from "./shell.ts";
 
 const DEFAULT_TIMEOUT_S = 120;
+/** 24 hours. Past 2^31-1 ms (24.8 days) setTimeout fires at once: the command was killed as it started (#90). */
+const MAX_TIMEOUT_S = 86_400;
 const MAX_OUTPUT = 30_000;
 
 interface Args {
@@ -22,7 +24,7 @@ export const bashTool: ToolDefinition<Args> = {
     type: "object",
     properties: {
       command: { type: "string", description: "Command to run" },
-      timeout: { type: "number", description: `Timeout in seconds (default ${DEFAULT_TIMEOUT_S})` },
+      timeout: { type: "number", maximum: MAX_TIMEOUT_S, description: `Timeout in seconds (default ${DEFAULT_TIMEOUT_S}, at most ${MAX_TIMEOUT_S})` },
     },
     required: ["command"],
     additionalProperties: false,
@@ -33,7 +35,7 @@ export const bashTool: ToolDefinition<Args> = {
   summary: (a) => a.command,
   execute(args, ctx) {
     if (ctx.signal.aborted) return Promise.resolve({ content: [text("[Command was interrupted before execution]")], isError: true });
-    const timeoutS = args.timeout && args.timeout > 0 ? args.timeout : DEFAULT_TIMEOUT_S;
+    const timeoutS = Math.min(args.timeout && args.timeout > 0 ? args.timeout : DEFAULT_TIMEOUT_S, MAX_TIMEOUT_S);
     let bash: string;
     try {
       bash = bashPath();

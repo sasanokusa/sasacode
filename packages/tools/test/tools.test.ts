@@ -377,3 +377,9 @@ test("read and bash never cut a surrogate pair in half (#88)", async () => {
   const b = out(await bashTool.execute({ command: "for i in $(seq 1 20000); do printf '😀'; done; echo; echo o" }, ctx()));
   expect(b.isWellFormed()).toBe(true);
 });
+
+test("bash: a timeout past what a timer holds is capped at 24 hours, not fired at once (#90)", async () => {
+  const r = await bashTool.execute({ command: "sleep 0.3; echo done", timeout: 3_600_000 }, ctx());
+  expect(out(r)).toBe("done\n[exit code 0]");
+  expect((bashTool.parameters as { properties: Record<string, unknown> }).properties.timeout).toMatchObject({ maximum: 86_400 });
+});
