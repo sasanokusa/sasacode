@@ -114,7 +114,8 @@ test("headless jsonl emits the whole run and exits 0", async () => {
   const h = await setup({ cwd: proj, noSession: true });
   const lines: string[] = [];
   const orig = process.stdout.write.bind(process.stdout);
-  process.stdout.write = ((s: string) => (lines.push(s), true)) as typeof process.stdout.write;
+  // Calls back as a stream does: headless waits for its writes to go out (#102).
+  process.stdout.write = ((s: string, cb?: () => void) => (lines.push(s), cb?.(), true)) as typeof process.stdout.write;
   try {
     expect(await runHeadless(h, "hi", "jsonl")).toBe(0);
   } finally {
@@ -126,6 +127,33 @@ test("headless jsonl emits the whole run and exits 0", async () => {
   expect(events.map((e) => e.type)).toContain("message_update");
   expect(events.at(-1)).toEqual({ type: "agent_end", cause: "done" });
   expect(JSON.stringify(events)).toContain("hello from replay");
+});
+
+test("headless returns only once its output has gone out to a slow reader (#102)", async () => {
+  writeConfigs({ providers: { test: { api: "replay" } }, model: "test/m" }, {});
+  const reply = { role: "assistant" as const, content: [{ type: "text" as const, text: "a long answer" }], api: "replay", provider: "test", model: "m", usage: emptyUsage(), stopReason: "stop" as const, timestamp: 0 };
+  registerApi("replay", replayProvider([reply]));
+  const h = await setup({ cwd: proj, noSession: true });
+  // A full pipe: every write is queued, and goes out only when the reader takes it.
+  const queued: (() => void)[] = [];
+  const written: string[] = [];
+  const orig = { out: process.stdout.write.bind(process.stdout), err: process.stderr.write.bind(process.stderr) };
+  const slow = ((s: string, cb?: () => void) => (written.push(s), cb && queued.push(cb), false)) as typeof process.stdout.write;
+  process.stdout.write = slow;
+  process.stderr.write = slow;
+  let returned = false;
+  try {
+    const run = runHeadless(h, "hi", "jsonl").then((code) => ((returned = true), code));
+    for (let i = 0; i < 200 && !written.some((s) => s.includes('"agent_end"')); i++) await Bun.sleep(10);
+    await Bun.sleep(100); // the run is over: only the output is still on its way
+    expect(written.some((s) => s.includes('"agent_end"'))).toBe(true);
+    expect(returned).toBe(false); // main() would exit here, dropping the rest
+    for (const cb of queued.splice(0)) cb();
+    expect(await run).toBe(0);
+  } finally {
+    process.stdout.write = orig.out;
+    process.stderr.write = orig.err;
+  }
 });
 
 test("one-shot runs can be chained with -r <id> -p (no tmux needed)", async () => {
@@ -146,8 +174,8 @@ test("one-shot runs can be chained with -r <id> -p (no tmux needed)", async () =
     const w = process.stdout.write.bind(process.stdout);
     const e = process.stderr.write.bind(process.stderr);
     const err: string[] = [];
-    process.stdout.write = (() => true) as typeof process.stdout.write;
-    process.stderr.write = ((s: string) => (err.push(s), true)) as typeof process.stderr.write;
+    process.stdout.write = ((_: string, cb?: () => void) => (cb?.(), true)) as typeof process.stdout.write;
+    process.stderr.write = ((s: string, cb?: () => void) => (err.push(s), cb?.(), true)) as typeof process.stderr.write;
     return fn().then(
       (r) => ((process.stdout.write = w), (process.stderr.write = e), { r, err: err.join("") }),
       (x) => ((process.stdout.write = w), (process.stderr.write = e), Promise.reject(x)),

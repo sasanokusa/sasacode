@@ -126,3 +126,57 @@ test("a file over the limit is not kept: /undo says so instead of guessing", asy
   expect(g.notices.join()).toContain("戻せません");
   expect(readFileSync(f, "utf8")).toBe("new");
 });
+
+test("a file that is not UTF-8 comes back byte for byte (#117)", async () => {
+  const f = join(root, "readme-sjis.txt");
+  const sjis = Buffer.from("93fa967b8cea0a", "hex"); // "日本語\n" in Shift_JIS
+  writeFileSync(f, sjis);
+  const g = fake();
+  await g.call(writeTool, { path: "readme-sjis.txt", content: "new\n" });
+  await g.commands.undo.run({});
+  expect(g.notices.join()).toContain("戻しました");
+  expect(readFileSync(f).equals(sjis)).toBe(true);
+});
+
+test("checkpoints whose calls share an id undo one at a time (#117)", async () => {
+  // A server that sends no ids gets call_0 in every turn (openai-chat).
+  writeFileSync(join(root, "ida.txt"), "a0");
+  writeFileSync(join(root, "idb.txt"), "b0");
+  const g = fake();
+  for (const [path, content] of [["ida.txt", "a1"], ["idb.txt", "b1"]]) {
+    const c = { id: "call_0", name: "write", input: {} };
+    const args = { path, content };
+    await g.fire("tool_call", { call: c, tool: writeTool, args });
+    const result = await writeTool.execute(args, { cwd: root, signal: new AbortController().signal });
+    await g.fire("tool_result", { call: c, result, ran: true });
+  }
+  await g.commands.undo.run({});
+  expect(readFileSync(join(root, "idb.txt"), "utf8")).toBe("b0");
+  expect(readFileSync(join(root, "ida.txt"), "utf8")).toBe("a1");
+  await g.commands.undo.run({});
+  expect(readFileSync(join(root, "ida.txt"), "utf8")).toBe("a0");
+});
+
+test("/undo <name> matches whole path parts: index.ts is not reindex.ts (#117)", async () => {
+  writeFileSync(join(root, "index.ts"), "index v0");
+  writeFileSync(join(root, "reindex.ts"), "reindex v0");
+  const g = fake();
+  await g.call(writeTool, { path: "index.ts", content: "index v1" });
+  await g.call(writeTool, { path: "reindex.ts", content: "reindex v1" });
+  await g.commands.undo.run({ args: "index.ts" });
+  expect(readFileSync(join(root, "index.ts"), "utf8")).toBe("index v0");
+  expect(readFileSync(join(root, "reindex.ts"), "utf8")).toBe("reindex v1");
+});
+
+test("/undo <name> that fits two files lists them and restores neither (#117)", async () => {
+  const { mkdirSync } = await import("node:fs");
+  for (const d of ["p1", "p2"]) mkdirSync(join(root, d), { recursive: true }), writeFileSync(join(root, d, "same.ts"), "0");
+  const g = fake();
+  await g.call(writeTool, { path: "p1/same.ts", content: "1" });
+  await g.call(writeTool, { path: "p2/same.ts", content: "1" });
+  await g.commands.undo.run({ args: "same.ts" });
+  expect(g.notices.join()).toContain("複数");
+  expect(readFileSync(join(root, "p1/same.ts"), "utf8") + readFileSync(join(root, "p2/same.ts"), "utf8")).toBe("11");
+  await g.commands.undo.run({ args: "p1/same.ts" });
+  expect(readFileSync(join(root, "p1/same.ts"), "utf8")).toBe("0");
+});

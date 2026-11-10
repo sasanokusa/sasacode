@@ -43,7 +43,9 @@ const progressNotes: Plugin = (api) => {
   api.on("system_prompt", ({ prompt }, ctx) => (ctx.agent ? undefined : { prompt: `${prompt}\n\n${guidance(named())}` }));
   api.on("user_prompt", ({ content }) => {
     silent = 0;
-    language = promptLanguage(content.map((b) => (b.type === "text" ? b.text : "")).join("")) ?? language;
+    const said = promptLanguage(content.map((b) => (b.type === "text" ? b.text : "")).join(""));
+    // Kanji alone (続行, 了解) is Japanese as much as Chinese: it keeps the language already known, and is Japanese in a Japanese interface (#91).
+    language = said === "Chinese" ? (language ?? (api.ui.lang === "ja" ? "Japanese" : said)) : (said ?? language);
   });
   api.on("turn_end", ({ message }, ctx) => {
     if (ctx.agent) return;

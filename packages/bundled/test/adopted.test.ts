@@ -90,6 +90,35 @@ test("background-sessions: a job runs detached and its exit code and output come
   }
 });
 
+test("background-sessions: a job two sessions watched is reported once, not again at the next start; bg_output never offers a from_line below 1 (#121)", async () => {
+  const home = join(root, "home-twice");
+  process.env.SASACODE_HOME = home;
+  try {
+    const s1 = fake(backgroundSessions, { pollMs: 20 });
+    const started = await s1.tools.bg_start.execute({ command: "sleep 0.3; echo built" }, { cwd: root });
+    const s2 = fake(backgroundSessions, { pollMs: 400 }); // adopts the running job, and sees its end later
+    for (let i = 0; i < 100 && !s1.injected.length; i++) await Bun.sleep(20);
+    await Bun.sleep(600);
+    const meta = JSON.parse((await Bun.file(join(dirname(started.details.logPath), "meta.json")).text()) as string);
+    expect(meta.notified).toBe(true);
+    expect(s1.injected.length + s2.injected.length).toBe(1);
+    const s3 = fake(backgroundSessions, { pollMs: 20 });
+    await Bun.sleep(200);
+    expect(s3.injected).toEqual([]);
+    // A finished job whose log holds 250 lines, written here: a command printing them gave an empty
+    // log on Windows' runner, and what is tested is how bg_output pages the log.
+    const lines = await s3.tools.bg_start.execute({ command: "exit 0" }, { cwd: root });
+    for (let i = 0; i < 500 && !s3.injected.length; i++) await Bun.sleep(20);
+    expect(s3.injected.length).toBe(1);
+    writeFileSync(lines.details.logPath, Array.from({ length: 250 }, (_, i) => `${i + 1}\n`).join(""));
+    const out = await s3.tools.bg_output.execute({ id: lines.details.id }, { cwd: root });
+    expect(out.content[0].text).toContain("Use from_line=1 to read from the start.");
+    expect(out.content[0].text).not.toContain("from_line=-");
+  } finally {
+    delete process.env.SASACODE_HOME;
+  }
+}, 20_000);
+
 test("auto-reconnect: after an error while the endpoint is down, it waits and resumes the work once it answers", async () => {
   const server = Bun.serve({ port: 0, fetch: () => new Response("ok") });
   const port = server.port;
@@ -148,6 +177,25 @@ test("background-sessions: a job from an earlier run is judged by its exit file 
     delete process.env.SASACODE_HOME;
   }
 }, 20_000); // on Windows the pid check starts PowerShell: seconds on a cold machine
+
+test("auto-reconnect: a watch from the session before a switch injects nothing into the new one (#122)", async () => {
+  const server = Bun.serve({ port: 0, fetch: () => new Response("ok") });
+  const port = server.port;
+  server.stop(true);
+  const a = fake(autoReconnect, { checkUrl: `http://127.0.0.1:${port}/`, checkIntervalMs: 30, checkTimeoutMs: 200 });
+  await a.fire("session_start");
+  await a.fire("agent_end", { cause: "error" });
+  for (let i = 0; i < 50 && !a.status.size; i++) await Bun.sleep(10);
+  await a.fire("session_end");
+  await a.fire("session_start"); // /new or /resume
+  const back = Bun.serve({ port, fetch: () => new Response("ok") });
+  try {
+    await Bun.sleep(300);
+    expect(a.injected).toEqual([]);
+  } finally {
+    back.stop(true);
+  }
+});
 
 test("auto-reconnect: without a baseUrl it checks the provider's own API, not a third party", async () => {
   const real = globalThis.fetch;

@@ -135,8 +135,8 @@ async function quiet(fn: () => Promise<unknown>): Promise<string> {
   const out = process.stdout.write.bind(process.stdout);
   const err = process.stderr.write.bind(process.stderr);
   const said: string[] = [];
-  process.stdout.write = (() => true) as typeof process.stdout.write;
-  process.stderr.write = ((s: string) => (said.push(s), true)) as typeof process.stderr.write;
+  process.stdout.write = ((_: string, cb?: () => void) => (cb?.(), true)) as typeof process.stdout.write;
+  process.stderr.write = ((s: string, cb?: () => void) => (said.push(s), cb?.(), true)) as typeof process.stderr.write;
   try {
     await fn();
   } finally {

@@ -147,6 +147,7 @@ export const openaiResponsesProvider: Provider = {
             break;
           }
           case "response.failed":
+            if (/context/i.test(`${ev.response.error?.code} ${ev.response.error?.message}`)) throw new ContextOverflowError(ev.response.error!.message); // as an "error" event (#99)
             throw new Error(ev.response.error?.message ?? "response failed");
           case "error":
             if (/context/i.test(ev.message)) throw new ContextOverflowError(ev.message);

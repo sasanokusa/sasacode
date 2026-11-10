@@ -189,7 +189,7 @@ export async function setup(opts: SetupOptions): Promise<Harness> {
 
   /** `keepModel`: -m was given on the command line, and beats the model the session ended with. */
   const openSession = (path: string, keepModel = false) => {
-    const { file, entries } = SessionFile.open(path);
+    const { file, entries } = SessionFile.open(path, agent.session?.secrets);
     const state = restore(entries);
     agent.reset(state.messages);
     // --no-session: the old conversation is read, and nothing more is written to it.
@@ -206,8 +206,10 @@ export async function setup(opts: SetupOptions): Promise<Harness> {
     }
   };
   const createSession = () => {
+    // The keys the old log redacted carry over: a fork writes the old conversation before any prompt registers them (#103).
+    const secrets = agent.session?.secrets;
     agent.reset();
-    agent.session = opts.noSession ? undefined : SessionFile.create(sessionsDir, opts.cwd);
+    agent.session = opts.noSession ? undefined : SessionFile.create(sessionsDir, opts.cwd, secrets);
     sessionEntries = [];
   };
 
@@ -319,6 +321,8 @@ export async function setup(opts: SetupOptions): Promise<Harness> {
       const kept = agent.messages.slice(0, index);
       await endSession("switch");
       createSession();
+      // And the model's key, as a prompt would register it (the old log may have had none yet).
+      agent.session?.addSecret(await resolveApiKey(agent.model.provider, providers[agent.model.provider]).catch(() => undefined));
       for (const m of kept) agent.session?.append({ type: "message", message: m });
       agent.reset(kept);
       await startSession(false);

@@ -238,8 +238,14 @@ class App {
           name: cmd.name,
           description: cmd.description,
           argumentHint: cmd.argumentHint,
+          // An argument typed out in full offers nothing more, for any plugin's command: enter then runs
+          // it (with a list up, enter would only complete). Longer ones show again after another key (#114).
           getArgumentCompletions: cmd.complete
-            ? async (prefix: string) => (await cmd.complete!(prefix)).map((o) => ({ value: o.value, label: o.label, description: o.description }))
+            ? async (prefix: string) => {
+                const options = await cmd.complete!(prefix);
+                if (options.some((o) => o.value === prefix)) return [];
+                return options.map((o) => ({ value: o.value, label: o.label, description: o.description }));
+              }
             : undefined,
         })),
         this.host.agent.cwd,
@@ -258,8 +264,8 @@ class App {
           { value: "no", label: t("いいえ") },
         ])) === "yes",
       select: (title, options: SelectOption[]) => this.pick(title, options),
-      input: (title, options) => this.ask((done) => new InputDialog(title, options, done)),
-      selectMany: (title, options, opts) => this.ask((done) => new CheckList(title, options, opts.selected ?? [], done)),
+      input: (title, options) => this.ask((done) => new InputDialog(title, options, done, () => this.inputRows())),
+      selectMany: (title, options, opts) => this.ask((done) => new CheckList(title, options, opts.selected ?? [], done, undefined, () => this.inputRows())),
       showText: (options) => this.showText(options),
     };
   }
@@ -359,6 +365,10 @@ class App {
 
   /** Pasted text (or "" for ctrl+v) offered to the plugins; unclaimed text goes to the editor as a paste. */
   private async paste(text: string): Promise<void> {
+    // A held image whose marker left the draft (ctrl+c, deleted) is gone: its number is free for the image
+    // plugin to give a new paste, and must not send the old image in that one's place (#109).
+    const shown = new Set([...this.editor.getText().matchAll(IMAGE_MARKER)].map((m) => Number(m[1])));
+    for (const n of this.held.keys()) if (!shown.has(n)) this.held.delete(n);
     for (const handle of this.host.host.pasteHandlers) {
       const out = await Promise.resolve(handle(text, this.editor.getText())).catch(() => undefined);
       if (out !== undefined) {
@@ -668,14 +678,15 @@ class App {
   }
 
   private async runCommand(text: string): Promise<void> {
-    const [name = "", ...rest] = text.slice(1).split(/\s+/);
+    // The arguments as written, line breaks and indentation kept (a pasted traceback, code): only their ends are trimmed (#112).
+    const [, name = "", args = ""] = /^(\S*)\s*([\s\S]*)$/.exec(text.slice(1))!;
     const cmd = this.host.host.commands.find((c) => c.name === name);
     if (!cmd) {
       this.notify(t("不明なコマンド: /{name}（/help で一覧）", { name }), c.yellow);
       return;
     }
     try {
-      await cmd.run({ args: rest.join(" ").trim() });
+      await cmd.run({ args: args.trim() });
     } catch (e) {
       this.notify(t("/{name} が失敗しました: {error}", { name, error: (e as Error).message }), c.red);
     }
@@ -936,6 +947,7 @@ class App {
             resolve(item?.value);
           },
           maxVisible,
+          () => this.inputRows(),
         ),
       );
     }));

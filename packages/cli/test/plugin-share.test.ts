@@ -3,7 +3,8 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setLang } from "@sasacode/host";
-import { apiRangeFor, checkPackageDir, describeNpm, describeSource, formatListings, parseSpec, searchPlugins, stagePackage } from "../src/plugin-share.ts";
+import { PLUGIN_API_VERSION } from "@sasacode/plugin-api";
+import { API_FEATURES, apiRangeFor, checkPackageDir, describeNpm, describeSource, formatListings, packageNameFor, parseSpec, publishedLatest, searchPlugins, stagePackage } from "../src/plugin-share.ts";
 
 beforeAll(() => setLang("en")); // these assertions quote the English strings
 
@@ -100,6 +101,68 @@ test("API ranges and descriptions", () => {
   expect(describeSource("export default () => {}")).toBeUndefined();
   // Imports first, then a header whose first line is only the name.
   expect(describeSource(`import fs from "node:fs";\n/**\n * tidy\n *\n * Keeps the notes tidy.\n */\nexport default () => {};`, "tidy")).toBe("Keeps the notes tidy.");
+});
+
+test("the version published next is looked up under the name it is published as (#108)", async () => {
+  process.env.SASACODE_HOME = join(root, "home");
+  try {
+    for (const base of ["my_tool.ts", "Other Tool.ts", "plain.mjs"]) {
+      const file = join(root, base);
+      writeFileSync(file, "export default () => {};\n");
+      expect(packageNameFor(file)).toBe(stagePackage(file).pkg.name);
+    }
+    const asked: string[] = [];
+    const doFetch = (async (url: string) => (asked.push(url), json({ "dist-tags": { latest: "0.1.3" } }))) as unknown as typeof fetch;
+    const file = join(root, "my_tool.ts");
+    const latest = await publishedLatest(file, undefined, doFetch);
+    expect(asked[0]).toEndWith("/sasacode-plugin-my-tool");
+    expect(stagePackage(file, { latest }).pkg).toMatchObject({ name: "sasacode-plugin-my-tool", version: "0.1.4" });
+    await publishedLatest(file, "@me/tool", doFetch);
+    expect(asked[1]).toEndWith("/@me%2ftool");
+  } finally {
+    delete process.env.SASACODE_HOME;
+  }
+});
+
+test("the API range follows every API version's features, up to PLUGIN_API_VERSION (#108)", () => {
+  const samples: [string, string][] = [
+    ["^1.15.0", `api.on("before_request", (e) => { if (e.model.server === "ollama") return {}; });`],
+    ["^1.15.0", `if (ctx.model?.server) {}`],
+    ["^1.14.0", `api.on("agent_end", (e) => { if (e.cause === "error") log(e.error); });`],
+    ["^1.14.0", `api.on("agent_end", ({ cause, error }) => {});`],
+    ["^1.13.0", `api.on("usage", ({ usage }) => {});`],
+    ["^1.12.0", `api.ui.onPaste((text) => text.trim());`],
+    ["^1.11.0", `api.on("before_request", (e) => ({ fetch: wrap(e.fetch) }));`],
+    ["^1.10.0", `api.ui.input("Name?")`],
+  ];
+  for (const [range, source] of samples) expect(`${range} ← ${apiRangeFor(source)}`).toBe(`${range} ← ${range}`);
+  // Not the newer features: an unrelated .server, agent_end's cause alone, console.error.
+  expect(apiRangeFor(`cb?.server.close();`)).toBe("^1.4.0");
+  expect(apiRangeFor(`api.on("agent_end", (e) => { if (e.cause === "error") console.error("x"); });`)).toBe("^1.4.0");
+  // Raising PLUGIN_API_VERSION's minor needs a row for it here.
+  const [major, minor] = PLUGIN_API_VERSION.split(".");
+  expect(API_FEATURES[0]![0]).toBe(`^${major}.${minor}.0`);
+});
+
+test("a range is described by the version it installs, not by latest (#108)", async () => {
+  const doFetch = (async () =>
+    json({
+      "dist-tags": { latest: "2.0.0" },
+      time: { "1.2.0": "2026-03-01T00:00:00Z", "2.0.0": "2026-06-01T00:00:00Z" },
+      versions: {
+        "1.0.0": { description: "v1", maintainers: [{ name: "alice" }], sasacode: {} },
+        "1.2.0": { description: "v1 line", maintainers: [{ name: "alice" }], dist: { fileCount: 2, unpackedSize: 1024 }, sasacode: {} },
+        "2.0.0": { description: "v2 rewrite", maintainers: [{ name: "bob" }], dist: { fileCount: 3, unpackedSize: 2048 } },
+      },
+    })) as unknown as typeof fetch;
+  const lines = (await describeNpm("sasacode-plugin-foo@^1", doFetch)).join("\n");
+  expect(lines).toContain("sasacode-plugin-foo@1.2.0 (range ^1");
+  expect(lines).toContain("v1 line");
+  expect(lines).toContain("published by alice on 2026-03-01");
+  expect(lines).toContain("2 files, 1 KB");
+  expect(lines).not.toContain("v2 rewrite");
+  await expect(describeNpm("sasacode-plugin-foo@^3", doFetch)).rejects.toThrow("no version of sasacode-plugin-foo matches ^3");
+  await expect(describeNpm("sasacode-plugin-foo@latest", doFetch)).rejects.toThrow("not a sasacode plugin"); // latest itself still is checked
 });
 
 test("a package directory needs the manifest, and gets the search keyword", () => {

@@ -15,6 +15,8 @@ interface Run {
   status: "running" | "done" | "failed" | "stopped";
   /** Stopped because the caller was interrupted (Esc): the report waits for the next message. */
   interrupted?: boolean;
+  /** Its session ended (/new, /resume, exit): its report belongs to that conversation, not to the next one. */
+  orphaned?: boolean;
   report?: string;
   send?: (text: string) => void;
   stop?: () => void;
@@ -104,7 +106,7 @@ const subagent: Plugin = (api) => {
       void done.then((r) => {
         api.ui.notify(t("task {id}「{description}」が終了しました（{status}）", { id: r.id, description: r.description, status: r.status }), r.status === "done" ? "info" : "warning");
         // After an interruption the user decides what comes next: the report goes with their next message.
-        api.session.inject(`[task ${r.id} "${r.description}" ended: ${r.status}]\n\n${r.report}`, r.interrupted ? "next" : "now");
+        if (!r.orphaned) api.session.inject(`[task ${r.id} "${r.description}" ended: ${r.status}]\n\n${r.report}`, r.interrupted ? "next" : "now");
       });
       return { content: [{ type: "text", text: `Started ${run.id} in the background. Its report will arrive as a message; use task_status / task_send / task_stop with id "${run.id}".` }] };
     },
@@ -114,6 +116,11 @@ const subagent: Plugin = (api) => {
   api.on("agent_end", (e, where) => {
     if (where.agent || e.cause !== "aborted") return;
     for (const r of runs.values()) if (r.background && r.stop) (r.interrupted = true), r.stop();
+  });
+
+  // A switch to another conversation stops them too: their reports started the new one's model unasked (#122).
+  api.on("session_end", () => {
+    for (const r of runs.values()) if (r.background && r.stop) (r.orphaned = true), r.stop();
   });
 
   const find = (id: string) => {

@@ -9,10 +9,13 @@ const PREFIX = /^ +(\d+)(?:\t| *(?=\r?$))/;
 
 const rows = (s: string) => (s.endsWith("\n") ? s.slice(0, -1) : s).split("\n");
 
-/** content without read's line numbers, when every line has one and they count up one by one; else undefined. */
+/**
+ * content without read's line numbers, when every line has one and they count up one by one; else undefined. At least one
+ * has its tab: indented numbers alone (wc -l's output, a column of counts) are the file's text (#92).
+ */
 export function stripLineNumbers(content: string): string | undefined {
   const lines = rows(content), first = Number(PREFIX.exec(lines[0]!)?.[1]);
-  if (!lines.every((l, i) => Number(PREFIX.exec(l)?.[1]) === first + i)) return undefined;
+  if (!lines.some((l) => /^ +\d+\t/.test(l)) || !lines.every((l, i) => Number(PREFIX.exec(l)?.[1]) === first + i)) return undefined;
   return lines.map((l) => l.replace(PREFIX, "")).join("\n") + (content.endsWith("\n") ? "\n" : "");
 }
 

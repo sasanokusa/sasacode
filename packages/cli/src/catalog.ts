@@ -19,9 +19,16 @@ const DEFAULT_HOST: Record<string, string> = {
   "openai-responses": "api.openai.com",
 };
 
-function host(p: ProviderConfig): string {
+/**
+ * Where the service lives: host and path. OpenAI-style base URLs end in /v1 and Anthropic-style
+ * ones do not (its client adds it), so /v1 is left off: ".../provider/v1" and ".../provider" are one
+ * service, while two servers behind one proxy (".../vllm/v1", ".../tabby/v1") are two (#105).
+ */
+function service(p: ProviderConfig): string {
   try {
-    return p.baseUrl ? new URL(p.baseUrl).host : (DEFAULT_HOST[p.api] ?? p.api);
+    if (!p.baseUrl) return DEFAULT_HOST[p.api] ?? p.api;
+    const url = new URL(p.baseUrl);
+    return url.host + url.pathname.replace(/\/+$/, "").replace(/\/v1$/, "");
   } catch {
     return p.baseUrl ?? p.api;
   }
@@ -35,7 +42,7 @@ function host(p: ProviderConfig): string {
 function groups(providers: Record<string, ProviderConfig>): string[][] {
   const byKey = new Map<string, string[]>();
   for (const [name, p] of Object.entries(providers)) {
-    const k = `${p.apiKeyEnv ?? ""}@${host(p)}`;
+    const k = `${p.apiKeyEnv ?? ""}@${service(p)}`;
     byKey.set(k, [...(byKey.get(k) ?? []), name]);
   }
   return [...byKey.values()];

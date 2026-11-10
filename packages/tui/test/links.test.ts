@@ -51,6 +51,17 @@ test("only link targets change: link text, code spans and fenced code stay as wr
   ]);
 });
 
+test("a file in the folder with a line is a file, a #heading is not part of the name, and $ in a path stays as written (#115)", () => {
+  expect(linkTarget("x.ts:42", cwd)).toBe(file("x.ts"));
+  expect(linkTarget("README.md:10", cwd)).toBe(file("README.md"));
+  expect(linkTarget("package.json:3:5", cwd)).toBe(file("package.json"));
+  expect(linkTarget("Makefile:12", cwd)).toBe(file("Makefile"));
+  expect(linkTarget("README.md#setup", cwd)).toBe(file("README.md"));
+  expect(linkTarget("docs/guide.md#install", cwd)).toBe(file("docs", "guide.md"));
+  for (const href of ["tel:5551234", "localhost:3000/x", "vscode:extension/a.b"]) expect(linkTarget(href, cwd)).toBe(href);
+  expect(localLinks("see [a](a$$b.md) and [r](x$&y.md)", cwd)).toBe(`see [a](${file("a$$b.md")}) and [r](${file("x$&y.md")})`);
+});
+
 test("the rendered terminal link points at the file", () => {
   setCapabilityOverrides({ hyperlinks: true });
   const out = new Markdown("[a](docs/a.md)", 0, 0, markdownTheme, undefined, { transform: (m) => localLinks(m, cwd) }).render(200).join("");

@@ -6,11 +6,14 @@
  *   - 退避はセッションログに残るので、/resume のあとも戻せる
  *
  * 設定（config の "plugins": { "settings": { "checkpoints": { ... } } }）:
- * - maxFileKB: 退避するファイルの上限（既定 1024）。大きいもの・テキストでないものは退避せず、
- *   /undo のときに「戻せない」と伝える。bash の変更は対象外（何を書き換えたか分からない）。
+ * - maxFileKB: 退避するファイルの上限（既定 1024）。大きいものは退避せず、/undo のときに「戻せない」と伝える。
+ *   UTF-8 でないもの（Shift_JIS、バイナリなど）はバイト列のまま（base64 で）退避する。
+ *   bash の変更は対象外（何を書き換えたか分からない）。
  */
+import { isUtf8 } from "node:buffer";
+import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { resolve, sep } from "node:path";
 import { t } from "@sasacode/host";
 import type { Plugin } from "@sasacode/plugin-api";
 
@@ -18,6 +21,8 @@ interface Change {
   path: string;
   /** 退避した内容（戻せるときだけ）。 */
   before?: string;
+  /** before は base64 のバイト列: UTF-8 として読むと U+FFFD に化けるファイル（#117）。 */
+  base64?: boolean;
   /** ファイルは元からなかった: 戻すときは削除する。 */
   created?: boolean;
   /** 退避していない（大きい・テキストでない）: 戻せないと伝えるだけ。 */
@@ -26,7 +31,10 @@ interface Change {
 
 /** 1回のツール呼び出しの退避。呼び出し単位でまとめて戻す。 */
 interface Checkpoint {
+  /** チェックポイントごとに一意。呼び出しの id はサーバーによってはターンごとに同じ call_0 になる（#117）。 */
   id: string;
+  /** 呼び出しの id（参考）。 */
+  call?: string;
   tool: string;
   at: number;
   changes: Change[];
@@ -54,8 +62,9 @@ const plugin: Plugin = (api) => {
     try {
       if (!existsSync(path)) return { path, created: true };
       if (statSync(path).size > maxKB * 1024) return { path, skipped: true };
-      const before = readFileSync(path, "utf8");
-      return before.includes("\0") ? { path, skipped: true } : { path, before }; // not text: restoring it as text would corrupt it
+      const bytes = readFileSync(path);
+      // Not UTF-8 text: as a string its undecodable bytes would become U+FFFD, and /undo would write those back (#117).
+      return isUtf8(bytes) && !bytes.includes(0) ? { path, before: bytes.toString("utf8") } : { path, before: bytes.toString("base64"), base64: true };
     } catch {
       return { path, skipped: true };
     }
@@ -77,13 +86,15 @@ const plugin: Plugin = (api) => {
       if (ch.skipped) return !result.isError;
       if (ch.created) return existsSync(ch.path);
       try {
-        return readFileSync(ch.path, "utf8") !== ch.before;
+        return !readFileSync(ch.path).equals(content(ch));
       } catch {
         return true; // なくなったり読めなくなったりした: 戻せるに越したことはない
       }
     });
-    if (keep.length) api.session.append(KIND, { id: call.id, tool: call.name, at: Date.now(), changes: keep } satisfies Checkpoint);
+    if (keep.length) api.session.append(KIND, { id: randomUUID(), call: call.id, tool: call.name, at: Date.now(), changes: keep } satisfies Checkpoint);
   });
+
+  const content = (ch: Change): Buffer => Buffer.from(ch.before ?? "", ch.base64 ? "base64" : "utf8");
 
   /** 1件の変更を巻き戻す。ファイルごとに1行の報告。 */
   const restore = (c: Checkpoint): string[] =>
@@ -95,7 +106,7 @@ const plugin: Plugin = (api) => {
           rmSync(ch.path);
           return t("{path}: 削除しました（変更前はなかったため）", { path: ch.path });
         }
-        writeFileSync(ch.path, ch.before ?? "");
+        writeFileSync(ch.path, content(ch));
         return t("{path}: 戻しました", { path: ch.path });
       } catch (e) {
         return t("{path}: 戻せませんでした（{error}）", { path: ch.path, error: e instanceof Error ? e.message : String(e) });
@@ -115,7 +126,13 @@ const plugin: Plugin = (api) => {
         const lines = left.map((c, i) => `${left.length - i}. ${new Date(c.at).toLocaleTimeString()} ${c.tool} — ${c.changes.map((ch) => ch.path).join(", ")}`);
         return api.ui.notify(`${t("[undo] 戻せる変更（新しい順）:")}\n${lines.reverse().join("\n")}`);
       }
-      const pick = a ? left.filter((c) => c.changes.some((ch) => ch.path === resolve(api.cwd, a) || ch.path.endsWith(a))).at(-1) : left.at(-1);
+      // The whole path, or its last parts: "index.ts" is not reindex.ts (#117).
+      const exact = resolve(api.cwd, a), tail = [sep, "/"].map((s) => s + a.replace(/^\.?[\\/]/, ""));
+      const hit = (p: string) => p === exact || tail.some((t) => p.endsWith(t));
+      const paths = [...new Set(left.flatMap((c) => c.changes.map((ch) => ch.path)).filter(hit))];
+      if (a && paths.length > 1 && !paths.includes(exact))
+        return api.ui.notify(`${t("[undo] {path} に当たるファイルが複数あります。パスをもっと詳しく指定してください:", { path: a })}\n${paths.join("\n")}`, "warning");
+      const pick = a ? left.filter((c) => c.changes.some((ch) => (paths.includes(exact) ? ch.path === exact : hit(ch.path)))).at(-1) : left.at(-1);
       if (!pick) return api.ui.notify(a ? t("[undo] {path} の変更が見つかりません", { path: a }) : t("[undo] 戻せる変更はありません"), "warning");
       // 戻した先からまた戻せる（＝変更の前後が入れ替わる）と迷うので、1件は消費したことにする。
       api.session.append(KIND, { undone: pick.id } satisfies Entry);

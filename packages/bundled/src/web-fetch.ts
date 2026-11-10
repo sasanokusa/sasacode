@@ -22,7 +22,22 @@ export async function readCapped(res: Response, limit: number): Promise<{ text: 
   // claim a 10 MB page was cut when it was read whole).
   const cut = size > limit || (size === limit && !(await reader.read().then((r) => r.done, () => false)));
   await reader.cancel().catch(() => {});
-  return { text: new TextDecoder().decode(Buffer.concat(chunks).subarray(0, limit)), cut };
+  const bytes = Buffer.concat(chunks).subarray(0, limit);
+  return { text: decoder(res.headers.get("content-type"), bytes).decode(bytes), cut };
+}
+
+/**
+ * A decoder for the charset the response names (Content-Type, else a <meta> near the start), UTF-8 when it names none or
+ * one TextDecoder does not know: a Shift_JIS or EUC-JP page read as UTF-8 was all U+FFFD (#120).
+ */
+function decoder(type: string | null, bytes: Uint8Array): TextDecoder {
+  const head = new TextDecoder("latin1").decode(bytes.subarray(0, 4096));
+  const charset = /charset\s*=\s*["']?([\w.:-]+)/i.exec(type ?? "")?.[1] ?? /<meta[^>]+charset\s*=\s*["']?([\w.:-]+)/i.exec(head)?.[1];
+  try {
+    return new TextDecoder(charset ?? "utf-8");
+  } catch {
+    return new TextDecoder();
+  }
 }
 
 export const USER_AGENT = "sasacode (+https://github.com/sasanokusa/sasacode)";
@@ -168,6 +183,7 @@ export function htmlToText(html: string, base?: string): { text: string; links: 
   if (declared) base = linkTarget(declared, base) ?? base;
   const links: string[] = [];
   const numbers = new Map<string, number>();
+  const pre: string[] = [];
   const text = html
     .replace(/<(script|style|noscript|svg|head)[\s\S]*?<\/\1>/gi, "")
     .replace(/<!--[\s\S]*?-->/g, "")
@@ -180,16 +196,24 @@ export function htmlToText(html: string, base?: string): { text: string; links: 
       if (n === undefined) numbers.set(target, (n = links.push(target)));
       return `[${label}][${n}]`;
     })
-    .replace(/<(br|\/p|\/div|\/li|\/h[1-6]|\/tr|\/section|\/article)[^>]*>/gi, "\n")
+    // Set aside as it is: its spaces are indentation, which code and YAML need (#120).
+    .replace(/<pre[^>]*>([\s\S]*?)<\/pre>/gi, (_, inner: string) => `\n\0${pre.push(entities(inner.replace(/<br[^>]*>/gi, "\n").replace(/<[^>]+>/g, ""))) - 1}\0\n`)
+    // A table's cells and a definition list's terms apart: "1.2", "18.4" ran together as 1.218.4 (#120).
+    .replace(/<\/t[dh]>/gi, " | ")
+    .replace(/<(br|\/p|\/div|\/li|\/h[1-6]|\/tr|\/dt|\/dd|\/table|\/section|\/article)[^>]*>/gi, "\n")
     .replace(/<li[^>]*>/gi, "- ")
     .replace(/<[^>]+>/g, "")
     .replace(/&(#x?[0-9a-f]+|\w+);/gi, (m, e: string) => (e.startsWith("#") ? codePoint(e) : ENTITIES[e]) ?? m)
     .replace(/[ \t]+/g, " ")
+    .replace(/ \| *$/gm, "") // after a row's last cell
     .replace(/^ ?(?:- ?)+$/gm, "") // the bullets of emptied list items
     .replace(/\n\s*\n\s*\n+/g, "\n\n")
-    .trim();
+    .trim()
+    .replace(/\0(\d+)\0/g, (_, i: string) => pre[Number(i)]!.replace(/^\n|\n$/g, ""));
   return { text, links };
 }
+
+const entities = (s: string) => s.replace(/&(#x?[0-9a-f]+|\w+);/gi, (m, e: string) => (e.startsWith("#") ? codePoint(e) : ENTITIES[e]) ?? m);
 
 /** Links listed under one part of a page at most (a site's navigation can have hundreds). */
 const MAX_LINKS = 200;

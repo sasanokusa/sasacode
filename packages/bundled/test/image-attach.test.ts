@@ -187,3 +187,14 @@ test("clipboard: Linux reads stdout; macOS goes through a file the script writes
   await expect(clipboardImage("win32", async () => { throw new Error("Command failed: powershell.exe"); })).rejects.toThrow("no image");
   await expect(clipboardImage("freebsd")).rejects.toThrow("not supported");
 });
+
+test("an apostrophe in the text does not swallow a path, and a file:// URL with a host costs no other image (#123)", async () => {
+  const cwd = fixture();
+  const h = await loadPlugin("image-attach", plugin, cwd);
+  for (const text of [`Here's the screenshot ${join(cwd, "shot.png")} what's wrong?`, "what's in @shot.png? it's weird"]) {
+    expect(findRefs(text).map((r) => r.path)).toHaveLength(1);
+    expect(kinds(await prompt(h, text))).toEqual(["text", "image"]);
+  }
+  expect(findRefs("it's '/tmp/a b.png', isn't it")).toMatchObject([{ path: "/tmp/a b.png" }]);
+  expect(kinds(await prompt(h, `file://nas.local/share/a.png and @shot.png`))).toEqual(["text", "image"]);
+});

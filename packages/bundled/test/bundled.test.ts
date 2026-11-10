@@ -123,6 +123,48 @@ test("compaction: /compact shows that it is summarizing, and an empty summary le
   expect(host.status.size).toBe(0);
 });
 
+test("compaction: a summary whose stream was cut leaves the history as it was (#95)", async () => {
+  const cut = reply([say("The user asked to refac")], { stopReason: "error", errorMessage: "the stream ended before it was complete" });
+  const { agent, host } = await setup([cut], ["compaction"]);
+  const history = longHistory();
+  agent.messages = [...history];
+  const compact = host.commands.find((c) => c.name === "compact")!;
+  await expect(Promise.resolve(compact.run({ args: "" }))).rejects.toThrow(/ended before/);
+  expect(agent.messages).toEqual(history);
+});
+
+test("compaction: a tool result clipped in the middle of an emoji is sent well-formed (#88)", async () => {
+  const { agent, host, provider } = await setup([reply([say("SUMMARY")])], ["compaction"]);
+  agent.messages = [
+    { role: "user", content: [say("look")], timestamp: 0 },
+    reply([call("c1", "read", { path: "e.txt" })]),
+    { role: "tool", toolCallId: "c1", toolName: "read", content: [say(`${"x".repeat(1999)}${"😀".repeat(10)}`)], isError: false, timestamp: 0 },
+    reply([say("ok")]),
+  ];
+  await host.commands.find((c) => c.name === "compact")!.run({ args: "" });
+  const sent = provider.requests[0]!.messages[0]!.content[0] as { text: string };
+  expect(sent.text.isWellFormed()).toBe(true);
+});
+
+test("compaction: /compact while a tool runs keeps the call, so its result does not arrive without it (#118)", async () => {
+  let release!: () => void, started!: () => void;
+  const running = new Promise<void>((r) => (started = r));
+  const slow = { name: "slow", description: "waits", parameters: { type: "object", properties: {} }, execute: () => (started(), new Promise((r) => (release = () => r({ content: [say("finished")] })))) };
+  const { agent, host, provider } = await setup([reply([call("call-1", "slow", {})]), reply([say("SUMMARY")]), reply([say("done")])], ["compaction"]);
+  await host.load("slow", (api) => api.registerTool(slow as any));
+  agent.permissions = new PermissionPolicy("auto");
+  agent.messages = longHistory();
+  const run = agent.prompt("go");
+  await running;
+  await host.commands.find((c) => c.name === "compact")!.run({ args: "" });
+  release();
+  await run;
+  const sent = provider.requests[2]!.messages;
+  const calls = new Set(sent.flatMap((m) => (m.role === "assistant" ? m.content.flatMap((c) => (c.type === "tool_call" ? [c.id] : [])) : [])));
+  expect(sent.filter((m) => m.role === "tool").every((m) => m.role === "tool" && calls.has(m.toolCallId))).toBe(true);
+  expect(JSON.stringify(sent[0])).toContain("SUMMARY");
+});
+
 /** A session of about `chars` characters: questions, file reads with long results, answers. */
 function readingSession(chars: number): Message[] {
   const history: Message[] = [];
@@ -476,6 +518,18 @@ test("read-only-shell: options that write files or run programs go back to the u
   for (const c of ["rg foo", "git log --oneline", "git show HEAD", "git diff", "tree -a", "file x", "ls -la"]) expect(writesOrRuns(c)).toBe(false);
 });
 
+test("read-only-shell: an expansion that bash turns into such an option goes back to the user; so does an edit under .git (#116)", async () => {
+  const { writesOrRuns } = await import("../src/permission-presets.ts");
+  for (const c of ["git diff ${HOME:+--output=/tmp/o.txt}", "git diff {--output=/tmp/o.txt,--stat}", "git diff $'--output=/tmp/o.txt'", "rg ${HOME:+--pre=./pre.sh} two f.txt", "git log `echo --output=x`", "git show \"$X\"", "tree {-o,x} y"])
+    expect([c, writesOrRuns(c)]).toEqual([c, true]);
+  for (const c of ["rg '${not expanded}' src", "rg 'a{1,2}' f", "rg \"a{1,2}\" f", "cat $HOME/x", "ls {a,b}"]) expect([c, writesOrRuns(c)]).toEqual([c, false]);
+  const { agent } = await setup([], ["permission-presets"], { settings: { "permission-presets": { presets: ["guard", "read-only-shell"] } } });
+  const { editTool, writeTool } = await import("@sasacode/tools");
+  expect((await agent.permissions.check({ tool: editTool, args: { path: ".git/config" }, cwd: root })).decision).toBe("ask");
+  expect((await agent.permissions.check({ tool: writeTool, args: { path: "sub/.git/hooks/x" }, cwd: root })).decision).toBe("ask");
+  expect((await agent.permissions.check({ tool: editTool, args: { path: "src/a.ts" }, cwd: root })).decision).toBe("allow");
+});
+
 test("subagents get neither todo_write nor set_goal: the caller's list and goal stay its own", async () => {
   const { agent, provider } = await setup([reply([call("t", "task", { description: "look", prompt: "look around" })]), reply([say("report")]), reply([say("done")])], ["subagent", "todo", "goal"]);
   await agent.prompt("go");
@@ -507,6 +561,18 @@ test("web_fetch reads at most 10 MB of a response", async () => {
   } finally {
     server.stop(true);
   }
+});
+
+test("htmlToText keeps table cells and definition terms apart, and a <pre>'s indentation; a Shift_JIS page is read as one (#120)", async () => {
+  const table = "<table><tr><th>Version</th><th>Node</th></tr><tr><td>1.2</td><td>18.4</td><td>2024-01-05</td></tr></table><dl><dt>timeout</dt><dd>30</dd></dl>";
+  expect(htmlToText(table).text.split("\n")).toEqual(["Version | Node", "1.2 | 18.4 | 2024-01-05", "", "timeout", "30"]);
+  const code = "<p>Example:</p><pre><code>def f(x):\n    if x &lt; 1:\n        return 1\n    return 0</code></pre><p>after   it</p>";
+  expect(htmlToText(readable(`<html><body><main>${code}</main></body></html>`)).text).toBe("Example:\n\ndef f(x):\n    if x < 1:\n        return 1\n    return 0\nafter it");
+  const sjis = Buffer.from("93fa967b8cea82cc8379815b835782c582b78142", "hex"); // 日本語のページです。
+  expect((await readCapped(new Response(sjis, { headers: { "content-type": "text/html; charset=Shift_JIS" } }), 1000)).text).toBe("日本語のページです。");
+  const meta = Buffer.concat([Buffer.from('<meta charset="euc-jp">'), Buffer.from("c6fccbdcb8ec", "hex")]); // 日本語
+  expect((await readCapped(new Response(meta, { headers: { "content-type": "text/html" } }), 1000)).text).toBe('<meta charset="euc-jp">日本語');
+  expect((await readCapped(new Response("ok", { headers: { "content-type": "text/html; charset=no-such" } }), 1000)).text).toBe("ok");
 });
 
 test("htmlToText leaves a numeric reference it cannot decode as written (#44)", () => {
@@ -798,6 +864,16 @@ test("progress-notes: the system prompt asks for progress lines, and silent tool
   expect(JSON.stringify(off.provider.requests)).not.toContain("with no text");
   expect(off.provider.requests[0]!.system).toContain("in the language the user writes in."); // "go" names none
   expect(off.provider.requests[0]!.system).toContain("Keep the user informed"); // 0 turns off only the reminder
+});
+
+test("progress-notes: a prompt in kanji alone keeps Japanese, and is Japanese in a Japanese interface (#91)", async () => {
+  const { agent, provider } = await setup([reply([say("a")]), reply([say("b")])], ["progress-notes"]);
+  await agent.prompt("テストを直して");
+  await agent.prompt("続行");
+  expect(provider.requests[1]!.system).toContain("in Japanese, the language the user writes in");
+  const fresh = await setup([reply([say("a")])], ["progress-notes"]); // the host's interface language is ja by default
+  await fresh.agent.prompt("了解");
+  expect(fresh.provider.requests[0]!.system).toContain("in Japanese, the language the user writes in");
 });
 
 test("promptLanguage names the language a prompt's script tells", () => {

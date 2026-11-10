@@ -1,6 +1,10 @@
 import { afterAll, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { ProviderConfig } from "@sasacode/ai";
 import { ModelCatalog } from "../src/catalog.ts";
+import { setup } from "../src/setup.ts";
 
 // One fake OpenAI-compatible endpoint standing in for a multi-format service like Command Code.
 const server = Bun.serve({
@@ -104,4 +108,59 @@ test("Ollama: num_ctx is the context window, otherwise the trained maximum is sh
     ollama.stop(true);
     openai.stop(true);
   }
+});
+
+test("two servers behind one proxy, told apart by path, are listed each with its own models, and -m takes either (#105)", async () => {
+  const proxy = Bun.serve({
+    port: 0,
+    fetch(req) {
+      const path = new URL(req.url).pathname;
+      if (path === "/vllm/v1/models") return Response.json({ object: "list", data: [{ id: "qwen-coder", object: "model" }] });
+      if (path === "/tabby/v1/models") return Response.json({ object: "list", data: [{ id: "deepseek-coder", object: "model" }] });
+      return new Response("", { status: 404 });
+    },
+  });
+  const root = mkdtempSync(join(tmpdir(), "sasacode-catalog-"));
+  const saved = process.env.SASACODE_HOME;
+  try {
+    const providers: Record<string, ProviderConfig> = {
+      vllm: { api: "openai-chat", baseUrl: `http://127.0.0.1:${proxy.port}/vllm/v1` },
+      tabby: { api: "openai-chat", baseUrl: `http://127.0.0.1:${proxy.port}/tabby/v1` },
+    };
+    const catalog = new ModelCatalog(providers, async () => undefined, () => "vllm");
+    expect((await catalog.list()).map((m) => m.spec).sort()).toEqual(["tabby/deepseek-coder", "vllm/qwen-coder"]);
+    expect(await catalog.offers("tabby/deepseek-coder")).toEqual({ ok: true, similar: [] });
+    expect((await catalog.offers("tabby/qwen-coder"))?.ok).toBe(false); // the other server's model
+    expect((await catalog.entry("tabby/deepseek-coder"))?.spec).toBe("tabby/deepseek-coder");
+    // The startup check of -m goes through the same listing.
+    const home = join(root, "home");
+    mkdirSync(home, { recursive: true });
+    mkdirSync(join(root, "proj"), { recursive: true });
+    writeFileSync(join(home, "config.json"), JSON.stringify({ providers, model: "vllm/qwen-coder", plugins: { disabled: ["openai-codex"] } }));
+    process.env.SASACODE_HOME = home;
+    const h = await setup({ cwd: join(root, "proj"), model: "tabby/deepseek-coder", noSession: true });
+    try {
+      await h.checkModel("tabby/deepseek-coder");
+      await expect(h.checkModel("tabby/qwen-coder")).rejects.toThrow("tabby/qwen-coder");
+    } finally {
+      await h.shutdown();
+    }
+  } finally {
+    if (saved === undefined) delete process.env.SASACODE_HOME;
+    else process.env.SASACODE_HOME = saved;
+    proxy.stop(true);
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("one service under one key stays one group whether its base URL ends in /v1 or not (#105)", async () => {
+  const catalog = new ModelCatalog(
+    {
+      svc: { api: "openai-chat", baseUrl: `${base}/`, apiKeyEnv: "SVC_KEY" },
+      "svc-anthropic": { api: "anthropic", baseUrl: `http://localhost:${server.port}/`, apiKeyEnv: "SVC_KEY" },
+    },
+    async () => "k",
+    () => "svc",
+  );
+  expect((await catalog.list()).map((m) => m.spec)).toEqual(["svc-anthropic/claude-x", "svc/gpt-y", "svc/plain"]);
 });

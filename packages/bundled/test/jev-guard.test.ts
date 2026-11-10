@@ -135,6 +135,19 @@ test("state: targets resolved, placed and described by git; the user's request i
   expect((scratch.targets as { location: string }[])[0]!.location).toBe("a temporary directory");
 });
 
+test("state: .git is not \"committed\", a glob is looked at file by file, and &> or >& writes its file (#113)", () => {
+  const dir = repo();
+  writeFileSync(join(dir, "notes.log"), "mine");
+  const facts = (command: string) => jevState({ tool: bashTool, args: { command }, cwd: dir }).targets as { path: string; exists: string; git: string }[];
+  expect(facts("rm -rf .git")[0]!.git).toBe("the repository's .git (its history: git cannot restore it)");
+  expect(facts("rm -rf *.log")).toMatchObject([{ path: "notes.log", exists: "file", git: "untracked (not in git, cannot be restored from it)" }]);
+  expect(facts("rm -rf *.nothing")[0]).toMatchObject({ exists: "a glob that names nothing here (what it matches is unchecked)", git: "n/a" });
+  expect(pathArgs("echo x &> ~/.zshrc")).toEqual(["~/.zshrc"]);
+  expect(pathArgs("echo x >& ~/.zshrc")).toEqual(["~/.zshrc"]);
+  expect(pathArgs("make 2>&1 >log.txt; ls >&2; cmd 2>& 1 &>> out.txt")).toEqual(["log.txt", "out.txt"]);
+  expect(pathArgs("sleep 1 & rm a.txt")).toEqual(["a.txt"]); // a background & still ends a command
+});
+
 const reply = (content: AssistantContent[]): AssistantMessage => ({
   role: "assistant",
   content,

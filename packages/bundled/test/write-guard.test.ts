@@ -95,3 +95,9 @@ test("stripLineNumbers: blank lines with or without their tab, CRLF, a final new
   expect(stripLineNumbers("     2\ta\n     1\tb")).toBeUndefined();
   expect(stripLineNumbers("")).toBeUndefined();
 });
+
+test("stripLineNumbers: indented numbers with no tab anywhere are the file's text (#92)", () => {
+  for (const s of [" 1\n 2\n 3\n", "  10\n  11\n  12\n", "    1\n    2\n", " 7\n", "       7\n"]) expect([s, stripLineNumbers(s)]).toEqual([s, undefined]);
+  expect(stripLineNumbers("  1\tfoo\n")).toBe("foo\n");
+  expect(stripLineNumbers("     1\ta\n     2\n     3\tb\n")).toBe("a\n\nb\n"); // a blank line among numbered ones
+});

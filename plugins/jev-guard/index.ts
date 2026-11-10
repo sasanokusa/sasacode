@@ -5,8 +5,11 @@ import type { Decision, HookMap, Plugin, ToolDefinition } from "@sasacode/plugin
 import { type Backend, type BackendName, type BackendSettings, detectService, makeBackend, parseNative, type Question, type RawAnswers } from "./backends.ts";
 import { L, setLang } from "./lang.ts";
 
-/** Where one shell command ends and the next begins (the core splits commands the same way). */
-const CHAIN = /&&|\|\||;|\||\n|&/;
+/**
+ * Where one shell command ends and the next begins (the core splits commands the same way), except the & of &> and >&:
+ * split there, `echo x &> ~/.zshrc` lost the file it writes (#113).
+ */
+const CHAIN = /&&|\|\||;|\||\n|(?<!>)&(?!>)/;
 
 function isInside(path: string, dir: string): boolean {
   const rel = relative(dir, path);
@@ -206,9 +209,11 @@ export function pathArgs(command: string): string[] {
     let skipFirst = ["chmod", "chown", "chgrp"].includes(program);
     for (let i = 1; i < words.length; i++) {
       const w = words[i]!;
-      const redirect = /^([0-9]*|&)>>?(.*)$/.exec(w);
+      const redirect = /^([0-9]*|&)>>?(&?)(.*)$/.exec(w);
       if (redirect) {
-        add(redirect[2] || words[++i] || "");
+        // >&2 and 2>&1 copy a descriptor; >& file, like &> file, writes the file.
+        const target = redirect[3] || words[++i] || "";
+        if (!(redirect[2] && /^(\d+|-)$/.test(target))) add(target);
         continue;
       }
       if (w.startsWith("<")) {
@@ -275,7 +280,20 @@ function gitState(path: string, root: string | undefined): string {
   if (tracked) return untracked ? "tracked by git and committed, plus untracked files" : "tracked by git and committed";
   if (untracked) return "untracked (not in git, cannot be restored from it)";
   if (ignored) return "ignored by git (build output, caches, dependencies)";
-  return "tracked by git and committed";
+  // Nothing reported is not "committed" (#113): .git itself is the history, and git cannot bring it back.
+  if (isInside(path, join(root, ".git"))) return "the repository's .git (its history: git cannot restore it)";
+  return "unknown to git (it reports nothing for this path)";
+}
+
+/** What a glob argument names in the workspace, at most 12 paths; the glob itself when it matches nothing or cannot be read (#113). */
+function globbed(p: string, cwd: string): string[] {
+  if (!/[*?[]/.test(p) || isAbsolute(p) || p.startsWith("~") || p.startsWith("$")) return [p];
+  try {
+    const found = Iterator.from(new Bun.Glob(p).scanSync({ cwd, dot: true, onlyFiles: false })).take(12).toArray();
+    return found.length ? found : [p];
+  } catch {
+    return [p];
+  }
 }
 
 /** Scratch space: changes there do not touch the user's files. */
@@ -314,9 +332,9 @@ export function buildState(f: CallFacts): Record<string, unknown> {
   const top = git(f.cwd, ["rev-parse", "--show-toplevel"])?.trim();
   const root = top ? real(resolve(top)) : undefined; // spelled like the targets (C:/x from git on Windows)
   const workspace = real(f.cwd);
-  const targets = written.slice(0, 12).map((p) => {
+  const targets = written.flatMap((p) => globbed(p, f.cwd)).slice(0, 12).map((p) => {
     const where = real(expand(p, f.cwd));
-    const exists = existsSync(where) ? (statSync(where).isDirectory() ? "directory" : "file") : "does not exist";
+    const exists = existsSync(where) ? (statSync(where).isDirectory() ? "directory" : "file") : /[*?[]/.test(p) ? "a glob that names nothing here (what it matches is unchecked)" : "does not exist";
     return {
       path: p,
       resolves_to: tildify(where),
@@ -329,7 +347,7 @@ export function buildState(f: CallFacts): Record<string, unknown> {
               ? "a temporary directory"
               : "outside the workspace",
       exists,
-      git: exists === "does not exist" ? "n/a" : gitState(where, root),
+      git: existsSync(where) ? gitState(where, root) : "n/a",
     };
   });
   const state: Record<string, unknown> = { workspace: tildify(workspace), call };

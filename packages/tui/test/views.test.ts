@@ -51,6 +51,21 @@ test("the input dialog submits typed text, cancels on esc, and shows controls as
   expect(got).toEqual(["abc", undefined]);
 });
 
+test("the picker shows its title and options' controls as visible text, and returns the option as given (#110)", async () => {
+  const { Picker } = await import("../src/dialogs.ts");
+  const got: unknown[] = [];
+  const option = { value: "x", label: "Yes\x1b]0;pwned\x07", description: "sure\x1b[8m" };
+  const p = new Picker("Run it?\x1b]52;c;cm0gLXJmIH4=\x07\x1b[8m hidden \x1b[0m", [option, { value: "n", label: "No" }], (i) => got.push(i));
+  const shown = p.render(80).join("\n");
+  expect(shown).not.toContain("\x1b]52");
+  expect(shown).not.toContain("\x1b]0;");
+  expect(shown).not.toContain("\x1b[8m");
+  expect(plain(shown)).toContain("Run it?␛]52;c;cm0gLXJmIH4=␛[8m hidden ␛[0m");
+  expect(plain(shown)).toContain("Yes␛]0;pwned");
+  p.handleInput("\r");
+  expect(got).toEqual([option]);
+});
+
 test("the check list toggles with space and confirms in option order", async () => {
   const { CheckList } = await import("../src/dialogs.ts");
   const got: (string[] | undefined)[] = [];
@@ -64,6 +79,46 @@ test("the check list toggles with space and confirms in option order", async () 
   list.handleInput("\r");
   new CheckList("Which?", items, [], (v) => got.push(v)).handleInput("\x1b");
   expect(got).toEqual([["a", "b"], undefined]);
+});
+
+test("dialogs wrap a long question whole, show the selected option's description in full, and scroll the question on a short screen (#111)", async () => {
+  const { CheckList, InputDialog, Picker } = await import("../src/dialogs.ts");
+  const { visibleWidth } = await import("@earendil-works/pi-tui");
+  const question = `${"認証方式を決める必要があります。既存のセッションCookie方式を残したままJWTを追加するか、置き換えるかを選んでください。".repeat(2)}最後まで読めること`;
+  const desc = (k: string) => `${"移行は安全だが、認証の実装が二つになり保守の手間が増える。".repeat(3)}説明${k}の終わり`;
+  const items = [{ value: "a", label: "JWTを追加", description: desc("A") }, { value: "b", label: "JWTに置き換え", description: desc("B") }];
+  const whole = (lines: string[]) => plain(lines.join(""));
+  const fits = (lines: string[]) => lines.every((l) => visibleWidth(l) <= 80);
+
+  const picker = new Picker(question, items, () => {});
+  let lines = picker.render(80);
+  expect(fits(lines)).toBe(true);
+  expect(whole(lines)).toContain(question);
+  expect(whole(lines)).toContain("説明Aの終わり");
+  picker.handleInput("\x1b[B");
+  expect(whole(picker.render(80))).toContain("説明Bの終わり");
+
+  lines = new InputDialog(question, { message: "理由も書いてください" }, () => {}).render(80);
+  expect(fits(lines)).toBe(true);
+  expect(whole(lines)).toContain(question);
+
+  const check = new CheckList(question, items, [], () => {});
+  lines = check.render(80);
+  expect(fits(lines)).toBe(true);
+  expect(whole(lines)).toContain(question);
+  expect(whole(lines)).toContain("説明Aの終わり");
+
+  // On a short screen the question gives way to the choices, and shift+↓ brings its end into view.
+  const short = new Picker(`${question.repeat(3)}質問の終わり`, items, () => {}, 10, () => 12);
+  lines = short.render(80);
+  expect(lines.length).toBeLessThanOrEqual(12);
+  expect(plain(lines.join("\n"))).toContain("JWTに置き換え");
+  expect(plain(lines.join("\n"))).toContain("shift+↑↓");
+  expect(whole(lines)).not.toContain("質問の終わり");
+  for (let i = 0; i < 10; i++) short.handleInput("\x1b[1;2B");
+  lines = short.render(80);
+  expect(lines.length).toBeLessThanOrEqual(12);
+  expect(whole(lines)).toContain("質問の終わり");
 });
 
 test("a reply whose blocks shift (unsigned thinking dropped on interrupt) is redrawn, not crashed on", () => {

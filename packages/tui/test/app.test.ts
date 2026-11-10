@@ -611,11 +611,42 @@ test("picker: backspace takes a whole emoji; no match is said in the interface's
   await term.type("/exit"); await term.send("\r"); await exited;
 });
 
+test("a plugin command whose argument is typed out runs on the first enter, whatever its completion returns (#114)", async () => {
+  const { term, host, exited } = await start([]);
+  const got: string[] = [];
+  await host.load("complete-test", (api) =>
+    api.registerCommand({
+      name: "toggle",
+      description: "x",
+      // As jev-guard and workflows do: the exact match too, and a longer one starting with it.
+      complete: (prefix) => ["on", "off", "offline"].filter((v) => v.startsWith(prefix)).map((v) => ({ value: v, label: v })),
+      run: ({ args }) => void got.push(args),
+    }),
+  );
+  await term.type("/toggle of");
+  expect(term.text()).toContain("offline"); // completion is up
+  await term.type("f");
+  await term.send("\r");
+  expect(got).toEqual(["off"]);
+  await term.type("/exit"); await term.send("\r"); await exited;
+});
+
 test("a fully typed /effort runs on the first enter (#29)", async () => {
   const { term, agent, exited } = await start([]);
   await term.type("/effort low");
   await term.send("\r");
   expect(agent.thinking).toBe("low");
+  await term.type("/exit"); await term.send("\r"); await exited;
+});
+
+test("a command's arguments keep their line breaks and indentation (#112)", async () => {
+  const { term, host, exited } = await start([]);
+  const got: string[] = [];
+  await host.load("args-test", (api) => api.registerCommand({ name: "argstest", description: "x", run: ({ args }) => void got.push(args) }));
+  await term.type("/argstest ");
+  await term.send("\x1b[200~Traceback:\n  File \"a.py\", line 12\n    total = price * qty\x1b[201~");
+  await term.send("\r");
+  expect(got).toEqual(['Traceback:\n  File "a.py", line 12\n    total = price * qty']);
   await term.type("/exit"); await term.send("\r"); await exited;
 });
 
@@ -763,6 +794,30 @@ test("/fork puts a message's image back with it, also when its file is gone, wit
   expect(imagesIn(last)).toBe(1);
   expect(textOf(last!.content as never)).toContain(`[Image 1: ${png}]`);
   expect(JSON.stringify(last!.content)).not.toContain("[Image 1: [Image");
+  await term.type("/exit"); await term.send("\r"); await exited;
+});
+
+test("an image put back by /fork is not sent for a later pasted one once its draft is cleared (#109)", async () => {
+  const script = [reply([{ type: "text", text: "red" }]), reply([{ type: "text", text: "blue" }])];
+  const { term, provider, agent, exited } = await startWithImages(script);
+  const red = join(agent.cwd, "red.png");
+  const blue = join(agent.cwd, "blue.png");
+  writeFileSync(red, PNG);
+  writeFileSync(blue, PNG);
+  await term.send(`\x1b[200~${red}\x1b[201~`);
+  await term.type("what is this?"); await term.send("\r");
+  await Bun.sleep(200);
+  await term.type("/fork"); await term.send("\r");
+  await term.send("\r"); // the only message: "[Image #1] what is this?" comes back
+  await term.send("\x03"); // ctrl+c clears the draft
+  await term.send(`\x1b[200~${blue}\x1b[201~`);
+  expect(term.text()).toContain("[Image #1]");
+  await term.type("and this one?"); await term.send("\r");
+  await Bun.sleep(200);
+  const last = provider.requests.at(-1)!.messages.at(-1);
+  expect(imagesIn(last)).toBe(1);
+  expect(textOf(last!.content as never)).toContain(`[Image 1: ${blue}] and this one?`);
+  expect(textOf(last!.content as never)).not.toContain("red.png");
   await term.type("/exit"); await term.send("\r"); await exited;
 });
 

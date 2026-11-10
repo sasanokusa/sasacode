@@ -91,6 +91,8 @@ export const TO_JA: Record<string, string> = {
   "plugin {path} skipped: {error}": "プラグイン {path} を飛ばした: {error}",
   "needs plugin API {need}, host provides {have}": "プラグイン API {need} が必要（ホストは {have} を提供）",
   "{file} is not a file inside {dir}": "{file} は {dir} の中のファイルではない",
+  "{file} is inside node_modules or .git, which the project's trust does not cover": "{file}はnode_modulesか.gitの中にあり、プロジェクトの信頼の対象外",
+  '"{name}" is not a package name': "「{name}」はパッケージ名ではない",
   "{file} has no default export function": "{file} に default export の関数がない",
   "{cmd} failed": "{cmd} が失敗",
   "stopped: pass --yes to go ahead without a question (no terminal to ask on)": "中止: 質問なしで進めるには --yes（確認できる端末がない）",
@@ -131,6 +133,8 @@ export const TO_JA: Record<string, string> = {
     "{spec}: パスではなく `sasacode plugin list` に表示されるプラグイン名を指定する",
   "Remove {name} from {dir}?": "{name} を {dir} から消す？",
   "removed {name}": "{name} を削除",
+  "{spec}: no plugin by that name in {dir} (see sasacode plugin list)": "{spec}: その名前のプラグインは{dir}にない（sasacode plugin listで確認できる）",
+  "{name} is still installed at {path}": "{name}はまだ{path}に残っている",
 
   // ── plugin-share.ts: search, describe, publish ─────────────────────
   "{url} returned {status}": "{url} は {status} を返した",
@@ -146,6 +150,7 @@ export const TO_JA: Record<string, string> = {
   "{name}  [{scope}]  not a sasacode plugin, never loaded: sasacode plugin remove {name}{flag}":
     "{name}  [{scope}]  sasacode のプラグインではなく、読み込まれていない: sasacode plugin remove {name}{flag}",
   "(range {range}: the newest match is installed)": "（{range} のうち最新をインストール）",
+  "no version of {name} matches {range}": "{name}には{range}に合う版がない",
   "published by {people}": "公開者: {people}",
   "on {date}": "（{date}）",
   "{count} files, {size}": "{count} ファイル、{size}",

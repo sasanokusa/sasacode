@@ -378,3 +378,38 @@ test("an approval that fails is a refused call; a concurrent call already runnin
   const results = agent.messages.filter((m) => m.role === "tool");
   expect(results.map((m) => JSON.stringify(m.content))).toEqual([expect.stringContaining("slow done"), expect.stringContaining("UI bridge died")]);
 });
+
+test("a tool result with a lone surrogate goes into the history well-formed (#88)", async () => {
+  const half: import("@sasacode/plugin-api").ToolDefinition<{}> = {
+    name: "half",
+    description: "cuts an emoji in half",
+    kind: "read",
+    parameters: { type: "object", properties: {} },
+    execute: async () => ({ content: [{ type: "text", text: "xx😀".slice(0, 3) }] }),
+  };
+  const { agent, provider } = setup([reply([call("1", "half", {})]), reply([say("ok")])], { tools: [half], permissions: new PermissionPolicy("auto") });
+  await agent.prompt("go");
+  const sent = JSON.stringify(provider.requests[1]!.messages.at(-1));
+  expect(sent).not.toContain("\\ud83d");
+  expect(sent).toContain("xx�");
+});
+
+test("a refusal's tool calls are not kept: the next request has no call without a result (#97)", async () => {
+  const { agent, provider } = setup([reply([say("I can't"), call("call_1", "read", { path: "x" })], { stopReason: "refusal" }), reply([say("ok")])]);
+  expect(await agent.prompt("first")).toBe("refusal");
+  expect(await agent.prompt("second")).toBe("done");
+  const sent = provider.requests[1]!.messages;
+  expect(sent.flatMap((m) => (m.role === "assistant" ? m.content.filter((c) => c.type === "tool_call") : []))).toEqual([]);
+  expect(sent[1]).toMatchObject({ role: "assistant", content: [say("I can't")] });
+});
+
+test("an abort that comes in between requests stops the next one: no reply is taken after it (#96)", async () => {
+  const { agent, provider } = setup([reply([say("generated after the abort")])]);
+  agent.hooks.on("before_request", async () => {
+    agent.abort();
+    await Bun.sleep(1);
+  });
+  expect(await agent.prompt("hi")).toBe("aborted");
+  expect(provider.requests).toHaveLength(1);
+  expect(JSON.stringify(agent.messages)).not.toContain("generated after the abort");
+});

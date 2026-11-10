@@ -68,6 +68,8 @@ const plugin: Plugin = (api) => {
   /** 待機中に別のランが終わったサーバーの一時エラー。監視が再開させずに終われば、それを再試行する（#51）。 */
   let missed: string | undefined;
   let stopped = false;
+  /** Bumped by session_start: a watch from the session before (/new, /resume) must not inject into this one (#122). */
+  let session = 0;
   let attempts = 0;
   let cancelWait: (() => void) | undefined;
 
@@ -86,9 +88,9 @@ const plugin: Plugin = (api) => {
     }
   }
 
-  async function waitForOnline(): Promise<boolean> {
+  async function waitForOnline(gen: number): Promise<boolean> {
     const deadline = Date.now() + maxWaitMs;
-    while (!stopped && Date.now() < deadline) {
+    while (!stopped && gen === session && Date.now() < deadline) {
       await sleep(checkIntervalMs);
       if (await isOnline()) return true;
     }
@@ -113,6 +115,7 @@ const plugin: Plugin = (api) => {
 
   /** 作業を再開させた（inject した）とき true。 */
   async function watch(trigger: "error" | "manual"): Promise<boolean> {
+    const gen = session;
     if (await isOnline()) {
       if (trigger !== "manual") return false;
       api.ui.notify(t("オンラインです。接続に問題ありません。"), "info");
@@ -126,9 +129,9 @@ const plugin: Plugin = (api) => {
     if (!quiet) {
       api.ui.notify(t("ネットワークに接続できません（{target}）。復旧を待って自動再試行します。", { target: target() }), "warning");
     }
-    const ok = await waitForOnline();
+    const ok = await waitForOnline(gen);
+    if (stopped || gen !== session) return false;
     api.ui.setStatus("auto-reconnect", undefined);
-    if (stopped) return false;
     if (ok) {
       if (!quiet) api.ui.notify(t("ネットワークが復旧しました。自動再試行します。"), "info");
       api.session.inject(retryMessage, "now");
@@ -155,6 +158,7 @@ const plugin: Plugin = (api) => {
   /** サーバーが一時的に応答できないとき、間隔を空けて同じ作業を再試行する。 */
   async function retryServer(error: string): Promise<void> {
     if (waiting || stopped) return;
+    const gen = session;
     waiting = true;
     const online = await isOnline();
     waiting = false;
@@ -174,11 +178,12 @@ const plugin: Plugin = (api) => {
     waiting = false;
     api.ui.setStatus("auto-reconnect", undefined);
     if (go) missed = undefined; // この再開で、待機中に終わったランの作業も続く
-    if (go && !stopped) api.session.inject("サーバーの一時的なエラーで中断しました。中断した作業を、続きから再開してください。", "now");
+    if (go && !stopped && gen === session) api.session.inject("サーバーの一時的なエラーで中断しました。中断した作業を、続きから再開してください。", "now");
   }
 
   api.on("session_start", () => {
     stopped = false;
+    session++;
   });
 
   // 待っている間にユーザーが入力したら、そちらを優先して再試行はやめる。

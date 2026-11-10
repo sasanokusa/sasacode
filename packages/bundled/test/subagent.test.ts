@@ -140,3 +140,26 @@ test("Esc on the caller stops its background runs, and the report waits for the 
   expect(agent.isRunning).toBe(false);
   expect(mainProvider.requests).toHaveLength(2);
 });
+
+test("a session switch stops background runs, and their reports are not injected into the new session (#122)", async () => {
+  let release!: () => void;
+  const gate = new Promise<void>((r) => (release = r));
+  const inner = replayProvider([reply([say("AUDIT REPORT of the old conversation")])]);
+  const sub: Provider = {
+    api: "gated",
+    async *stream(req) {
+      await gate;
+      yield* inner.stream(req);
+    },
+  };
+  const { agent, mainProvider, notices } = await setup([reply([call("1", "task", { description: "audit", prompt: "audit", model: "t/sub", background: true })]), reply([say("waiting")])], sub);
+  expect(await agent.prompt("go")).toBe("done");
+  await agent.hooks.run("session_end", { reason: "switch" });
+  agent.reset([]);
+  await agent.hooks.run("session_start", { resumed: false });
+  release();
+  await until(() => notices.some((m) => m.includes("t1")));
+  await new Promise((r) => setTimeout(r, 30));
+  expect(agent.messages).toEqual([]);
+  expect(mainProvider.requests).toHaveLength(2);
+});

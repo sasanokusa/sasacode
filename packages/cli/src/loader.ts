@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { basename, join, resolve } from "node:path";
+import { basename, join, relative, resolve, sep } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { parseArgs } from "node:util";
 import { isInside } from "@sasacode/agent";
@@ -8,7 +8,7 @@ import * as pluginApi from "@sasacode/plugin-api";
 import { isCompatible, type Plugin } from "@sasacode/plugin-api";
 import { type McpServerConfig, sasacodeHome } from "./config.ts";
 import { readJsonOr } from "./json.ts";
-import { checkPackageDir, describeLocal, describeNpm, NotAPlugin, formatListings, isDir, latestVersion, parseSpec, searchPlugins, stagePackage } from "./plugin-share.ts";
+import { checkPackageDir, describeLocal, describeNpm, NotAPlugin, formatListings, isDir, parseSpec, publishedLatest, searchPlugins, stagePackage } from "./plugin-share.ts";
 
 export interface Manifest {
   name: string;
@@ -77,6 +77,11 @@ export function discoverPlugins(cwd: string, warnings?: string[]): FoundPlugin[]
     }
     const deps = readJson(join(dir, "package.json"))?.dependencies ?? {};
     for (const name of Object.keys(deps)) {
+      // A package name only: "../../x" would point the loader at a folder trust never read (#104).
+      if (!NPM_NAME.test(name)) {
+        warnings?.push(t("plugin {path} skipped: {error}", { path: join(dir, "package.json"), error: t('"{name}" is not a package name', { name }) }));
+        continue;
+      }
       const pdir = join(dir, "node_modules", name);
       const manifest = readManifest(pdir);
       if (manifest) found.push({ manifest, dir: pdir, scope });
@@ -84,6 +89,9 @@ export function discoverPlugins(cwd: string, warnings?: string[]): FoundPlugin[]
   }
   return found;
 }
+
+/** An npm package name, scoped or not: one folder (or @scope/folder) under node_modules. */
+const NPM_NAME = /^(?:@[a-z0-9~][\w.~-]*\/)?[a-z0-9~][\w.~-]*$/i;
 
 let virtualApiRegistered = false;
 /** Plugins may import "@sasacode/plugin-api" without installing it: resolve it to the host's copy. */
@@ -108,6 +116,9 @@ export async function importExtensions(p: FoundPlugin): Promise<Plugin[]> {
     const file = resolve(p.dir, rel);
     // Only code inside the plugin's own folder: that is what trust and review covered.
     if (!existsSync(file) || !isInside(realpathSync(file), realpathSync(p.dir))) throw new Error(t("{file} is not a file inside {dir}", { file: rel, dir: p.dir }));
+    // A project's trust covers its plugins' code but not their node_modules or .git: none of it may be loaded from there (#104).
+    if (p.scope === "project" && relative(realpathSync(p.dir), realpathSync(file)).split(sep).some((s) => s === "node_modules" || s === ".git"))
+      throw new Error(t("{file} is inside node_modules or .git, which the project's trust does not cover", { file: rel }));
     const mod = await import(file);
     const fn = mod.default ?? mod.plugin;
     if (typeof fn !== "function") throw new Error(t("{file} has no default export function", { file: rel }));
@@ -250,7 +261,8 @@ export async function pluginCommand(args: string[], cwd: string): Promise<number
             console.error(t("{name}: not a sasacode plugin, skipped (sasacode plugin remove {name})", { name: n }));
             continue;
           }
-          if (lines[0]?.startsWith(`${n}@${before[n]}`)) {
+          // The whole version, not a prefix: 1.0.1 is not the newest when 1.0.10 is (#106).
+          if (lines[0]?.split(" ")[0] === `${n}@${before[n]}`) {
             console.log(t("{name}: {version} (already the newest)", { name: n, version: before[n] ?? "?" }));
             continue;
           }
@@ -286,7 +298,8 @@ export async function pluginCommand(args: string[], cwd: string): Promise<number
         target = spec;
       } else {
         const name = v.name;
-        const latest = v.version ? undefined : await latestVersion(name ?? `sasacode-plugin-${basename(spec).replace(/\.(ts|js|mjs)$/, "").toLowerCase()}`);
+        // The name it will be published under, so the next version follows the last one (#108).
+        const latest = v.version ? undefined : await publishedLatest(spec, name);
         ({ dir: target, pkg, notes } = stagePackage(spec, { name, version: v.version, api: v.api, license: v.license, description: v.description, latest }));
       }
       console.log(t("{name}@{version}  (plugin API {api})\n  {dir}", { name: pkg.name, version: pkg.version, api: pkg.sasacode?.apiVersion ?? "?", dir: target }));
@@ -301,10 +314,32 @@ export async function pluginCommand(args: string[], cwd: string): Promise<number
       const folder = /^[^/\\]+$/.test(spec) && spec !== "." && spec !== ".." && spec !== "node_modules";
       if (!folder && !/^(@[a-z0-9~-][a-z0-9._~-]*\/)?[a-z0-9~-][a-z0-9._~-]*$/.test(spec))
         throw new Error(t("{spec}: give the plugin's name as `sasacode plugin list` shows it, not a path", { spec }));
-      const target = join(dir, spec);
+      // What `plugin list` shows under that name in this scope: a single file, a folder (named
+      // differently, as a git clone may be), or an npm dependency; plus a folder or a dependency by
+      // that name that is not a plugin. Nothing found is an error, not a quiet "removed" (#107).
+      const scope = project ? "project" : "global";
+      const modules = join(dir, "node_modules");
+      const deps = () => Object.keys(readJson(join(dir, "package.json"))?.dependencies ?? {});
+      const named = () => discoverPlugins(cwd).filter((p) => p.scope === scope && p.manifest.name === spec);
+      const files = new Set<string>();
+      const packages = new Set<string>();
+      for (const p of named()) {
+        if (p.dir === dir) files.add(join(dir, p.manifest.extensions![0]!)); // single file: never the plugins folder itself
+        else if (p.dir.startsWith(modules + sep)) {
+          const dep = deps().find((d) => join(modules, d) === p.dir);
+          if (dep) packages.add(dep);
+        } else files.add(p.dir);
+      }
+      if (deps().includes(spec)) packages.add(spec);
+      else if (folder && isDir(join(dir, spec))) files.add(join(dir, spec));
+      if (!files.size && !packages.size) throw new Error(t("{spec}: no plugin by that name in {dir} (see sasacode plugin list)", { spec, dir }));
+      for (const f of files) console.log(`  ${f}`);
+      for (const d of packages) console.log(`  ${join(modules, d)}`);
       if (!(await confirm(t("Remove {name} from {dir}?", { name: spec, dir }), yes))) return 1;
-      if (folder && existsSync(target) && statSync(target).isDirectory() && !existsSync(join(dir, "node_modules", spec))) rmSync(target, { recursive: true, force: true });
-      else await bun(["remove", spec], dir);
+      for (const f of files) rmSync(f, { recursive: true, force: true });
+      if (packages.size) await bun(["remove", ...packages], dir);
+      const left = named();
+      if (left.length) throw new Error(t("{name} is still installed at {path}", { name: spec, path: left[0]!.dir }));
       console.log(t("removed {name}", { name: spec }));
       return 0;
     }

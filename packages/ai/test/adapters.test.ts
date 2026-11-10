@@ -301,3 +301,17 @@ test("openai-chat: an index-less call that repeats its name is not parsed again 
   }
   expect(large).toBe(1); // the final parse of the first call's arguments
 });
+
+test("openai-responses: an overflow sent as response.failed is ContextOverflowError, as it is as an error event (#99)", async () => {
+  const model: ModelInfo = { id: "gpt-r", provider: "openai", api: "openai-responses", baseUrl: "http://x/v1", contextWindow: 1e5, maxOutput: 1000 };
+  const message = "Your input exceeds the context window of this model. Please adjust your input and try again.";
+  const failed = (error: object) => [
+    { type: "response.created", sequence_number: 0, response: { id: "r", output: [] } },
+    { type: "response.failed", sequence_number: 1, response: { id: "r", output: [], error } },
+  ];
+  for (const events of [failed({ code: "context_length_exceeded", message }), [{ type: "error", sequence_number: 0, message }]])
+    await expect(run(openaiResponsesProvider, reqFor(model, fakeFetch(sse(events, true)).fetch))).rejects.toBeInstanceOf(ContextOverflowError);
+  const other = run(openaiResponsesProvider, reqFor(model, fakeFetch(sse(failed({ code: "server_error", message: "The server had an error" }), true)).fetch));
+  await expect(other).rejects.toThrow("The server had an error");
+  await expect(other).rejects.not.toBeInstanceOf(ContextOverflowError);
+});

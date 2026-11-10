@@ -1,4 +1,6 @@
 import { afterAll, expect, test } from "bun:test";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { Agent, PermissionPolicy, PluginHost } from "@sasacode/agent";
@@ -170,6 +172,60 @@ test("a server that never comes up retries a few times, then /mcp reconnect star
   await until(() => notes.filter((n) => n.includes("再接続をあきらめました")).length === 2); // the count starts over
   await mcp.run({ args: "" });
   expect(notes.at(-1)).toContain("broken: failed");
+  await agent.hooks.run("session_end", {});
+});
+
+/** Starts and ends of fixture processes, from FIXTURE_LOG. */
+function processes(log: string) {
+  const lines = existsSync(log) ? readFileSync(log, "utf8").trim().split("\n").filter(Boolean) : [];
+  return { started: lines.filter((l) => l.startsWith("start")).length, ended: lines.filter((l) => l.startsWith("exit")).length };
+}
+const logDir = mkdtempSync(join(tmpdir(), "sasacode-mcp-"));
+afterAll(() => rmSync(logDir, { recursive: true, force: true }));
+let logs = 0;
+const fixtureLog = () => join(logDir, `processes-${++logs}.log`);
+
+test("a server with prompts only is not asked for tools: it connects and its prompts become commands (#101)", async () => {
+  const { agent, host, notes, until } = await load({
+    docs: { command: "bun", args: [join(import.meta.dir, "fixture-server.ts")], env: { FIXTURE_NO_TOOLS: "1" } },
+  });
+  await until(() => host.commands.some((c) => c.name === "mcp__docs__later") || notes.length > 0);
+  expect(notes).toEqual([]);
+  expect(host.commands.map((c) => c.name).filter((n) => n.startsWith("mcp__docs__"))).toEqual(["mcp__docs__review", "mcp__docs__greet", "mcp__docs__later"]);
+  expect(host.status.get("mcp:servers")).toBe("MCP 1/1");
+  expect(agent.getTools().some((t) => t.name.startsWith("mcp__docs__"))).toBe(false);
+  await agent.hooks.run("session_end", {});
+});
+
+test("a server whose tools/list fails after connecting runs out of reconnects, and no process is left behind (#101)", async () => {
+  const log = fixtureLog();
+  const { agent, notes, until } = await load(
+    { docs: { command: "bun", args: [join(import.meta.dir, "fixture-server.ts")], env: { FIXTURE_TOOLS_FAIL: "1", FIXTURE_LOG: log } } },
+    { reconnectDelayMs: 10 },
+  );
+  await until(() => notes.some((n) => n.includes("再接続をあきらめました")));
+  expect(notes.filter((n) => n.includes("再接続をあきらめました"))).toHaveLength(1);
+  expect(notes.filter((n) => n.includes("起動できませんでした"))).toHaveLength(1); // the retries stay quiet
+  await until(() => processes(log).ended === 6);
+  expect(processes(log)).toEqual({ started: 6, ended: 6 }); // the first try and 5 reconnects, each closed
+  await agent.hooks.run("session_end", {});
+});
+
+test("/mcp reconnect: the old process taking its time to exit is not taken for the new connection dropping (#101)", async () => {
+  const log = fixtureLog();
+  const { agent, host, notes, until } = await load(
+    { slow: { command: "bun", args: [join(import.meta.dir, "fixture-server.ts")], env: { FIXTURE_SLOW_EXIT: "600", FIXTURE_LOG: log } } },
+    { reconnectDelayMs: 10 },
+  );
+  await until(() => host.status.get("mcp:servers") === "MCP 1/1");
+  const mcp = host.commands.find((c) => c.name === "mcp")!;
+  await mcp.run({ args: "reconnect slow" });
+  await until(() => processes(log).ended === 1); // the first process is gone...
+  await Bun.sleep(300); // ...and its close has reached the client
+  expect(notes.filter((n) => n.includes("接続が切れました"))).toEqual([]);
+  await until(() => (void mcp.run({ args: "" }), notes.at(-1)!.includes("● slow: connected")));
+  expect(notes.at(-1)).toBe("● slow: connected · 4 tools");
+  expect(processes(log).started).toBe(2);
   await agent.hooks.run("session_end", {});
 });
 

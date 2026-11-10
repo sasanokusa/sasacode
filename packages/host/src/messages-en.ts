@@ -181,6 +181,7 @@ export const TO_EN: Record<string, string> = {
   "[undo] 戻せる変更（新しい順）:": "[undo] Changes that can be undone (newest first):",
   "[undo] {path} の変更が見つかりません": "[undo] No change to {path} found",
   "[undo] 戻しました:": "[undo] Restored:",
+  "[undo] {path} に当たるファイルが複数あります。パスをもっと詳しく指定してください:": "[undo] {path} matches more than one file; give more of its path:",
   // ── bundled: image-slim ───────────────────────────────────────────────
   "画像を縮め、古い画像を送らない処理の状態を出す": "Show what image-slim did to the last request",
   "いまのモデル（{id}）に効きます。": "Active for {id}.",
@@ -227,7 +228,7 @@ export const TO_EN: Record<string, string> = {
   "圧縮するほどの履歴がありません": "Not enough history to compact",
   // ── bundled: permission-presets ───────────────────────────────────────
   "取り返しのつかない操作を常に拒否（sudo、ルートの rm -rf、ディスク操作、パイプで sh に流す等）。ホーム配下の rm -rf と force push は softDeny（jev-guard などが確認に回せる）。ssh・scp・sftp・リモートへの rsync は常に確認": "always deny what cannot be undone (sudo, rm -rf at the root, disk operations, piping into sh, …). rm -rf under the home directory and force pushes are softDeny (jev-guard and the like can hand them to you). ssh, scp, sftp and rsync to a remote host always ask",
-  "読み取りだけのシェルコマンドを確認なしで許可（ls, cat, rg, git status/diff/log など）。書き出しやコマンドの実行をするオプション（rg --pre、git diff --output、tree -o など）は確認に回す": "allow read-only shell commands without asking (ls, cat, rg, git status/diff/log, …). Options that write files or run programs (rg --pre, git diff --output, tree -o, …) ask",
+  "読み取りだけのシェルコマンドを確認なしで許可（ls, cat, rg, git status/diff/log など）。書き出しやコマンドの実行をするオプション（rg --pre、git diff --output、tree -o など）、それを作りうるシェル展開、.git以下の編集は確認に回す": "allow read-only shell commands without asking (ls, cat, rg, git status/diff/log, …). Options that write files or run programs (rg --pre, git diff --output, tree -o, …), shell expansions that could make one, and edits under .git ask",
   "よくあるテスト・型チェックコマンドを確認なしで許可": "allow common test and type-check commands without asking",
   "権限プリセットの一覧": "list the permission presets",
   "有効化: config の plugins.settings[\"permission-presets\"].presets": "enable with plugins.settings[\"permission-presets\"].presets in the config",

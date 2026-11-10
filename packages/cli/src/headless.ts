@@ -11,13 +11,44 @@ import type { Harness } from "./setup.ts";
  * With `control` (`--control stdio`, jsonl only), the process that reads this output answers approvals, sends messages and can abort.
  */
 export async function runHeadless(h: Harness, prompt: string, output: "text" | "jsonl", control?: ControlInput): Promise<number> {
+  const out = sent();
+  try {
+    return await run(h, prompt, output, control, out);
+  } finally {
+    // main() ends with process.exit, which drops what a slow pipe reader has not taken yet (#102).
+    await out.flushed();
+  }
+}
+
+/**
+ * Writes to stdout and stderr, counted until they have gone out. Bun's streams say nothing about
+ * what is still queued (writableLength stays 0, and an empty write does not wait), so each write's
+ * callback is the only sign (#102). A reader that went away (EPIPE) calls back too.
+ */
+function sent() {
+  let pending = 0;
+  let idle: (() => void) | undefined;
+  const put = (stream: NodeJS.WriteStream, s: string) => {
+    pending++; // before the write: its callback may come at once
+    stream.write(s, () => {
+      if (--pending === 0) idle?.();
+    });
+  };
+  return {
+    stdout: (s: string) => put(process.stdout, s),
+    stderr: (s: string) => put(process.stderr, s),
+    flushed: () => (pending ? new Promise<void>((r) => (idle = r)) : Promise.resolve()),
+  };
+}
+
+async function run(h: Harness, prompt: string, output: "text" | "jsonl", control: ControlInput | undefined, out: ReturnType<typeof sent>): Promise<number> {
   const { agent } = h;
   // Model and tool text reaching a terminal must not carry escape sequences it would act on.
   const tty = process.stdout.isTTY;
-  const write = (s: string) => process.stdout.write(tty ? plain(s) : s);
+  const write = (s: string) => out.stdout(tty ? plain(s) : s);
   // Dim only where it will be shown as dim: a log file or CI output must keep no escape codes (NO_COLOR too).
   const dim = process.stderr.isTTY && !process.env.NO_COLOR ? (s: string) => `\x1b[2m${s}\x1b[0m` : (s: string) => s;
-  const status = (s: string) => process.stderr.write(`${dim(plain(s))}\n`);
+  const status = (s: string) => out.stderr(`${dim(plain(s))}\n`);
   let atLineStart = true;
 
   agent.events.on((e: AgentEvent) => {
@@ -37,9 +68,9 @@ export async function runHeadless(h: Harness, prompt: string, output: "text" | "
       status(t("the connection dropped mid-reply; asking again"));
     } else if (e.type === "tool_start") status(`● ${e.call.name}(${e.summary})`);
     else if (e.type === "tool_end" && e.result.isError) status(`  ⎿ ${textOf(e.result.content).split("\n").slice(-1)[0]}`);
-    else if (e.type === "error") process.stderr.write(`${t("error: {error}", { error: plain(e.error) })}\n`);
+    else if (e.type === "error") out.stderr(`${t("error: {error}", { error: plain(e.error) })}\n`);
     else if (e.type === "tool_repaired") status(`  ${t("↻ repaired {name}: {note}", { name: e.call.name, note: e.note })}`);
-    else if (e.type === "plugin_error") process.stderr.write(`${t("plugin {plugin} ({hook}): {error}", { plugin: e.plugin, hook: e.hook, error: e.error })}\n`);
+    else if (e.type === "plugin_error") out.stderr(`${t("plugin {plugin} ({hook}): {error}", { plugin: e.plugin, hook: e.hook, error: e.error })}\n`);
   });
   const session = agent.session;
   if (output === "jsonl") write(`${JSON.stringify({ type: "session", id: session?.id ?? null, path: session?.path ?? null })}\n`);
@@ -56,7 +87,7 @@ export async function runHeadless(h: Harness, prompt: string, output: "text" | "
   const listed = await listing;
   if (listed?.server === "ollama" && !listed.contextWindow && listed.maxContext) {
     const warning = t("{spec} には num_ctx が設定されていません。Ollama を OLLAMA_CONTEXT_LENGTH で起動していなければ、Ollama の既定の長さ（数千トークン）を超えた入力は黙って切り詰められます。Modelfile に PARAMETER num_ctx 32768 などを書くか、OLLAMA_CONTEXT_LENGTH を設定してください（このモデルは最大 {max}）。", { spec: listed.spec, max: fmtTokens(listed.maxContext) });
-    process.stderr.write(`${t("warning: {warning}", { warning })}\n`);
+    out.stderr(`${t("warning: {warning}", { warning })}\n`);
   }
   const onSigint = () => agent.abort();
   process.on("SIGINT", onSigint);

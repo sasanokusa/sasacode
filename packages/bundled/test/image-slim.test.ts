@@ -49,6 +49,19 @@ test("a large screenshot becomes a JPEG of about maxPixels, aspect ratio kept, w
   expect(r.note).toMatch(/^1500x950 PNG \d+ KB -> 1286x814 JPEG q90 \d+ KB; multiply positions in it by 1\.17 for the original$/);
 });
 
+test("a JPEG turned by its EXIF orientation is shrunk upright, its aspect ratio kept (#93)", async () => {
+  const jpg = Buffer.from(await new Bun.Image(bytes(png(1600, 1200))).jpeg({ quality: 90 }).bytes());
+  // APP1 Exif: a big-endian TIFF whose IFD0 has one entry, Orientation (0x0112) = 6: shown turned 90°, 1200×1600.
+  const exif = Buffer.concat([Buffer.from("Exif\0\0", "latin1"), Buffer.from([0x4d, 0x4d, 0, 0x2a, 0, 0, 0, 8, 0, 1, 0x01, 0x12, 0, 3, 0, 0, 0, 1, 0, 6, 0, 0, 0, 0, 0, 0])]);
+  const app1 = Buffer.from([0xff, 0xe1, (exif.length + 2) >> 8, (exif.length + 2) & 0xff]);
+  const turned = Buffer.concat([jpg.subarray(0, 2), app1, exif, jpg.subarray(2)]);
+  const r = (await shrink({ type: "image", mediaType: "image/jpeg", data: turned.toString("base64") }, S))!;
+  const out = await new Bun.Image(bytes(r)).metadata();
+  expect([out.width, out.height]).toEqual([886, 1182]);
+  expect(r.note).toStartWith("1200x1600 JPEG");
+  expect(r.note).toContain("-> 886x1182 JPEG");
+});
+
 test("within maxPixels: an opaque PNG over minBytes becomes a JPEG of the same size; small, transparent and JPEG stay", async () => {
   const r = (await shrink(png(600, 400), S))!;
   expect(probe(bytes(r))).toEqual({ kind: "jpeg", w: 600, h: 400, alpha: false });
@@ -110,6 +123,21 @@ test("plugin: a tool's image is stored shrunk with a note; a request sends the n
   expect((sent.at(-1) as any).content[1].mediaType).toBe("image/jpeg"); // the pasted one, shrunk for the request
   expect((messages.at(-1) as any).content[1]).toBe(shot); // the history is left as it was
 
+});
+
+test("plugin: a reminder after the user's message does not take its place: the pasted images are all sent (#94)", async () => {
+  const { harnessNote } = await import("@sasacode/host");
+  const h = await loadPlugin("image-slim", plugin, root);
+  const small = png(10, 10);
+  const messages: Message[] = [
+    { role: "user", content: [{ type: "text", text: "compare these" }, ...Array.from({ length: 12 }, () => small)], timestamp: 0 },
+    { role: "assistant", content: [{ type: "tool_call", id: "1", name: "read", input: {} }], timestamp: 0 } as any,
+    { role: "tool", toolCallId: "1", toolName: "read", content: [{ type: "text", text: "ok" }], isError: false, timestamp: 0 },
+    { role: "user", content: [{ type: "text", text: harnessNote("Your last 5 replies were tool calls with no text") }], timestamp: 0 },
+  ];
+  let sent = messages;
+  await h.agent.hooks.run("before_request", { messages, model: h.agent.model, sampling: {} }, (r: any) => { if (r.messages) sent = r.messages; });
+  expect(sent[0]!.content.filter((c: any) => c.type === "image").length).toBe(12);
 });
 
 test("plugin: models limits it to the models named", async () => {

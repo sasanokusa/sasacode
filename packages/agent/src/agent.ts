@@ -439,6 +439,8 @@ export class Agent {
         // Half-streamed tool calls never ran and unsigned thinking cannot be replayed; keep what was finished.
         message.content = message.content.filter((c) => c.type === "text" || (c.type === "thinking" && c.signature));
       }
+      // A refusal ends the run before its tool calls run: kept, they would be calls without results, which every API rejects (#97).
+      if (message.stopReason === "refusal") message.content = message.content.filter((c) => c.type !== "tool_call");
       if (userAborted) {
         this.interrupted = true;
         if (message.content.length) this.pushMessage(message);
@@ -495,6 +497,7 @@ export class Agent {
     const request = new AbortController();
     const forward = () => request.abort();
     signal.addEventListener("abort", forward, { once: true });
+    if (signal.aborted) forward(); // it came in between requests (a backoff, a hook): the listener never hears it (#96)
     const watchDeltas = this.hooks.has("stream_delta");
     const toolJson = new Map<number, string>();
     let stopped: { plugin: string; reason: string } | undefined;
@@ -577,6 +580,8 @@ export class Agent {
       if (ev.type === "done") {
         this.spent(ev.message, "side");
         if (ev.message.stopReason === "aborted") throw new Error("aborted");
+        // A stream cut before its end (stopReason "error") is a fragment: a compaction would replace the whole history with it (#95).
+        if (ev.message.stopReason === "error") throw new Error(ev.message.errorMessage ?? "the reply failed");
         text = textOf(ev.message.content);
       }
     }
