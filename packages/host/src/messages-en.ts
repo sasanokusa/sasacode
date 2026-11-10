@@ -181,6 +181,7 @@ export const TO_EN: Record<string, string> = {
   "[undo] 戻せる変更（新しい順）:": "[undo] Changes that can be undone (newest first):",
   "[undo] {path} の変更が見つかりません": "[undo] No change to {path} found",
   "[undo] 戻しました:": "[undo] Restored:",
+  "[undo] {path} に当たるファイルが複数あります。パスをもっと詳しく指定してください:": "[undo] {path} matches more than one file; give more of its path:",
   // ── bundled: image-slim ───────────────────────────────────────────────
   "画像を縮め、古い画像を送らない処理の状態を出す": "Show what image-slim did to the last request",
   "いまのモデル（{id}）に効きます。": "Active for {id}.",
