@@ -174,6 +174,25 @@ test("background-sessions: a job from an earlier run is judged by its exit file 
   }
 }, 20_000); // on Windows the pid check starts PowerShell: seconds on a cold machine
 
+test("auto-reconnect: a watch from the session before a switch injects nothing into the new one (#122)", async () => {
+  const server = Bun.serve({ port: 0, fetch: () => new Response("ok") });
+  const port = server.port;
+  server.stop(true);
+  const a = fake(autoReconnect, { checkUrl: `http://127.0.0.1:${port}/`, checkIntervalMs: 30, checkTimeoutMs: 200 });
+  await a.fire("session_start");
+  await a.fire("agent_end", { cause: "error" });
+  for (let i = 0; i < 50 && !a.status.size; i++) await Bun.sleep(10);
+  await a.fire("session_end");
+  await a.fire("session_start"); // /new or /resume
+  const back = Bun.serve({ port, fetch: () => new Response("ok") });
+  try {
+    await Bun.sleep(300);
+    expect(a.injected).toEqual([]);
+  } finally {
+    back.stop(true);
+  }
+});
+
 test("auto-reconnect: without a baseUrl it checks the provider's own API, not a third party", async () => {
   const real = globalThis.fetch;
   const urls: string[] = [];
