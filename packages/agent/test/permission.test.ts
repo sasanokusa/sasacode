@@ -15,6 +15,18 @@ test("default edits mode: in-cwd read/edit allowed, bash and outside paths ask",
   expect((await p.check(bash("ls"))).decision).toBe("ask");
 });
 
+test("edits mode asks before an edit under .git or .sasacode, where it runs code at the next git command or start (#127)", async () => {
+  const p = new PermissionPolicy();
+  const edit = async (path: string, tool: typeof writeTool | typeof editTool = writeTool) => (await p.check({ tool, args: { path }, cwd })).decision;
+  for (const path of [".git/hooks/pre-commit", ".git/config", "sub/.git/config", ".GIT/config", ".sasacode/plugins/x.ts", ".sasacode/config.json", ".git"]) expect(await edit(path)).toBe("ask");
+  expect(await edit(".git/config", editTool)).toBe("ask");
+  // Names that only start like them, and reads, are as before.
+  for (const path of [".gitignore", ".github/workflows/ci.yml", "src/.gitkeep", "my.git/x", ".sasacoderc"]) expect(await edit(path)).toBe("allow");
+  expect((await p.check({ tool: readTool, args: { path: ".git/config" }, cwd })).decision).toBe("allow");
+  // A project that itself lives under such a folder is not affected: the path is judged from the project.
+  expect((await p.check({ tool: writeTool, args: { path: "x.ts" }, cwd: "/home/u/.sasacode/plugins/mine" })).decision).toBe("allow");
+});
+
 test("modes auto and ask", async () => {
   expect((await new PermissionPolicy("auto").check(bash("rm -rf x"))).decision).toBe("allow");
   expect((await new PermissionPolicy("ask").check({ tool: readTool, args: { path: "a" }, cwd })).decision).toBe("ask");

@@ -393,7 +393,7 @@ sasacode -m pgx/&lt;モデル名&gt;</code></pre>
       <h3 id="modes">権限モード</h3>
       <div class="tbl"><table>
         <tr><th>モード</th><th>作業ディレクトリ内のread</th><th>内のwrite / edit</th><th>bash・外への操作・その他</th></tr>
-        <tr><td><code>edits</code>（既定）</td><td class="yes">許可</td><td class="yes">許可</td><td>確認</td></tr>
+        <tr><td><code>edits</code>（既定）</td><td class="yes">許可</td><td class="yes">許可（<code>.git</code>と<code>.sasacode</code>の中は確認）</td><td>確認</td></tr>
         <tr><td><code>ask</code></td><td>確認</td><td>確認</td><td>確認</td></tr>
         <tr><td><code>agent</code></td><td class="yes">許可</td><td colspan="2">モデルが判定（安全なら許可、それ以外は確認）</td></tr>
         <tr><td><code>auto</code></td><td class="yes">許可</td><td class="yes">許可</td><td class="yes">許可（denyルールとaskルールは効く）</td></tr>
