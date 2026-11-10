@@ -797,6 +797,30 @@ test("/fork puts a message's image back with it, also when its file is gone, wit
   await term.type("/exit"); await term.send("\r"); await exited;
 });
 
+test("an image put back by /fork is not sent for a later pasted one once its draft is cleared (#109)", async () => {
+  const script = [reply([{ type: "text", text: "red" }]), reply([{ type: "text", text: "blue" }])];
+  const { term, provider, agent, exited } = await startWithImages(script);
+  const red = join(agent.cwd, "red.png");
+  const blue = join(agent.cwd, "blue.png");
+  writeFileSync(red, PNG);
+  writeFileSync(blue, PNG);
+  await term.send(`\x1b[200~${red}\x1b[201~`);
+  await term.type("what is this?"); await term.send("\r");
+  await Bun.sleep(200);
+  await term.type("/fork"); await term.send("\r");
+  await term.send("\r"); // the only message: "[Image #1] what is this?" comes back
+  await term.send("\x03"); // ctrl+c clears the draft
+  await term.send(`\x1b[200~${blue}\x1b[201~`);
+  expect(term.text()).toContain("[Image #1]");
+  await term.type("and this one?"); await term.send("\r");
+  await Bun.sleep(200);
+  const last = provider.requests.at(-1)!.messages.at(-1);
+  expect(imagesIn(last)).toBe(1);
+  expect(textOf(last!.content as never)).toContain(`[Image 1: ${blue}] and this one?`);
+  expect(textOf(last!.content as never)).not.toContain("red.png");
+  await term.type("/exit"); await term.send("\r"); await exited;
+});
+
 test("after a compaction what was said stays on screen; the model gets the summary", async () => {
   const script = [reply([{ type: "text", text: "first answer" }])];
   const { term, host, agent, exited } = await start(script);

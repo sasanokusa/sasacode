@@ -365,6 +365,10 @@ class App {
 
   /** Pasted text (or "" for ctrl+v) offered to the plugins; unclaimed text goes to the editor as a paste. */
   private async paste(text: string): Promise<void> {
+    // A held image whose marker left the draft (ctrl+c, deleted) is gone: its number is free for the image
+    // plugin to give a new paste, and must not send the old image in that one's place (#109).
+    const shown = new Set([...this.editor.getText().matchAll(IMAGE_MARKER)].map((m) => Number(m[1])));
+    for (const n of this.held.keys()) if (!shown.has(n)) this.held.delete(n);
     for (const handle of this.host.host.pasteHandlers) {
       const out = await Promise.resolve(handle(text, this.editor.getText())).catch(() => undefined);
       if (out !== undefined) {
