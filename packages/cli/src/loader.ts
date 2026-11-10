@@ -261,7 +261,8 @@ export async function pluginCommand(args: string[], cwd: string): Promise<number
             console.error(t("{name}: not a sasacode plugin, skipped (sasacode plugin remove {name})", { name: n }));
             continue;
           }
-          if (lines[0]?.startsWith(`${n}@${before[n]}`)) {
+          // The whole version, not a prefix: 1.0.1 is not the newest when 1.0.10 is (#106).
+          if (lines[0]?.split(" ")[0] === `${n}@${before[n]}`) {
             console.log(t("{name}: {version} (already the newest)", { name: n, version: before[n] ?? "?" }));
             continue;
           }

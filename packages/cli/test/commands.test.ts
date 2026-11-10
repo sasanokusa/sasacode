@@ -48,6 +48,32 @@ test("plugin flags may come before the name", async () => {
   expect(bad.r).toBe(1);
 });
 
+test("plugin update offers 1.0.10 to 1.0.1: the whole version is compared, not a prefix (#106)", async () => {
+  const plugins = join(home, "plugins");
+  mkdirSync(join(plugins, "node_modules", "sasacode-plugin-demo"), { recursive: true });
+  writeFileSync(join(plugins, "package.json"), JSON.stringify({ dependencies: { "sasacode-plugin-demo": "^1.0.1" } }));
+  writeFileSync(join(plugins, "node_modules", "sasacode-plugin-demo", "package.json"), JSON.stringify({ name: "sasacode-plugin-demo", version: "1.0.1", sasacode: { extensions: [] } }));
+  let latest = "1.0.10";
+  const registry = Bun.serve({
+    port: 0,
+    fetch: () => Response.json({ "dist-tags": { latest }, versions: { [latest]: { name: "sasacode-plugin-demo", version: latest, sasacode: { extensions: [] } } } }),
+  });
+  const saved = process.env.SASACODE_NPM_REGISTRY;
+  process.env.SASACODE_NPM_REGISTRY = `http://127.0.0.1:${registry.port}`;
+  try {
+    // No --yes and no terminal: shown, then not updated (nothing is downloaded).
+    const newer = await quiet(() => pluginCommand(["update"], proj));
+    expect(newer.out).not.toContain("already the newest");
+    expect(newer.out).toContain("sasacode-plugin-demo: 1.0.1 →\nsasacode-plugin-demo@1.0.10");
+    latest = "1.0.1";
+    expect((await quiet(() => pluginCommand(["update"], proj))).out).toContain("sasacode-plugin-demo: 1.0.1 (already the newest)");
+  } finally {
+    if (saved === undefined) delete process.env.SASACODE_NPM_REGISTRY;
+    else process.env.SASACODE_NPM_REGISTRY = saved;
+    registry.stop(true);
+  }
+});
+
 test("a broken link in a plugins folder is skipped with a warning, not a crash", () => {
   symlinkSync(join(base, "missing"), join(proj, ".sasacode", "plugins", "dangling"), "junction"); // junction: no admin needed on Windows
   const warnings: string[] = [];
