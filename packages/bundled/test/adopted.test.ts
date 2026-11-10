@@ -105,15 +105,17 @@ test("background-sessions: a job two sessions watched is reported once, not agai
     const s3 = fake(backgroundSessions, { pollMs: 20 });
     await Bun.sleep(200);
     expect(s3.injected).toEqual([]);
-    const lines = await s3.tools.bg_start.execute({ command: "seq 1 250" }, { cwd: root });
-    for (let i = 0; i < 100 && !s3.injected.length; i++) await Bun.sleep(20);
+    // bash's own printf, not seq (which Windows' Git Bash may lack); a job starts slowly there, so wait for its end.
+    const lines = await s3.tools.bg_start.execute({ command: "printf '%s\\n' {1..250}" }, { cwd: root });
+    for (let i = 0; i < 500 && !s3.injected.length; i++) await Bun.sleep(20);
+    expect(s3.injected.length).toBe(1);
     const out = await s3.tools.bg_output.execute({ id: lines.details.id }, { cwd: root });
     expect(out.content[0].text).toContain("Use from_line=1 to read from the start.");
     expect(out.content[0].text).not.toContain("from_line=-");
   } finally {
     delete process.env.SASACODE_HOME;
   }
-});
+}, 20_000);
 
 test("auto-reconnect: after an error while the endpoint is down, it waits and resumes the work once it answers", async () => {
   const server = Bun.serve({ port: 0, fetch: () => new Response("ok") });
