@@ -639,6 +639,17 @@ test("a fully typed /effort runs on the first enter (#29)", async () => {
   await term.type("/exit"); await term.send("\r"); await exited;
 });
 
+test("a command's arguments keep their line breaks and indentation (#112)", async () => {
+  const { term, host, exited } = await start([]);
+  const got: string[] = [];
+  await host.load("args-test", (api) => api.registerCommand({ name: "argstest", description: "x", run: ({ args }) => void got.push(args) }));
+  await term.type("/argstest ");
+  await term.send("\x1b[200~Traceback:\n  File \"a.py\", line 12\n    total = price * qty\x1b[201~");
+  await term.send("\r");
+  expect(got).toEqual(['Traceback:\n  File "a.py", line 12\n    total = price * qty']);
+  await term.type("/exit"); await term.send("\r"); await exited;
+});
+
 test("/resume lists every session, and a title is cut between whole characters (#30, #31)", async () => {
   const root = mkdtempSync(join(tmpdir(), "sasacode-resume-"));
   const dir = join(root, "sessions");

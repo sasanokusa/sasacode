@@ -674,14 +674,15 @@ class App {
   }
 
   private async runCommand(text: string): Promise<void> {
-    const [name = "", ...rest] = text.slice(1).split(/\s+/);
+    // The arguments as written, line breaks and indentation kept (a pasted traceback, code): only their ends are trimmed (#112).
+    const [, name = "", args = ""] = /^(\S*)\s*([\s\S]*)$/.exec(text.slice(1))!;
     const cmd = this.host.host.commands.find((c) => c.name === name);
     if (!cmd) {
       this.notify(t("不明なコマンド: /{name}（/help で一覧）", { name }), c.yellow);
       return;
     }
     try {
-      await cmd.run({ args: rest.join(" ").trim() });
+      await cmd.run({ args: args.trim() });
     } catch (e) {
       this.notify(t("/{name} が失敗しました: {error}", { name, error: (e as Error).message }), c.red);
     }
