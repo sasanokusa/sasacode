@@ -91,6 +91,8 @@ export const TO_JA: Record<string, string> = {
   "plugin {path} skipped: {error}": "プラグイン {path} を飛ばした: {error}",
   "needs plugin API {need}, host provides {have}": "プラグイン API {need} が必要（ホストは {have} を提供）",
   "{file} is not a file inside {dir}": "{file} は {dir} の中のファイルではない",
+  "{file} is inside node_modules or .git, which the project's trust does not cover": "{file}はnode_modulesか.gitの中にあり、プロジェクトの信頼の対象外",
+  '"{name}" is not a package name': "「{name}」はパッケージ名ではない",
   "{file} has no default export function": "{file} に default export の関数がない",
   "{cmd} failed": "{cmd} が失敗",
   "stopped: pass --yes to go ahead without a question (no terminal to ask on)": "中止: 質問なしで進めるには --yes（確認できる端末がない）",

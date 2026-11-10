@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { basename, join, resolve } from "node:path";
+import { basename, join, relative, resolve, sep } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { parseArgs } from "node:util";
 import { isInside } from "@sasacode/agent";
@@ -77,6 +77,11 @@ export function discoverPlugins(cwd: string, warnings?: string[]): FoundPlugin[]
     }
     const deps = readJson(join(dir, "package.json"))?.dependencies ?? {};
     for (const name of Object.keys(deps)) {
+      // A package name only: "../../x" would point the loader at a folder trust never read (#104).
+      if (!NPM_NAME.test(name)) {
+        warnings?.push(t("plugin {path} skipped: {error}", { path: join(dir, "package.json"), error: t('"{name}" is not a package name', { name }) }));
+        continue;
+      }
       const pdir = join(dir, "node_modules", name);
       const manifest = readManifest(pdir);
       if (manifest) found.push({ manifest, dir: pdir, scope });
@@ -84,6 +89,9 @@ export function discoverPlugins(cwd: string, warnings?: string[]): FoundPlugin[]
   }
   return found;
 }
+
+/** An npm package name, scoped or not: one folder (or @scope/folder) under node_modules. */
+const NPM_NAME = /^(?:@[a-z0-9~][\w.~-]*\/)?[a-z0-9~][\w.~-]*$/i;
 
 let virtualApiRegistered = false;
 /** Plugins may import "@sasacode/plugin-api" without installing it: resolve it to the host's copy. */
@@ -108,6 +116,9 @@ export async function importExtensions(p: FoundPlugin): Promise<Plugin[]> {
     const file = resolve(p.dir, rel);
     // Only code inside the plugin's own folder: that is what trust and review covered.
     if (!existsSync(file) || !isInside(realpathSync(file), realpathSync(p.dir))) throw new Error(t("{file} is not a file inside {dir}", { file: rel, dir: p.dir }));
+    // A project's trust covers its plugins' code but not their node_modules or .git: none of it may be loaded from there (#104).
+    if (p.scope === "project" && relative(realpathSync(p.dir), realpathSync(file)).split(sep).some((s) => s === "node_modules" || s === ".git"))
+      throw new Error(t("{file} is inside node_modules or .git, which the project's trust does not cover", { file: rel }));
     const mod = await import(file);
     const fn = mod.default ?? mod.plugin;
     if (typeof fn !== "function") throw new Error(t("{file} has no default export function", { file: rel }));

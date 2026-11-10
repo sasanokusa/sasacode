@@ -168,3 +168,25 @@ test("plugin remove takes a plugin's name, never a path out of the plugins folde
   expect(await pluginCommand(["remove", "--yes", "gone"], proj)).toBe(0);
   expect(existsSync(join(home, "plugins", "gone"))).toBe(false);
 });
+
+test("trust covers what the loader imports: no dependency outside node_modules, no extension under node_modules (#104)", async () => {
+  const plugins = join(proj, ".sasacode", "plugins");
+  // A: a dependency "name" that leaves node_modules.
+  write(join(proj, "..", "tools", "plug", "plugin.json"), JSON.stringify({ apiVersion: "^1.0.0", extensions: ["main.ts"] }));
+  write(join(proj, "..", "tools", "plug", "main.ts"), PLUGIN("dotdot_v1"));
+  write(join(plugins, "package.json"), JSON.stringify({ dependencies: { "../../../tools/plug": "*" } }));
+  const warnings: string[] = [];
+  expect(discoverPlugins(proj, warnings).map((p) => p.manifest.name)).not.toContain("plug");
+  expect(warnings.join()).toContain("is not a package name");
+  // B: an extension under the plugin's node_modules: changing it is asked about, and the loader refuses it.
+  write(join(plugins, "nm", "plugin.json"), JSON.stringify({ apiVersion: "^1.0.0", extensions: ["node_modules/impl/index.ts"] }));
+  write(join(plugins, "nm", "node_modules", "impl", "index.ts"), PLUGIN("nm_v1"));
+  saveTrust(proj, assessProject(proj));
+  expect(isTrusted(proj, assessProject(proj))).toBe(true);
+  write(join(plugins, "nm", "node_modules", "impl", "index.ts"), PLUGIN("nm_v2"));
+  expect(isTrusted(proj, assessProject(proj))).toBe(false);
+  const h = await setup({ cwd: proj, noSession: true, trustProject: true });
+  await h.loadPlugins();
+  expect(h.agent.getTools().map((t) => t.name)).not.toContain("nm_v2");
+  expect(h.host.plugins.find((p) => p.name === "nm")?.error).toContain("node_modules or .git");
+});

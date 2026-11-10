@@ -4,7 +4,7 @@
 // changes, the plugins' code included.
 import { createHash, type Hash } from "node:crypto";
 import { readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
-import { join, relative } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { t } from "@sasacode/host";
 import { type ConfigFiles, describeElevated, loadConfig, readConfigFiles, sasacodeHome } from "./config.ts";
@@ -47,6 +47,25 @@ export function assessProject(cwd: string): ProjectTrust {
     const walk: Walk = { hash, root, files: 5000, seen: new Set() };
     complete = hashTree(walk, root);
     for (const p of plugins) if (relative(root, p.dir).startsWith("node_modules")) complete = hashTree(walk, p.dir) && complete;
+    // And each module the loader would import from a folder not walked above (under node_modules or .git), so a change
+    // to it is asked about too (#104). Code in the folders walked is in the hash already, which stays as it was.
+    for (const p of plugins)
+      for (const rel of p.manifest.extensions ?? []) {
+        const file = resolve(p.dir, rel);
+        let real: string;
+        try {
+          real = realpathSync(file);
+        } catch {
+          continue; // not there: the loader fails on it as well
+        }
+        if (walk.seen.has(dirname(real))) continue;
+        hash.update(`\0${relative(root, file)}\0`);
+        try {
+          hash.update(readFileSync(real));
+        } catch {
+          complete = false;
+        }
+      }
   }
   return { items, fingerprint: hash.digest("hex").slice(0, 16), complete, files, plugins: found, warnings };
 }
