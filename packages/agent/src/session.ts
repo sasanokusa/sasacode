@@ -42,7 +42,8 @@ export function sessionDir(root: string, cwd: string): string {
 export class SessionFile {
   readonly id: string;
   readonly path: string;
-  private secrets: string[];
+  /** What this log redacts: a log that takes over its conversation (a fork) redacts them too (#103). */
+  readonly secrets: string[];
   /** The header is written with the first real entry, so sessions nobody used leave no file. */
   private header?: SessionEntry;
 
