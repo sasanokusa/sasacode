@@ -254,11 +254,12 @@ async function drive(script: AssistantMessage[], react: (e: any, ch: ReturnType<
   const ch = channel();
   const events: any[] = [];
   const orig = process.stdout.write.bind(process.stdout);
-  process.stdout.write = ((s: string) => {
+  process.stdout.write = ((s: string, cb?: () => void) => {
     expect(s.endsWith("\n") && s.indexOf("\n") === s.length - 1).toBe(true); // one write, one line
     const e = JSON.parse(s);
     events.push(e);
     react(e, ch);
+    cb?.(); // headless waits for its writes to go out (#102)
     return true;
   }) as typeof process.stdout.write;
   let code: number;
