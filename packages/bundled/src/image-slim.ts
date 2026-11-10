@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { inflateSync } from "node:zlib";
-import { t } from "@sasacode/host";
+import { noteText, t } from "@sasacode/host";
 import type { Plugin, UserContent } from "@sasacode/plugin-api";
 
 type Image = Extract<UserContent, { type: "image" }>;
@@ -212,7 +212,8 @@ const imageSlim: Plugin = (api) => {
 
   api.on("before_request", async ({ messages, model }) => {
     if (!targets(model.id)) return;
-    const lastUser = messages.findLastIndex((m) => m.role === "user");
+    // The user's: a reminder (todo, progress-notes) is a user turn too, and took the pasted images' place (#94).
+    const lastUser = messages.findLastIndex((m) => m.role === "user" && noteText(m.content) === undefined);
     const spots: { key: string; bytes: number; locked: boolean }[] = [];
     const replaced = new Map<string, Image>();
     for (const [mi, m] of messages.entries()) {

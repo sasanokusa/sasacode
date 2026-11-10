@@ -125,6 +125,21 @@ test("plugin: a tool's image is stored shrunk with a note; a request sends the n
 
 });
 
+test("plugin: a reminder after the user's message does not take its place: the pasted images are all sent (#94)", async () => {
+  const { harnessNote } = await import("@sasacode/host");
+  const h = await loadPlugin("image-slim", plugin, root);
+  const small = png(10, 10);
+  const messages: Message[] = [
+    { role: "user", content: [{ type: "text", text: "compare these" }, ...Array.from({ length: 12 }, () => small)], timestamp: 0 },
+    { role: "assistant", content: [{ type: "tool_call", id: "1", name: "read", input: {} }], timestamp: 0 } as any,
+    { role: "tool", toolCallId: "1", toolName: "read", content: [{ type: "text", text: "ok" }], isError: false, timestamp: 0 },
+    { role: "user", content: [{ type: "text", text: harnessNote("Your last 5 replies were tool calls with no text") }], timestamp: 0 },
+  ];
+  let sent = messages;
+  await h.agent.hooks.run("before_request", { messages, model: h.agent.model, sampling: {} }, (r: any) => { if (r.messages) sent = r.messages; });
+  expect(sent[0]!.content.filter((c: any) => c.type === "image").length).toBe(12);
+});
+
 test("plugin: models limits it to the models named", async () => {
   const h = await loadPlugin("image-slim", plugin, root, { models: ["other"] });
   const shot = png(1500, 950);
