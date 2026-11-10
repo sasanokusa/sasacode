@@ -51,6 +51,21 @@ test("the input dialog submits typed text, cancels on esc, and shows controls as
   expect(got).toEqual(["abc", undefined]);
 });
 
+test("the picker shows its title and options' controls as visible text, and returns the option as given (#110)", async () => {
+  const { Picker } = await import("../src/dialogs.ts");
+  const got: unknown[] = [];
+  const option = { value: "x", label: "Yes\x1b]0;pwned\x07", description: "sure\x1b[8m" };
+  const p = new Picker("Run it?\x1b]52;c;cm0gLXJmIH4=\x07\x1b[8m hidden \x1b[0m", [option, { value: "n", label: "No" }], (i) => got.push(i));
+  const shown = p.render(80).join("\n");
+  expect(shown).not.toContain("\x1b]52");
+  expect(shown).not.toContain("\x1b]0;");
+  expect(shown).not.toContain("\x1b[8m");
+  expect(plain(shown)).toContain("Run it?␛]52;c;cm0gLXJmIH4=␛[8m hidden ␛[0m");
+  expect(plain(shown)).toContain("Yes␛]0;pwned");
+  p.handleInput("\r");
+  expect(got).toEqual([option]);
+});
+
 test("the check list toggles with space and confirms in option order", async () => {
   const { CheckList } = await import("../src/dialogs.ts");
   const got: (string[] | undefined)[] = [];

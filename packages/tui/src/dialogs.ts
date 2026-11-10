@@ -26,9 +26,11 @@ export class Picker implements Component, Focusable {
   private rebuild(): void {
     const f = this.filter.toLowerCase();
     const shown = f ? this.items.filter((i) => `${i.value} ${i.label} ${i.description ?? ""}`.toLowerCase().includes(f)) : this.items;
+    // Shown made safe: an option (ask_user's) may come from the model, and its escape sequences must not reach the terminal (#110).
+    const safe = new Map<SelectItem, SelectItem>(shown.map((i) => [{ ...i, label: plain(i.label), description: i.description === undefined ? undefined : plain(i.description) }, i]));
     // Long values (model specs) need room; descriptions get what is left.
-    this.list = new SelectList(shown, this.maxVisible, selectTheme, { minPrimaryColumnWidth: 24, maxPrimaryColumnWidth: 64 });
-    this.list.onSelect = (i) => this.done(i);
+    this.list = new SelectList([...safe.keys()], this.maxVisible, selectTheme, { minPrimaryColumnWidth: 24, maxPrimaryColumnWidth: 64 });
+    this.list.onSelect = (i) => this.done(safe.get(i) ?? i);
     this.list.onCancel = () => this.done(undefined);
   }
 
@@ -58,7 +60,7 @@ export class Picker implements Component, Focusable {
     const hint = this.filter ? t("絞り込み: {filter}", { filter: this.filter }) : t("入力で絞り込み · ↑↓ で選択 · enter で決定 · esc でキャンセル");
     return [
       truncateToWidth(c.gray("─".repeat(width)), width),
-      ...this.title.split("\n").map((l, i) => truncateToWidth(i === 0 ? c.bold(l) : c.gray(l), width)),
+      ...plain(this.title).split("\n").map((l, i) => truncateToWidth(i === 0 ? c.bold(l) : c.gray(l), width)),
       ...this.list.render(width),
       truncateToWidth(c.gray(hint), width),
     ];
