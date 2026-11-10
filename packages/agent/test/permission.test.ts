@@ -117,3 +117,34 @@ test("a .. after the first part of a rule is normalized as the path is (#50)", a
   expect(await denied("../shared/**", "../shared/a.txt")).toBe("deny");
   expect(await denied("foo/../secret/**", "other/a.txt")).not.toBe("deny");
 });
+
+test("a working directory named with +(…) or @(…) still anchors its relative rules (#98)", async () => {
+  for (const dir of ["/work/proj+(old)", "/work/app@(v2)", "/work/x!(y)"]) {
+    const deny = new PermissionPolicy("edits", { deny: ["edit(secrets/**)", "read(.env)"] });
+    expect((await deny.check({ tool: editTool, args: { path: "secrets/k.txt" }, cwd: dir })).decision).toBe("deny");
+    expect((await deny.check({ tool: readTool, args: { path: ".env" }, cwd: dir })).decision).toBe("deny");
+    const allow = new PermissionPolicy("ask", { allow: ["edit(src/**)"] });
+    expect((await allow.check({ tool: editTool, args: { path: "src/a.ts" }, cwd: dir })).decision).toBe("allow");
+  }
+});
+
+test("where the file system folds case, a deny rule holds for the path in any case; decomposed names match composed rules (#98)", async () => {
+  const { mkdtempSync, rmSync, writeFileSync, existsSync, mkdirSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const dir = mkdtempSync(resolve(tmpdir(), "sasacode-perm-"));
+  try {
+    writeFileSync(resolve(dir, ".env"), "API_KEY=topsecret");
+    mkdirSync(resolve(dir, "secrets"));
+    const folds = existsSync(resolve(dir, ".ENV"));
+    const p = new PermissionPolicy("edits", { deny: ["read(.env)", "read(secrets/**)", "edit(secrets/**)", "read(が.txt)"] });
+    const check = async (tool: typeof readTool, path: string) => (await p.check({ tool, args: { path }, cwd: dir })).decision;
+    expect(await check(readTool, ".env")).toBe("deny");
+    expect(await check(readTool, ".ENV")).toBe(folds ? "deny" : "allow");
+    expect(await check(readTool, "Secrets/key.txt")).toBe(folds ? "deny" : "allow");
+    expect(await check(editTool, "SECRETS/key.txt")).toBe(folds ? "deny" : "allow");
+    expect(await check(readTool, "が.txt".normalize("NFD"))).toBe("deny");
+    expect(await check(readTool, "other.txt")).toBe("allow");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

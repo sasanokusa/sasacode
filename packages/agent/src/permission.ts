@@ -1,4 +1,4 @@
-import { lstatSync, readlinkSync } from "node:fs";
+import { lstatSync, readlinkSync, statSync } from "node:fs";
 import { dirname, isAbsolute, join, parse, relative, resolve, sep } from "node:path";
 import type { ToolDefinition } from "@sasacode/plugin-api";
 
@@ -106,7 +106,7 @@ export class PermissionPolicy {
     const target = c.tool.matchTarget?.(c.args);
     if (target !== undefined) return [`${c.tool.name}(${target.replace(/\\/g, "\\\\").replace(/\*/g, "\\*")})`];
     const paths = pathsOf(c);
-    if (paths.length) return [...new Set(paths)].map((p) => `${c.tool.name}(${slashes(p).replace(/[\\*?[\]{}!]/g, "\\$&")})`);
+    if (paths.length) return [...new Set(paths)].map((p) => `${c.tool.name}(${slashes(p).replace(/[\\*?[\]{}!()+@]/g, "\\$&")})`);
     return [c.tool.name];
   }
 
@@ -170,10 +170,12 @@ function ruleMatches(rule: ParsedRule, c: PermissionCheck, forAllow = false): bo
   // but links inside the project are not followed (a repo could point `src` at ~/.ssh). An
   // absolute pattern is the user's own path: its fixed part is resolved (/var → /private/var).
   const pattern = pathPattern(rule.pattern, c.cwd);
+  // .ENV is .env where the file system folds case (macOS by default): compared as it would be, a deny rule could be spelled past (#98).
+  const fold = foldsCase(tryRealPath(c.cwd) ?? c.cwd);
   const globs = [
-    ...new Set(isAbsolute(pattern) ? [pattern, realPattern(pattern)].map(globPath) : [c.cwd, tryRealPath(c.cwd) ?? c.cwd].map((d) => anchored(d, pattern))),
+    ...new Set(isAbsolute(pattern) ? [pattern, realPattern(pattern)].map((g) => globPath(g, fold)) : [c.cwd, tryRealPath(c.cwd) ?? c.cwd].map((d) => anchored(d, pattern, fold))),
   ].map((g) => new Bun.Glob(g));
-  const hit = (p: string) => globs.some((g) => g.match(globPath(p)));
+  const hit = (p: string) => globs.some((g) => g.match(globPath(p, fold)));
   const spellings = paths.flatMap((p) => [p, tryRealPath(p) ?? p]);
   return forAllow ? spellings.every(hit) : spellings.some(hit);
 }
@@ -194,8 +196,8 @@ function pathPattern(pattern: string, cwd: string): string {
   return /^\/(?!\/)/.test(p) ? resolve(cwd).slice(0, 2) + p : p;
 }
 
-/** A relative pattern under `dir`, which is a literal path: a `[` or `{` in it is not a wildcard. */
-function anchored(dir: string, pattern: string): string {
+/** A relative pattern under `dir`, which is a literal path: a `[`, `{` or `+(` in it is not a wildcard. */
+function anchored(dir: string, pattern: string, fold: boolean): string {
   // Normalized as resolve(dir, pattern) would, a ".." anywhere included (#50).
   const rest: string[] = [];
   for (const part of slashes(pattern).split("/")) {
@@ -205,13 +207,31 @@ function anchored(dir: string, pattern: string): string {
     else dir = dirname(dir);
   }
   // resolve: on Windows a cwd given as /work/x gets its drive, as the paths compared with it do.
-  const base = globPath(resolve(dir)).replace(/[\\*?[\]{}!]/g, "\\$&").replace(/\/$/, "");
-  return rest.length ? `${base}/${globPath(rest.join("/"))}` : base || "/";
+  // ( ) + @ too: Bun.Glob reads +(…) and @(…) as extglobs, and a folder named proj+(old) matched no path in it (#98).
+  const base = globPath(resolve(dir), fold).replace(/[\\*?[\]{}!()+@]/g, "\\$&").replace(/\/$/, "");
+  return rest.length ? `${base}/${globPath(rest.join("/"), fold)}` : base || "/";
 }
 
-/** A path or glob as compared: on Windows with `/` and in one case, as the file system sees names. */
-function globPath(p: string): string {
-  return WINDOWS ? slashes(p).toLowerCase() : p;
+/** A path or glob as compared, as the file system sees names: on Windows with `/`; in one case where it folds case; NFC (macOS takes NFD as the same). */
+function globPath(p: string, fold: boolean): string {
+  const s = slashes(p);
+  return (fold ? s.toLowerCase() : s).normalize("NFC");
+}
+
+const folds = new Map<string, boolean>();
+/** Does the file system at `dir` take a name in another case for the same file (Windows; macOS's APFS and HFS+ by default)? */
+function foldsCase(dir: string): boolean {
+  if (WINDOWS) return true;
+  if (!folds.has(dir)) {
+    const other = dir.replace(/\p{L}/gu, (ch) => (ch === ch.toLowerCase() ? ch.toUpperCase() : ch.toLowerCase()));
+    try {
+      const [a, b] = [statSync(dir), statSync(other)];
+      folds.set(dir, other !== dir && a.ino === b.ino && a.dev === b.dev);
+    } catch {
+      folds.set(dir, false);
+    }
+  }
+  return folds.get(dir)!;
 }
 
 /** The root `p` starts from: on Windows a drive (C:\) or share; a bare `\` is the current drive's. */
