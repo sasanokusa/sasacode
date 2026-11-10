@@ -611,6 +611,26 @@ test("picker: backspace takes a whole emoji; no match is said in the interface's
   await term.type("/exit"); await term.send("\r"); await exited;
 });
 
+test("a plugin command whose argument is typed out runs on the first enter, whatever its completion returns (#114)", async () => {
+  const { term, host, exited } = await start([]);
+  const got: string[] = [];
+  await host.load("complete-test", (api) =>
+    api.registerCommand({
+      name: "toggle",
+      description: "x",
+      // As jev-guard and workflows do: the exact match too, and a longer one starting with it.
+      complete: (prefix) => ["on", "off", "offline"].filter((v) => v.startsWith(prefix)).map((v) => ({ value: v, label: v })),
+      run: ({ args }) => void got.push(args),
+    }),
+  );
+  await term.type("/toggle of");
+  expect(term.text()).toContain("offline"); // completion is up
+  await term.type("f");
+  await term.send("\r");
+  expect(got).toEqual(["off"]);
+  await term.type("/exit"); await term.send("\r"); await exited;
+});
+
 test("a fully typed /effort runs on the first enter (#29)", async () => {
   const { term, agent, exited } = await start([]);
   await term.type("/effort low");

@@ -238,8 +238,14 @@ class App {
           name: cmd.name,
           description: cmd.description,
           argumentHint: cmd.argumentHint,
+          // An argument typed out in full offers nothing more, for any plugin's command: enter then runs
+          // it (with a list up, enter would only complete). Longer ones show again after another key (#114).
           getArgumentCompletions: cmd.complete
-            ? async (prefix: string) => (await cmd.complete!(prefix)).map((o) => ({ value: o.value, label: o.label, description: o.description }))
+            ? async (prefix: string) => {
+                const options = await cmd.complete!(prefix);
+                if (options.some((o) => o.value === prefix)) return [];
+                return options.map((o) => ({ value: o.value, label: o.label, description: o.description }));
+              }
             : undefined,
         })),
         this.host.agent.cwd,
