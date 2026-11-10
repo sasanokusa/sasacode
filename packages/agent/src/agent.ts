@@ -439,6 +439,8 @@ export class Agent {
         // Half-streamed tool calls never ran and unsigned thinking cannot be replayed; keep what was finished.
         message.content = message.content.filter((c) => c.type === "text" || (c.type === "thinking" && c.signature));
       }
+      // A refusal ends the run before its tool calls run: kept, they would be calls without results, which every API rejects (#97).
+      if (message.stopReason === "refusal") message.content = message.content.filter((c) => c.type !== "tool_call");
       if (userAborted) {
         this.interrupted = true;
         if (message.content.length) this.pushMessage(message);

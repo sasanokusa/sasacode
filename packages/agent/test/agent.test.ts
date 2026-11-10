@@ -393,3 +393,12 @@ test("a tool result with a lone surrogate goes into the history well-formed (#88
   expect(sent).not.toContain("\\ud83d");
   expect(sent).toContain("xx�");
 });
+
+test("a refusal's tool calls are not kept: the next request has no call without a result (#97)", async () => {
+  const { agent, provider } = setup([reply([say("I can't"), call("call_1", "read", { path: "x" })], { stopReason: "refusal" }), reply([say("ok")])]);
+  expect(await agent.prompt("first")).toBe("refusal");
+  expect(await agent.prompt("second")).toBe("done");
+  const sent = provider.requests[1]!.messages;
+  expect(sent.flatMap((m) => (m.role === "assistant" ? m.content.filter((c) => c.type === "tool_call") : []))).toEqual([]);
+  expect(sent[1]).toMatchObject({ role: "assistant", content: [say("I can't")] });
+});
