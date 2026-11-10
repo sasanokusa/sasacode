@@ -105,10 +105,12 @@ test("background-sessions: a job two sessions watched is reported once, not agai
     const s3 = fake(backgroundSessions, { pollMs: 20 });
     await Bun.sleep(200);
     expect(s3.injected).toEqual([]);
-    // bash's own printf, not seq (which Windows' Git Bash may lack); a job starts slowly there, so wait for its end.
-    const lines = await s3.tools.bg_start.execute({ command: "printf '%s\\n' {1..250}" }, { cwd: root });
+    // A finished job whose log holds 250 lines, written here: a command printing them gave an empty
+    // log on Windows' runner, and what is tested is how bg_output pages the log.
+    const lines = await s3.tools.bg_start.execute({ command: "exit 0" }, { cwd: root });
     for (let i = 0; i < 500 && !s3.injected.length; i++) await Bun.sleep(20);
     expect(s3.injected.length).toBe(1);
+    writeFileSync(lines.details.logPath, Array.from({ length: 250 }, (_, i) => `${i + 1}\n`).join(""));
     const out = await s3.tools.bg_output.execute({ id: lines.details.id }, { cwd: root });
     expect(out.content[0].text).toContain("Use from_line=1 to read from the start.");
     expect(out.content[0].text).not.toContain("from_line=-");
