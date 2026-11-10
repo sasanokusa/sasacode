@@ -133,6 +133,8 @@ export const TO_JA: Record<string, string> = {
     "{spec}: パスではなく `sasacode plugin list` に表示されるプラグイン名を指定する",
   "Remove {name} from {dir}?": "{name} を {dir} から消す？",
   "removed {name}": "{name} を削除",
+  "{spec}: no plugin by that name in {dir} (see sasacode plugin list)": "{spec}: その名前のプラグインは{dir}にない（sasacode plugin listで確認できる）",
+  "{name} is still installed at {path}": "{name}はまだ{path}に残っている",
 
   // ── plugin-share.ts: search, describe, publish ─────────────────────
   "{url} returned {status}": "{url} は {status} を返した",

@@ -169,6 +169,25 @@ test("plugin remove takes a plugin's name, never a path out of the plugins folde
   expect(existsSync(join(home, "plugins", "gone"))).toBe(false);
 });
 
+test("plugin remove finds the plugin by the name list shows: a single file, a folder named otherwise; nothing found is an error (#107)", async () => {
+  const plugins = join(home, "plugins");
+  write(join(plugins, "repo-dir", "package.json"), JSON.stringify({ name: "sasacode-plugin-demo", version: "1.0.0", sasacode: { extensions: ["index.ts"] } }));
+  write(join(plugins, "repo-dir", "index.ts"), PLUGIN("demo"));
+  const names = () => discoverPlugins(proj).filter((p) => p.scope === "global").map((p) => p.manifest.name);
+  expect(names().sort()).toEqual(["global-hi", "sasacode-plugin-demo"]);
+
+  expect(await pluginCommand(["remove", "--yes", "global-hi"], proj)).toBe(0);
+  expect(existsSync(join(plugins, "global-hi.ts"))).toBe(false);
+  expect(existsSync(plugins)).toBe(true); // the file, never the folder it is listed with
+  expect(await pluginCommand(["remove", "--yes", "sasacode-plugin-demo"], proj)).toBe(0);
+  expect(existsSync(join(plugins, "repo-dir"))).toBe(false);
+  expect(names()).toEqual([]);
+
+  expect(await pluginCommand(["remove", "--yes", "nothing-here"], proj)).toBe(1);
+  expect(await pluginCommand(["remove", "--yes", "proj-hi"], proj)).toBe(1); // a project plugin, without --project
+  expect(existsSync(join(proj, ".sasacode", "plugins", "proj-hi"))).toBe(true);
+});
+
 test("trust covers what the loader imports: no dependency outside node_modules, no extension under node_modules (#104)", async () => {
   const plugins = join(proj, ".sasacode", "plugins");
   // A: a dependency "name" that leaves node_modules.

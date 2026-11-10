@@ -313,10 +313,32 @@ export async function pluginCommand(args: string[], cwd: string): Promise<number
       const folder = /^[^/\\]+$/.test(spec) && spec !== "." && spec !== ".." && spec !== "node_modules";
       if (!folder && !/^(@[a-z0-9~-][a-z0-9._~-]*\/)?[a-z0-9~-][a-z0-9._~-]*$/.test(spec))
         throw new Error(t("{spec}: give the plugin's name as `sasacode plugin list` shows it, not a path", { spec }));
-      const target = join(dir, spec);
+      // What `plugin list` shows under that name in this scope: a single file, a folder (named
+      // differently, as a git clone may be), or an npm dependency; plus a folder or a dependency by
+      // that name that is not a plugin. Nothing found is an error, not a quiet "removed" (#107).
+      const scope = project ? "project" : "global";
+      const modules = join(dir, "node_modules");
+      const deps = () => Object.keys(readJson(join(dir, "package.json"))?.dependencies ?? {});
+      const named = () => discoverPlugins(cwd).filter((p) => p.scope === scope && p.manifest.name === spec);
+      const files = new Set<string>();
+      const packages = new Set<string>();
+      for (const p of named()) {
+        if (p.dir === dir) files.add(join(dir, p.manifest.extensions![0]!)); // single file: never the plugins folder itself
+        else if (p.dir.startsWith(modules + sep)) {
+          const dep = deps().find((d) => join(modules, d) === p.dir);
+          if (dep) packages.add(dep);
+        } else files.add(p.dir);
+      }
+      if (deps().includes(spec)) packages.add(spec);
+      else if (folder && isDir(join(dir, spec))) files.add(join(dir, spec));
+      if (!files.size && !packages.size) throw new Error(t("{spec}: no plugin by that name in {dir} (see sasacode plugin list)", { spec, dir }));
+      for (const f of files) console.log(`  ${f}`);
+      for (const d of packages) console.log(`  ${join(modules, d)}`);
       if (!(await confirm(t("Remove {name} from {dir}?", { name: spec, dir }), yes))) return 1;
-      if (folder && existsSync(target) && statSync(target).isDirectory() && !existsSync(join(dir, "node_modules", spec))) rmSync(target, { recursive: true, force: true });
-      else await bun(["remove", spec], dir);
+      for (const f of files) rmSync(f, { recursive: true, force: true });
+      if (packages.size) await bun(["remove", ...packages], dir);
+      const left = named();
+      if (left.length) throw new Error(t("{name} is still installed at {path}", { name: spec, path: left[0]!.dir }));
       console.log(t("removed {name}", { name: spec }));
       return 0;
     }
