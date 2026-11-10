@@ -124,12 +124,15 @@ export async function shrink(img: Image, s: Pick<SlimSettings, "maxPixels" | "jp
   const alpha = p.alpha && !opaque(original);
   if (!big && alpha) return;
   const jpeg = !alpha;
-  let w = p.w, h = p.h;
   let pipe = new Bun.Image(original);
+  // As decoded: Bun.Image turns a JPEG by its EXIF orientation, and 5 to 8 swap width and height (a phone's portrait photo).
+  // Sized from the frame's width and height, the portrait was squeezed into a landscape box (#93).
+  const { width: W, height: H } = await pipe.metadata().catch(() => ({ width: p.w, height: p.h }));
+  let w = W, h = H;
   if (big) {
-    const scale = Math.sqrt(s.maxPixels / (p.w * p.h));
-    w = Math.max(1, Math.floor(p.w * scale));
-    h = Math.max(1, Math.floor(p.h * scale));
+    const scale = Math.sqrt(s.maxPixels / (W * H));
+    w = Math.max(1, Math.floor(W * scale));
+    h = Math.max(1, Math.floor(H * scale));
     pipe = pipe.resize(w, h);
   }
   let out: Uint8Array;
@@ -140,11 +143,11 @@ export async function shrink(img: Image, s: Pick<SlimSettings, "maxPixels" | "jp
   }
   if (out.length >= original.length) return;
   const format = jpeg ? `JPEG q${s.jpegQuality}` : "PNG";
-  const scaled = big ? `; multiply positions in it by ${(p.w / w).toFixed(2)} for the original` : "";
+  const scaled = big ? `; multiply positions in it by ${(W / w).toFixed(2)} for the original` : "";
   return {
     mediaType: jpeg ? "image/jpeg" : "image/png",
     data: Buffer.from(out).toString("base64"),
-    note: `${p.w}x${p.h} ${p.kind.toUpperCase()} ${kb(img.data.length)} -> ${w}x${h} ${format} ${kb((out.length * 4) / 3)}${scaled}`,
+    note: `${W}x${H} ${p.kind.toUpperCase()} ${kb(img.data.length)} -> ${w}x${h} ${format} ${kb((out.length * 4) / 3)}${scaled}`,
   };
 }
 

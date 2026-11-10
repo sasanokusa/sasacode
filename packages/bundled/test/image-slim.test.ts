@@ -49,6 +49,19 @@ test("a large screenshot becomes a JPEG of about maxPixels, aspect ratio kept, w
   expect(r.note).toMatch(/^1500x950 PNG \d+ KB -> 1286x814 JPEG q90 \d+ KB; multiply positions in it by 1\.17 for the original$/);
 });
 
+test("a JPEG turned by its EXIF orientation is shrunk upright, its aspect ratio kept (#93)", async () => {
+  const jpg = Buffer.from(await new Bun.Image(bytes(png(1600, 1200))).jpeg({ quality: 90 }).bytes());
+  // APP1 Exif: a big-endian TIFF whose IFD0 has one entry, Orientation (0x0112) = 6: shown turned 90°, 1200×1600.
+  const exif = Buffer.concat([Buffer.from("Exif\0\0", "latin1"), Buffer.from([0x4d, 0x4d, 0, 0x2a, 0, 0, 0, 8, 0, 1, 0x01, 0x12, 0, 3, 0, 0, 0, 1, 0, 6, 0, 0, 0, 0, 0, 0])]);
+  const app1 = Buffer.from([0xff, 0xe1, (exif.length + 2) >> 8, (exif.length + 2) & 0xff]);
+  const turned = Buffer.concat([jpg.subarray(0, 2), app1, exif, jpg.subarray(2)]);
+  const r = (await shrink({ type: "image", mediaType: "image/jpeg", data: turned.toString("base64") }, S))!;
+  const out = await new Bun.Image(bytes(r)).metadata();
+  expect([out.width, out.height]).toEqual([886, 1182]);
+  expect(r.note).toStartWith("1200x1600 JPEG");
+  expect(r.note).toContain("-> 886x1182 JPEG");
+});
+
 test("within maxPixels: an opaque PNG over minBytes becomes a JPEG of the same size; small, transparent and JPEG stay", async () => {
   const r = (await shrink(png(600, 400), S))!;
   expect(probe(bytes(r))).toEqual({ kind: "jpeg", w: 600, h: 400, alpha: false });
