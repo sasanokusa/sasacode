@@ -354,3 +354,17 @@ test("read stops on a whole line within 100,000 characters and says where to go 
   const long = out(await readTool.execute({ path: "long.txt" }, ctx()));
   expect(long).toContain("[Showing lines 1-49 of 60. Use offset=50 to continue.]\n[49 long line(s) truncated");
 });
+
+test("edit refuses a file that is not UTF-8 and leaves its bytes as they were; read says so (#89)", async () => {
+  // Shift_JIS for "// 設定\nconst x = 1;\n// 終わり\n"
+  const sjis = Buffer.from("2f2f2090dd92e80a636f6e73742078203d20313b0a2f2f208f4982ed82e80a", "hex");
+  writeFileSync(join(dir, "sjis.js"), sjis);
+  const r = await editTool.execute({ path: "sjis.js", old_string: "const x = 1;", new_string: "const x = 2;" }, ctx());
+  expect(r.isError).toBe(true);
+  expect(out(r)).toContain("not valid UTF-8");
+  expect(readFileSync(join(dir, "sjis.js")).equals(sjis)).toBe(true);
+  expect(out(await readTool.execute({ path: "sjis.js" }, ctx()))).toContain("is not valid UTF-8");
+  writeFileSync(join(dir, "utf8.js"), "// 設定\nconst x = 1;\n");
+  expect(out(await readTool.execute({ path: "utf8.js" }, ctx()))).not.toContain("UTF-8");
+  expect((await editTool.execute({ path: "utf8.js", old_string: "const x = 1;", new_string: "const x = 2;" }, ctx())).isError).toBeFalsy();
+});

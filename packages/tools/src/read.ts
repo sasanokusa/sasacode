@@ -1,4 +1,5 @@
 import { createReadStream } from "node:fs";
+import { isUtf8 } from "node:buffer";
 import { readFile, stat } from "node:fs/promises";
 import { extname } from "node:path";
 import { createInterface } from "node:readline";
@@ -63,7 +64,8 @@ export const readTool: ToolDefinition<Args> = {
     if (head.includes(0)) return errorResult(`${path} looks like a binary file (${st.size} bytes).`);
     const start = (args.offset ?? 1) - 1;
     const wanted = start + (args.limit ?? DEFAULT_LIMIT);
-    const { lines, more } = st.size > WHOLE_FILE_BYTES ? await readLines(path, wanted, ctx.signal) : { lines: splitLines((await readFile(path)).toString("utf8")), more: false };
+    const whole = st.size > WHOLE_FILE_BYTES ? undefined : await readFile(path);
+    const { lines, more } = whole ? { lines: splitLines(whole.toString("utf8")), more: false } : await readLines(path, wanted, ctx.signal);
     if (start >= lines.length && lines.length > 0)
       return errorResult(`offset ${args.offset} is past the end of the file (${lines.length} lines).`);
     let end = Math.min(lines.length, wanted), size = 0;
@@ -78,6 +80,9 @@ export const readTool: ToolDefinition<Args> = {
     if (more) notes.push(`[Showing lines ${start + 1}-${end} of a ${Math.round(st.size / 1_000_000)} MB file. Use offset=${end + 1} to continue.]`);
     else if (end < lines.length || start > 0)
       notes.push(`[Showing lines ${start + 1}-${end} of ${lines.length}.${end < lines.length ? ` Use offset=${end + 1} to continue.` : ""}]`);
+    // Shown with U+FFFD for the bytes UTF-8 cannot read: edit refuses such a file and write would keep the U+FFFDs (#89).
+    if (whole && !isUtf8(whole))
+      notes.push(`[${path} is not valid UTF-8 (e.g. Shift_JIS, EUC-JP or Latin-1): undecodable bytes are shown as U+FFFD. edit refuses it, and writing back what is shown would lose them; use bash (e.g. iconv) to change it.]`);
     if (cut) notes.push(`[${cut} long line(s) truncated at ${MAX_LINE} chars; use bash (e.g. cut, sed) to see them in full.]`);
     if (!lines.length || (lines.length === 1 && lines[0] === "")) return { content: [text(`${path} is empty.`)] };
     return { content: [text([shown.join("\n"), ...notes].join("\n"))] };

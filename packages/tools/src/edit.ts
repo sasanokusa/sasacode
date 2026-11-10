@@ -1,3 +1,4 @@
+import { isUtf8 } from "node:buffer";
 import { readFile, writeFile } from "node:fs/promises";
 import { errorResult, text, type ToolDefinition } from "@sasacode/plugin-api";
 import { lineDiff, resolvePath } from "./util.ts";
@@ -30,8 +31,12 @@ export const editTool: ToolDefinition<Args> = {
   summary: (a) => a.path,
   async execute(args, ctx) {
     const path = resolvePath(args.path, ctx.cwd);
-    const before = await readFile(path, "utf8").catch(() => undefined);
-    if (before === undefined) return errorResult(`File not found: ${path}. Use write to create it.`);
+    const bytes = await readFile(path).catch(() => undefined);
+    if (bytes === undefined) return errorResult(`File not found: ${path}. Use write to create it.`);
+    // As UTF-8, Shift_JIS or Latin-1 bytes become U+FFFD: written back, lines the edit never touched would be lost (#89).
+    if (!isUtf8(bytes))
+      return errorResult(`${path} is not valid UTF-8 (e.g. Shift_JIS, EUC-JP or Latin-1); edit would corrupt the bytes it cannot decode, so nothing was changed. Edit it with bash instead (e.g. iconv to UTF-8 and back, or sed on its own encoding).`);
+    const before = bytes.toString("utf8");
     if (!args.old_string) return errorResult("old_string is empty. Use write to replace the whole file.");
     const count = before.split(args.old_string).length - 1;
     if (count > 1 && !args.replace_all)
