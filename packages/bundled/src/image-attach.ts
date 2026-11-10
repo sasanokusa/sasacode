@@ -11,8 +11,9 @@ type Image = Extract<UserContent, { type: "image" }>;
 const MAX_BYTES = 5_000_000;
 const EXT = "png|jpe?g|gif|webp";
 // `@path`, a quoted path, or a bare word; a bare word may carry `\ `-escaped spaces (what terminals paste on a drop).
-// Only ASCII whitespace ends a word: macOS names screenshots "… 12.34.56\u202fPM.png".
-const TOKEN = /(@)?(?:"([^"\n]+)"|'([^'\n]+)'|((?:\\.|[^ \t\r\n"'\\])+))/g;
+// Only ASCII whitespace ends a word: macOS names screenshots "… 12.34.56\u202fPM.png". A '…' quote starts a word and
+// ends one: between the apostrophes of "Here's … what's" a path was taken for quoted text (#123).
+const TOKEN = /(@)?(?:"([^"\n]+)"|(?<=^|[\s@])'([^'\n]+)'(?=$|[\s.,;:!?)、。])|((?:\\.|[^ \t\r\n"'\\])+))/g;
 
 const WINDOWS = process.platform === "win32";
 /** A Windows absolute path (C:\x, C:/x, \\server\share): its `\` are separators, not escapes. */
@@ -54,7 +55,9 @@ export function findRefs(s: string): Ref[] {
 }
 
 export function resolvePath(p: string, cwd: string): string {
-  if (p.startsWith("file://")) p = fileURLToPath(p);
+  // A URL with a host (file://nas/a.png) cannot be a path here: kept as written, it is a file that is not found,
+  // where the exception lost every other image of the message (#123).
+  if (p.startsWith("file://")) p = URL.canParse(p) && /^(localhost)?$/.test(new URL(p).hostname) ? fileURLToPath(p) : p;
   if (p === "~" || p.startsWith("~/") || (WINDOWS && p.startsWith("~\\"))) p = join(homedir(), p.slice(1));
   return resolve(cwd, p);
 }
