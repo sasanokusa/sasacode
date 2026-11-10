@@ -29,7 +29,7 @@ export const PRESETS: Record<string, { description: string; rules: PermissionRul
   },
   "read-only-shell": {
     description:
-      "読み取りだけのシェルコマンドを確認なしで許可（ls, cat, rg, git status/diff/log など）。書き出しやコマンドの実行をするオプション（rg --pre、git diff --output、tree -o など）は確認に回す",
+      "読み取りだけのシェルコマンドを確認なしで許可（ls, cat, rg, git status/diff/log など）。書き出しやコマンドの実行をするオプション（rg --pre、git diff --output、tree -o など）、それを作りうるシェル展開、.git以下の編集は確認に回す",
     rules: {
       allow: [
         "bash(ls*)",
@@ -50,6 +50,9 @@ export const PRESETS: Record<string, { description: string; rules: PermissionRul
         "bash(git branch)",
         "bash(git rev-parse*)",
       ],
+      // git diff/log/show/status run what .git/config names (diff.external, textconv, core.fsmonitor): an edit there,
+      // which edits mode allows in the project, would make the allowed git commands run a program unasked (#116).
+      ask: ["edit(**/.git/**)", "write(**/.git/**)"],
     },
   },
   tests: {
@@ -73,7 +76,9 @@ export const PRESETS: Record<string, { description: string; rules: PermissionRul
 /**
  * Options that turn a read-only-shell command into one that writes files or runs programs. The
  * allow rules match by prefix, so these are handed back to the user. Tokens are compared without
- * quotes and backslashes; git also takes unambiguous prefixes of long options (--outp=…).
+ * quotes and backslashes; git also takes unambiguous prefixes of long options (--outp=…). One of
+ * these commands with a shell expansion in it goes back to the user as well: bash expands
+ * ${X:+--output=…}, $'--output=…' and {--output=…,x} into the option before the command runs.
  */
 const WRITES_OR_RUNS: [RegExp, RegExp][] = [
   [/^rg$/, /^--(pre|hostname-bin)(=|$)/],
@@ -87,9 +92,15 @@ export function writesOrRuns(command: string): boolean {
     const words = piece.trim().replace(/["'\\]/g, "").split(/\s+/);
     return WRITES_OR_RUNS.some(([cmd, opt]) => {
       const name = cmd.test(words.slice(0, 2).join(" ")) ? 2 : cmd.test(words[0] ?? "") ? 1 : 0;
-      return name > 0 && words.slice(name).some((w) => opt.test(w));
+      return name > 0 && (expands(piece) || words.slice(name).some((w) => opt.test(w)));
     });
   });
+}
+
+/** Does bash change `piece` before the command sees it ($VAR, ${…}, $'…', `…`, {a,b}, {1..3})? Single quotes keep it as written (#116). */
+function expands(piece: string): boolean {
+  const bare = piece.replace(/'[^']*'/g, "''"); // $'…' keeps its $
+  return /[$`]/.test(bare) || /\{[^{}]*(,|\.\.)[^{}]*\}/.test(bare.replace(/"[^"]*"/g, '""'));
 }
 
 const permissionPresets: Plugin = (api) => {
@@ -104,7 +115,7 @@ const permissionPresets: Plugin = (api) => {
       // Only calls a rule allowed: auto mode (and the user's own asks) are left as they are.
       if (tool.name !== "bash" || verdict.decision !== "allow" || verdict.source !== "rule") return;
       if (writesOrRuns(String(args.command ?? "")))
-        return { decision: "ask", reason: "read-only-shell: this option writes files or runs programs" };
+        return { decision: "ask", reason: "read-only-shell: this option writes files or runs programs (or a shell expansion could make one)" };
     });
   api.registerCommand({
     name: "presets",

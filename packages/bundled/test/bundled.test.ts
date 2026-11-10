@@ -518,6 +518,18 @@ test("read-only-shell: options that write files or run programs go back to the u
   for (const c of ["rg foo", "git log --oneline", "git show HEAD", "git diff", "tree -a", "file x", "ls -la"]) expect(writesOrRuns(c)).toBe(false);
 });
 
+test("read-only-shell: an expansion that bash turns into such an option goes back to the user; so does an edit under .git (#116)", async () => {
+  const { writesOrRuns } = await import("../src/permission-presets.ts");
+  for (const c of ["git diff ${HOME:+--output=/tmp/o.txt}", "git diff {--output=/tmp/o.txt,--stat}", "git diff $'--output=/tmp/o.txt'", "rg ${HOME:+--pre=./pre.sh} two f.txt", "git log `echo --output=x`", "git show \"$X\"", "tree {-o,x} y"])
+    expect([c, writesOrRuns(c)]).toEqual([c, true]);
+  for (const c of ["rg '${not expanded}' src", "rg 'a{1,2}' f", "rg \"a{1,2}\" f", "cat $HOME/x", "ls {a,b}"]) expect([c, writesOrRuns(c)]).toEqual([c, false]);
+  const { agent } = await setup([], ["permission-presets"], { settings: { "permission-presets": { presets: ["guard", "read-only-shell"] } } });
+  const { editTool, writeTool } = await import("@sasacode/tools");
+  expect((await agent.permissions.check({ tool: editTool, args: { path: ".git/config" }, cwd: root })).decision).toBe("ask");
+  expect((await agent.permissions.check({ tool: writeTool, args: { path: "sub/.git/hooks/x" }, cwd: root })).decision).toBe("ask");
+  expect((await agent.permissions.check({ tool: editTool, args: { path: "src/a.ts" }, cwd: root })).decision).toBe("allow");
+});
+
 test("subagents get neither todo_write nor set_goal: the caller's list and goal stay its own", async () => {
   const { agent, provider } = await setup([reply([call("t", "task", { description: "look", prompt: "look around" })]), reply([say("report")]), reply([say("done")])], ["subagent", "todo", "goal"]);
   await agent.prompt("go");
