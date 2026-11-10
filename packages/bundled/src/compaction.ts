@@ -95,12 +95,26 @@ export function splitPoint(messages: readonly Message[], keepTokens: number): nu
   return user < messages.length && userTokens >= keepTokens / 2 ? user : Math.min(user, turn);
 }
 
+/**
+ * Index of the last assistant message whose tool calls have not all got their results yet (a /compact while tools run),
+ * or the length: summarized away, the calls would leave their results, which arrive later, without them (#118).
+ */
+export function pendingCalls(messages: readonly Message[]): number {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i]!;
+    if (m.role !== "assistant") continue;
+    const answered = new Set(messages.slice(i + 1).flatMap((r) => (r.role === "tool" ? [r.toolCallId] : [])));
+    return m.content.some((c) => c.type === "tool_call" && !answered.has(c.id)) ? i : messages.length;
+  }
+  return messages.length;
+}
+
 /** `manual` (/compact) summarizes everything; automatic compaction keeps a recent tail verbatim. */
 export async function compact(api: PluginAPI, instructions = "", manual = false): Promise<boolean> {
   const messages = api.session.messages();
   const model = api.agent.model();
   const keep = Math.min(40_000, Math.floor(model.contextWindow * 0.15));
-  const split = manual ? messages.length : splitPoint(messages, keep);
+  const split = Math.min(manual ? messages.length : splitPoint(messages, keep), pendingCalls(messages));
   const head = messages.slice(0, split);
   if (head.length < 2) return false;
   // One long model call with nothing streaming to the screen: say that it is under way.
@@ -114,6 +128,8 @@ export async function compact(api: PluginAPI, instructions = "", manual = false)
   }
   // An empty answer (the output spent on reasoning, a cut-off stream) must not replace the history.
   if (!summary.trim()) throw new Error("the model returned an empty summary; the history was left as it was");
+  // Results that came in while it summarized are in this array (and kept, after split); another replacement is not.
+  if (api.session.messages() !== messages) throw new Error("the history was replaced while it was being summarized; it was left as it was");
   api.session.replaceMessages([
     { role: "user", timestamp: Date.now(), content: [{ type: "text", text: `[Summary of the earlier conversation, compacted to save context]\n\n${summary}` }] },
     ...messages.slice(split),

@@ -146,6 +146,25 @@ test("compaction: a tool result clipped in the middle of an emoji is sent well-f
   expect(sent.text.isWellFormed()).toBe(true);
 });
 
+test("compaction: /compact while a tool runs keeps the call, so its result does not arrive without it (#118)", async () => {
+  let release!: () => void, started!: () => void;
+  const running = new Promise<void>((r) => (started = r));
+  const slow = { name: "slow", description: "waits", parameters: { type: "object", properties: {} }, execute: () => (started(), new Promise((r) => (release = () => r({ content: [say("finished")] })))) };
+  const { agent, host, provider } = await setup([reply([call("call-1", "slow", {})]), reply([say("SUMMARY")]), reply([say("done")])], ["compaction"]);
+  await host.load("slow", (api) => api.registerTool(slow as any));
+  agent.permissions = new PermissionPolicy("auto");
+  agent.messages = longHistory();
+  const run = agent.prompt("go");
+  await running;
+  await host.commands.find((c) => c.name === "compact")!.run({ args: "" });
+  release();
+  await run;
+  const sent = provider.requests[2]!.messages;
+  const calls = new Set(sent.flatMap((m) => (m.role === "assistant" ? m.content.flatMap((c) => (c.type === "tool_call" ? [c.id] : [])) : [])));
+  expect(sent.filter((m) => m.role === "tool").every((m) => m.role === "tool" && calls.has(m.toolCallId))).toBe(true);
+  expect(JSON.stringify(sent[0])).toContain("SUMMARY");
+});
+
 /** A session of about `chars` characters: questions, file reads with long results, answers. */
 function readingSession(chars: number): Message[] {
   const history: Message[] = [];
