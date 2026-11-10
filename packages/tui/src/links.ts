@@ -2,17 +2,24 @@ import { homedir } from "node:os";
 import { isAbsolute, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
+/** Schemes whose URL can be digits after the colon (`tel:5551234`): not a file with a line. */
+const DIGIT_SCHEMES = /^(?:tel|sms|fax|callto):/i;
+
 /**
  * Where a markdown link should point so the terminal can open it. A model writes local files as
- * `docs/a.md`, `src/x.ts:42` or `/abs/path#L3`; a terminal only opens URLs, so a path becomes a
- * file:// URL against `cwd` (a line suffix is dropped: file URLs have no place for it). URLs and
- * in-page anchors are left alone.
+ * `docs/a.md`, `src/x.ts:42`, `x.ts:42`, `README.md#setup` or `/abs/path#L3`; a terminal only opens
+ * URLs, so a path becomes a file:// URL against `cwd` (a line suffix and a `#` heading are dropped:
+ * a file URL has no place for a line, and an editor opens it at the top). URLs and in-page anchors
+ * are left alone.
  */
 export function linkTarget(href: string, cwd: string): string {
   if (!href || href.startsWith("#")) return href;
   const path = href.startsWith("~/") ? homedir() + href.slice(1) : href;
-  if (!isAbsolute(path) && /^[a-z][a-z0-9+.-]*:/i.test(path)) return href;
-  let p = path.replace(/#L\d+(?:-L?\d+)?$/, "").replace(/:\d+(?::\d+)?$/, "");
+  // `x.ts:42` and `Makefile:12` (a line, maybe a heading after it) are files in the folder, not URLs (#115).
+  const fileLine = /^[^:/]+:\d+(?::\d+)?(?:#.*)?$/s.test(path) && !DIGIT_SCHEMES.test(path);
+  if (!isAbsolute(path) && !fileLine && /^[a-z][a-z0-9+.-]*:/i.test(path)) return href;
+  // The fragment goes before decoding: a `%23` in a name is a real `#` of the file's (#115).
+  let p = path.replace(/#.*$/s, "").replace(/:\d+(?::\d+)?$/, "");
   try {
     p = decodeURI(p);
   } catch {}
@@ -46,7 +53,8 @@ export function localLinks(markdown: string, cwd: string): string {
             : part.replace(LINK, (m, target: string) => {
                 const angle = target.startsWith("<");
                 const to = linkTarget(angle ? target.slice(1, -1) : target, cwd);
-                return m.replace(target, angle ? `<${to}>` : to);
+                // As a function: `$&` or `$$` in a path is not a replacement pattern (#115).
+                return m.replace(target, () => (angle ? `<${to}>` : to));
               }),
         )
         .join("");
