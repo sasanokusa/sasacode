@@ -854,6 +854,16 @@ test("progress-notes: the system prompt asks for progress lines, and silent tool
   expect(off.provider.requests[0]!.system).toContain("Keep the user informed"); // 0 turns off only the reminder
 });
 
+test("progress-notes: a prompt in kanji alone keeps Japanese, and is Japanese in a Japanese interface (#91)", async () => {
+  const { agent, provider } = await setup([reply([say("a")]), reply([say("b")])], ["progress-notes"]);
+  await agent.prompt("テストを直して");
+  await agent.prompt("続行");
+  expect(provider.requests[1]!.system).toContain("in Japanese, the language the user writes in");
+  const fresh = await setup([reply([say("a")])], ["progress-notes"]); // the host's interface language is ja by default
+  await fresh.agent.prompt("了解");
+  expect(fresh.provider.requests[0]!.system).toContain("in Japanese, the language the user writes in");
+});
+
 test("promptLanguage names the language a prompt's script tells", () => {
   expect(promptLanguage("テストを直して")).toBe("Japanese");
   expect(promptLanguage("修正 bug in 関数を")).toBe("Japanese"); // kana decides over the kanji they share with Chinese
