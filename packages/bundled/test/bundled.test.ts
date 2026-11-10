@@ -123,6 +123,16 @@ test("compaction: /compact shows that it is summarizing, and an empty summary le
   expect(host.status.size).toBe(0);
 });
 
+test("compaction: a summary whose stream was cut leaves the history as it was (#95)", async () => {
+  const cut = reply([say("The user asked to refac")], { stopReason: "error", errorMessage: "the stream ended before it was complete" });
+  const { agent, host } = await setup([cut], ["compaction"]);
+  const history = longHistory();
+  agent.messages = [...history];
+  const compact = host.commands.find((c) => c.name === "compact")!;
+  await expect(Promise.resolve(compact.run({ args: "" }))).rejects.toThrow(/ended before/);
+  expect(agent.messages).toEqual(history);
+});
+
 /** A session of about `chars` characters: questions, file reads with long results, answers. */
 function readingSession(chars: number): Message[] {
   const history: Message[] = [];

@@ -577,6 +577,8 @@ export class Agent {
       if (ev.type === "done") {
         this.spent(ev.message, "side");
         if (ev.message.stopReason === "aborted") throw new Error("aborted");
+        // A stream cut before its end (stopReason "error") is a fragment: a compaction would replace the whole history with it (#95).
+        if (ev.message.stopReason === "error") throw new Error(ev.message.errorMessage ?? "the reply failed");
         text = textOf(ev.message.content);
       }
     }

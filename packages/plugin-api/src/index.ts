@@ -301,7 +301,7 @@ export interface PluginAgent {
   tools(): ToolDefinition<any>[];
   /** Run an independent agent loop with its own history (subagents). `error`: why it stopped, when cause is "error" (since 1.8.0). */
   run(opts: SubagentOptions): Promise<{ text: string; messages: Message[]; cause: StopCause; error?: string }>;
-  /** One model call without tools; returns the text. */
+  /** One model call without tools; returns the text. Throws when it is aborted, or when the stream was cut before its end. */
   complete(opts: CompleteOptions): Promise<string>;
 }
 
