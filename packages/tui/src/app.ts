@@ -258,8 +258,8 @@ class App {
           { value: "no", label: t("いいえ") },
         ])) === "yes",
       select: (title, options: SelectOption[]) => this.pick(title, options),
-      input: (title, options) => this.ask((done) => new InputDialog(title, options, done)),
-      selectMany: (title, options, opts) => this.ask((done) => new CheckList(title, options, opts.selected ?? [], done)),
+      input: (title, options) => this.ask((done) => new InputDialog(title, options, done, () => this.inputRows())),
+      selectMany: (title, options, opts) => this.ask((done) => new CheckList(title, options, opts.selected ?? [], done, undefined, () => this.inputRows())),
       showText: (options) => this.showText(options),
     };
   }
@@ -936,6 +936,7 @@ class App {
             resolve(item?.value);
           },
           maxVisible,
+          () => this.inputRows(),
         ),
       );
     }));
