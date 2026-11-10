@@ -79,15 +79,16 @@ export class PermissionPolicy {
 
   private modeDecision(c: PermissionCheck): Omit<Verdict, "source"> {
     // Through a symlink, a path inside the project can point anywhere: judge where it really goes.
-    const insideCwd = pathsOf(c).every((p) => isInside(tryRealPath(p) ?? p, tryRealPath(c.cwd) ?? c.cwd));
-    const hasPaths = !!c.tool.paths;
+    const cwd = tryRealPath(c.cwd) ?? c.cwd, real = pathsOf(c).map((p) => tryRealPath(p) ?? p), insideCwd = real.every((p) => isInside(p, cwd));
+    // Edits under .git (hooks, config) or .sasacode (plugins, rules) run code at the next git command or start (#127).
+    const hasPaths = !!c.tool.paths, runsCode = real.some((p) => /(^|[\\/])\.(git|sasacode)([\\/]|$)/i.test(relative(cwd, p)));
     switch (this.mode) {
       case "auto":
         return { decision: "allow", reason: "mode auto" };
       case "ask":
         return { decision: "ask", reason: "mode ask" };
       case "edits":
-        if ((c.tool.kind === "read" || c.tool.kind === "edit") && hasPaths && insideCwd)
+        if ((c.tool.kind === "read" || (c.tool.kind === "edit" && !runsCode)) && hasPaths && insideCwd)
           return { decision: "allow", reason: "mode edits: inside working directory" };
         return { decision: "ask", reason: "mode edits" };
       case "agent":

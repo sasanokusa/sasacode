@@ -335,6 +335,20 @@ test("a reply whose stream was cut is thrown away and asked for again, not taken
   expect(answers.map((m) => JSON.stringify(m.content))).toEqual([JSON.stringify([say("the answer")])]);
 });
 
+test("a subagent given a signal already aborted does not run (#125)", async () => {
+  const { agent } = setup([]);
+  // Before the fix the child's run had its own controller, never aborted: the request went out and the reply came back.
+  const sent: boolean[] = [];
+  const inner = replayProvider([reply([say("ran anyway")])]) as any;
+  registerApi("replay", { ...inner, stream: (req: any) => (sent.push(!req.signal.aborted), inner.stream(req)) } as any);
+  const ac = new AbortController();
+  ac.abort();
+  const r = await agent.runSubagent({ prompt: "x", signal: ac.signal });
+  expect(r.cause).toBe("aborted");
+  expect(r.text).toBe("");
+  expect(sent).not.toContain(true); // a fetch given an aborted signal sends nothing
+});
+
 test("what subagents, side requests and discarded replies use is logged and reported once each", async () => {
   const session = SessionFile.create(join(dir, "sessions"), dir);
   const cost = (n: number) => ({ ...emptyUsage(), input: n, cost: n / 100 });

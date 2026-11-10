@@ -97,9 +97,7 @@ export const bashTool: ToolDefinition<Args> = {
         child.stderr!.destroy();
         const output = tail;
         const notes: string[] = [];
-        if (file) {
-          notes.push(`[Output truncated: showing the last ${MAX_OUTPUT} of ${size} characters. Full output saved to ${file}]`);
-        }
+        if (file) notes.push(`[Output truncated: showing the last ${MAX_OUTPUT} of ${size} characters. Full output saved to ${file}]`);
         if (killedBy === "timeout") notes.push(`[Command timed out after ${timeoutS}s and was killed]`);
         if (killedBy === "abort") notes.push("[Command was interrupted by the user]");
         notes.push(code !== null ? `[exit code ${code}]` : `[terminated by ${sig}]`);

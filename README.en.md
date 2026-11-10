@@ -214,7 +214,7 @@ Endpoints in a project's `.sasacode/config.json` are not used until you trust th
 
 | Mode | Behavior |
 | --- | --- |
-| `edits` (default) | read / write / edit inside the working directory run without asking; bash and anything outside ask |
+| `edits` (default) | read / write / edit inside the working directory run without asking; bash and anything outside ask. Writing under `.git` or `.sasacode` asks too (git's hooks and config, and sasacode's plugins and rules, can run code at the next git command or start) |
 | `ask` | Every tool call asks, reads included |
 | `agent` | Reads inside the working directory run; everything else is judged by the current model: safe runs, anything else asks. `judgeModel` in the config (`"provider/model"`) picks another model to judge, e.g. a fast, cheap one to cut the wait and the cost. The judge reads the call's arguments, so text written to steer the model can steer the judgment too; this is a convenience, not protection against prompt injection (use deny / ask rules and the `guard` preset for that) |
 | `auto` | Everything runs (deny and ask rules still apply). Shown in red in the TUI footer |

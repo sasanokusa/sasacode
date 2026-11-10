@@ -610,6 +610,7 @@ export class Agent {
     let error: string | undefined;
     child.events.on((e) => {
       if (e.type === "tool_start") o.onProgress?.(`${e.call.name}(${e.summary})`);
+      if (e.type === "agent_start" && o.signal?.aborted) child.abort(); // aborted before its run had a controller to abort (#125)
       if (e.type === "plugin_error") this.events.emit(e);
       if (e.type === "error") error = e.error;
       // The child keeps no log: what it used is the parent's.

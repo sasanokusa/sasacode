@@ -14,6 +14,20 @@ test("a multi-line command stays on its tool's one header line", () => {
   expect(plain(header!)).toBe("○ bash(python3 - <<EOF ↵ global s ↵ print(s) ↵ EOF)");
 });
 
+test("a long output line wraps under its own indent: ask_user's question stays readable after the answer (#126)", () => {
+  const view = new ToolView({ type: "tool_call", id: "1", name: "ask_user", input: {} } as ToolCall);
+  view.status = "done";
+  view.output = `Q: ${"どちらのデータベースを使いますか、".repeat(6)}\nA: Postgres\n\nQ: 次`;
+  const lines = view.render(40).slice(1).map(plain);
+  expect(lines[0]).toStartWith("  ⎿ Q: どちら");
+  expect(lines.length).toBeGreaterThan(4);
+  // Every line the long one wraps onto, the answer, and the blank line between keep the indent.
+  for (const l of lines.slice(1)) expect(l).toStartWith("    ");
+  expect(lines.map((l) => l.trim())).toContain("A: Postgres");
+  expect(lines.map((l) => l.trim())).toContain("");
+  for (const l of view.render(40)) expect(Bun.stringWidth(plain(l))).toBeLessThanOrEqual(40);
+});
+
 test("no rendered line can move the cursor off its row; escape sequences and prompt marks survive", () => {
   const child = { render: () => ["\x1b]133;A\x07a\rb\nc\td\x1b[31mX\x1b[0m"], invalidate() {} };
   expect(new Padded(child, 2, 2).render(40)).toEqual(["\x1b]133;A\x07  abc   d\x1b[31mX\x1b[0m"]);
@@ -215,7 +229,7 @@ test("a tool view shows what changed since its last frame", async () => {
     display.expanded = false;
   }
   expect(plain(view.render(60).join("\n"))).not.toContain("out 9");
-  view.output = `${"y".repeat(50)}TAIL`;
+  view.output = `${"y".repeat(44)}TAIL`; // 26 columns a line under the indent: TAIL stays whole on the second
   expect(plain(view.render(30).join(""))).toContain("TAIL"); // wrapped again at the new width
   view.status = "error";
   expect(view.render(30).join("")).toContain("\x1b[31m");
