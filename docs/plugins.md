@@ -314,7 +314,7 @@ before_request → stream_delta（生成中、差分ごと） → assistant_mess
 
 ## 公開APIの詳細な契約
 
-4,000行のcore上限を維持するため、以下の詳細な契約説明は型定義から移した。公開APIの動作は変えない。型の短い注釈と併せて参照する。
+coreの行数の上限（当時4,000行。いまは5,000行）を守るため、以下の詳細な契約説明は型定義から移した。公開APIの動作は変えない。型の短い注釈と併せて参照する。
 
 Call another registered tool through validation, hooks and its own permission check.
 Inherits cwd, agent and cancellation. Available only while execute is running; await it.
