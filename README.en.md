@@ -369,6 +369,6 @@ bun run build       # dist/sasacode for this machine; --all for every target
 | `@sasacode/mcp` / `@sasacode/skills` / `@sasacode/bundled` | MCP and Skills adapters, bundled plugins |
 | `@sasacode/host` | What the TUI, the CLI and the bundled plugins share: the interface language (the translation tables), the built-in providers and known models (prices, context windows), and the session index |
 
-The core (ai, agent, plugin-api, tools) has a ceiling of 4,000 lines: `bun test` fails above it, and `bun run improve` prints what it is now.
+The core (ai, agent, plugin-api, tools) has a ceiling of 5,000 lines of at most 120 columns (a line that is only a string may run longer): `bun test` fails past either, and `bun run improve` prints what it is now.
 
 Repository docs: [requirements](docs/requirements.md), [milestone checks](docs/milestones.md), [runtime dependencies](docs/dependencies.md), [plugin API](docs/plugins.md), [API compatibility](docs/api-compatibility.md), [benchmarks](docs/benchmarks.md) and [how the improvement loop runs](docs/improvement.md). Improvements are kept small and stacked one round at a time: the procedure, the lenses and the record of what was done are in [docs/improvement.md](docs/improvement.md).

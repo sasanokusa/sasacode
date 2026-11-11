@@ -55,13 +55,13 @@ Anthropicネイティブのtool search（Should）は未対応で、全プロバ
 完了条件「単一バイナリで配布できる」。
 
 - `bun run build`で`dist/sasacode`（約65MB）ができる。`node_modules`のない場所で次の点を確認した：ヘッドレス実行、`~/.sasacode/plugins`のTSプラグイン（`@sasacode/plugin-api`のimportを含む）、MCP stdioサーバー、パイプ入力、TUIの起動。
-- `.github/workflows/release.yml`：`v*`タグをpushすると、7種類のバイナリ（darwin-arm64 / darwin-x64 / linux-x64 / linux-x64-baseline / linux-arm64 / linux-x64-musl / linux-arm64-musl）をビルドしてGitHub Releaseに添付する。macOS版はmacOSのランナーでビルドし、起動を確認する。
-- npm向け：各パッケージに公開用のメタデータを入れ、`bun pm pack`での梱包を確認した。まだ公開はしていない。
+- `.github/workflows/release.yml`：`v*`タグをpushすると、10種類のバイナリ（darwin-arm64 / darwin-x64 / linux-x64 / linux-x64-baseline / linux-arm64 / linux-x64-musl / linux-arm64-musl / windows-x64 / windows-x64-baseline / windows-arm64）をビルドしてGitHub Releaseに添付する。M4の時点では、Windowsを除く7種類だった（Windows版はv0.10.1から）。どのバイナリも、そのOSとCPUのランナー（darwin-x64はRosetta、muslはAlpine）で起動を確かめてから公開する。
+- npm：M4の時点では梱包の確認までだった。v0.9.7（2026-09-29）から、マシンに合うバイナリを取ってくるランチャー`sasacode`をnpmで公開している（`npm install -g sasacode`、`npx sasacode`）。`@sasacode/plugin-api`も公開している。
 - 同梱プラグイン：`agents-md`、`compaction`、`subagent`、`todo`、`web-fetch`、`permission-presets`。どれもテストがあり、TUIで実モデルを使って確認した（TODOの表示とステータス行、サブエージェント、`/compact`の後も内容を覚えていること）。
 
 ### M4 以降の追加
 
-- 配布：`curl -fsSL https://sasanokusa.com/sasacode/install.sh | sh`の1コマンドでインストールできる。インストーラーはOS・CPU・libc・AVX2の有無を見て7種類のバイナリから選び、SHA256を検証して配置し、起動できるかも確かめる。インストーラーとバイナリはGitHub Releasesの最新版から取得する。sasanokusa.com/sasacode/install.shは最新リリースのinstall.shへのリダイレクト（Cloudflare Tunnel → Apacheの.htaccess）なので、タグを打つだけで配布も最新になる。
+- 配布：`curl -fsSL https://sasanokusa.com/sasacode/install.sh | sh`の1コマンドでインストールできる。インストーラーはOS・CPU・libc・AVX2の有無を見てバイナリを選び（Windowsは`install.ps1`）、SHA256を検証して配置し、起動できるかも確かめる。インストーラーとバイナリはGitHub Releasesの最新版から取得する。sasanokusa.com/sasacode/install.shは最新リリースのinstall.shへのリダイレクト（Cloudflare Tunnel → Apacheの.htaccess）なので、タグを打つだけで配布も最新になる。
 - browsrプラグイン：browsr-4-agentのmanifest v1を読んで互換性を確かめ、`browsr-agent serve`をMCPサーバーとして起動する。`search` / `open`を元の名前のまま公開する。実モデルで、検索 → ページを開く → 出典付きで回答、という流れを確認した。
 - 組み込みSkill `tool-authoring`：実モデルで`/skill:tool-authoring`から`now`ツールのプラグインを作らせ、テストを通し、作ったツールをsasacodeから呼び出せることを確認した。
 - プラグインAPI 1.1.0：`api.ready()`を追加した（既存を壊さない変更）。ヘッドレス実行では、MCPサーバーなどの起動処理を待ってから最初のリクエストを送る。
@@ -71,7 +71,7 @@ Anthropicネイティブのtool search（Should）は未対応で、全プロバ
 - tool-callの修復：`tool_call_raw`フック（検証の前）と、同梱の`tool-repair`プラグイン。修復した呼び出しは、会話履歴には修復後の形で残し、モデルにはtool_resultの先頭で短く伝える。元の出力はセッションに`tool_repair`として記録する。署名付きのthinkingを含む応答は、APIが履歴の書き換えを拒否するので、実行時だけ直し、履歴はそのまま残す。`max_tokens`で途切れた呼び出しは修復しない。
 - 生成中のフック：`stream_delta`（同期のみ、途中停止）、`assistant_message`（書き換え、再生成、継続）、`before_request`でのサンプリング設定の変更。同梱の`repetition-guard`がこれらを使う。プラグインが止めた応答は`stopped`として扱い、「ユーザーが中断した」とはモデルに伝えない。
 - セッションIDと終了：`/exit`・`/quit`・`/session`を追加し、IDをフッター、終了時、ヘッドレスの出力に出すようにした。`-r <id> -p`で続けられることをE2Eテストで確認した。
-- コアからツール実行の部分を`tool-exec.ts`に切り出した。コアの行数の上限は、要件定義書で4,000行に改訂した。
+- コアからツール実行の部分を`tool-exec.ts`に切り出した。コアの行数の上限は、要件定義書で4,000行に改訂した（2026-11-11に、1行120桁までと組にして5,000行に改訂）。
 
 ### モデル一覧とプラグイン API 1.3.0
 
@@ -103,20 +103,36 @@ Anthropicネイティブのtool search（Should）は未対応で、全プロバ
 - 利用者のプラグインから同梱へ：`usage`（使用量、ChatGPTプランの残り、Contributions Graph風の日別グラフ）、`goal`（セッションのゴール）、`background-sessions`（長いコマンドのバックグラウンド実行と終了通知）、`auto-reconnect`（接続が切れたら復旧を待って再開）。後の3つは、sasacode自身の上で他のモデルに書かせたプラグインを見直して取り込んだ。同じ名前のユーザー・プロジェクトのプラグインがあれば、同梱版の代わりにそちらを読み込む。
 - 圧縮：`/compact`の実行中はフッターに表示し、要約が空で返ってきたら履歴を置き換えない。
 
-## 非機能要件の実測（M4 時点。行数とテストは v0.9.3）
+### v0.9.4〜v0.15.2（プラグイン API 1.8.0〜1.15.0）
+
+各版の内容はタグの注記にある。大きなものだけを挙げる。
+
+- プラグインの共有：`sasacode plugin search` / `install` / `update` / `publish`。インストールの前に、何が入るか（版、公開者、依存、インストールスクリプトの有無）を見せる。公式プラグイン`ask-user`、`git-context`、`project-checks`、`workflows`。
+- Windowsのネイティブ対応（v0.10.1）：PowerShellのインストーラー、`bash`ツールはGit Bashで動かす。CIはubuntuとwindowsで回す。
+- 入力と表示：スクリーンショットの貼り付けと画像ファイルのドロップ（`image-attach`、v0.9.9とv0.11.0）、手元のファイルへのリンクをクリックで開く、生成速度の表示、承認画面と貼り付けの不具合の修正（#18〜#41）。
+- 使用量：サブエージェント、判定などの副リクエスト、捨てられた応答も数える（v0.12.0）。
+- `--control stdio`で、実行中のモデルに外からメッセージを送れる（v0.13.0）。agentモードの判定を同梱プラグイン`agent-judge`に移し、コアを減らした。
+- 接続の回復：サーバーの一時エラー（503・429など）で止まったら、間を空けて自動で再試行する（`auto-reconnect`、v0.13.1）。応答の途中で接続が切れたら聞き直す。
+- Web：`web_search`（RustXNGによるキー不要の検索。`sasacode web-search install`で入れる）、`web_fetch`は本文だけを読み、ページ内のリンクを番号付きで返す。
+- ローカルLLM（v0.14.0〜）：Ollama、llama.cpp、LM Studioの実際の挙動（出力上限のパラメーター、コンテキスト超過のエラー、読み込まれたコンテキスト長）に合わせた。8K〜16Kの小さい窓でも圧縮が動く。本文に書いたツール呼び出しを拾う`text-tool-calls`、ほかのハーネスのツール名の読み替え、editのゆるい一致。
+- 小型モデルがファイルを壊す形への対策（v0.15.0）：`write-guard`（`read`の行番号付きの内容から行番号を外す。既存のファイルの大部分を消す上書きを一度止める）、`progress-notes`。履歴の画像を小さく送る`image-slim`（v0.15.1）。
+- 不具合の報告（#82〜#139）への修正：権限ルールの照合（大文字小文字、NFD、`..`、`[` `{` `+(`を含むフォルダ）、editsモードで`.git`と`.sasacode`への書き込みを確認する（#127）、中断、圧縮、UTF-8でないファイル、TUIの表示など。どれも回帰テストを付けた。
+
+## 非機能要件の実測（起動時間はM4時点、行数とテストはv0.15.2）
 
 | 項目 | 目標 | 実測 |
 | --- | --- | --- |
 | 起動から入力可能まで（プラグイン0個） | 300 ms以内 | 単一バイナリで86 ms、ソースから`bun`で約100 ms |
 | 同上（プラグイン＋MCPサーバーあり） | 入力をブロックしない | 95 ms（読み込みは起動後にバックグラウンドで行う） |
-| コアの行数（ai + agent + plugin-api + tools） | 約4,000行（当初3,000行から改訂） | 3,609行（v0.9.3。v0.7.0では3,306行） |
-| テスト | LLMなしでE2E | 157テスト（26ファイル）。replayProviderと、テスト用のMCPサーバー、偽のbrowsr-agent、偽のModels APIを使う。組み込みSkill `tool-authoring`のコード例も抜き出して実行する |
+| コアの行数（ai + agent + plugin-api + tools） | 約5,000行、1行120桁まで（当初3,000行。2026-09-24に4,000行、2026-11-11に5,000行に改訂） | 4,000行（v0.15.2、上限ちょうど。1行に詰めて守っていた）。1行120桁に整形し直した後は4,539行。v0.9.3では3,609行、v0.7.0では3,306行 |
+| テスト | LLMなしでE2E | 643テスト（71ファイル）。うち4つは、実APIのキーやWindowsなどの条件が揃わないと走らない（macOSで実APIのキーなしなら4つとも飛ばす）。replayProviderと、テスト用のMCPサーバー、偽のbrowsr-agent、偽のModels APIを使う。組み込みSkill `tool-authoring`のコード例も抜き出して実行する |
 
 ## 未検証・既知の制限
 
-- 実際のAnthropic API：Command Codeの現在のプランではClaude系のモデルが403になる。AnthropicアダプタはOllamaのMessages互換エンドポイントでしか確認していない。prompt caching、adaptive thinking、署名付きthinkingの再送は、本物のAPIでの確認が必要。
+- 実際のAnthropic API：[api-compatibility.md](api-compatibility.md)には、2026-10-01の修正（07f7d33）の前の版で、公式APIでの署名付きthinkingの再送・prefixの破棄・キャッシュ・推論の深さを確かめたとある。ただし、手順や結果の記録はリポジトリに残っていない。それ以降の版では、本物のAPIでは確かめていない（モックでの検証だけ）。実APIで確かめるテスト`packages/ai/test/live.test.ts`（`SASACODE_LIVE=1`とキーが要る）はあるが、走らせた記録はない。Command CodeのClaude系モデルは、当時のプランでは403だった。
 - IMEの候補ウィンドウの位置：実端末での手動確認が必要。
 - OAuthが必要なリモートMCPサーバー：未対応。ヘッダーでトークンを渡す方式だけ使える。
 - MCPのresources（Could）：一覧取得と参照は未実装。ツール結果に含まれるresourceは扱える。
-- クロスコンパイル：ローカルではこのマシン向けのビルドだけを確認した。他ターゲットのビルドはreleaseワークフローで行う。
+- クロスコンパイル：ローカルではこのマシン向けのビルドだけを確認している。ほかの9種類は、releaseワークフローでビルドし、それぞれのランナーで起動を確かめる。CIのテストはubuntuとwindowsで走る。macOSでは、リリースのときにバイナリの起動を確かめるだけで、テストは手元で走らせている。
 - 権限の承認フロー：1ターンに複数のツール呼び出しがあるときは、全部の承認を先に取ってから実行する。
+- 小型モデルでの効果：修復と抑止の機能が実際に働いたかは、Gemma4 e4b / e2bの短い課題で数回測っただけ（[benchmarks.md](benchmarks.md)）。
