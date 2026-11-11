@@ -186,7 +186,7 @@ export class ToolView implements Component {
       const color = this.status === "error" ? c.red : c.gray;
       // Wrapped under its own indent: a long line (ask_user's question and answer, #126) stays readable as a block.
       for (const [i, l] of shown.entries())
-        for (const [j, w] of (l ? new Text(l, 0, 0).render(width - 4) : [""]).entries()) lines.push(color(`${i === 0 && j === 0 ? "  ⎿ " : "    "}${w}`));
+        for (const [j, w] of (l ? new Text(l, 0, 0).render(Math.max(1, width - 4)) : [""]).entries()) lines.push(color(`${i === 0 && j === 0 ? "  ⎿ " : "    "}${w}`));
       if (!display.expanded && all.length > shown.length)
         lines.push(truncateToWidth(c.gray(`    … +${all.length - shown.length} lines (ctrl+o)`), width));
     }

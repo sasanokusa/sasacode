@@ -21,7 +21,7 @@ export function linkTarget(href: string, cwd: string): string {
   // The fragment goes before decoding: a `%23` in a name is a real `#` of the file's (#115).
   let p = path.replace(/#.*$/s, "").replace(/:\d+(?::\d+)?$/, "");
   try {
-    p = decodeURI(p);
+    p = decodeURIComponent(p); // not decodeURI, which keeps %23 (#138)
   } catch {}
   return pathToFileURL(resolve(cwd, p)).href;
 }
