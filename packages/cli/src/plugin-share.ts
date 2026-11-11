@@ -111,7 +111,8 @@ export async function describeNpm(spec: string, doFetch: typeof fetch = fetch): 
   const isRange = !!range && !doc.versions?.[range] && !doc["dist-tags"]?.[range];
   // A range: the version that will be installed, as npm and bun pick it (latest when it fits,
   // else the newest that does), so what is shown and checked is what arrives (#108).
-  const matching = isRange ? Object.keys(doc.versions ?? {}).filter((x) => Bun.semver.satisfies(x, range!)) : [];
+  // Bun.semver takes what is not a range (a dist-tag that does not exist) as `*` (#133).
+  const matching = isRange && /^[\s\d.xX*^~<>=|v]*$/.test(range!.replace(/[-+][\w.-]*/g, "")) ? Object.keys(doc.versions ?? {}).filter((x) => Bun.semver.satisfies(x, range!)) : [];
   const version = !range ? latest : !isRange ? (doc.versions?.[range] ? range : doc["dist-tags"][range]) : matching.includes(latest) ? latest : matching.sort(Bun.semver.order).at(-1);
   if (isRange && !version) throw new Error(t("no version of {name} matches {range}", { name, range: range! }));
   const v = doc.versions?.[version] ?? {};
@@ -141,10 +142,10 @@ export async function describeNpm(spec: string, doFetch: typeof fetch = fetch): 
  * A new API version adds its row here: a test checks that the first row is PLUGIN_API_VERSION.
  */
 export const API_FEATURES: [range: string, uses: RegExp][] = [
-  // ModelInfo.server (model.server, or compared with a server's name; not any `.server`), ProviderConfig.lmstudio
-  ["^1.15.0", /\bmodel\w*\??\.server\b|\.server\s*[!=]==?|\blmstudio\b/i],
-  // agent_end's error: e.error or ({ cause, error }), not `cause === "error"` (older) or console.error
-  ["^1.14.0", /["']agent_end["'][\s\S]*((?<!console)\.error\b|\(\s*\{[^}]*\berror\b)/],
+  // ModelInfo.server (model.server, model()?.server, or compared with a server's name; not any `.server`), ProviderConfig.lmstudio
+  ["^1.15.0", /\bmodel\w*(?:\(\))?\??\.server\b|\.server\s*[!=]==?|\blmstudio\b/i],
+  // agent_end's error: e.error, ({ cause, error }) or const { error } = e, not `cause === "error"` (older) or console.error
+  ["^1.14.0", /["']agent_end["'][\s\S]*((?<!console)\.error\b|\(\s*\{[^}]*\berror\b|\{[^}]*\berror\b[^}]*\}\s*=[^=>])/],
   ["^1.13.0", /on\(\s*["']usage["']|\bSpend\b/],
   ["^1.12.0", /\b(onPaste|PasteHandler)\b/],
   ["^1.11.0", /["']before_request["'][\s\S]*\bfetch\b/],
