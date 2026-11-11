@@ -12,8 +12,8 @@ const MAX_BYTES = 5_000_000;
 const EXT = "png|jpe?g|gif|webp";
 // `@path`, a quoted path, or a bare word; a bare word may carry `\ `-escaped spaces (what terminals paste on a drop).
 // Only ASCII whitespace ends a word: macOS names screenshots "… 12.34.56\u202fPM.png". A '…' quote starts a word and
-// ends one: between the apostrophes of "Here's … what's" a path was taken for quoted text (#123).
-const TOKEN = /(@)?(?:"([^"\n]+)"|(?<=^|[\s@])'([^'\n]+)'(?=$|[\s.,;:!?)、。])|((?:\\.|[^ \t\r\n"'\\])+))/g;
+// ends one: between the apostrophes of "Here's … what's" a path was taken for quoted text (#123). Japanese may follow it (#132).
+const TOKEN = /(@)?(?:"([^"\n]+)"|(?<=^|[\s@])'([^'\n]+)'(?![\w'"])|((?:\\.|[^ \t\r\n"'\\])+))/g;
 
 const WINDOWS = process.platform === "win32";
 /** A Windows absolute path (C:\x, C:/x, \\server\share): its `\` are separators, not escapes. */

@@ -28,6 +28,13 @@ test("a long output line wraps under its own indent: ask_user's question stays r
   for (const l of view.render(40)) expect(Bun.stringWidth(plain(l))).toBeLessThanOrEqual(40);
 });
 
+test("a tool's output renders at any width, even below its indent (#139)", () => {
+  const view = new ToolView({ type: "tool_call", id: "1", name: "bash", input: {} } as ToolCall);
+  view.status = "done";
+  view.output = "hello world";
+  for (const width of [1, 2, 3, 4]) expect(() => view.render(width)).not.toThrow();
+});
+
 test("no rendered line can move the cursor off its row; escape sequences and prompt marks survive", () => {
   const child = { render: () => ["\x1b]133;A\x07a\rb\nc\td\x1b[31mX\x1b[0m"], invalidate() {} };
   expect(new Padded(child, 2, 2).render(40)).toEqual(["\x1b]133;A\x07  abc   d\x1b[31mX\x1b[0m"]);

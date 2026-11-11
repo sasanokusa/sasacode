@@ -174,14 +174,14 @@ function ruleMatches(rule: ParsedRule, c: PermissionCheck, forAllow = false): bo
   // .ENV is .env where the file system folds case (macOS by default): compared as it would be, a deny rule could be spelled past (#98).
   const fold = foldsCase(tryRealPath(c.cwd) ?? c.cwd);
   const globs = [
-    ...new Set(isAbsolute(pattern) ? [pattern, realPattern(pattern)].map((g) => globPath(g, fold)) : [c.cwd, tryRealPath(c.cwd) ?? c.cwd].map((d) => anchored(d, pattern, fold))),
+    ...new Set(isAbsolute(pattern) ? [pattern, realPattern(pattern)].map((g) => globPath(g, fold).replace(EXTGLOB, "\\$&")) : [c.cwd, tryRealPath(c.cwd) ?? c.cwd].map((d) => anchored(d, pattern, fold))),
   ].map((g) => new Bun.Glob(g));
   const hit = (p: string) => globs.some((g) => g.match(globPath(p, fold)));
   const spellings = paths.flatMap((p) => [p, tryRealPath(p) ?? p]);
   return forAllow ? spellings.every(hit) : spellings.some(hit);
 }
 
-const WINDOWS = process.platform === "win32";
+const WINDOWS = process.platform === "win32", EXTGLOB = /(?<!\\)[+@](?=\()/g;
 /** Path separators: on Windows both, elsewhere `\` is an ordinary character of a name. */
 const SEP = WINDOWS ? /[\\/]/ : "/";
 
@@ -208,9 +208,9 @@ function anchored(dir: string, pattern: string, fold: boolean): string {
     else dir = dirname(dir);
   }
   // resolve: on Windows a cwd given as /work/x gets its drive, as the paths compared with it do.
-  // ( ) + @ too: Bun.Glob reads +(…) and @(…) as extglobs, and a folder named proj+(old) matched no path in it (#98).
+  // ( ) + @ too: Bun.Glob reads +(…) and @(…) as extglobs, and a folder named proj+(old) matched no path in it (#98); in a rule too (#131).
   const base = globPath(resolve(dir), fold).replace(/[\\*?[\]{}!()+@]/g, "\\$&").replace(/\/$/, "");
-  return rest.length ? `${base}/${globPath(rest.join("/"), fold)}` : base || "/";
+  return rest.length ? `${base}/${globPath(rest.join("/"), fold).replace(EXTGLOB, "\\$&")}` : base || "/";
 }
 
 /** A path or glob as compared, as the file system sees names: on Windows with `/`; in one case where it folds case; NFC (macOS takes NFD as the same). */

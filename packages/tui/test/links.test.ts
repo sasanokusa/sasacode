@@ -62,6 +62,11 @@ test("a file in the folder with a line is a file, a #heading is not part of the 
   expect(localLinks("see [a](a$$b.md) and [r](x$&y.md)", cwd)).toBe(`see [a](${file("a$$b.md")}) and [r](${file("x$&y.md")})`);
 });
 
+test("%23 in a link is the file's own # (#138)", () => {
+  expect(linkTarget("foo%23bar.md", cwd)).toBe(file("foo#bar.md"));
+  expect(linkTarget("a%20b.md:3", cwd)).toBe(file("a b.md"));
+});
+
 test("the rendered terminal link points at the file", () => {
   setCapabilityOverrides({ hyperlinks: true });
   const out = new Markdown("[a](docs/a.md)", 0, 0, markdownTheme, undefined, { transform: (m) => localLinks(m, cwd) }).render(200).join("");

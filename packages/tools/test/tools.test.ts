@@ -155,6 +155,19 @@ test("edit: a TSV row's \"123\\t\" is the file's text, not read's 6-column line 
   expect(readFileSync(path, "utf8")).toBe("123\tF\n456\tBAR\nfoo\nbar\n");
 });
 
+test("edit: a number past the file's last line is no line number of read's, so nothing else is changed (#130)", async () => {
+  const path = join(dir, "short.txt");
+  writeFileSync(path, "hello\nfoo\nbar\n");
+  expect(out(await editTool.execute({ path, old_string: "123456\tfoo", new_string: "BAZ" }, ctx()))).toContain("not found");
+  expect(readFileSync(path, "utf8")).toBe("hello\nfoo\nbar\n");
+  writeFileSync(path, "123457\tfoo\n234567\tbar\n");
+  expect(out(await editTool.execute({ path, old_string: "123456\tfoo", new_string: "123456\tBAZ" }, ctx()))).toContain("not found");
+  expect(readFileSync(path, "utf8")).toBe("123457\tfoo\n234567\tbar\n");
+  // Within the file, read's numbers are still taken off.
+  expect(out(await editTool.execute({ path, old_string: "     2\t234567\tbar", new_string: "     2\t234567\tBAR" }, ctx()))).toStartWith("[harness matched old_string ignoring line-number prefixes]\n");
+  expect(readFileSync(path, "utf8")).toBe("123457\tfoo\n234567\tBAR\n");
+});
+
 test("edit: trailing whitespace and CRLF are ignored both ways, and the file keeps its line endings (#65)", async () => {
   const crlf = join(dir, "crlf.txt");
   writeFileSync(crlf, "a\r\nb  \r\nc\r\n");
@@ -367,6 +380,14 @@ test("edit refuses a file that is not UTF-8 and leaves its bytes as they were; r
   writeFileSync(join(dir, "utf8.js"), "// 設定\nconst x = 1;\n");
   expect(out(await readTool.execute({ path: "utf8.js" }, ctx()))).not.toContain("UTF-8");
   expect((await editTool.execute({ path: "utf8.js", old_string: "const x = 1;", new_string: "const x = 2;" }, ctx())).isError).toBeFalsy();
+});
+
+test("read says a file over 10 MB is not UTF-8 too, by its first lines (#137)", async () => {
+  const sjis = Buffer.from("2f2f2090dd92e80a", "hex"); // "// 設定\n" in Shift_JIS
+  writeFileSync(join(dir, "big-sjis.txt"), Buffer.concat([sjis, Buffer.alloc(10_000_001, "a\n")]));
+  expect(out(await readTool.execute({ path: "big-sjis.txt", limit: 3 }, ctx()))).toContain("is not valid UTF-8");
+  writeFileSync(join(dir, "big-utf8.txt"), Buffer.concat([Buffer.from("// 設定\n"), Buffer.alloc(10_000_001, "a\n")]));
+  expect(out(await readTool.execute({ path: "big-utf8.txt", limit: 3 }, ctx()))).not.toContain("UTF-8");
 });
 
 test("read and bash never cut a surrogate pair in half (#88)", async () => {

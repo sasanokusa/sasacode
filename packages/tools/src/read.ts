@@ -81,7 +81,7 @@ export const readTool: ToolDefinition<Args> = {
     if (more) notes.push(`[Showing lines ${start + 1}-${end} of a ${Math.round(st.size / 1_000_000)} MB file. Use offset=${end + 1} to continue.]`);
     else if (end < lines.length || start > 0)
       notes.push(`[Showing lines ${start + 1}-${end} of ${lines.length}.${end < lines.length ? ` Use offset=${end + 1} to continue.` : ""}]`);
-    if (whole && !isUtf8(whole)) // shown with U+FFFD for what UTF-8 cannot read: edit refuses it, write would keep the U+FFFDs (#89)
+    if (!isUtf8(whole ?? head.subarray(0, head.lastIndexOf(10) + 1))) // shown with U+FFFD: edit refuses it, write would keep them (#89); a large file by its whole first lines (#137)
       notes.push(`[${path} is not valid UTF-8 (e.g. Shift_JIS, EUC-JP or Latin-1): undecodable bytes are shown as U+FFFD. edit refuses it, and writing back what is shown would lose them; use bash (e.g. iconv) to change it.]`);
     if (cut) notes.push(`[${cut} long line(s) truncated at ${MAX_LINE} chars; use bash (e.g. cut, sed) to see them in full.]`);
     if (!lines.length || (lines.length === 1 && lines[0] === "")) return { content: [text(`${path} is empty.`)] };

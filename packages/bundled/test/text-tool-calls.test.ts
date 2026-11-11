@@ -173,6 +173,10 @@ test("text-tool-calls: a write cut off where the server stopped on a closing tag
   expect(extractTextCalls('<tool_call>{"name": "read", "arguments": {"path": "a"}}')?.calls[0]?.name).toBe("read");
   expect(extractTextCalls("<tool_call>{'name': 'read', 'arguments': {'path': 'a'}}")?.calls[0]?.name).toBe("read");
   expect(extractTextCalls('<function=write>{"path": "f", "content": "x <function=read>{\\"path\\": \\"a\\"}')).toBeUndefined();
+  // A server that keeps the stop string it stopped on: the reply ends with the inner closing tag (#136).
+  expect(extractTextCalls(`${cut}</tool_call>`)).toBeUndefined();
+  expect(extractTextCalls('<function=write>{"path": "f", "content": "x <function=read>{\\"path\\": \\"a\\"}</function>')).toBeUndefined();
+  expect(extractTextCalls('<tool_call>{"name": "read", "arguments": {"path": "a"}}</tool_call>')?.calls[0]?.name).toBe("read");
 });
 
 test("text-tool-calls: a call whose JSON cannot be mended still tells the model to call natively (#85)", async () => {

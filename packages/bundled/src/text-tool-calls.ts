@@ -48,9 +48,10 @@ function envelope(body: string): TextCall | undefined {
 /**
  * JSON that parses only once a string or bracket is closed for it. A call that ends the reply
  * without its closing tag may have been cut off where a server stopped on a closing tag inside its
- * arguments (an example written into a file): repaired, it ran with what was left (#82).
+ * arguments (an example written into a file): repaired, it ran with what was left (#82). JSON
+ * nothing mends is cut off when `unreadable` (no closing tag); with one, it is a call to report (#85).
  */
-const cutOff = (json: string) => repairJson(json)?.fixes.some((f) => f.startsWith("closed")) ?? true;
+const cutOff = (json: string, unreadable: boolean) => repairJson(json)?.fixes.some((f) => f.startsWith("closed")) ?? unreadable;
 
 /**
  * The tool calls a reply writes as text, when they end it: the matches at the very end of `text`,
@@ -64,8 +65,8 @@ const cutOff = (json: string) => repairJson(json)?.fixes.some((f) => f.startsWit
 export function extractTextCalls(text: string): { prose: string; calls: TextCall[]; skipped: number } | undefined {
   const found: { start: number; end: number; call?: TextCall; fence?: boolean }[] = [];
   const add = (m: RegExpExecArray, call: TextCall | undefined, fence = false) => found.push({ start: m.index, end: m.index + m[0].length, call, fence });
-  // Ends the text without its closing tag, and its JSON had to be closed: cut off, not a call.
-  const open = (m: RegExpExecArray, close: string, json: string) => m.index + m[0].length === text.length && !m[0].trimEnd().endsWith(close) && cutOff(json);
+  // Ends the text and its JSON had to be closed: cut off, not a call. With its closing tag too: a server may keep the stop string it stopped on (#136).
+  const open = (m: RegExpExecArray, close: string, json: string) => m.index + m[0].length === text.length && cutOff(json, !m[0].trimEnd().endsWith(close));
   for (const m of text.matchAll(TAG)) add(m, open(m, "</tool_call>", m[1]!) ? undefined : envelope(m[1]!));
   for (const m of text.matchAll(FUNCTION)) add(m, open(m, "</function>", m[2]!) ? undefined : { name: m[1]!, args: m[2]! });
   for (const m of text.matchAll(FENCE)) add(m, envelope(m[1]!), true);

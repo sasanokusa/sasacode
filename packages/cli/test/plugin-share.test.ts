@@ -128,6 +128,8 @@ test("the API range follows every API version's features, up to PLUGIN_API_VERSI
   const samples: [string, string][] = [
     ["^1.15.0", `api.on("before_request", (e) => { if (e.model.server === "ollama") return {}; });`],
     ["^1.15.0", `if (ctx.model?.server) {}`],
+    ["^1.15.0", `if (api.agent.model()?.server === "lmstudio") {}`], // #134
+    ["^1.14.0", `api.on("agent_end", (e) => { const { error } = e; });`],
     ["^1.14.0", `api.on("agent_end", (e) => { if (e.cause === "error") log(e.error); });`],
     ["^1.14.0", `api.on("agent_end", ({ cause, error }) => {});`],
     ["^1.13.0", `api.on("usage", ({ usage }) => {});`],
@@ -162,6 +164,9 @@ test("a range is described by the version it installs, not by latest (#108)", as
   expect(lines).toContain("2 files, 1 KB");
   expect(lines).not.toContain("v2 rewrite");
   await expect(describeNpm("sasacode-plugin-foo@^3", doFetch)).rejects.toThrow("no version of sasacode-plugin-foo matches ^3");
+  // A dist-tag it does not have is no range, though Bun.semver takes it for `*` (#133).
+  for (const tag of ["beta", "latest-x"]) await expect(describeNpm(`sasacode-plugin-foo@${tag}`, doFetch)).rejects.toThrow(`no version of sasacode-plugin-foo matches ${tag}`);
+  expect((await describeNpm("sasacode-plugin-foo@1.x", doFetch)).join("\n")).toContain("sasacode-plugin-foo@1.2.0");
   await expect(describeNpm("sasacode-plugin-foo@latest", doFetch)).rejects.toThrow("not a sasacode plugin"); // latest itself still is checked
 });
 
