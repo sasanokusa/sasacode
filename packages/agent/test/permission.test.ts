@@ -140,6 +140,13 @@ test("a working directory named with +(…) or @(…) still anchors its relative
   }
 });
 
+test("a rule naming a folder with +(…) or @(…) matches that folder, absolute or relative (#131)", async () => {
+  const deny = new PermissionPolicy("edits", { deny: ["edit(/tmp/proj+(old)/**)", "edit(/tmp/a@(b)/**)", "edit(lib+(v1)/**)"] });
+  for (const path of ["/tmp/proj+(old)/x.ts", "/tmp/a@(b)/x.ts", "/work/proj/lib+(v1)/x.ts"])
+    expect((await deny.check({ tool: editTool, args: { path }, cwd: "/work/proj" })).decision).toBe("deny");
+  expect((await deny.check({ tool: editTool, args: { path: "/work/proj/libv1/x.ts" }, cwd: "/work/proj" })).decision).not.toBe("deny");
+});
+
 test("where the file system folds case, a deny rule holds for the path in any case; decomposed names match composed rules (#98)", async () => {
   const { mkdtempSync, rmSync, writeFileSync, existsSync, mkdirSync } = await import("node:fs");
   const { tmpdir } = await import("node:os");
