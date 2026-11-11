@@ -1,7 +1,7 @@
 // Everything between "the model asked for tools" and "results go back": repair, lookup,
 // validation, plugin decisions, permission, parallel execution.
 import type { AssistantMessage, ToolCall, ToolResultMessage } from "@sasacode/ai";
-import type { ToolDefinition, ToolResult } from "@sasacode/plugin-api";
+import { errorResult as err, type ToolDefinition, type ToolResult, type VerdictSource } from "@sasacode/plugin-api";
 import type { ApprovalAnswer, ApprovalRequest } from "./agent.ts";
 import type { AgentEvent, EventBus } from "./events.ts";
 import type { HookRunner } from "./hooks.ts";
@@ -27,10 +27,6 @@ export interface Repair {
   input: Record<string, unknown>;
   rawInput?: string;
   note: string;
-}
-
-export function err(message: string): ToolResult {
-  return { content: [{ type: "text", text: message }], isError: true };
 }
 
 const notRun = (): ToolResult => err("Interrupted by the user before this tool ran.");
@@ -183,7 +179,7 @@ function preflight(
   job.tool = tool;
 }
 
-type Current = Omit<Verdict, "source"> & { source: Verdict["source"] | "plugin" };
+type Current = Omit<Verdict, "source"> & { source: VerdictSource };
 
 /**
  * A tool_call plugin's decision replaces the permission mode's default, but never the user's

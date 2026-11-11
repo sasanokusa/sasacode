@@ -60,7 +60,7 @@ export const readTool: ToolDefinition<Args> = {
       const data = await readFile(path);
       return { content: [text(`Image ${path} (${data.length} bytes)`), { type: "image", mediaType: imageType, data: data.toString("base64") }] };
     }
-    const head = await readHead(path, 8192);
+    const head = Buffer.from(await Bun.file(path).slice(0, 8192).arrayBuffer());
     if (head.includes(0)) return errorResult(`${path} looks like a binary file (${st.size} bytes).`);
     const start = (args.offset ?? 1) - 1;
     const wanted = start + (args.limit ?? DEFAULT_LIMIT);
@@ -93,12 +93,6 @@ export function splitLines(text: string): string[] {
   const lines = text.split("\n");
   if (lines.length > 1 && lines[lines.length - 1] === "") lines.pop();
   return lines;
-}
-
-async function readHead(path: string, bytes: number): Promise<Buffer> {
-  const chunks: Buffer[] = [];
-  for await (const c of createReadStream(path, { start: 0, end: bytes - 1 })) chunks.push(c as Buffer);
-  return Buffer.concat(chunks);
 }
 
 /** The first `count` lines of a large file; `more` when the file goes on after them. */

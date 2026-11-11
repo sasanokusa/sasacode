@@ -18,13 +18,14 @@ import {
   type StreamEvent,
   type ThinkingContent,
   droppedMidReply,
+  hasOrigin,
   markIfCut,
   type ToolCall,
   type Usage,
 } from "./types.ts";
 import { withEffort } from "./effort.ts";
 import { canReplay, replayScope, newReply as newAssistant } from "./replay.ts";
-const openrouter = (m: ModelInfo) => { try { return new URL(m.baseUrl ?? "").origin === "https://openrouter.ai"; } catch { return false; } };
+const openrouter = (m: ModelInfo) => hasOrigin(m.baseUrl, "https://openrouter.ai");
 
 export function openaiClient(req: Request): OpenAI {
   return new OpenAI({

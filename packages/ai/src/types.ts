@@ -174,10 +174,12 @@ export interface Provider {
 }
 
 export class ContextOverflowError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "ContextOverflowError";
-  }
+  override name = "ContextOverflowError";
+}
+
+/** Is `url` on exactly this origin? Fields only one vendor's own endpoint takes are sent nowhere else. */
+export function hasOrigin(url: string | undefined, origin: string): boolean {
+  try { return new URL(url ?? "").origin === origin; } catch { return false; }
 }
 
 /** Common sampling fields in the snake_case most HTTP APIs use, plus extraBody. Unset fields are omitted. */

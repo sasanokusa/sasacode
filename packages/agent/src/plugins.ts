@@ -1,4 +1,3 @@
-import type { UserContent } from "@sasacode/ai";
 import {
   type CommandDefinition,
   PLUGIN_API_VERSION,
@@ -12,6 +11,7 @@ import {
   type SelectManyOptions,
   type SelectOption,
   type ShowTextOptions,
+  text,
   type ToolDefinition,
   type ToolRenderer,
 } from "@sasacode/plugin-api";
@@ -198,8 +198,7 @@ export class PluginHost {
         messages: () => agent.messages,
         replaceMessages: (messages) => agent.replaceMessages(messages),
         inject(content, when = "next") {
-          const c: UserContent[] = typeof content === "string" ? [{ type: "text", text: content }] : content;
-          agent.inject(c, when);
+          agent.inject(typeof content === "string" ? [text(content)] : content, when);
         },
       },
       agent: {

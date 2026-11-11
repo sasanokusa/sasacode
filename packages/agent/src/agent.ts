@@ -11,7 +11,7 @@ import {
   type UserContent,
   type UserMessage,
 } from "@sasacode/ai";
-import type { CompleteOptions, HookName, Spend, StopCause, SubagentOptions, ToolDefinition } from "@sasacode/plugin-api";
+import { type CompleteOptions, type HookName, type Spend, type StopCause, type SubagentOptions, text, type ToolDefinition } from "@sasacode/plugin-api";
 import { type AgentEvent, EventBus } from "./events.ts";
 import { HookRunner } from "./hooks.ts";
 import { type PermissionCheck, PermissionPolicy } from "./permission.ts";
@@ -182,7 +182,7 @@ export class Agent {
     // Sent while a halt waits for the run to stop: it belongs after the halt, not to the stopping run.
     // (Input sent before the halt was queued for that run, and the halt drops it.)
     const halting = this.halted;
-    let content: UserContent[] = typeof input === "string" ? [{ type: "text", text: input }] : input;
+    let content: UserContent[] = typeof input === "string" ? [text(input)] : input;
     let handled = false;
     await this.hooks.run("user_prompt", { content }, (r) => {
       if (r.content) content = r.content;
@@ -204,8 +204,7 @@ export class Agent {
 
   /** Continue without new input, e.g. after resuming a session. */
   async continue(): Promise<StopCause> {
-    if (this.running) return this.running;
-    return this.start();
+    return this.running ?? this.start();
   }
 
   /** Add a user message from a plugin: "next" waits for the next turn or prompt, "now" also starts a run. */
@@ -266,7 +265,7 @@ export class Agent {
 
   private pushUser(content: UserContent[]): void {
     if (this.interrupted) {
-      content = [{ type: "text", text: INTERRUPTED_NOTE }, ...content];
+      content = [text(INTERRUPTED_NOTE), ...content];
       this.interrupted = false;
     }
     this.pushMessage({ role: "user", content, timestamp: Date.now() } satisfies UserMessage);
@@ -290,8 +289,9 @@ export class Agent {
     this.spend({ t: m.timestamp, model: `${m.provider}/${m.model}`, usage: m.usage, source }, emit);
   }
 
-  /** A reply with nothing to keep: not in the conversation, but the UI counts it from message_end. */
-  private endEmpty(m: AssistantMessage): void {
+  /** Stores a reply. One with nothing to keep stays out of the conversation, but the UI counts it from message_end. */
+  private keep(m: AssistantMessage): void {
+    if (m.content.length) return this.pushMessage(m);
     this.spent(m, "discarded", false);
     this.events.emit({ type: "message_end", message: m });
   }
@@ -360,7 +360,7 @@ export class Agent {
             return false;
           }
           if (r.inject) {
-            this.queued.push([{ type: "text", text: r.inject }]);
+            this.queued.push([text(r.inject)]);
             injected = true;
           }
         });
@@ -385,7 +385,7 @@ export class Agent {
       this.abortController = undefined;
     }
     await this.hooks.run("agent_end", { cause, stopped, error }, (r) => {
-      if (r.inject) this.queued.push([{ type: "text", text: r.inject }]);
+      if (r.inject) this.queued.push([text(r.inject)]);
     });
     this.events.emit({ type: "agent_end", cause, stopped, error });
     return cause;
@@ -443,8 +443,7 @@ export class Agent {
       if (message.stopReason === "refusal") message.content = message.content.filter((c) => c.type !== "tool_call");
       if (userAborted) {
         this.interrupted = true;
-        if (message.content.length) this.pushMessage(message);
-        else this.endEmpty(message);
+        this.keep(message);
         return { message, repairs: new Map() };
       }
       let final = message;
@@ -461,9 +460,8 @@ export class Agent {
         continue;
       }
       const repairs = await repairCalls(this.toolContext(), final);
-      if (final.content.length) this.pushMessage(final);
-      else this.endEmpty(final);
-      if (inject) this.queued.push([{ type: "text", text: inject }]);
+      this.keep(final);
+      if (inject) this.queued.push([text(inject)]);
       return { message: final, repairs };
     }
   }
@@ -619,7 +617,7 @@ export class Agent {
     });
     const onAbort = () => child.abort();
     o.signal?.addEventListener("abort", onAbort, { once: true });
-    o.onStart?.({ send: (text) => child.inject([{ type: "text", text }], "next"), stop: onAbort });
+    o.onStart?.({ send: (t) => child.inject([text(t)], "next"), stop: onAbort });
     try {
       const cause = await child.prompt(o.prompt);
       // The last thing it said, even when it stopped in the middle of tool calls.

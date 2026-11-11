@@ -1,14 +1,9 @@
 import { lstatSync, readlinkSync, statSync } from "node:fs";
 import { dirname, isAbsolute, join, parse, relative, resolve, sep } from "node:path";
-import type { ToolDefinition } from "@sasacode/plugin-api";
+import type { Decision, PermissionMode, PermissionRules, ToolDefinition, VerdictSource } from "@sasacode/plugin-api";
 
-/**
- * auto    — allow everything
- * agent   — reads inside the working directory run; the agent-judge plugin has a model judge the rest
- * ask     — ask for every call, reads included
- * edits   — read/write/edit inside the working directory run, everything else asks (default)
- */
-export type PermissionMode = "auto" | "agent" | "ask" | "edits";
+// The modes, the decisions and the rule lists are the plugin API's: one definition for the policy and for plugins.
+export type { Decision, PermissionMode, PermissionRules };
 export const PERMISSION_MODES: PermissionMode[] = ["edits", "ask", "agent", "auto"];
 export const PERMISSION_MODE_LABELS: Record<PermissionMode, string> = {
   edits: "読み取り・編集のみ許可",
@@ -16,17 +11,6 @@ export const PERMISSION_MODE_LABELS: Record<PermissionMode, string> = {
   agent: "エージェント判断",
   auto: "自動許可",
 };
-
-export type Decision = "allow" | "ask" | "deny";
-
-/** Rules look like `bash`, `bash(git status*)`, `edit(src/**)`, `mcp__github__*`. */
-export interface PermissionRules {
-  allow?: string[];
-  ask?: string[];
-  deny?: string[];
-  /** Denied like `deny`, but a permission hook may hand the call to the user instead (never run it unasked). */
-  softDeny?: string[];
-}
 
 export interface PermissionCheck {
   tool: ToolDefinition<any>;
@@ -37,11 +21,8 @@ export interface PermissionCheck {
 export interface Verdict {
   decision: Decision;
   reason: string;
-  /**
-   * "rule": the user's (or a plugin's) explicit allow/ask/deny rule; "soft": a softDeny rule;
-   * "mode": the permission mode's default.
-   */
-  source: "rule" | "soft" | "mode";
+  /** The policy itself never answers "plugin": that is a tool_call hook's decision. */
+  source: Exclude<VerdictSource, "plugin">;
 }
 
 interface ParsedRule {
@@ -122,6 +103,7 @@ function covers(rule: ParsedRule, tool: ToolDefinition<any>): boolean {
   return rule.tool.test(tool.name) || (!!tool.permissionsAs && rule.tool.test(tool.permissionsAs));
 }
 
+/** Rules look like `bash`, `bash(git status*)`, `edit(src/**)`, `mcp__github__*`. */
 function parseRule(source: string): ParsedRule {
   const m = /^([^()]+?)(?:\((.*)\))?$/s.exec(source.trim());
   if (!m) throw new Error(`invalid permission rule: ${source}`);
@@ -281,7 +263,7 @@ export function realPath(p: string): string {
         const st = lstatSync(next);
         if (st.isSymbolicLink()) link = readlinkSync(next);
       } catch (e) {
-        if (!missing(e)) throw e;
+        if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
         absent = true;
       }
       if (link !== undefined) {
@@ -294,10 +276,6 @@ export function realPath(p: string): string {
     done = next;
   }
   return done;
-}
-
-function missing(e: unknown): boolean {
-  return (e as NodeJS.ErrnoException).code === "ENOENT";
 }
 
 function tryRealPath(p: string): string | undefined {

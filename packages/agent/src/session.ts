@@ -40,16 +40,12 @@ export function sessionDir(root: string, cwd: string): string {
 
 /** Append-only JSONL log. Every entry is flushed immediately so a crash loses nothing that was complete. */
 export class SessionFile {
-  readonly id: string;
-  readonly path: string;
   /** What this log redacts: a log that takes over its conversation (a fork) redacts them too (#103). */
   readonly secrets: string[];
   /** The header is written with the first real entry, so sessions nobody used leave no file. */
   private header?: SessionEntry;
 
-  private constructor(path: string, id: string, secrets: string[]) {
-    this.path = path;
-    this.id = id;
+  private constructor(readonly path: string, readonly id: string, secrets: string[]) {
     this.secrets = secrets.filter((s) => s.length >= 8);
   }
 
@@ -121,13 +117,10 @@ export function readEntries(path: string): SessionEntry[] {
 }
 
 /**
- * Rebuild conversation state from entries. Tool calls that never got a result (a crash mid-turn)
- * get one saying so; `repaired` tells the caller to persist that (a replace entry), so the next
- * restore sees the same history.
- */
-/**
- * The conversation and the model to continue with. `permission_mode` entries are a record of what
- * the user chose, not restored: resuming never starts in a looser mode than the one asked for now.
+ * The conversation and the model to continue with, rebuilt from entries. Tool calls that never got
+ * a result (a crash mid-turn) get one saying so; `repaired` tells the caller to persist that (a
+ * replace entry), so the next restore sees the same history. `permission_mode` entries are a record
+ * of what the user chose, not restored: resuming never starts in a looser mode than the one asked for now.
  */
 export function restore(entries: SessionEntry[]): { messages: Message[]; model?: string; repaired: boolean } {
   const messages: Message[] = [];

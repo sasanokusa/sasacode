@@ -29,12 +29,10 @@ export function shouldDefer(deferrable: ToolDefinition<any>[], model: ModelInfo,
 export function loadedFromHistory(messages: readonly Message[]): Set<string> {
   const names = new Set<string>();
   for (const m of messages) {
-    if (m.role !== "assistant") continue;
-    for (const c of m.content) if (c.type === "tool_call") names.add(c.name);
-  }
-  for (const m of messages)
+    if (m.role === "assistant") for (const c of m.content) if (c.type === "tool_call") names.add(c.name);
     if (m.role === "tool" && m.toolName === TOOL_SEARCH_NAME)
       for (const c of m.content) if (c.type === "text") for (const n of c.text.matchAll(/^### (\S+)$/gm)) names.add(n[1]!);
+  }
   return names;
 }
 

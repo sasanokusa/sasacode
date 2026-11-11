@@ -10,6 +10,7 @@ import {
   ContextOverflowError,
   computeCost,
   droppedMidReply,
+  hasOrigin,
   markIfCut,
   type Message,
   parseToolInput,
@@ -33,10 +34,6 @@ const BINDING_BETA = "thinking-binding-controls-2026-08-01";
 
 /** What a model turned out not to accept, so later requests go straight to what works. */
 const learned = new Map<string, { noDisable?: boolean; noXhigh?: boolean; noBinding?: boolean }>();
-
-function officialEndpoint(baseUrl: string = OFFICIAL_BASE): boolean {
-  try { return new URL(baseUrl).origin === OFFICIAL_BASE; } catch { return false; }
-}
 
 /** The thinking fields for a level. Only the official API gets fields beyond what was sent before. */
 export function thinkingFields(id: string, level: ThinkingLevel | undefined, official: boolean, known: { noDisable?: boolean; noXhigh?: boolean } = {}): Pick<MessageCreateParamsStreaming, "thinking" | "output_config"> {
@@ -67,7 +64,7 @@ export const anthropicProvider: Provider = {
       defaultHeaders: model.headers,
       ...(req.fetch ? { fetch: req.fetch } : {}),
     });
-    const official = officialEndpoint(model.baseUrl);
+    const official = hasOrigin(model.baseUrl ?? OFFICIAL_BASE, OFFICIAL_BASE);
     const key = JSON.stringify([model.baseUrl ?? OFFICIAL_BASE, model.id]);
     const known = learned.get(key) ?? {};
     learned.set(key, known);
@@ -196,12 +193,7 @@ function readUsage(out: AssistantMessage, u: Partial<Anthropic.Usage> | Anthropi
   if (u.cache_creation_input_tokens != null) out.usage.cacheWrite = u.cache_creation_input_tokens;
 }
 
-function mapStop(r: string | null): StopReason {
-  if (r === "tool_use") return "tool_use";
-  if (r === "max_tokens") return "max_tokens";
-  if (r === "refusal") return "refusal";
-  return "stop";
-}
+const mapStop = (r: string | null): StopReason => (r === "tool_use" || r === "max_tokens" || r === "refusal" ? r : "stop");
 
 function userBlocks(content: UserContent[]): ContentBlockParam[] {
   return content.map((c) =>
