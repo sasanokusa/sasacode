@@ -197,6 +197,25 @@ test("auto-reconnect: a watch from the session before a switch injects nothing i
   }
 });
 
+test("auto-reconnect: a server error's check that outlasts a session switch injects nothing into the new one (#135)", async () => {
+  let hang = true;
+  const server = Bun.serve({ port: 0, fetch: () => (hang ? new Promise<Response>(() => {}) : new Response("ok")) });
+  try {
+    const a = fake(autoReconnect, { checkUrl: `http://127.0.0.1:${server.port}/`, checkIntervalMs: 30, checkTimeoutMs: 200 });
+    await a.fire("session_start");
+    await a.fire("agent_end", { cause: "error", error: "503 Service Unavailable" });
+    await Bun.sleep(50); // the first check hangs
+    await a.fire("session_end");
+    await a.fire("session_start");
+    await Bun.sleep(250); // the check timed out: offline
+    hang = false;
+    await Bun.sleep(300);
+    expect(a.injected).toEqual([]);
+  } finally {
+    server.stop(true);
+  }
+});
+
 test("auto-reconnect: without a baseUrl it checks the provider's own API, not a third party", async () => {
   const real = globalThis.fetch;
   const urls: string[] = [];

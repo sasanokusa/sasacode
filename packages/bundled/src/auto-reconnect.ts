@@ -117,7 +117,7 @@ const plugin: Plugin = (api) => {
   async function watch(trigger: "error" | "manual"): Promise<boolean> {
     const gen = session;
     if (await isOnline()) {
-      if (trigger !== "manual") return false;
+      if (trigger !== "manual" || gen !== session) return false;
       api.ui.notify(t("オンラインです。接続に問題ありません。"), "info");
       api.session.inject(
         "接続に問題ありません。直前で中断した作業があれば、続きから再開してください。",
@@ -162,7 +162,7 @@ const plugin: Plugin = (api) => {
     waiting = true;
     const online = await isOnline();
     waiting = false;
-    if (!online) return monitorAndRetry("error");
+    if (!online) return gen === session ? monitorAndRetry("error") : undefined; // 待つ間に次のセッションになっていたら、そちらへは再開させない (#135)
     if (attempts >= serverRetries) {
       attempts = 0;
       if (serverRetries) api.ui.notify(t("サーバーのエラーが続いたため、再試行をやめました。"), "warning");

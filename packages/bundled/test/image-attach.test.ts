@@ -196,5 +196,9 @@ test("an apostrophe in the text does not swallow a path, and a file:// URL with 
     expect(kinds(await prompt(h, text))).toEqual(["text", "image"]);
   }
   expect(findRefs("it's '/tmp/a b.png', isn't it")).toMatchObject([{ path: "/tmp/a b.png" }]);
+  // Japanese right after the closing quote (#132), but not a word going on in ASCII.
+  for (const text of ["@'/tmp/a b.png'を見て", "@'/tmp/a b.png'です", "「@'/tmp/a b.png'」と書いた", "@'/tmp/a b.png'はどう？"])
+    expect(findRefs(text)).toMatchObject([{ path: "/tmp/a b.png" }]);
+  expect(findRefs("it's 'a b.png'what's").map((r) => r.path)).not.toContain("a b.png");
   expect(kinds(await prompt(h, `file://nas.local/share/a.png and @shot.png`))).toEqual(["text", "image"]);
 });
