@@ -23,17 +23,27 @@ const accepted = new Map<string, number>();
  */
 export function isEffortRejected(e: unknown): boolean {
   if (!(e instanceof OpenAI.APIError)) return false;
-  const bad = e.status === 400 || e.status === 422 || (e.status === undefined && (String(e.code) === "400" || /BadRequest|invalid_request/i.test(String(e.type))));
+  const bad =
+    e.status === 400 ||
+    e.status === 422 ||
+    (e.status === undefined && (String(e.code) === "400" || /BadRequest|invalid_request/i.test(String(e.type))));
   const text = `${e.param ?? ""} ${e.message}`;
-  return bad && !/reasoning_content|reasoning_details|signature|encrypted_content|messages\[|messages\./i.test(text)
-    && /reasoning[_ .]effort|\beffort\b|(?:does not support|unsupported).*thinking/i.test(text);
+  return (
+    bad &&
+    !/reasoning_content|reasoning_details|signature|encrypted_content|messages\[|messages\./i.test(text) &&
+    /reasoning[_ .]effort|\beffort\b|(?:does not support|unsupported).*thinking/i.test(text)
+  );
 }
 
 /**
  * Run `attempt` with the closest effort the server takes for `level`. `key` names the endpoint and
  * model; `thinking` undefined sends no effort at all.
  */
-export async function withEffort<T>(key: string, thinking: ThinkingLevel | undefined, attempt: (effort: string | undefined) => Promise<T>): Promise<T> {
+export async function withEffort<T>(
+  key: string,
+  thinking: ThinkingLevel | undefined,
+  attempt: (effort: string | undefined) => Promise<T>,
+): Promise<T> {
   if (!thinking) return attempt(undefined);
   const list = CANDIDATES[thinking];
   const k = `${key} ${thinking}`;

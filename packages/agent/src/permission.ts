@@ -41,7 +41,8 @@ export class PermissionPolicy {
   }
 
   addRules(rules: PermissionRules): void {
-    for (const d of ["allow", "ask", "deny", "softDeny"] as const) for (const r of rules[d] ?? []) this.rules[d].push(parseRule(r));
+    for (const d of ["allow", "ask", "deny", "softDeny"] as const)
+      for (const r of rules[d] ?? []) this.rules[d].push(parseRule(r));
   }
 
   async check(c: PermissionCheck): Promise<Verdict> {
@@ -60,9 +61,12 @@ export class PermissionPolicy {
 
   private modeDecision(c: PermissionCheck): Omit<Verdict, "source"> {
     // Through a symlink, a path inside the project can point anywhere: judge where it really goes.
-    const cwd = tryRealPath(c.cwd) ?? c.cwd, real = pathsOf(c).map((p) => tryRealPath(p) ?? p), insideCwd = real.every((p) => isInside(p, cwd));
+    const cwd = tryRealPath(c.cwd) ?? c.cwd;
+    const real = pathsOf(c).map((p) => tryRealPath(p) ?? p);
+    const insideCwd = real.every((p) => isInside(p, cwd));
     // Edits under .git (hooks, config) or .sasacode (plugins, rules) run code at the next git command or start (#127).
-    const hasPaths = !!c.tool.paths, runsCode = real.some((p) => /(^|[\\/])\.(git|sasacode)([\\/]|$)/i.test(relative(cwd, p)));
+    const hasPaths = !!c.tool.paths;
+    const runsCode = real.some((p) => /(^|[\\/])\.(git|sasacode)([\\/]|$)/i.test(relative(cwd, p)));
     switch (this.mode) {
       case "auto":
         return { decision: "allow", reason: "mode auto" };
@@ -73,7 +77,8 @@ export class PermissionPolicy {
           return { decision: "allow", reason: "mode edits: inside working directory" };
         return { decision: "ask", reason: "mode edits" };
       case "agent":
-        if (c.tool.kind === "read" && hasPaths && insideCwd) return { decision: "allow", reason: "read inside working directory" };
+        if (c.tool.kind === "read" && hasPaths && insideCwd)
+          return { decision: "allow", reason: "read inside working directory" };
         // The model's judgement is a permission hook (the bundled agent-judge plugin).
         return { decision: "ask", reason: "mode agent: not judged" };
     }
@@ -88,7 +93,8 @@ export class PermissionPolicy {
     const target = c.tool.matchTarget?.(c.args);
     if (target !== undefined) return [`${c.tool.name}(${target.replace(/\\/g, "\\\\").replace(/\*/g, "\\*")})`];
     const paths = pathsOf(c);
-    if (paths.length) return [...new Set(paths)].map((p) => `${c.tool.name}(${slashes(p).replace(/[\\*?[\]{}!()+@]/g, "\\$&")})`);
+    if (paths.length)
+      return [...new Set(paths)].map((p) => `${c.tool.name}(${slashes(p).replace(/[\\*?[\]{}!()+@]/g, "\\$&")})`);
     return [c.tool.name];
   }
 
@@ -153,17 +159,23 @@ function ruleMatches(rule: ParsedRule, c: PermissionCheck, forAllow = false): bo
   // but links inside the project are not followed (a repo could point `src` at ~/.ssh). An
   // absolute pattern is the user's own path: its fixed part is resolved (/var → /private/var).
   const pattern = pathPattern(rule.pattern, c.cwd);
-  // .ENV is .env where the file system folds case (macOS by default): compared as it would be, a deny rule could be spelled past (#98).
+  // .ENV is .env where the file system folds case (macOS by default): compared as it would be, a deny rule could be
+  // spelled past (#98).
   const fold = foldsCase(tryRealPath(c.cwd) ?? c.cwd);
   const globs = [
-    ...new Set(isAbsolute(pattern) ? [pattern, realPattern(pattern)].map((g) => globPath(g, fold).replace(EXTGLOB, "\\$&")) : [c.cwd, tryRealPath(c.cwd) ?? c.cwd].map((d) => anchored(d, pattern, fold))),
+    ...new Set(
+      isAbsolute(pattern)
+        ? [pattern, realPattern(pattern)].map((g) => globPath(g, fold).replace(EXTGLOB, "\\$&"))
+        : [c.cwd, tryRealPath(c.cwd) ?? c.cwd].map((d) => anchored(d, pattern, fold)),
+    ),
   ].map((g) => new Bun.Glob(g));
   const hit = (p: string) => globs.some((g) => g.match(globPath(p, fold)));
   const spellings = paths.flatMap((p) => [p, tryRealPath(p) ?? p]);
   return forAllow ? spellings.every(hit) : spellings.some(hit);
 }
 
-const WINDOWS = process.platform === "win32", EXTGLOB = /(?<!\\)[+@](?=\()/g;
+const WINDOWS = process.platform === "win32",
+  EXTGLOB = /(?<!\\)[+@](?=\()/g;
 /** Path separators: on Windows both, elsewhere `\` is an ordinary character of a name. */
 const SEP = WINDOWS ? /[\\/]/ : "/";
 
@@ -190,19 +202,28 @@ function anchored(dir: string, pattern: string, fold: boolean): string {
     else dir = dirname(dir);
   }
   // resolve: on Windows a cwd given as /work/x gets its drive, as the paths compared with it do.
-  // ( ) + @ too: Bun.Glob reads +(…) and @(…) as extglobs, and a folder named proj+(old) matched no path in it (#98); in a rule too (#131).
-  const base = globPath(resolve(dir), fold).replace(/[\\*?[\]{}!()+@]/g, "\\$&").replace(/\/$/, "");
+  // ( ) + @ too: Bun.Glob reads +(…) and @(…) as extglobs, and a folder named proj+(old) matched no path in it (#98);
+  // in a rule too (#131).
+  const base = globPath(resolve(dir), fold)
+    .replace(/[\\*?[\]{}!()+@]/g, "\\$&")
+    .replace(/\/$/, "");
   return rest.length ? `${base}/${globPath(rest.join("/"), fold).replace(EXTGLOB, "\\$&")}` : base || "/";
 }
 
-/** A path or glob as compared, as the file system sees names: on Windows with `/`; in one case where it folds case; NFC (macOS takes NFD as the same). */
+/**
+ * A path or glob as compared, as the file system sees names: on Windows with `/`; in one case where it folds case; NFC
+ * (macOS takes NFD as the same).
+ */
 function globPath(p: string, fold: boolean): string {
   const s = slashes(p);
   return (fold ? s.toLowerCase() : s).normalize("NFC");
 }
 
 const folds = new Map<string, boolean>();
-/** Does the file system at `dir` take a name in another case for the same file (Windows; macOS's APFS and HFS+ by default)? */
+/**
+ * Does the file system at `dir` take a name in another case for the same file (Windows; macOS's APFS and HFS+ by
+ * default)?
+ */
 function foldsCase(dir: string): boolean {
   if (WINDOWS) return true;
   if (!folds.has(dir)) {
@@ -300,7 +321,9 @@ function allowedByRules(rules: ParsedRule[], c: PermissionCheck): boolean {
   if (mine.some((r) => r.pattern === undefined)) return true;
   const target = c.tool.matchTarget?.(c.args);
   if (target === undefined) return mine.some((r) => ruleMatches(r, c, true));
-  if (mine.some((r) => !r.pattern!.replace(/\\[\\*]/g, "").includes("*") && wildcard(r.pattern!).test(target))) return true; // a rule without a wildcard ("always allow" adds one for the command shown) covers it whole, chained or not (#100)
+  // A rule without a wildcard ("always allow" adds one for the command shown) covers it whole, chained or not (#100).
+  const literal = (r: ParsedRule) => !r.pattern!.replace(/\\[\\*]/g, "").includes("*");
+  if (mine.some((r) => literal(r) && wildcard(r.pattern!).test(target))) return true;
   if (SUBSTITUTION.test(target)) return false;
   return segments(target).every((s) => mine.some((r) => wildcard(r.pattern!).test(s)));
 }

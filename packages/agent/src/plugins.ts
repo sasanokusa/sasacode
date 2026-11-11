@@ -88,7 +88,12 @@ export class PluginHost {
     } catch (e) {
       const error = e instanceof Error ? e.message : String(e);
       this.plugins.push({ name, error });
-      this.notify(this.opts.lang === "en" ? `plugin ${name} failed to load: ${error}` : `プラグイン ${name} を読み込めなかった: ${error}`, "error");
+      this.notify(
+        this.opts.lang === "en"
+          ? `plugin ${name} failed to load: ${error}`
+          : `プラグイン ${name} を読み込めなかった: ${error}`,
+        "error",
+      );
       return false;
     }
   }
@@ -110,10 +115,16 @@ export class PluginHost {
       get interactive() {
         return host.ui.interactive;
       },
-      get lang() { return host.opts.lang ?? "ja"; }, // read live: /language switches it
+      get lang() {
+        return host.opts.lang ?? "ja";
+      }, // read live: /language switches it
       notify: (m, level = "info") => host.notify(m, level),
       async showText(options) {
-        if (typeof options.title !== "string" || typeof options.text !== "string" || (options.format !== undefined && !["text", "markdown"].includes(options.format)))
+        if (
+          typeof options.title !== "string" ||
+          typeof options.text !== "string" ||
+          (options.format !== undefined && !["text", "markdown"].includes(options.format))
+        )
           throw new Error("showText requires title, text and optional text/markdown format");
         const clean = (s: string) => s.replace(/\x1b/g, "␛").replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, "");
         const safe = { ...options, title: clean(options.title), text: clean(options.text) };
@@ -123,15 +134,25 @@ export class PluginHost {
       confirm: (t, m) => host.ui.confirm(t, m),
       select: (t, o) => host.ui.select(t, o),
       async input(title, options = {}) {
-        if (typeof title !== "string" || [options.message, options.placeholder, options.initial].some((v) => v !== undefined && typeof v !== "string"))
+        if (
+          typeof title !== "string" ||
+          [options.message, options.placeholder, options.initial].some((v) => v !== undefined && typeof v !== "string")
+        )
           throw new Error("input requires a title and optional string message, placeholder and initial");
         if (!host.ui.interactive || !host.ui.input) return undefined;
         return host.ui.input(title, options);
       },
       async selectMany(title, options, opts = {}) {
-        if (typeof title !== "string" || !Array.isArray(options) || options.some((o) => typeof o?.value !== "string" || typeof o.label !== "string"))
+        if (
+          typeof title !== "string" ||
+          !Array.isArray(options) ||
+          options.some((o) => typeof o?.value !== "string" || typeof o.label !== "string")
+        )
           throw new Error("selectMany requires a title and options with string value and label");
-        if (opts.selected !== undefined && (!Array.isArray(opts.selected) || opts.selected.some((v) => typeof v !== "string")))
+        if (
+          opts.selected !== undefined &&
+          (!Array.isArray(opts.selected) || opts.selected.some((v) => typeof v !== "string"))
+        )
           throw new Error("selectMany: selected must be an array of option values");
         if (!host.ui.interactive || !host.ui.selectMany) return undefined;
         const picked = await host.ui.selectMany(title, options, opts);

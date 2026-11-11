@@ -31,7 +31,8 @@ export function loadedFromHistory(messages: readonly Message[]): Set<string> {
   for (const m of messages) {
     if (m.role === "assistant") for (const c of m.content) if (c.type === "tool_call") names.add(c.name);
     if (m.role === "tool" && m.toolName === TOOL_SEARCH_NAME)
-      for (const c of m.content) if (c.type === "text") for (const n of c.text.matchAll(/^### (\S+)$/gm)) names.add(n[1]!);
+      for (const c of m.content)
+        if (c.type === "text") for (const n of c.text.matchAll(/^### (\S+)$/gm)) names.add(n[1]!);
   }
   return names;
 }
@@ -39,10 +40,16 @@ export function loadedFromHistory(messages: readonly Message[]): Set<string> {
 export function searchTools(query: string, tools: ToolDefinition<any>[], limit = 5): ToolDefinition<any>[] {
   const q = query.trim();
   if (q.startsWith("select:")) {
-    const wanted = q.slice(7).split(",").map((s) => s.trim());
+    const wanted = q
+      .slice(7)
+      .split(",")
+      .map((s) => s.trim());
     return tools.filter((t) => wanted.includes(t.name));
   }
-  const terms = q.toLowerCase().split(/[\s_\-.]+/).filter(Boolean);
+  const terms = q
+    .toLowerCase()
+    .split(/[\s_\-.]+/)
+    .filter(Boolean);
   return tools
     .map((t) => {
       const name = t.name.toLowerCase();
@@ -62,7 +69,10 @@ export function searchTools(query: string, tools: ToolDefinition<any>[], limit =
 }
 
 /** The core search tool offered when definitions are deferred. Its description carries the catalog. */
-export function makeToolSearchTool(deferred: () => ToolDefinition<any>[], onLoad: (names: string[]) => void): ToolDefinition<{ query: string; limit?: number }> {
+export function makeToolSearchTool(
+  deferred: () => ToolDefinition<any>[],
+  onLoad: (names: string[]) => void,
+): ToolDefinition<{ query: string; limit?: number }> {
   return {
     name: TOOL_SEARCH_NAME,
     get description() {

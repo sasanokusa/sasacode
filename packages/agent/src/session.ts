@@ -13,7 +13,13 @@ export type SessionEntry =
   | { type: "permission_mode"; mode: string }
   | { type: "replace"; messages: Message[] }
   /** What the model actually produced for a call that a tool_call_raw hook repaired. */
-  | { type: "tool_repair"; callId: string; original: { name: string; input: unknown; rawInput?: string }; repaired: { name: string; input: unknown }; note: string }
+  | {
+      type: "tool_repair";
+      callId: string;
+      original: { name: string; input: unknown; rawInput?: string };
+      repaired: { name: string; input: unknown };
+      note: string;
+    }
   /** What a response outside the conversation used (subagent, side request, discarded reply). */
   | ({ type: "usage" } & Spend)
   | { type: "custom"; plugin: string; kind: string; data: unknown };
@@ -45,7 +51,11 @@ export class SessionFile {
   /** The header is written with the first real entry, so sessions nobody used leave no file. */
   private header?: SessionEntry;
 
-  private constructor(readonly path: string, readonly id: string, secrets: string[]) {
+  private constructor(
+    readonly path: string,
+    readonly id: string,
+    secrets: string[],
+  ) {
     this.secrets = secrets.filter((s) => s.length >= 8);
   }
 
@@ -164,7 +174,14 @@ export function settleToolCalls(messages: Message[]): Message[] {
     }
     for (const c of calls)
       if (!answered.has(c.id))
-        out.push({ role: "tool", toolCallId: c.id, toolName: c.name, content: [{ type: "text", text: NO_RESULT }], isError: true, timestamp: m.timestamp });
+        out.push({
+          role: "tool",
+          toolCallId: c.id,
+          toolName: c.name,
+          content: [{ type: "text", text: NO_RESULT }],
+          isError: true,
+          timestamp: m.timestamp,
+        });
     i = j - 1;
   }
   return out;

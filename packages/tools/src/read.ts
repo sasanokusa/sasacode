@@ -52,38 +52,62 @@ export const readTool: ToolDefinition<Args> = {
     if (!st) return errorResult(`File not found: ${path}`);
     if (st.isDirectory()) return errorResult(`${path} is a directory. List it with bash (ls).`);
     // A FIFO or a device would block until someone writes to it, or never end.
-    if (!st.isFile()) return errorResult(`${path} is not a regular file (a pipe, socket or device); use bash if you really need it.`);
+    if (!st.isFile())
+      return errorResult(`${path} is not a regular file (a pipe, socket or device); use bash if you really need it.`);
     const imageType = IMAGE_TYPES[extname(path).toLowerCase()];
     if (imageType) {
       if (st.size > MAX_IMAGE_BYTES)
-        return errorResult(`${path} is ${st.size} bytes, over the ${MAX_IMAGE_BYTES} bytes an image may have. Make a smaller copy with bash (e.g. sips -Z 1600 or magick -resize) and read that.`);
+        return errorResult(
+          `${path} is ${st.size} bytes, over the ${MAX_IMAGE_BYTES} bytes an image may have. Make a smaller copy with bash (e.g. sips -Z 1600 or magick -resize) and read that.`,
+        );
       const data = await readFile(path);
-      return { content: [text(`Image ${path} (${data.length} bytes)`), { type: "image", mediaType: imageType, data: data.toString("base64") }] };
+      return {
+        content: [
+          text(`Image ${path} (${data.length} bytes)`),
+          { type: "image", mediaType: imageType, data: data.toString("base64") },
+        ],
+      };
     }
     const head = Buffer.from(await Bun.file(path).slice(0, 8192).arrayBuffer());
     if (head.includes(0)) return errorResult(`${path} looks like a binary file (${st.size} bytes).`);
     const start = (args.offset ?? 1) - 1;
     const wanted = start + (args.limit ?? DEFAULT_LIMIT);
     const whole = st.size > WHOLE_FILE_BYTES ? undefined : await readFile(path);
-    const { lines, more } = whole ? { lines: splitLines(whole.toString("utf8")), more: false } : await readLines(path, wanted, ctx.signal);
+    const { lines, more } = whole
+      ? { lines: splitLines(whole.toString("utf8")), more: false }
+      : await readLines(path, wanted, ctx.signal);
     if (start >= lines.length && lines.length > 0)
       return errorResult(`offset ${args.offset} is past the end of the file (${lines.length} lines).`);
-    let end = Math.min(lines.length, wanted), size = 0;
+    let end = Math.min(lines.length, wanted),
+      size = 0;
     // size only grows, so the filter keeps the whole lines that fit in MAX_TOTAL and drops every one after (#66).
     const shown = lines
       .slice(start, end)
       // Not after the first half of a surrogate pair: a lone one fails every later request (#88).
-      .map((l, i) => `${String(start + i + 1).padStart(6)}\t${l.length > MAX_LINE ? `${l.slice(0, MAX_LINE - +/[\ud800-\udbff]/.test(l[MAX_LINE - 1]!))}… [line truncated, ${l.length} chars]` : l}`)
+      .map((l, i) => {
+        if (l.length <= MAX_LINE) return `${String(start + i + 1).padStart(6)}\t${l}`;
+        const keep = MAX_LINE - +/[\ud800-\udbff]/.test(l[MAX_LINE - 1]!);
+        return `${String(start + i + 1).padStart(6)}\t${l.slice(0, keep)}… [line truncated, ${l.length} chars]`;
+      })
       .filter((l) => (size += l.length + 1) <= MAX_TOTAL);
     end = start + shown.length;
     const cut = lines.slice(start, end).filter((l) => l.length > MAX_LINE).length;
     const notes: string[] = [];
-    if (more) notes.push(`[Showing lines ${start + 1}-${end} of a ${Math.round(st.size / 1_000_000)} MB file. Use offset=${end + 1} to continue.]`);
+    if (more)
+      notes.push(
+        `[Showing lines ${start + 1}-${end} of a ${Math.round(st.size / 1_000_000)} MB file. Use offset=${end + 1} to continue.]`,
+      );
     else if (end < lines.length || start > 0)
-      notes.push(`[Showing lines ${start + 1}-${end} of ${lines.length}.${end < lines.length ? ` Use offset=${end + 1} to continue.` : ""}]`);
-    if (!isUtf8(whole ?? head.subarray(0, head.lastIndexOf(10) + 1))) // shown with U+FFFD: edit refuses it, write would keep them (#89); a large file by its whole first lines (#137)
-      notes.push(`[${path} is not valid UTF-8 (e.g. Shift_JIS, EUC-JP or Latin-1): undecodable bytes are shown as U+FFFD. edit refuses it, and writing back what is shown would lose them; use bash (e.g. iconv) to change it.]`);
-    if (cut) notes.push(`[${cut} long line(s) truncated at ${MAX_LINE} chars; use bash (e.g. cut, sed) to see them in full.]`);
+      notes.push(
+        `[Showing lines ${start + 1}-${end} of ${lines.length}.${end < lines.length ? ` Use offset=${end + 1} to continue.` : ""}]`,
+      );
+    if (!isUtf8(whole ?? head.subarray(0, head.lastIndexOf(10) + 1)))
+      // shown with U+FFFD: edit refuses it, write would keep them (#89); a large file by its whole first lines (#137)
+      notes.push(
+        `[${path} is not valid UTF-8 (e.g. Shift_JIS, EUC-JP or Latin-1): undecodable bytes are shown as U+FFFD. edit refuses it, and writing back what is shown would lose them; use bash (e.g. iconv) to change it.]`,
+      );
+    if (cut)
+      notes.push(`[${cut} long line(s) truncated at ${MAX_LINE} chars; use bash (e.g. cut, sed) to see them in full.]`);
     if (!lines.length || (lines.length === 1 && lines[0] === "")) return { content: [text(`${path} is empty.`)] };
     return { content: [text([shown.join("\n"), ...notes].join("\n"))] };
   },
@@ -96,7 +120,11 @@ export function splitLines(text: string): string[] {
 }
 
 /** The first `count` lines of a large file; `more` when the file goes on after them. */
-async function readLines(path: string, count: number, signal: AbortSignal): Promise<{ lines: string[]; more: boolean }> {
+async function readLines(
+  path: string,
+  count: number,
+  signal: AbortSignal,
+): Promise<{ lines: string[]; more: boolean }> {
   const stream = createReadStream(path, { encoding: "utf8", signal });
   const rl = createInterface({ input: stream, crlfDelay: Infinity });
   const lines: string[] = [];

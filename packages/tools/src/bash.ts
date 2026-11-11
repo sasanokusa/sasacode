@@ -24,7 +24,11 @@ export const bashTool: ToolDefinition<Args> = {
     type: "object",
     properties: {
       command: { type: "string", description: "Command to run" },
-      timeout: { type: "number", maximum: MAX_TIMEOUT_S, description: `Timeout in seconds (default ${DEFAULT_TIMEOUT_S}, at most ${MAX_TIMEOUT_S})` },
+      timeout: {
+        type: "number",
+        maximum: MAX_TIMEOUT_S,
+        description: `Timeout in seconds (default ${DEFAULT_TIMEOUT_S}, at most ${MAX_TIMEOUT_S})`,
+      },
     },
     required: ["command"],
     additionalProperties: false,
@@ -96,7 +100,10 @@ export const bashTool: ToolDefinition<Args> = {
         child.stdout!.destroy();
         child.stderr!.destroy();
         const notes: string[] = [];
-        if (file) notes.push(`[Output truncated: showing the last ${MAX_OUTPUT} of ${size} characters. Full output saved to ${file}]`);
+        if (file)
+          notes.push(
+            `[Output truncated: showing the last ${MAX_OUTPUT} of ${size} characters. Full output saved to ${file}]`,
+          );
         if (killedBy === "timeout") notes.push(`[Command timed out after ${timeoutS}s and was killed]`);
         if (killedBy === "abort") notes.push("[Command was interrupted by the user]");
         notes.push(code !== null ? `[exit code ${code}]` : `[terminated by ${sig}]`);

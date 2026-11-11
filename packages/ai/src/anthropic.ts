@@ -36,7 +36,12 @@ const BINDING_BETA = "thinking-binding-controls-2026-08-01";
 const learned = new Map<string, { noDisable?: boolean; noXhigh?: boolean; noBinding?: boolean }>();
 
 /** The thinking fields for a level. Only the official API gets fields beyond what was sent before. */
-export function thinkingFields(id: string, level: ThinkingLevel | undefined, official: boolean, known: { noDisable?: boolean; noXhigh?: boolean } = {}): Pick<MessageCreateParamsStreaming, "thinking" | "output_config"> {
+export function thinkingFields(
+  id: string,
+  level: ThinkingLevel | undefined,
+  official: boolean,
+  known: { noDisable?: boolean; noXhigh?: boolean } = {},
+): Pick<MessageCreateParamsStreaming, "thinking" | "output_config"> {
   const adaptive = (effort?: string) => ({
     thinking: { type: "adaptive", display: "summarized" } as MessageCreateParamsStreaming["thinking"],
     ...(effort ? { output_config: { effort } as MessageCreateParamsStreaming["output_config"] } : {}),
@@ -45,7 +50,8 @@ export function thinkingFields(id: string, level: ThinkingLevel | undefined, off
   if (level === "off") {
     if (!official) return {};
     // The installed SDK predates Sonnet 5.5's lowest thinking setting.
-    if (/^claude-sonnet-5-5(?:-|$)/.test(id)) return { thinking: { type: "between_tools" } as unknown as MessageCreateParamsStreaming["thinking"] };
+    if (/^claude-sonnet-5-5(?:-|$)/.test(id))
+      return { thinking: { type: "between_tools" } as unknown as MessageCreateParamsStreaming["thinking"] };
     if (ALWAYS_THINKS.test(id) || known.noDisable) return adaptive("low");
     return official && id.startsWith("claude-") ? { thinking: { type: "disabled" } } : {};
   }
@@ -91,7 +97,9 @@ export const anthropicProvider: Provider = {
       let beta: string | undefined;
       if (official && params.thinking?.type === "adaptive" && BINDS_THINKING.test(model.id) && !known.noBinding) {
         // A block whose context changed is dropped instead of failing the whole request.
-        (params.thinking as unknown as Record<string, unknown>).block_binding = { prefix_mismatch_behavior: "drop_block" };
+        (params.thinking as unknown as Record<string, unknown>).block_binding = {
+          prefix_mismatch_behavior: "drop_block",
+        };
         beta = [new Headers(model.headers).get("anthropic-beta"), BINDING_BETA].filter(Boolean).join(",");
       }
       return { params, headers: beta ? { "anthropic-beta": beta } : undefined };
@@ -99,9 +107,21 @@ export const anthropicProvider: Provider = {
 
     /** Adjust a rejected request only before any content has arrived. */
     function adjust(message: string, params: MessageCreateParamsStreaming): boolean {
-      if (params.thinking?.type === "disabled" && /thinking\.type\.disabled|disabled.*not supported/i.test(message)) return (known.noDisable = true);
-      if (params.output_config?.effort === "xhigh" && !/messages[.\[]|signature|reasoning_content/i.test(message) && /effort/i.test(message)) return (known.noXhigh = true);
-      if (params.thinking?.type === "adaptive" && "block_binding" in params.thinking && /block_binding/.test(message) && !known.noBinding) return (known.noBinding = true);
+      if (params.thinking?.type === "disabled" && /thinking\.type\.disabled|disabled.*not supported/i.test(message))
+        return (known.noDisable = true);
+      if (
+        params.output_config?.effort === "xhigh" &&
+        !/messages[.\[]|signature|reasoning_content/i.test(message) &&
+        /effort/i.test(message)
+      )
+        return (known.noXhigh = true);
+      if (
+        params.thinking?.type === "adaptive" &&
+        "block_binding" in params.thinking &&
+        /block_binding/.test(message) &&
+        !known.noBinding
+      )
+        return (known.noBinding = true);
       // Preserved thinking where the binding controls are not offered: send the history without thinking once.
       if (/bound to a different conversation/i.test(message) && !stripThinking) return (stripThinking = true);
       return false;
@@ -173,7 +193,12 @@ export const anthropicProvider: Provider = {
           out.stopReason = "aborted";
         } else if (e instanceof Anthropic.BadRequestError && /prompt is too long|context window/i.test(e.message)) {
           throw new ContextOverflowError(e.message);
-        } else if (attempt < 3 && !out.content.length && e instanceof Anthropic.BadRequestError && adjust(e.message, params)) {
+        } else if (
+          attempt < 3 &&
+          !out.content.length &&
+          e instanceof Anthropic.BadRequestError &&
+          adjust(e.message, params)
+        ) {
           continue;
         } else if (!droppedMidReply(e)) throw e;
       }
@@ -193,7 +218,8 @@ function readUsage(out: AssistantMessage, u: Partial<Anthropic.Usage> | Anthropi
   if (u.cache_creation_input_tokens != null) out.usage.cacheWrite = u.cache_creation_input_tokens;
 }
 
-const mapStop = (r: string | null): StopReason => (r === "tool_use" || r === "max_tokens" || r === "refusal" ? r : "stop");
+const mapStop = (r: string | null): StopReason =>
+  r === "tool_use" || r === "max_tokens" || r === "refusal" ? r : "stop";
 
 function userBlocks(content: UserContent[]): ContentBlockParam[] {
   return content.map((c) =>
@@ -216,7 +242,12 @@ export function toAnthropicMessages(messages: Message[], model: Request["model"]
     if (m.role === "user") push("user", userBlocks(m.content));
     else if (m.role === "tool")
       push("user", [
-        { type: "tool_result", tool_use_id: m.toolCallId, content: userBlocks(m.content) as never, is_error: m.isError },
+        {
+          type: "tool_result",
+          tool_use_id: m.toolCallId,
+          content: userBlocks(m.content) as never,
+          is_error: m.isError,
+        },
       ]);
     else {
       const sameModel = canReplay(m, model);

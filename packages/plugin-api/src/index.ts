@@ -93,7 +93,10 @@ export interface CommandDefinition {
 // ── hooks (requirements 5.3) ─────────────────────────────────────────
 
 export type Decision = "allow" | "ask" | "deny";
-/** auto: allow everything; agent: the model judges; ask: ask for every call; edits: reads and edits in the working directory run. (since 1.7.0) */
+/**
+ * auto: allow everything; agent: the model judges; ask: ask for every call; edits: reads and edits in the working
+ * directory run. (since 1.7.0)
+ */
 export type PermissionMode = "auto" | "agent" | "ask" | "edits";
 /**
  * Where a verdict came from: "rule" the user's (or a plugin's) allow/ask/deny rule, "soft" a
@@ -172,8 +175,13 @@ export interface HookMap {
   turn_end: { event: { turn: number; message: AssistantMessage }; result: { inject?: string; stop?: string } };
   /** A response outside the conversation (subagent, complete(), a discarded reply) and what it used (since 1.13.0). */
   usage: { event: Spend; result: void };
-  /** `stopped` is set when cause is "stopped" (since 1.4.0); `error`, the message, when cause is "error" (since 1.14.0). */
-  agent_end: { event: { cause: StopCause; stopped?: { plugin: string; reason: string }; error?: string }; result: { inject?: string } };
+  /**
+   * `stopped` is set when cause is "stopped" (since 1.4.0); `error`, the message, when cause is "error" (since 1.14.0).
+   */
+  agent_end: {
+    event: { cause: StopCause; stopped?: { plugin: string; reason: string }; error?: string };
+    result: { inject?: string };
+  };
   /** Free up context (e.g. session.replaceMessages) and return `retry` to continue. */
   context_limit: { event: { tokens: number; contextWindow: number }; result: { retry?: boolean } };
 }
@@ -205,7 +213,11 @@ export interface RenderOptions {
 }
 
 /** Returns body lines (ANSI allowed, each at most `width` wide) or undefined for the default rendering. */
-export type ToolRenderer = (call: ToolCall, result: ToolResult | undefined, opts: RenderOptions) => string[] | undefined;
+export type ToolRenderer = (
+  call: ToolCall,
+  result: ToolResult | undefined,
+  opts: RenderOptions,
+) => string[] | undefined;
 
 export interface ShowTextOptions {
   title: string;
@@ -256,7 +268,10 @@ export interface PluginUI {
   /** Show (or clear with undefined) a status line item. */
   setStatus(key: string, text: string | undefined): void;
   registerToolRenderer(toolName: string, renderer: ToolRenderer): void;
-  /** Pasted or dropped text before it reaches the input; "" for ctrl+v or a paste without text. Return what to insert instead (since 1.12.0). */
+  /**
+   * Pasted or dropped text before it reaches the input; "" for ctrl+v or a paste without text. Return what to insert
+   * instead (since 1.12.0).
+   */
   onPaste(handler: PasteHandler): void;
 }
 
@@ -291,7 +306,10 @@ export interface CompleteOptions {
   system: string;
   messages: Message[];
   model?: string;
-  /** Default 8192, lowered to the room left in the model's window (estimated from the characters of system and messages) and to its maxOutput. */
+  /**
+   * Default 8192, lowered to the room left in the model's window (estimated from the characters of system and messages)
+   * and to its maxOutput.
+   */
   maxTokens?: number;
   signal?: AbortSignal;
 }
@@ -299,9 +317,15 @@ export interface CompleteOptions {
 export interface PluginAgent {
   model(): ModelInfo;
   tools(): ToolDefinition<any>[];
-  /** Run an independent agent loop with its own history (subagents). `error`: why it stopped, when cause is "error" (since 1.8.0). */
+  /**
+   * Run an independent agent loop with its own history (subagents). `error`: why it stopped, when cause is "error"
+   * (since 1.8.0).
+   */
   run(opts: SubagentOptions): Promise<{ text: string; messages: Message[]; cause: StopCause; error?: string }>;
-  /** One model call without tools; returns the text. Throws when it is aborted, or when the stream was cut before its end. */
+  /**
+   * One model call without tools; returns the text. Throws when it is aborted, or when the stream was cut before its
+   * end.
+   */
   complete(opts: CompleteOptions): Promise<string>;
 }
 
@@ -354,7 +378,10 @@ export function errorResult(message: string): ToolResult {
 
 /** `^1.2.0`-style compatibility: same major, and not newer than what the host provides. */
 export function isCompatible(required: string, provided = PLUGIN_API_VERSION): boolean {
-  const req = required.replace(/^[\^~>=\s]+/, "").split(".").map(Number);
+  const req = required
+    .replace(/^[\^~>=\s]+/, "")
+    .split(".")
+    .map(Number);
   const have = provided.split(".").map(Number);
   if (req[0] !== have[0]) return false;
   for (let i = 1; i < 3; i++) {
@@ -372,7 +399,8 @@ export function sasacodeHome(): string {
 }
 
 // On globalThis: a plugin bundling its own copy of this module shares the host's list.
-const hiddenEnv: Set<string> = ((globalThis as Record<symbol, unknown>)[Symbol.for("sasacode.hiddenEnv")] ??= new Set<string>()) as Set<string>;
+const hiddenEnv: Set<string> = ((globalThis as Record<symbol, unknown>)[Symbol.for("sasacode.hiddenEnv")] ??=
+  new Set<string>()) as Set<string>;
 
 /** Keep these variables out of childEnv(): secrets sasacode loaded for itself (~/.sasacode/.env). (since 1.8.0) */
 export function hideFromChildren(names: Iterable<string>): void {
