@@ -13,7 +13,13 @@ export type SessionEntry =
   | { type: "permission_mode"; mode: string }
   | { type: "replace"; messages: Message[] }
   /** What the model actually produced for a call that a tool_call_raw hook repaired. */
-  | { type: "tool_repair"; callId: string; original: { name: string; input: unknown; rawInput?: string }; repaired: { name: string; input: unknown }; note: string }
+  | {
+      type: "tool_repair";
+      callId: string;
+      original: { name: string; input: unknown; rawInput?: string };
+      repaired: { name: string; input: unknown };
+      note: string;
+    }
   /** What a response outside the conversation used (subagent, side request, discarded reply). */
   | ({ type: "usage" } & Spend)
   | { type: "custom"; plugin: string; kind: string; data: unknown };
@@ -40,16 +46,16 @@ export function sessionDir(root: string, cwd: string): string {
 
 /** Append-only JSONL log. Every entry is flushed immediately so a crash loses nothing that was complete. */
 export class SessionFile {
-  readonly id: string;
-  readonly path: string;
   /** What this log redacts: a log that takes over its conversation (a fork) redacts them too (#103). */
   readonly secrets: string[];
   /** The header is written with the first real entry, so sessions nobody used leave no file. */
   private header?: SessionEntry;
 
-  private constructor(path: string, id: string, secrets: string[]) {
-    this.path = path;
-    this.id = id;
+  private constructor(
+    readonly path: string,
+    readonly id: string,
+    secrets: string[],
+  ) {
     this.secrets = secrets.filter((s) => s.length >= 8);
   }
 
@@ -121,13 +127,10 @@ export function readEntries(path: string): SessionEntry[] {
 }
 
 /**
- * Rebuild conversation state from entries. Tool calls that never got a result (a crash mid-turn)
- * get one saying so; `repaired` tells the caller to persist that (a replace entry), so the next
- * restore sees the same history.
- */
-/**
- * The conversation and the model to continue with. `permission_mode` entries are a record of what
- * the user chose, not restored: resuming never starts in a looser mode than the one asked for now.
+ * The conversation and the model to continue with, rebuilt from entries. Tool calls that never got
+ * a result (a crash mid-turn) get one saying so; `repaired` tells the caller to persist that (a
+ * replace entry), so the next restore sees the same history. `permission_mode` entries are a record
+ * of what the user chose, not restored: resuming never starts in a looser mode than the one asked for now.
  */
 export function restore(entries: SessionEntry[]): { messages: Message[]; model?: string; repaired: boolean } {
   const messages: Message[] = [];
@@ -171,7 +174,14 @@ export function settleToolCalls(messages: Message[]): Message[] {
     }
     for (const c of calls)
       if (!answered.has(c.id))
-        out.push({ role: "tool", toolCallId: c.id, toolName: c.name, content: [{ type: "text", text: NO_RESULT }], isError: true, timestamp: m.timestamp });
+        out.push({
+          role: "tool",
+          toolCallId: c.id,
+          toolName: c.name,
+          content: [{ type: "text", text: NO_RESULT }],
+          isError: true,
+          timestamp: m.timestamp,
+        });
     i = j - 1;
   }
   return out;

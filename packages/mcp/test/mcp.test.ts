@@ -155,8 +155,9 @@ test("a server that drops is reconnected by itself, and its tools work again", a
   const ctx = { cwd: ".", signal: new AbortController().signal };
   void fx().client!.close(); // as far as sasacode can tell, the server went away
   await until(() => fx().status === "closed");
-  await until(() => fx().status === "connected");
-  expect(fx().attempts).toBe(0);
+  // The count goes back to 0 only once the tools are listed again (#101), a moment after "connected".
+  await until(() => fx().status === "connected" && fx().attempts === 0);
+  expect(fx().attempts).toBe(0); // until() gives up quietly: this is what fails if the count never comes back
   const add = agent.getTools().find((t) => t.name === "mcp__fx__add")!;
   expect((await add.execute({ a: 1, b: 2 }, ctx)).content).toEqual([{ type: "text", text: "3" }]);
   await agent.hooks.run("session_end", {});

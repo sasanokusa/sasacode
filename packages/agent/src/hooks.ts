@@ -1,6 +1,10 @@
 import type { HookContext, HookHandler, HookMap, HookName } from "@sasacode/plugin-api";
 
-type Step<K extends HookName> = (result: HookMap[K]["result"], event: HookMap[K]["event"], owner: string) => boolean | void;
+type Step<K extends HookName> = (
+  result: HookMap[K]["result"],
+  event: HookMap[K]["event"],
+  owner: string,
+) => boolean | void;
 
 interface Entry {
   owner: string;

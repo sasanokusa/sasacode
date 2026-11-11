@@ -17,7 +17,12 @@ export function gitBashCandidates(env: NodeJS.ProcessEnv = process.env): string[
     if (!existsSync(join(dir, "git.exe"))) continue;
     out.push(join(dirname(dir), "bin", "bash.exe"), join(dirname(dirname(dir)), "bin", "bash.exe"));
   }
-  for (const root of [env.ProgramFiles, env["ProgramFiles(x86)"], env.ProgramW6432, env.LOCALAPPDATA && join(env.LOCALAPPDATA, "Programs")])
+  for (const root of [
+    env.ProgramFiles,
+    env["ProgramFiles(x86)"],
+    env.ProgramW6432,
+    env.LOCALAPPDATA && join(env.LOCALAPPDATA, "Programs"),
+  ])
     if (root) out.push(join(root, "Git", "bin", "bash.exe"));
   return out;
 }

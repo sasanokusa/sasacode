@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { appendFileSync } from "node:fs";
-import { childEnv, saveOutput, text, type ToolDefinition } from "@sasacode/plugin-api";
+import { childEnv, errorResult, saveOutput, text, type ToolDefinition } from "@sasacode/plugin-api";
 import { bashPath, killTree } from "./shell.ts";
 
 const DEFAULT_TIMEOUT_S = 120;
@@ -24,7 +24,11 @@ export const bashTool: ToolDefinition<Args> = {
     type: "object",
     properties: {
       command: { type: "string", description: "Command to run" },
-      timeout: { type: "number", maximum: MAX_TIMEOUT_S, description: `Timeout in seconds (default ${DEFAULT_TIMEOUT_S}, at most ${MAX_TIMEOUT_S})` },
+      timeout: {
+        type: "number",
+        maximum: MAX_TIMEOUT_S,
+        description: `Timeout in seconds (default ${DEFAULT_TIMEOUT_S}, at most ${MAX_TIMEOUT_S})`,
+      },
     },
     required: ["command"],
     additionalProperties: false,
@@ -34,13 +38,13 @@ export const bashTool: ToolDefinition<Args> = {
   matchTarget: (a) => a.command,
   summary: (a) => a.command,
   execute(args, ctx) {
-    if (ctx.signal.aborted) return Promise.resolve({ content: [text("[Command was interrupted before execution]")], isError: true });
+    if (ctx.signal.aborted) return Promise.resolve(errorResult("[Command was interrupted before execution]"));
     const timeoutS = Math.min(args.timeout && args.timeout > 0 ? args.timeout : DEFAULT_TIMEOUT_S, MAX_TIMEOUT_S);
     let bash: string;
     try {
       bash = bashPath();
     } catch (e) {
-      return Promise.resolve({ content: [text(String((e as Error).message))], isError: true });
+      return Promise.resolve(errorResult(String((e as Error).message)));
     }
     return new Promise((resolve) => {
       // detached: the command gets its own process group so we can kill everything it spawned
@@ -95,14 +99,16 @@ export const bashTool: ToolDefinition<Args> = {
         // Background jobs may keep the pipes open; stop listening once the shell itself is gone.
         child.stdout!.destroy();
         child.stderr!.destroy();
-        const output = tail;
         const notes: string[] = [];
-        if (file) notes.push(`[Output truncated: showing the last ${MAX_OUTPUT} of ${size} characters. Full output saved to ${file}]`);
+        if (file)
+          notes.push(
+            `[Output truncated: showing the last ${MAX_OUTPUT} of ${size} characters. Full output saved to ${file}]`,
+          );
         if (killedBy === "timeout") notes.push(`[Command timed out after ${timeoutS}s and was killed]`);
         if (killedBy === "abort") notes.push("[Command was interrupted by the user]");
         notes.push(code !== null ? `[exit code ${code}]` : `[terminated by ${sig}]`);
         resolve({
-          content: [text([output.trimEnd(), ...notes].filter(Boolean).join("\n"))],
+          content: [text([tail.trimEnd(), ...notes].filter(Boolean).join("\n"))],
           isError: code !== 0 || killedBy !== undefined,
           details: { exitCode: code, killedBy },
         });

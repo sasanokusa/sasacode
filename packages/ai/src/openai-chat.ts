@@ -18,13 +18,14 @@ import {
   type StreamEvent,
   type ThinkingContent,
   droppedMidReply,
+  hasOrigin,
   markIfCut,
   type ToolCall,
   type Usage,
 } from "./types.ts";
 import { withEffort } from "./effort.ts";
 import { canReplay, replayScope, newReply as newAssistant } from "./replay.ts";
-const openrouter = (m: ModelInfo) => { try { return new URL(m.baseUrl ?? "").origin === "https://openrouter.ai"; } catch { return false; } };
+const openrouter = (m: ModelInfo) => hasOrigin(m.baseUrl, "https://openrouter.ai");
 
 export function openaiClient(req: Request): OpenAI {
   return new OpenAI({
@@ -39,7 +40,11 @@ export function openaiClient(req: Request): OpenAI {
 
 export function isContextOverflow(e: unknown): boolean {
   if (!(e instanceof OpenAI.APIError)) return false;
-  return e.code === "context_length_exceeded" || e.type === "exceed_context_size_error" || /context length|context window|context size|too many tokens|maximum context/i.test(e.message);
+  return (
+    e.code === "context_length_exceeded" ||
+    e.type === "exceed_context_size_error" ||
+    /context length|context window|context size|too many tokens|maximum context/i.test(e.message)
+  );
 }
 /** A Chat Completions usage object: the standard counts, plus fields vendors add on. */
 export interface ChatUsage {
@@ -56,7 +61,7 @@ export function parseChatUsage(model: ModelInfo, u: ChatUsage): Usage {
   const cached = u.prompt_tokens_details?.cached_tokens ?? u.prompt_cache_hit_tokens ?? 0;
   const written = u.prompt_tokens_details?.cache_write_tokens ?? 0;
   const usage: Usage = {
-    input: (u.prompt_tokens ?? ((u.prompt_cache_miss_tokens ?? 0) + cached)) - cached - written,
+    input: (u.prompt_tokens ?? (u.prompt_cache_miss_tokens ?? 0) + cached) - cached - written,
     output: u.completion_tokens ?? 0,
     cacheRead: cached,
     cacheWrite: written,
@@ -77,31 +82,61 @@ export const openaiChatProvider: Provider = {
       stream: true,
       stream_options: { include_usage: true },
       // Local servers read max_tokens (Ollama ignores the other); OpenAI's reasoning models refuse it.
-      ...(model.server ? { max_tokens: req.maxTokens ?? model.maxOutput } : { max_completion_tokens: req.maxTokens ?? model.maxOutput }),
+      ...(model.server
+        ? { max_tokens: req.maxTokens ?? model.maxOutput }
+        : { max_completion_tokens: req.maxTokens ?? model.maxOutput }),
     };
     if (req.tools.length)
       params.tools = req.tools.map((t) => ({
         type: "function",
         function: { name: t.name, description: t.description, parameters: t.parameters },
       }));
-    Object.assign(params, samplingFields(req.sampling, ["temperature", "top_p", "frequency_penalty", "presence_penalty"]));
+    Object.assign(
+      params,
+      samplingFields(req.sampling, ["temperature", "top_p", "frequency_penalty", "presence_penalty"]),
+    );
 
     const routerReasoning = (params as unknown as { reasoning?: { effort?: string } }).reasoning;
     // "off" is sent too: servers such as vLLM think by default unless told "none".
-    const level = (params.reasoning_effort ?? routerReasoning?.effort) !== undefined ? undefined : model.reasoning ? req.thinking : undefined;
-    // llama-server before b10121 ignores reasoning_effort; its templates (Qwen3) read enable_thinking. The caller's kwargs win.
-    if (level === "off" && model.server === "llamacpp") Object.assign(params, { chat_template_kwargs: { enable_thinking: false, ...(params as { chat_template_kwargs?: object }).chat_template_kwargs } });
+    const level =
+      (params.reasoning_effort ?? routerReasoning?.effort) !== undefined
+        ? undefined
+        : model.reasoning
+          ? req.thinking
+          : undefined;
+    // llama-server before b10121 ignores reasoning_effort; its templates (Qwen3) read enable_thinking. The caller's
+    // kwargs win.
+    if (level === "off" && model.server === "llamacpp")
+      Object.assign(params, {
+        chat_template_kwargs: {
+          enable_thinking: false,
+          ...(params as { chat_template_kwargs?: object }).chat_template_kwargs,
+        },
+      });
     const out = newAssistant(model);
     yield { type: "start", partial: out };
     let thinking: ThinkingContent | undefined;
     let detailsBlock: ThinkingContent | undefined;
     const details: unknown[] = [];
     let text: { type: "text"; text: string } | undefined;
-    const calls = new Map<number | string, { block: ToolCall; json: string; index: number; depth: number; str?: boolean; esc?: boolean }>();
+    const calls = new Map<
+      number | string,
+      { block: ToolCall; json: string; index: number; depth: number; str?: boolean; esc?: boolean }
+    >();
     let ended = false;
     try {
       const stream = await withEffort(replayScope(model), level, async (effort) => {
-        const s = await client.chat.completions.create({ ...params, ...(effort ? openrouter(model) ? { reasoning: { effort, ...routerReasoning } } : { reasoning_effort: effort as never } : {}) }, { signal: req.signal });
+        const s = await client.chat.completions.create(
+          {
+            ...params,
+            ...(effort
+              ? openrouter(model)
+                ? { reasoning: { effort, ...routerReasoning } }
+                : { reasoning_effort: effort as never }
+              : {}),
+          },
+          { signal: req.signal },
+        );
         const it = s[Symbol.asyncIterator]();
         // A refused effort can arrive as the first event of an HTTP 200 stream (vLLM).
         return { it, first: await it.next() };
@@ -114,16 +149,25 @@ export const openaiChatProvider: Provider = {
         }
         const choice = chunk.choices[0];
         if (!choice) continue;
-        const delta = choice.delta as typeof choice.delta & { reasoning?: string; reasoning_content?: string; reasoning_details?: unknown[] };
+        const delta = choice.delta as typeof choice.delta & {
+          reasoning?: string;
+          reasoning_content?: string;
+          reasoning_details?: unknown[];
+        };
         if (openrouter(model) && delta.reasoning_details?.length) {
-          if (!detailsBlock) out.content.push(detailsBlock = { type: "thinking", thinking: "", redacted: true });
+          if (!detailsBlock) out.content.push((detailsBlock = { type: "thinking", thinking: "", redacted: true }));
           details.push(...delta.reasoning_details);
-          detailsBlock.signature = JSON.stringify(details); // Consecutive chunks stay in their original order and shape.
+          // Consecutive chunks stay in their original order and shape.
+          detailsBlock.signature = JSON.stringify(details);
         }
         const r = delta.reasoning_content ?? delta.reasoning;
         if (r) {
           if (!thinking) {
-            thinking = { type: "thinking", thinking: "", reasoningField: delta.reasoning_content != null ? "reasoning_content" : "reasoning" };
+            thinking = {
+              type: "thinking",
+              thinking: "",
+              reasoningField: delta.reasoning_content != null ? "reasoning_content" : "reasoning",
+            };
             out.content.push(thinking);
           }
           thinking.thinking += r;
@@ -140,12 +184,21 @@ export const openaiChatProvider: Provider = {
           yield { type: "text_delta", index: out.content.indexOf(text), delta: prose, partial: out };
         }
         for (const tc of delta.tool_calls ?? []) {
-          const name = tc.function?.name, known = [...calls.values()], last = known.at(-1);
-          // Without an index (some servers), match by a non-empty id, else continue the latest call unless this one starts
-          // another: a new id, or a name after a call with another name or with complete arguments.
-          let c = tc.index != null ? calls.get(tc.index) : (tc.id && known.find((k) => k.block.id === tc.id)) || (tc.id || (name && last?.block.name && (name !== last.block.name || (last.json && !last.depth))) ? undefined : last);
+          const name = tc.function?.name;
+          const known = [...calls.values()];
+          const last = known.at(-1);
+          // Without an index (some servers), match by a non-empty id, else continue the latest call unless this one
+          // starts another: a new id, or a name after a call with another name or with complete arguments.
+          const startsAnother = name && last?.block.name && (name !== last.block.name || (last.json && !last.depth));
+          const byId = tc.id ? known.find((k) => k.block.id === tc.id) : undefined;
+          let c = tc.index != null ? calls.get(tc.index) : (byId ?? (tc.id || startsAnother ? undefined : last));
           if (!c) {
-            const block: ToolCall = { type: "tool_call", id: tc.id || `call_${tc.index ?? calls.size}`, name: name ?? "", input: {} };
+            const block: ToolCall = {
+              type: "tool_call",
+              id: tc.id || `call_${tc.index ?? calls.size}`,
+              name: name ?? "",
+              input: {},
+            };
             out.content.push(block);
             c = { block, json: "", index: out.content.length - 1, depth: 0 };
             calls.set(tc.index ?? block.id, c);
@@ -155,7 +208,11 @@ export const openaiChatProvider: Provider = {
             c.json += tc.function.arguments;
             // Braces open outside strings, counted chunk by chunk: back to 0 once the arguments are complete, so the
             // check above never re-parses the whole string on every chunk.
-            for (const ch of tc.function.arguments) if (c.esc) c.esc = false; else if (c.str) c.esc = ch === "\\", c.str = ch !== '"'; else if (ch === '"') c.str = true; else c.depth += ch === "{" ? 1 : ch === "}" ? -1 : 0;
+            for (const ch of tc.function.arguments)
+              if (c.esc) c.esc = false;
+              else if (c.str) (c.esc = ch === "\\"), (c.str = ch !== '"');
+              else if (ch === '"') c.str = true;
+              else c.depth += ch === "{" ? 1 : ch === "}" ? -1 : 0;
             yield { type: "toolcall_delta", index: c.index, delta: tc.function.arguments, partial: out };
           }
         }
@@ -195,17 +252,30 @@ function toChatMessages(messages: Message[], model: ModelInfo, hasTools: boolean
         ),
       });
     } else if (m.role === "assistant") {
-      const text = m.content.filter((c) => c.type === "text").map((c) => c.text).join("");
+      const text = m.content
+        .filter((c) => c.type === "text")
+        .map((c) => c.text)
+        .join("");
       const tools = m.content.filter((c) => c.type === "tool_call");
-      const replay = canReplay(m, model) ? m.content.filter(c => c.type === "thinking") : [];
-      const reasoningText = replay.filter(c => !c.redacted).map(c => c.thinking).join("");
-      const reasoningDetails = openrouter(model) ? replay.flatMap(c => c.redacted && c.signature ? JSON.parse(c.signature) : []) : [];
+      const replay = canReplay(m, model) ? m.content.filter((c) => c.type === "thinking") : [];
+      const reasoningText = replay
+        .filter((c) => !c.redacted)
+        .map((c) => c.thinking)
+        .join("");
+      const reasoningDetails = openrouter(model)
+        ? replay.flatMap((c) => (c.redacted && c.signature ? JSON.parse(c.signature) : []))
+        : [];
       const reasoning = openrouter(model)
-        ? reasoningDetails.length ? { reasoning_details: reasoningDetails } : reasoningText ? { reasoning: reasoningText } : {}
+        ? reasoningDetails.length
+          ? { reasoning_details: reasoningDetails }
+          : reasoningText
+            ? { reasoning: reasoningText }
+            : {}
         : deepseek || (mimo && tools.length)
-        ? { reasoning_content: reasoningText }
-        : !deepseekModel && !mimo && reasoningText && replay[0]?.reasoningField ? { [replay[0].reasoningField]: reasoningText }
-        : {};
+          ? { reasoning_content: reasoningText }
+          : !deepseekModel && !mimo && reasoningText && replay[0]?.reasoningField
+            ? { [replay[0].reasoningField]: reasoningText }
+            : {};
       // A turn of thinking alone (max_tokens spent on it) is kept when its reasoning is sent back.
       if (!text && !tools.length && !Object.values(reasoning).some((v) => v.length)) continue;
       out.push({
@@ -224,7 +294,10 @@ function toChatMessages(messages: Message[], model: ModelInfo, hasTools: boolean
       });
     } else {
       // Tool messages are text-only; replay images in a follow-up user message.
-      const text = m.content.filter((c) => c.type === "text").map((c) => c.text).join("\n");
+      const text = m.content
+        .filter((c) => c.type === "text")
+        .map((c) => c.text)
+        .join("\n");
       out.push({ role: "tool", tool_call_id: m.toolCallId, content: text || (m.isError ? "error" : "ok") });
       for (const c of m.content)
         if (c.type === "image")
@@ -240,7 +313,10 @@ function toChatMessages(messages: Message[], model: ModelInfo, hasTools: boolean
     if (!pendingImages.length) return;
     // Must come after all tool messages of a turn; insert before the message just pushed if it isn't a tool.
     const imgs = pendingImages.splice(0);
-    const msg: ChatCompletionMessageParam = { role: "user", content: [{ type: "text", text: "Images from tool results:" }, ...imgs] };
+    const msg: ChatCompletionMessageParam = {
+      role: "user",
+      content: [{ type: "text", text: "Images from tool results:" }, ...imgs],
+    };
     const last = out[out.length - 1];
     if (last && last.role !== "tool") out.splice(out.length - 1, 0, msg);
     else out.push(msg);

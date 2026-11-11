@@ -11,7 +11,15 @@ import {
   type UserContent,
   type UserMessage,
 } from "@sasacode/ai";
-import type { CompleteOptions, HookName, Spend, StopCause, SubagentOptions, ToolDefinition } from "@sasacode/plugin-api";
+import {
+  type CompleteOptions,
+  type HookName,
+  type Spend,
+  type StopCause,
+  type SubagentOptions,
+  text,
+  type ToolDefinition,
+} from "@sasacode/plugin-api";
 import { type AgentEvent, EventBus } from "./events.ts";
 import { HookRunner } from "./hooks.ts";
 import { type PermissionCheck, PermissionPolicy } from "./permission.ts";
@@ -55,13 +63,22 @@ let subagentRuns = 0;
 /** Images in a history sent to a model that cannot take them, replaced by a note. */
 export function withoutImages(messages: Message[]): Message[] {
   const strip = <T extends { type: string }>(content: T[]) =>
-    content.map((c) => (c.type === "image" ? ({ type: "text", text: "[image omitted: this model does not accept images]" } as unknown as T) : c));
-  return messages.map((m) => (m.role === "assistant" || !m.content.some((c) => c.type === "image") ? m : ({ ...m, content: strip(m.content) } as Message)));
+    content.map((c) =>
+      c.type === "image"
+        ? ({ type: "text", text: "[image omitted: this model does not accept images]" } as unknown as T)
+        : c,
+    );
+  return messages.map((m) =>
+    m.role === "assistant" || !m.content.some((c) => c.type === "image")
+      ? m
+      : ({ ...m, content: strip(m.content) } as Message),
+  );
 }
 
 /** Characters a message stands for, an image as about 1,600 tokens rather than its base64. */
 export const contentChars = (m: Message): number =>
-  JSON.stringify(m.content, (k, v) => (k === "data" && typeof v === "string" && v.length > 64 ? "" : v)).length + 6400 * m.content.filter((c) => c.type === "image").length;
+  JSON.stringify(m.content, (k, v) => (k === "data" && typeof v === "string" && v.length > 64 ? "" : v)).length +
+  6400 * m.content.filter((c) => c.type === "image").length;
 
 /**
  * max_tokens for the next reply: the model's maximum, unless less room is left in the window.
@@ -71,7 +88,12 @@ export const contentChars = (m: Message): number =>
  * Usage reported before `trustFrom` describes a conversation since replaced (a compaction keeps
  * the last messages, with the nearly full usage they reported) and is not used.
  */
-export function replyBudget(model: ModelInfo, messages: readonly Message[], fixedChars: number, trustFrom = 0): number | undefined {
+export function replyBudget(
+  model: ModelInfo,
+  messages: readonly Message[],
+  fixedChars: number,
+  trustFrom = 0,
+): number | undefined {
   let used = 0;
   let from = 0;
   for (let i = messages.length - 1; i >= trustFrom; i--) {
@@ -99,7 +121,15 @@ export function responseRoom(model: ModelInfo): number {
 }
 
 /** Hooks that belong to the user's session, not to subagents. */
-const SESSION_HOOKS: HookName[] = ["session_start", "session_end", "user_prompt", "turn_end", "agent_end", "context_limit", "usage"];
+const SESSION_HOOKS: HookName[] = [
+  "session_start",
+  "session_end",
+  "user_prompt",
+  "turn_end",
+  "agent_end",
+  "context_limit",
+  "usage",
+];
 
 export class Agent {
   readonly events = new EventBus<AgentEvent>();
@@ -144,7 +174,12 @@ export class Agent {
     this.toolSearch = opts.toolSearch ?? {};
     this.hooks = opts.hooks ?? new HookRunner();
     this.hooks.onError ??= (plugin, hook, error) =>
-      this.events.emit({ type: "plugin_error", plugin, hook, error: error instanceof Error ? error.message : String(error) });
+      this.events.emit({
+        type: "plugin_error",
+        plugin,
+        hook,
+        error: error instanceof Error ? error.message : String(error),
+      });
     this.searchTool = makeToolSearchTool(
       () => this.deferredTools(),
       (names) => names.forEach((n) => this.loadedTools.add(n)),
@@ -178,11 +213,14 @@ export class Agent {
    * `accepted` gets the content the user_prompt hooks made of it (undefined: a plugin handled it), the
    * same blocks the user message will hold.
    */
-  async prompt(input: string | UserContent[], accepted?: (content: UserContent[] | undefined) => void): Promise<StopCause> {
+  async prompt(
+    input: string | UserContent[],
+    accepted?: (content: UserContent[] | undefined) => void,
+  ): Promise<StopCause> {
     // Sent while a halt waits for the run to stop: it belongs after the halt, not to the stopping run.
     // (Input sent before the halt was queued for that run, and the halt drops it.)
     const halting = this.halted;
-    let content: UserContent[] = typeof input === "string" ? [{ type: "text", text: input }] : input;
+    let content: UserContent[] = typeof input === "string" ? [text(input)] : input;
     let handled = false;
     await this.hooks.run("user_prompt", { content }, (r) => {
       if (r.content) content = r.content;
@@ -204,8 +242,7 @@ export class Agent {
 
   /** Continue without new input, e.g. after resuming a session. */
   async continue(): Promise<StopCause> {
-    if (this.running) return this.running;
-    return this.start();
+    return this.running ?? this.start();
   }
 
   /** Add a user message from a plugin: "next" waits for the next turn or prompt, "now" also starts a run. */
@@ -227,7 +264,10 @@ export class Agent {
     this.events.emit({ type: "messages_replaced" });
   }
 
-  /** Another conversation (new session, resume, fork): input queued for the old one and its interrupted note do not carry over. */
+  /**
+   * Another conversation (new session, resume, fork): input queued for the old one and its interrupted note do not
+   * carry over.
+   */
   reset(messages: Message[] = []): void {
     this.messages = messages;
     this.queued = [];
@@ -266,7 +306,7 @@ export class Agent {
 
   private pushUser(content: UserContent[]): void {
     if (this.interrupted) {
-      content = [{ type: "text", text: INTERRUPTED_NOTE }, ...content];
+      content = [text(INTERRUPTED_NOTE), ...content];
       this.interrupted = false;
     }
     this.pushMessage({ role: "user", content, timestamp: Date.now() } satisfies UserMessage);
@@ -278,7 +318,9 @@ export class Agent {
     this.events.emit({ type: "message_end", message: m });
   }
 
-  /** A response that is not in the conversation still cost tokens: logged, and (`emit`) reported to the UI and plugins. */
+  /**
+   * A response that is not in the conversation still cost tokens: logged, and (`emit`) reported to the UI and plugins.
+   */
   private spend(s: Spend, emit = true): void {
     this.session?.append({ type: "usage", ...s });
     if (!emit) return;
@@ -290,8 +332,9 @@ export class Agent {
     this.spend({ t: m.timestamp, model: `${m.provider}/${m.model}`, usage: m.usage, source }, emit);
   }
 
-  /** A reply with nothing to keep: not in the conversation, but the UI counts it from message_end. */
-  private endEmpty(m: AssistantMessage): void {
+  /** Stores a reply. One with nothing to keep stays out of the conversation, but the UI counts it from message_end. */
+  private keep(m: AssistantMessage): void {
+    if (m.content.length) return this.pushMessage(m);
     this.spent(m, "discarded", false);
     this.events.emit({ type: "message_end", message: m });
   }
@@ -360,7 +403,7 @@ export class Agent {
             return false;
           }
           if (r.inject) {
-            this.queued.push([{ type: "text", text: r.inject }]);
+            this.queued.push([text(r.inject)]);
             injected = true;
           }
         });
@@ -385,7 +428,7 @@ export class Agent {
       this.abortController = undefined;
     }
     await this.hooks.run("agent_end", { cause, stopped, error }, (r) => {
-      if (r.inject) this.queued.push([{ type: "text", text: r.inject }]);
+      if (r.inject) this.queued.push([text(r.inject)]);
     });
     this.events.emit({ type: "agent_end", cause, stopped, error });
     return cause;
@@ -430,7 +473,10 @@ export class Agent {
         if (cut >= 3) throw new Error(message.errorMessage ?? "the reply failed");
         this.spent(message, "discarded");
         this.events.emit({ type: "message_discarded", message });
-        await Promise.race([Bun.sleep(1000 * 2 ** cut++), new Promise((r) => signal.addEventListener("abort", r, { once: true }))]);
+        await Promise.race([
+          Bun.sleep(1000 * 2 ** cut++),
+          new Promise((r) => signal.addEventListener("abort", r, { once: true })),
+        ]);
         attempt--;
         continue;
       }
@@ -439,12 +485,12 @@ export class Agent {
         // Half-streamed tool calls never ran and unsigned thinking cannot be replayed; keep what was finished.
         message.content = message.content.filter((c) => c.type === "text" || (c.type === "thinking" && c.signature));
       }
-      // A refusal ends the run before its tool calls run: kept, they would be calls without results, which every API rejects (#97).
+      // A refusal ends the run before its tool calls run: kept, they would be calls without results, which every API
+      // rejects (#97).
       if (message.stopReason === "refusal") message.content = message.content.filter((c) => c.type !== "tool_call");
       if (userAborted) {
         this.interrupted = true;
-        if (message.content.length) this.pushMessage(message);
-        else this.endEmpty(message);
+        this.keep(message);
         return { message, repairs: new Map() };
       }
       let final = message;
@@ -461,15 +507,16 @@ export class Agent {
         continue;
       }
       const repairs = await repairCalls(this.toolContext(), final);
-      if (final.content.length) this.pushMessage(final);
-      else this.endEmpty(final);
-      if (inject) this.queued.push([{ type: "text", text: inject }]);
+      this.keep(final);
+      if (inject) this.queued.push([text(inject)]);
       return { message: final, repairs };
     }
   }
 
   /** Stream one response. A stream_delta handler can end it early; that is reported as `stopped`. */
-  private async stream(signal: AbortSignal): Promise<{ message: AssistantMessage; stopped?: { plugin: string; reason: string } }> {
+  private async stream(
+    signal: AbortSignal,
+  ): Promise<{ message: AssistantMessage; stopped?: { plugin: string; reason: string } }> {
     const provider = getProvider(this.model.api);
     const apiKey = await this.opts.getApiKey?.(this.model.provider);
     this.session?.addSecret(apiKey);
@@ -480,16 +527,24 @@ export class Agent {
     let messages = this.messages;
     let sampling: SamplingOptions = {};
     let requestFetch: typeof fetch | undefined;
-    await this.hooks.run("before_request", { messages: [...messages], model: this.model, sampling, fetch: requestFetch }, (r, ev) => {
-      if (r.messages) messages = ev.messages = r.messages;
-      if (r.sampling) sampling = ev.sampling = { ...sampling, ...r.sampling };
-      if (r.fetch) requestFetch = ev.fetch = r.fetch;
-    });
+    await this.hooks.run(
+      "before_request",
+      { messages: [...messages], model: this.model, sampling, fetch: requestFetch },
+      (r, ev) => {
+        if (r.messages) messages = ev.messages = r.messages;
+        if (r.sampling) sampling = ev.sampling = { ...sampling, ...r.sampling };
+        if (r.fetch) requestFetch = ev.fetch = r.fetch;
+      },
+    );
 
     // A model that takes no images gets a note instead: one image would fail every request after it.
     if (this.model.images === false) messages = withoutImages(messages);
 
-    const tools = this.requestTools().map((t) => ({ name: t.name, description: t.description, parameters: t.parameters }));
+    const tools = this.requestTools().map((t) => ({
+      name: t.name,
+      description: t.description,
+      parameters: t.parameters,
+    }));
     // Counted from the end: a before_request hook may have dropped messages at the front.
     const trustFrom = Math.max(0, messages.length - (this.messages.length - this.trustFrom));
 
@@ -524,13 +579,22 @@ export class Agent {
             const block = ev.partial.content[ev.index];
             const kind = ev.type === "text_delta" ? "text" : ev.type === "thinking_delta" ? "thinking" : "toolcall";
             if (kind === "toolcall") toolJson.set(ev.index, (toolJson.get(ev.index) ?? "") + ev.delta);
-            const text = block?.type === "text" ? block.text : block?.type === "thinking" ? block.thinking : (toolJson.get(ev.index) ?? "");
-            this.hooks.runSync("stream_delta", { kind, index: ev.index, delta: ev.delta, text, message: ev.partial }, (r, _e, owner) => {
-              if (!r.stop) return;
-              stopped = { plugin: owner, reason: r.stop };
-              request.abort();
-              return false;
-            });
+            const text =
+              block?.type === "text"
+                ? block.text
+                : block?.type === "thinking"
+                  ? block.thinking
+                  : (toolJson.get(ev.index) ?? "");
+            this.hooks.runSync(
+              "stream_delta",
+              { kind, index: ev.index, delta: ev.delta, text, message: ev.partial },
+              (r, _e, owner) => {
+                if (!r.stop) return;
+                stopped = { plugin: owner, reason: r.stop };
+                request.abort();
+                return false;
+              },
+            );
           }
         }
       }
@@ -562,7 +626,10 @@ export class Agent {
 
   // ── plugin services ────────────────────────────────────────────────
 
-  /** One model call without tools, its max_tokens kept within the room left in that model's window (#60), estimated from what it sends: usage in o.messages was another request's. */
+  /**
+   * One model call without tools, its max_tokens kept within the room left in that model's window (#60), estimated from
+   * what it sends: usage in o.messages was another request's.
+   */
   async complete(o: CompleteOptions): Promise<string> {
     const model = o.model ? this.resolve(o.model) : this.model;
     let text = "";
@@ -573,14 +640,18 @@ export class Agent {
       messages: o.messages,
       tools: [],
       thinking: "low",
-      maxTokens: Math.min(o.maxTokens ?? 8192, replyBudget(model, o.messages, o.system.length, o.messages.length) ?? model.maxOutput),
+      maxTokens: Math.min(
+        o.maxTokens ?? 8192,
+        replyBudget(model, o.messages, o.system.length, o.messages.length) ?? model.maxOutput,
+      ),
       maxRetries: this.opts.maxRetries,
       signal: o.signal,
     })) {
       if (ev.type === "done") {
         this.spent(ev.message, "side");
         if (ev.message.stopReason === "aborted") throw new Error("aborted");
-        // A stream cut before its end (stopReason "error") is a fragment: a compaction would replace the whole history with it (#95).
+        // A stream cut before its end (stopReason "error") is a fragment: a compaction would replace the whole history
+        // with it (#95).
         if (ev.message.stopReason === "error") throw new Error(ev.message.errorMessage ?? "the reply failed");
         text = textOf(ev.message.content);
       }
@@ -589,7 +660,9 @@ export class Agent {
   }
 
   /** An independent loop sharing tools, permissions, approvals and tool hooks, with its own history. */
-  async runSubagent(o: SubagentOptions): Promise<{ text: string; messages: Message[]; cause: StopCause; error?: string }> {
+  async runSubagent(
+    o: SubagentOptions,
+  ): Promise<{ text: string; messages: Message[]; cause: StopCause; error?: string }> {
     const exclude = new Set(o.excludeTools ?? []);
     const tools = this.getTools().filter((t) => (o.tools ? o.tools.includes(t.name) : !exclude.has(t.name)));
     const child = new Agent({
@@ -610,7 +683,8 @@ export class Agent {
     let error: string | undefined;
     child.events.on((e) => {
       if (e.type === "tool_start") o.onProgress?.(`${e.call.name}(${e.summary})`);
-      if (e.type === "agent_start" && o.signal?.aborted) child.abort(); // aborted before its run had a controller to abort (#125)
+      // Aborted before its run had a controller to abort (#125)
+      if (e.type === "agent_start" && o.signal?.aborted) child.abort();
       if (e.type === "plugin_error") this.events.emit(e);
       if (e.type === "error") error = e.error;
       // The child keeps no log: what it used is the parent's.
@@ -619,11 +693,15 @@ export class Agent {
     });
     const onAbort = () => child.abort();
     o.signal?.addEventListener("abort", onAbort, { once: true });
-    o.onStart?.({ send: (text) => child.inject([{ type: "text", text }], "next"), stop: onAbort });
+    o.onStart?.({ send: (t) => child.inject([text(t)], "next"), stop: onAbort });
     try {
       const cause = await child.prompt(o.prompt);
       // The last thing it said, even when it stopped in the middle of tool calls.
-      const text = [...child.messages].reverse().map((m) => (m.role === "assistant" ? textOf(m.content).trim() : "")).find(Boolean) ?? "";
+      const text =
+        [...child.messages]
+          .reverse()
+          .map((m) => (m.role === "assistant" ? textOf(m.content).trim() : ""))
+          .find(Boolean) ?? "";
       return { text, messages: child.messages, cause, error };
     } finally {
       o.signal?.removeEventListener("abort", onAbort);

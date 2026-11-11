@@ -10,6 +10,7 @@ import {
   cliOptions,
   compareVersions,
   coreLines,
+  wideCoreLines,
   countLines,
   documentedApiVersion,
   documentedDependencies,
@@ -42,6 +43,22 @@ test("countLines counts a last line without a newline", () => {
   expect(countLines("a\n")).toBe(1);
   expect(countLines("a\nb")).toBe(2);
   expect(countLines("a\nb\n")).toBe(2);
+});
+
+test("wideCoreLines reports code and comments past 120 columns, but not a string literal on its own line", () => {
+  const long = "x".repeat(130);
+  const root = fixture({
+    "packages/ai/src/a.ts": [
+      `const a = "${long}"; const b = 1;`,
+      `// ${long}`,
+      `    "${long}",`,
+      `  return \`${long}\`;`,
+      `  description: "${long}",`,
+      "const short = 1;",
+    ].join("\n"),
+    "packages/cli/src/not-core.ts": `const a = ${long};\n`,
+  });
+  expect(wideCoreLines(root)).toEqual(["packages/ai/src/a.ts:1 (156 columns)", "packages/ai/src/a.ts:2 (133 columns)"]);
 });
 
 test("coreLines adds up src/*.ts of the core packages, subdirectories included", () => {

@@ -52,16 +52,28 @@ export const openaiResponsesProvider: Provider = {
       return it ? { it, b: out.content[it.index] } : undefined;
     };
     try {
-      const stream = await withEffort(replayScope(model), params.reasoning?.effort !== undefined ? undefined : model.reasoning ? req.thinking : undefined, async (effort) => {
-        const s = await client.responses.create(
-          // Request encrypted state explicitly for compatible services that predate automatic inclusion.
-          effort ? { ...params, reasoning: { effort: effort as never, summary: "auto", ...params.reasoning }, include: [...new Set([...(params.include ?? []), "reasoning.encrypted_content" as const])] } : params,
-          { signal: req.signal },
-        );
-        const it = s[Symbol.asyncIterator](), first = await it.next();
-        if (!first.done && first.value.type === "error") throw new OpenAI.APIError(undefined, first.value, first.value.message, new Headers());
-        return { it, first };
-      });
+      const stream = await withEffort(
+        replayScope(model),
+        params.reasoning?.effort !== undefined ? undefined : model.reasoning ? req.thinking : undefined,
+        async (effort) => {
+          const s = await client.responses.create(
+            // Request encrypted state explicitly for compatible services that predate automatic inclusion.
+            effort
+              ? {
+                  ...params,
+                  reasoning: { effort: effort as never, summary: "auto", ...params.reasoning },
+                  include: [...new Set([...(params.include ?? []), "reasoning.encrypted_content" as const])],
+                }
+              : params,
+            { signal: req.signal },
+          );
+          const it = s[Symbol.asyncIterator](),
+            first = await it.next();
+          if (!first.done && first.value.type === "error")
+            throw new OpenAI.APIError(undefined, first.value, first.value.message, new Headers());
+          return { it, first };
+        },
+      );
       for (let next = stream.first; !next.done; next = await stream.it.next()) {
         const ev = next.value;
         switch (ev.type) {
@@ -76,7 +88,13 @@ export const openaiResponsesProvider: Provider = {
               out.content.push({ type: "thinking", thinking: "" });
               items.set(item.id, { index: out.content.length - 1 });
             } else if (item.type === "message") {
-              out.content.push({ type: "text", text: "", ...(Object.hasOwn(item, "phase") ? { phase: (item as unknown as { phase: "commentary" | "final_answer" | null }).phase } : {}) });
+              out.content.push({
+                type: "text",
+                text: "",
+                ...(Object.hasOwn(item, "phase")
+                  ? { phase: (item as unknown as { phase: "commentary" | "final_answer" | null }).phase }
+                  : {}),
+              });
               items.set(item.id, { index: out.content.length - 1 });
             }
             break;
@@ -121,8 +139,8 @@ export const openaiResponsesProvider: Provider = {
             else if (ev.item.type === "reasoning" && r.b?.type === "thinking") {
               (r.b as ThinkingContent).thinking = r.b.thinking.trim();
               (r.b as ThinkingContent).signature = JSON.stringify(ev.item);
-            }
-            else if (ev.item.type === "message" && r.b?.type === "text" && Object.hasOwn(ev.item, "phase")) r.b.phase = (ev.item as unknown as { phase: "commentary" | "final_answer" | null }).phase;
+            } else if (ev.item.type === "message" && r.b?.type === "text" && Object.hasOwn(ev.item, "phase"))
+              r.b.phase = (ev.item as unknown as { phase: "commentary" | "final_answer" | null }).phase;
             break;
           }
           case "response.completed":
@@ -131,7 +149,9 @@ export const openaiResponsesProvider: Provider = {
             const u = ev.response.usage;
             if (u) {
               const cached = u.input_tokens_details?.cached_tokens ?? 0;
-              const written = (u.input_tokens_details as typeof u.input_tokens_details & { cache_write_tokens?: number })?.cache_write_tokens ?? 0;
+              const written =
+                (u.input_tokens_details as typeof u.input_tokens_details & { cache_write_tokens?: number })
+                  ?.cache_write_tokens ?? 0;
               out.usage.input = u.input_tokens - cached - written;
               out.usage.cacheWrite = written;
               out.usage.cacheRead = cached;
@@ -147,7 +167,8 @@ export const openaiResponsesProvider: Provider = {
             break;
           }
           case "response.failed":
-            if (/context/i.test(`${ev.response.error?.code} ${ev.response.error?.message}`)) throw new ContextOverflowError(ev.response.error!.message); // as an "error" event (#99)
+            if (/context/i.test(`${ev.response.error?.code} ${ev.response.error?.message}`))
+              throw new ContextOverflowError(ev.response.error!.message); // as an "error" event (#99)
             throw new Error(ev.response.error?.message ?? "response failed");
           case "error":
             if (/context/i.test(ev.message)) throw new ContextOverflowError(ev.message);
@@ -187,12 +208,22 @@ function toResponsesInput(messages: Message[], model: Request["model"]): Respons
       const sameModel = canReplay(m, model);
       for (const c of m.content) {
         if (c.type === "text") {
-          if (c.text) out.push({ role: "assistant", content: c.text, ...(m.api === model.api && c.phase !== undefined ? { phase: c.phase } : {}) });
+          if (c.text)
+            out.push({
+              role: "assistant",
+              content: c.text,
+              ...(m.api === model.api && c.phase !== undefined ? { phase: c.phase } : {}),
+            });
         } else if (c.type === "thinking") {
           // Reasoning items only carry over to the model that produced them.
           if (sameModel && c.signature) out.push(JSON.parse(c.signature));
         } else
-          out.push({ type: "function_call", call_id: c.id, name: c.name, arguments: c.rawInput ?? JSON.stringify(c.input) });
+          out.push({
+            type: "function_call",
+            call_id: c.id,
+            name: c.name,
+            arguments: c.rawInput ?? JSON.stringify(c.input),
+          });
       }
     }
   }

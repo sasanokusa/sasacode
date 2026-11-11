@@ -57,12 +57,15 @@ export const INCOMPLETE_STREAM = "the stream ended before the reply was complete
  */
 export function droppedMidReply(e: unknown): boolean {
   const err = e as { code?: unknown; message?: unknown } | undefined;
-  return /ECONNRESET|EPIPE|ETIMEDOUT|ConnectionClosed|socket connection was closed|socket hang up|^terminated$/i.test(`${err?.code ?? ""} ${err?.message ?? ""}`.trim());
+  return /ECONNRESET|EPIPE|ETIMEDOUT|ConnectionClosed|socket connection was closed|socket hang up|^terminated$/i.test(
+    `${err?.code ?? ""} ${err?.message ?? ""}`.trim(),
+  );
 }
 
 /** Marks `out` as cut off unless the provider said it was done (`ended`) or the user aborted. */
 export function markIfCut(out: AssistantMessage, ended: boolean): void {
-  if (!ended && out.stopReason !== "aborted") Object.assign(out, { stopReason: "error", errorMessage: INCOMPLETE_STREAM });
+  if (!ended && out.stopReason !== "aborted")
+    Object.assign(out, { stopReason: "error", errorMessage: INCOMPLETE_STREAM });
 }
 
 export interface Usage {
@@ -122,7 +125,10 @@ export interface ModelInfo {
   reasoning?: boolean;
   images?: boolean;
   headers?: Record<string, string>;
-  /** The local server behind an OpenAI-style endpoint, from the provider's ollama / llamacpp / lmstudio flag (since 1.15.0). */
+  /**
+   * The local server behind an OpenAI-style endpoint, from the provider's ollama / llamacpp / lmstudio flag (since
+   * 1.15.0).
+   */
   server?: "ollama" | "llamacpp" | "lmstudio";
 }
 
@@ -170,18 +176,31 @@ export interface Provider {
    * The models this provider offers, for /model. Without it, the provider's Models API is asked
    * (GET /models for the OpenAI and Anthropic formats).
    */
-  listModels?(config: ProviderConfig, apiKey: string | undefined, signal?: AbortSignal): Promise<{ id: string; contextWindow?: number; maxOutput?: number; price?: ModelInfo["price"] }[]>;
+  listModels?(
+    config: ProviderConfig,
+    apiKey: string | undefined,
+    signal?: AbortSignal,
+  ): Promise<{ id: string; contextWindow?: number; maxOutput?: number; price?: ModelInfo["price"] }[]>;
 }
 
 export class ContextOverflowError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "ContextOverflowError";
+  override name = "ContextOverflowError";
+}
+
+/** Is `url` on exactly this origin? Fields only one vendor's own endpoint takes are sent nowhere else. */
+export function hasOrigin(url: string | undefined, origin: string): boolean {
+  try {
+    return new URL(url ?? "").origin === origin;
+  } catch {
+    return false;
   }
 }
 
 /** Common sampling fields in the snake_case most HTTP APIs use, plus extraBody. Unset fields are omitted. */
-export function samplingFields(s: SamplingOptions | undefined, keys: ("temperature" | "top_p" | "frequency_penalty" | "presence_penalty")[]) {
+export function samplingFields(
+  s: SamplingOptions | undefined,
+  keys: ("temperature" | "top_p" | "frequency_penalty" | "presence_penalty")[],
+) {
   if (!s) return {};
   const all: Record<string, number | undefined> = {
     temperature: s.temperature,
