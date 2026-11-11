@@ -75,7 +75,8 @@ export function wideCoreLines(root = ROOT): string[] {
         .split("\n")
         .forEach((line, i) => {
           if (line.length > CORE_LINE_WIDTH && !PROSE_LINE.test(line))
-            wide.push(`${relative(root, file)}:${i + 1} (${line.length} columns)`);
+            // With "/" on Windows too: the same place reads the same in every report.
+            wide.push(`${relative(root, file).replaceAll("\\", "/")}:${i + 1} (${line.length} columns)`);
         });
   }
   return wide;
