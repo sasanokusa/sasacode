@@ -58,6 +58,7 @@
 | 2026-11-11 | コアを1行120桁までに整形し直す。4,000行は文を1行に詰めることで守られていた（140桁超が94行、200桁超が18行） | 振る舞いは変えない。コア3,950→4,539行。typecheck、`bun test` | 0cbf670 |
 | 2026-11-11 | 上限を4,000行から5,000行に上げ、検査 `core-line-width`（1行120桁まで）を足す。行数の上限は、1行の幅が揃っていないと大きさを表さない | `bun run improve` の9検査がok、コア4,539 / 5,000（ai 1,230・agent 2,316・plugin-api 435・tools 558）。`bun test` 640 pass / 4 skip、`bun run build` と起動 | 1beb84b |
 | 2026-11-11 | `bun run improve` のコメントの出力例を5,000行の上限に合わせる | コメントだけの変更 | 3a154b7 |
+| 2026-11-11 | `core-line-width` が報告するパスを `/` 区切りに揃える（Windowsでは `\` 区切りになり、検査のテストが落ちた） | `bun test scripts`、`bun run improve`、CIのwindows-latest | c363801 |
 
 ## 次の候補
 
