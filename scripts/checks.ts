@@ -11,7 +11,13 @@ import { PLUGIN_API_VERSION } from "../packages/plugin-api/src/index.ts";
 export const ROOT = resolve(import.meta.dir, "..");
 
 /** The core (ai, agent, plugin-api, tools) stays under this many lines (README,「開発」). */
-export const CORE_LINE_BUDGET = 4000;
+export const CORE_LINE_BUDGET = 5000;
+/**
+ * A core line is at most this wide, so the budget above measures size: 4,000 lines were once kept by
+ * packing statements onto lines of 300 characters. One string or template literal may run past it
+ * (a tool description, a message for the model: prose that reads and greps better whole).
+ */
+export const CORE_LINE_WIDTH = 120;
 export const CORE_PACKAGES = ["ai", "agent", "plugin-api", "tools"] as const;
 /** Both READMEs document the CLI and the bundled plugins; a change to one is a change to both. */
 export const READMES = ["README.md", "README.en.md"] as const;
@@ -53,6 +59,26 @@ export function coreLines(root = ROOT): CoreLines {
       : 0;
   }
   return { total: Object.values(byPackage).reduce((sum, n) => sum + n, 0), byPackage };
+}
+
+/** A line that is one string or template literal, after `return`, a property name or an operator at most. */
+const PROSE_LINE = /^\s*(?:return |[A-Za-z_$][\w$]*: |[?:+] )?(["`]).*\1[,;)]*(?: \+)?$/;
+
+/** Core lines wider than CORE_LINE_WIDTH, as `packages/ai/src/x.ts:12 (140 columns)`. */
+export function wideCoreLines(root = ROOT): string[] {
+  const wide: string[] = [];
+  for (const name of CORE_PACKAGES) {
+    const dir = join(root, "packages", name, "src");
+    if (!existsSync(dir)) continue;
+    for (const file of walk(dir, (f) => f.endsWith(".ts")))
+      read(file)
+        .split("\n")
+        .forEach((line, i) => {
+          if (line.length > CORE_LINE_WIDTH && !PROSE_LINE.test(line))
+            wide.push(`${relative(root, file)}:${i + 1} (${line.length} columns)`);
+        });
+  }
+  return wide;
 }
 
 /** Runtime dependencies of the workspace packages, excluding the ones on each other. */
@@ -224,6 +250,11 @@ export function runChecks(root = ROOT): CheckResult[] {
         lines.total > CORE_LINE_BUDGET
           ? [`the core is ${lines.total} lines, ${lines.total - CORE_LINE_BUDGET} over the budget of ${CORE_LINE_BUDGET}`]
           : [],
+    },
+    {
+      name: "core-line-width",
+      promise: `no core line is wider than ${CORE_LINE_WIDTH} columns, a string literal on its own line aside`,
+      problems: wideCoreLines(root).map((at) => `${at} is over ${CORE_LINE_WIDTH} columns`),
     },
     {
       name: "dependency-record",
