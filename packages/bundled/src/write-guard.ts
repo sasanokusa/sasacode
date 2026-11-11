@@ -19,13 +19,43 @@ export function stripLineNumbers(content: string): string | undefined {
   return lines.map((l) => l.replace(PREFIX, "")).join("\n") + (content.endsWith("\n") ? "\n" : "");
 }
 
+/** The leading whitespace every non-blank line shares. */
+function sharedIndent(lines: string[]): string {
+  let shared: string | undefined;
+  for (const l of lines) {
+    if (!l.trim()) continue;
+    const w = /^[ \t]*/.exec(l)![0];
+    let i = 0;
+    while (shared !== undefined && i < shared.length && shared[i] === w[i]) i++;
+    shared = shared === undefined ? w : shared.slice(0, i);
+  }
+  return shared ?? "";
+}
+
+/**
+ * content without what read's padding left on every line when the model took off only its numbers and tabs
+ * ("     1\t…" → "     …", seen with Gemma4 e2b): 1 to 5 spaces that every non-blank line starts with beyond the
+ * indentation all of `file`'s lines share, removed only when at least half of what is left are lines of `file` (the
+ * model wrote the file back), and there are 3 such lines or more; else undefined.
+ */
+export function stripPadding(content: string, file: string): { content: string; spaces: number } | undefined {
+  const lines = rows(content), have = sharedIndent(rows(file)), all = sharedIndent(lines);
+  const extra = all.startsWith(have) ? all.slice(have.length) : "";
+  if (!/^ {1,5}$/.test(extra)) return undefined;
+  const plain = lines.map((l) => (l.startsWith(have + extra) ? have + l.slice(have.length + extra.length) : l));
+  const known = new Set(rows(file)), text = plain.filter((l) => l.trim());
+  if (text.length < 3 || text.filter((l) => known.has(l)).length * 2 < text.length) return undefined;
+  return { content: plain.join("\n") + (content.endsWith("\n") ? "\n" : ""), spaces: extra.length };
+}
+
 /** Lines as read and write count them: a final newline ends the last line, it does not start one. */
 const count = (s: string) => (s ? rows(s).length : 0);
 
 /**
  * Guards write against the damage small models did in the Gemma4 measurement (#68):
  * - content copied from read with its line numbers: removed when every line has one and they count up one by one (the model
- *   is told); refused when most lines have one but not like that (lines were dropped or added among them);
+ *   is told); refused when most lines have one but not like that (lines were dropped or added among them); the spaces of
+ *   read's padding left on every line of a file written back without its numbers: removed (the model is told);
  * - an existing file of `minLines` lines or more replaced by less than half as many (a fragment meant as an edit): refused.
  * A refused write goes through when the model sends the same one again, so a file that really looks like that can be written.
  *
@@ -39,12 +69,21 @@ const writeGuard: Plugin = (api) => {
   api.on("user_prompt", () => refused.clear());
 
   // After tool-repair (load order): the name and arguments are the repaired ones.
-  api.on("tool_call_raw", ({ name, input }) => {
+  api.on("tool_call_raw", async ({ name, input, tools }) => {
     if (name !== "write" || !on("lineNumbers") || typeof input.content !== "string") return;
     const plain = stripLineNumbers(input.content);
-    if (plain === undefined) return;
-    const n = count(input.content);
-    return { input: { ...input, content: plain }, note: `removed read's line numbers from content (${n} line${n === 1 ? "" : "s"}); write takes the file's text alone` };
+    if (plain !== undefined) {
+      const n = count(input.content);
+      return { input: { ...input, content: plain }, note: `removed read's line numbers from content (${n} line${n === 1 ? "" : "s"}); write takes the file's text alone` };
+    }
+    const path = typeof input.path === "string" ? tools.find((t) => t.name === "write")?.paths?.(input, api.cwd)[0] : undefined;
+    const file = path ? await readFile(path, "utf8").catch(() => undefined) : undefined;
+    const fixed = file === undefined ? undefined : stripPadding(input.content, file);
+    if (!fixed) return;
+    return {
+      input: { ...input, content: fixed.content },
+      note: `removed the ${fixed.spaces} space${fixed.spaces === 1 ? "" : "s"} every line of content started with, which ${String(input.path)}'s own lines do not have (read's padding, left when only its line numbers were taken off); write takes the file's text alone`,
+    };
   });
 
   api.on("tool_call", async ({ tool, args }, ctx) => {

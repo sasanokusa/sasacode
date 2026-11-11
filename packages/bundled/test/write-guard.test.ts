@@ -7,7 +7,7 @@ import { Agent, PermissionPolicy, PluginHost } from "@sasacode/agent";
 import { type AssistantMessage, emptyUsage, registerApi } from "@sasacode/ai";
 import { replayProvider } from "@sasacode/testing";
 import builtinTools, { readTool } from "@sasacode/tools";
-import { bundledPlugins, stripLineNumbers } from "../src/index.ts";
+import { bundledPlugins, stripLineNumbers, stripPadding } from "../src/index.ts";
 
 const root = mkdtempSync(join(tmpdir(), "sasacode-write-guard-"));
 afterAll(() => rmSync(root, { recursive: true, force: true }));
@@ -46,6 +46,17 @@ test("content copied from read with its line numbers: written without them, and 
   expect(result!.isError).toBe(false);
   // read does not show the final newline, so the content had none.
   expect(readFileSync(file, "utf8")).toBe(text.slice(0, -1));
+});
+
+test("a file written back with only read's numbers and tabs taken off: the padding left on every line is removed, and the model is told", async () => {
+  const file = join(root, "padded.test.ts");
+  const text = `${Array.from({ length: 30 }, (_, i) => (i % 7 === 3 ? "" : i % 2 ? `  expect(${i}).toBe(${i});` : `test("t${i}", () => {});`)).join("\n")}\n`;
+  writeFileSync(file, text);
+  // As Gemma4 e2b sent it (2026-11-11): "     1\t…" became "     …" on every line, one line changed.
+  const content = text.replace("toBe(1)", "toBe(2)").split("\n").map((l) => (l ? `     ${l}` : l)).join("\n");
+  const [result] = await run([write("1", "padded.test.ts", content)]);
+  expect(result!.text).toContain("removed the 5 spaces every line of content started with");
+  expect(readFileSync(file, "utf8")).toBe(text.replace("toBe(1)", "toBe(2)"));
 });
 
 test("a fragment over a long file is refused; the same write again goes through", async () => {
@@ -100,4 +111,28 @@ test("stripLineNumbers: indented numbers with no tab anywhere are the file's tex
   for (const s of [" 1\n 2\n 3\n", "  10\n  11\n  12\n", "    1\n    2\n", " 7\n", "       7\n"]) expect([s, stripLineNumbers(s)]).toEqual([s, undefined]);
   expect(stripLineNumbers("  1\tfoo\n")).toBe("foo\n");
   expect(stripLineNumbers("     1\ta\n     2\n     3\tb\n")).toBe("a\n\nb\n"); // a blank line among numbered ones
+});
+
+test("stripPadding: only spaces read could have left, beyond the file's own indentation, on a file written back", () => {
+  const file = "def f():\n    return 1\n\nprint(f())\n";
+  expect(stripPadding("     def f():\n         return 1\n\n     print(f())\n", file)).toEqual({ content: file, spaces: 5 });
+  // A file whose lines all share an indentation keeps it.
+  const nested = "  a: 1\n  b: 2\n  c: 3\n";
+  expect(stripPadding("     a: 1\n     b: 2\n     c: 3\n", nested)).toEqual({ content: nested, spaces: 3 });
+  // Not read's padding: more than 5 spaces, a tab, or no extra indentation at all.
+  expect(stripPadding("        a\n        b\n        c\n", "a\nb\nc\n")).toBeUndefined();
+  expect(stripPadding("\ta\n\tb\n\tc\n", "a\nb\nc\n")).toBeUndefined();
+  expect(stripPadding("a\nb\nc\n", "a\nb\nc\n")).toBeUndefined();
+  // New text, not the file written back, or too short to tell: left as the model wrote it.
+  expect(stripPadding("  x\n  y\n  z\n", "a\nb\nc\n")).toBeUndefined();
+  expect(stripPadding("  a\n  b\n", "a\nb\n")).toBeUndefined();
+});
+
+test("a new file, or one indented on purpose, is written as it is", async () => {
+  const yaml = "  - a\n  - b\n  - c\n";
+  writeFileSync(join(root, "list.yml"), "x: 1\ny: 2\nz: 3\n");
+  const results = await run([write("1", "new.yml", yaml), write("2", "list.yml", yaml)]);
+  expect(results.map((r) => r.text).join()).not.toContain("harness repaired");
+  expect(readFileSync(join(root, "new.yml"), "utf8")).toBe(yaml);
+  expect(readFileSync(join(root, "list.yml"), "utf8")).toBe(yaml);
 });

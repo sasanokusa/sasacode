@@ -32,7 +32,7 @@ export { closestName, editDistance, fitToSchema, repairJson, resolveToolName, TO
 export { extractTextCalls } from "./text-tool-calls.ts";
 export { htmlToText, readable, readCapped } from "./web-fetch.ts";
 export { formatResults, matchesQuery, privateAddress } from "./web-search.ts";
-export { stripLineNumbers } from "./write-guard.ts";
+export { stripLineNumbers, stripPadding } from "./write-guard.ts";
 export { omit as omitImages, probe as probeImage, shrink as shrinkImage } from "./image-slim.ts";
 export { installRustxng, managedRustxng, rustxngTarget } from "./rustxng-install.ts";
 export { byDay, graph, planLines, readRecords } from "./usage.ts";
