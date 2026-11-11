@@ -62,9 +62,9 @@ export const editTool: ToolDefinition<Args> = {
  * that old_string indentation, else the one shift all lines share if two depths of old_string or unmoved lines show it, else refused.
  */
 function loosely(path: string, file: string, old: string, neu: string): string | { after: string; note: string } {
-  // read pads its numbers to 6 columns: a TSV row's "123\t" is the file's text, not a line number (#84).
+  // read pads its numbers to 6 columns: a TSV row's "123\t" is the file's text, not a line number (#84); nor is one past the file's end (#130).
   const LN = String.raw`^(?:(?=[ \d]{6}\t) *\d+|\d{7,})\t`, ln = new RegExp(LN, "gm");
-  const numbered = new RegExp(LN, "m").test(old) && old.split("\n").every((l) => !l.trim() || new RegExp(`${LN}|^ *\\d+ *\\r?$`).test(l)), bare = numbered ? old.replace(ln, "") : old, digits = numbered && /^ *\d+ *\r?$/m.exec(`${old}\n${neu}`);
+  const numbered = new RegExp(LN, "m").test(old) && old.split("\n").every((l) => !l.trim() || new RegExp(`${LN}|^ *\\d+ *\\r?$`).test(l)) && old.match(ln)!.reduce((a, n) => Math.max(a, +n), 0) <= file.split("\n").length, bare = numbered ? old.replace(ln, "") : old, digits = numbered && /^ *\d+ *\r?$/m.exec(`${old}\n${neu}`);
   if (digits) return `${digits.index > old.length ? "new" : "old"}_string's line ${JSON.stringify(digits[0])} is only digits among read's line numbers: a blank line's number without its tab, or text, so the line-number form is ambiguous there. Nothing was changed; give old_string and new_string as the file's exact text, without line numbers.`;
   [old, neu] = [bare, numbered ? neu.replace(ln, "") : neu].map((s) => s.replace(/[ \t\r]+$/, ""));
   let i = 0, find = (re: string) => file.matchAll(new RegExp(`(?=(${re}))`, "gm")).take(2).toArray(), hits = find(RegExp.escape(old));
