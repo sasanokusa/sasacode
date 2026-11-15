@@ -4,8 +4,11 @@
 
 mod app;
 mod i18n;
+mod prefs;
 mod runner;
+mod style;
 mod transcript;
+mod view;
 
 use std::path::PathBuf;
 
@@ -53,7 +56,7 @@ fn main() -> iced::Result {
         .title(app::App::title)
         .theme(app::App::theme)
         .subscription(app::App::subscription)
-        .window_size((1100.0, 760.0))
+        .window_size((1120.0, 780.0))
         .run()
 }
 

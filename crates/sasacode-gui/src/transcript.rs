@@ -18,7 +18,14 @@ pub enum Item {
     Thinking(String),
     Tool(Tool),
     Approval(Approval),
-    Notice { text: String, error: bool },
+    Notice {
+        text: String,
+        error: bool,
+    },
+    /// A run ended here, after this many seconds.
+    Done {
+        seconds: u64,
+    },
 }
 
 /// Markdown that can grow while it streams in.
@@ -47,6 +54,8 @@ pub struct Tool {
     pub id: String,
     pub name: String,
     pub summary: String,
+    /// The call's arguments: an edit or a write shows its change from them.
+    pub input: serde_json::Value,
     pub output: String,
     /// `None` while it runs.
     pub is_error: Option<bool>,
@@ -57,15 +66,52 @@ pub struct Approval {
     pub id: String,
     pub tool: String,
     pub detail: String,
+    /// The call's arguments: an edit or a write is shown as the change it would make.
+    pub args: serde_json::Value,
     pub reason: String,
     /// How it was answered, once it was.
     pub answer: Option<String>,
+}
+
+/// One line of the agent's task list (`todo_write`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Todo {
+    pub text: String,
+    pub state: TodoState,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TodoState {
+    Pending,
+    Active,
+    Done,
+}
+
+/// What the agent is doing right now, for the line under the input.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum Activity {
+    #[default]
+    Waiting,
+    Thinking,
+    Writing,
+    Tool(String),
+}
+
+/// One request and what followed it: `items[start..end]`. Only the first turn of a conversation that
+/// was read back mid-way can start with something other than the request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Turn {
+    pub start: usize,
+    pub end: usize,
 }
 
 #[derive(Debug, Default)]
 pub struct Transcript {
     pub items: Vec<Item>,
     pub usage: Usage,
+    /// The agent's task list as it last wrote it.
+    pub todos: Vec<Todo>,
+    pub activity: Activity,
     /// Content index of the streaming reply → its item.
     streaming: HashMap<usize, usize>,
     /// Prompts shown when they were sent, so the run's echo of them is not shown twice.
@@ -78,6 +124,8 @@ pub struct Effect {
     pub session_id: Option<String>,
     pub ended: Option<StopCause>,
     pub approval: Option<String>,
+    /// A message sent during the run reached the model and is now part of the conversation.
+    pub delivered: Option<String>,
 }
 
 impl Transcript {
@@ -116,20 +164,28 @@ impl Transcript {
         let mut effect = Effect::default();
         match event {
             Event::Session { id, .. } => effect.session_id = id.clone(),
-            Event::MessageStart => self.streaming.clear(),
+            Event::MessageStart => {
+                self.streaming.clear();
+                self.activity = Activity::Waiting;
+            }
             Event::MessageUpdate { event } => self.stream(event),
-            Event::MessageEnd { message } => self.message_end(message),
-            Event::ToolStart { call, summary, .. } => self.items.push(Item::Tool(Tool {
-                id: call.id.clone(),
-                name: call.name.clone(),
-                summary: if summary.is_empty() {
-                    summarize(call)
-                } else {
-                    summary.clone()
-                },
-                output: String::new(),
-                is_error: None,
-            })),
+            Event::MessageEnd { message } => effect.delivered = self.message_end(message),
+            Event::ToolStart { call, summary, .. } => {
+                self.activity = Activity::Tool(call.name.clone());
+                self.read_todos(call);
+                self.items.push(Item::Tool(Tool {
+                    id: call.id.clone(),
+                    name: call.name.clone(),
+                    summary: if summary.is_empty() {
+                        summarize(call)
+                    } else {
+                        summary.clone()
+                    },
+                    input: call.input.clone(),
+                    output: String::new(),
+                    is_error: None,
+                }))
+            }
             Event::ToolUpdate { call, text, .. } => {
                 if let Some(tool) = self.tool_mut(&call.id) {
                     tool.output.push_str(text);
@@ -137,6 +193,7 @@ impl Transcript {
                 }
             }
             Event::ToolEnd { call, result, .. } => {
+                self.activity = Activity::Waiting;
                 let output = tail(&text_of(&result.content));
                 match self.tool_mut(&call.id) {
                     Some(tool) => {
@@ -147,6 +204,7 @@ impl Transcript {
                         id: call.id.clone(),
                         name: call.name.clone(),
                         summary: summarize(call),
+                        input: call.input.clone(),
                         output,
                         is_error: Some(result.is_error),
                     })),
@@ -186,6 +244,7 @@ impl Transcript {
                     id: id.clone(),
                     tool: tool.clone(),
                     detail: describe(args),
+                    args: args.clone(),
                     reason: reason.clone(),
                     answer: None,
                 }));
@@ -200,40 +259,56 @@ impl Transcript {
 
     fn stream(&mut self, delta: &StreamDelta) {
         match delta {
-            StreamDelta::TextDelta { index, delta } => match self.streaming.get(index) {
-                Some(&i) => {
-                    if let Some(Item::Assistant(md)) = self.items.get_mut(i) {
-                        md.push(delta);
-                    }
-                }
-                None => {
-                    self.streaming.insert(*index, self.items.len());
-                    self.items.push(Item::Assistant(Markdown::new(delta)));
-                }
-            },
-            StreamDelta::ThinkingDelta { index, delta } => match self.streaming.get(index) {
-                Some(&i) => {
-                    if let Some(Item::Thinking(t)) = self.items.get_mut(i) {
-                        t.push_str(delta);
-                    }
-                }
-                None => {
-                    self.streaming.insert(*index, self.items.len());
-                    self.items.push(Item::Thinking(delta.clone()));
-                }
-            },
+            StreamDelta::TextDelta { index, delta } => {
+                self.activity = Activity::Writing;
+                self.stream_text(*index, delta)
+            }
+            StreamDelta::ThinkingDelta { index, delta } => {
+                self.activity = Activity::Thinking;
+                self.stream_thinking(*index, delta)
+            }
             _ => {}
         }
     }
 
-    fn message_end(&mut self, message: &Message) {
+    fn stream_text(&mut self, index: usize, delta: &str) {
+        match self.streaming.get(&index) {
+            Some(&i) => {
+                if let Some(Item::Assistant(md)) = self.items.get_mut(i) {
+                    md.push(delta);
+                }
+            }
+            None => {
+                self.streaming.insert(index, self.items.len());
+                self.items.push(Item::Assistant(Markdown::new(delta)));
+            }
+        }
+    }
+
+    fn stream_thinking(&mut self, index: usize, delta: &str) {
+        match self.streaming.get(&index) {
+            Some(&i) => {
+                if let Some(Item::Thinking(t)) = self.items.get_mut(i) {
+                    t.push_str(delta);
+                }
+            }
+            None => {
+                self.streaming.insert(index, self.items.len());
+                self.items.push(Item::Thinking(delta.to_owned()));
+            }
+        }
+    }
+
+    /// Returns the text of a user message that was not shown yet: one sent while the run was busy.
+    fn message_end(&mut self, message: &Message) -> Option<String> {
         match message {
             Message::User { content, .. } => {
                 let text = text_of(content);
                 if let Some(pos) = self.echoes.iter().position(|e| *e == text) {
                     self.echoes.remove(pos);
                 } else {
-                    self.items.push(Item::User(text));
+                    self.items.push(Item::User(text.clone()));
+                    return Some(text);
                 }
             }
             Message::Assistant(a) => {
@@ -260,6 +335,70 @@ impl Transcript {
             }
             Message::Tool(_) | Message::Other => {}
         }
+        None
+    }
+
+    fn read_todos(&mut self, call: &ToolCall) {
+        if call.name != "todo_write" {
+            return;
+        }
+        let Some(list) = call.input.get("todos").and_then(|v| v.as_array()) else {
+            return;
+        };
+        self.todos = list
+            .iter()
+            .filter_map(|t| {
+                Some(Todo {
+                    text: t.get("content")?.as_str()?.to_owned(),
+                    state: match t.get("status").and_then(|s| s.as_str()) {
+                        Some("completed") => TodoState::Done,
+                        Some("in_progress") => TodoState::Active,
+                        _ => TodoState::Pending,
+                    },
+                })
+            })
+            .collect();
+    }
+
+    /// The conversation cut at each request.
+    pub fn turns(&self) -> Vec<Turn> {
+        let mut out: Vec<Turn> = Vec::new();
+        for (i, item) in self.items.iter().enumerate() {
+            match out.last_mut() {
+                Some(turn) if !matches!(item, Item::User(_)) => turn.end = i + 1,
+                _ => out.push(Turn { start: i, end: i + 1 }),
+            }
+        }
+        out
+    }
+
+    /// The reply a turn ended with: its last text, when only notices follow it. A turn that was cut
+    /// short (an error, an interrupt before any text) has none.
+    pub fn answer(&self, turn: Turn) -> Option<usize> {
+        for i in (turn.start..turn.end).rev() {
+            match &self.items[i] {
+                Item::Notice { .. } | Item::Done { .. } => {}
+                Item::Assistant(_) => return Some(i),
+                _ => return None,
+            }
+        }
+        None
+    }
+
+    /// The files a turn's edits and writes changed, each once, in the order they were first changed.
+    pub fn changed_files(&self, turn: Turn) -> Vec<&str> {
+        let mut out: Vec<&str> = Vec::new();
+        for item in &self.items[turn.start..turn.end] {
+            if let Item::Tool(t) = item
+                && matches!(t.name.as_str(), "edit" | "write")
+                && t.is_error == Some(false)
+                && let Some(path) = t.input.get("path").and_then(|p| p.as_str())
+                && !out.contains(&path)
+            {
+                out.push(path);
+            }
+        }
+        out
     }
 
     fn tool_mut(&mut self, id: &str) -> Option<&mut Tool> {
@@ -285,13 +424,17 @@ impl Transcript {
                             Content::Thinking { thinking, .. } if !thinking.trim().is_empty() => {
                                 t.items.push(Item::Thinking(thinking.clone()))
                             }
-                            Content::ToolCall(call) => t.items.push(Item::Tool(Tool {
-                                id: call.id.clone(),
-                                name: call.name.clone(),
-                                summary: summarize(call),
-                                output: String::new(),
-                                is_error: None,
-                            })),
+                            Content::ToolCall(call) => {
+                                t.read_todos(call);
+                                t.items.push(Item::Tool(Tool {
+                                    id: call.id.clone(),
+                                    name: call.name.clone(),
+                                    summary: summarize(call),
+                                    input: call.input.clone(),
+                                    output: String::new(),
+                                    is_error: None,
+                                }))
+                            }
                             _ => {}
                         }
                     }
@@ -311,18 +454,47 @@ impl Transcript {
 
 /// A one-line description of a call: the argument that says the most, else its JSON.
 pub fn summarize(call: &ToolCall) -> String {
+    brief(&call.input)
+}
+
+/// The same for bare arguments, as an approval request carries them.
+pub fn brief(input: &serde_json::Value) -> String {
     for key in ["command", "path", "file_path", "pattern", "url", "query"] {
-        if let Some(v) = call.input.get(key).and_then(|v| v.as_str()) {
+        if let Some(v) = input.get(key).and_then(|v| v.as_str()) {
             return first_line(v);
         }
     }
-    first_line(&call.input.to_string())
+    first_line(&input.to_string())
 }
 
 fn describe(args: &serde_json::Value) -> String {
     match args.get("command").and_then(|v| v.as_str()) {
         Some(command) => command.to_owned(),
         None => serde_json::to_string_pretty(args).unwrap_or_default(),
+    }
+}
+
+/// The change an `edit` or a `write` makes, read from its arguments: `-` lines leave, `+` lines come.
+/// Lines an edit keeps at both ends are left out. `None` for any other tool.
+pub fn change(tool: &str, input: &serde_json::Value) -> Option<Vec<(char, String)>> {
+    let field = |key: &str| input.get(key).and_then(|v| v.as_str());
+    match tool {
+        "write" => Some(field("content")?.lines().map(|l| ('+', l.to_owned())).collect()),
+        "edit" => {
+            let old: Vec<&str> = field("old_string")?.lines().collect();
+            let new: Vec<&str> = field("new_string")?.lines().collect();
+            let head = old.iter().zip(&new).take_while(|(a, b)| a == b).count();
+            let tail = old[head..]
+                .iter()
+                .rev()
+                .zip(new[head..].iter().rev())
+                .take_while(|(a, b)| a == b)
+                .count();
+            let gone = old[head..old.len() - tail].iter().map(|l| ('-', (*l).to_owned()));
+            let come = new[head..new.len() - tail].iter().map(|l| ('+', (*l).to_owned()));
+            Some(gone.chain(come).collect())
+        }
+        _ => None,
     }
 }
 
@@ -369,6 +541,7 @@ mod tests {
                 Item::Tool(t) => format!("tool:{}:{}:{:?}", t.name, t.summary, t.is_error),
                 Item::Approval(a) => format!("approval:{}:{}:{:?}", a.tool, a.detail, a.answer),
                 Item::Notice { text, error } => format!("notice:{error}:{text}"),
+                Item::Done { seconds } => format!("done:{seconds}"),
             })
             .collect()
     }
@@ -417,6 +590,81 @@ mod tests {
                 "assistant:**完了**しました。`made.txt` を作成しています。",
             ]
         );
+    }
+
+    #[test]
+    fn a_conversation_is_cut_at_each_request_and_a_turn_knows_its_answer_and_its_changed_files() {
+        let call = |id: &str, name: &str, path: &str| {
+            let input = serde_json::json!({ "path": path, "old_string": "a", "new_string": "b" });
+            Item::Tool(Tool {
+                id: id.into(),
+                name: name.into(),
+                summary: path.into(),
+                input,
+                output: String::new(),
+                is_error: Some(false),
+            })
+        };
+        let items = vec![
+            Item::User("直して".into()),
+            Item::Assistant(Markdown::new("見てみます。")),
+            call("1", "read", "src/a.rs"),
+            call("2", "edit", "src/a.rs"),
+            call("3", "edit", "src/a.rs"),
+            call("4", "write", "src/b.rs"),
+            Item::Assistant(Markdown::new("直しました。")),
+            Item::Done { seconds: 12 },
+            Item::User("もう一度".into()),
+            call("5", "bash", "x"),
+            Item::Notice {
+                text: "中断しました".into(),
+                error: false,
+            },
+        ];
+        let t = Transcript {
+            items,
+            ..Transcript::default()
+        };
+        let turns = t.turns();
+        assert_eq!(turns, [Turn { start: 0, end: 8 }, Turn { start: 8, end: 11 }]);
+        assert_eq!(t.answer(turns[0]), Some(6));
+        assert_eq!(t.changed_files(turns[0]), ["src/a.rs", "src/b.rs"]);
+        // Cut short before any text: there is no answer to set apart.
+        assert_eq!(t.answer(turns[1]), None);
+    }
+
+    #[test]
+    fn an_edit_is_shown_as_the_lines_that_leave_and_come_without_the_lines_it_keeps() {
+        let input =
+            serde_json::json!({ "path": "a", "old_string": "fn f() {\n  1\n}", "new_string": "fn f() {\n  2\n  3\n}" });
+        let lines = change("edit", &input).unwrap();
+        assert_eq!(
+            lines,
+            [
+                ('-', "  1".to_owned()),
+                ('+', "  2".to_owned()),
+                ('+', "  3".to_owned())
+            ]
+        );
+        let written = change("write", &serde_json::json!({ "path": "a", "content": "x\ny" })).unwrap();
+        assert_eq!(written, [('+', "x".to_owned()), ('+', "y".to_owned())]);
+        assert_eq!(change("bash", &serde_json::json!({ "command": "ls" })), None);
+    }
+
+    #[test]
+    fn the_task_list_follows_the_last_todo_write_and_a_message_sent_mid_run_joins_when_delivered() {
+        let s = Strings::get("ja");
+        let mut t = Transcript::default();
+        let start = r#"{"type":"tool_start","call":{"id":"t1","name":"todo_write","input":{"todos":[{"content":"調べる","status":"completed"},{"content":"直す","status":"in_progress"}]}}}"#;
+        t.apply(&parse_event(start).unwrap(), &s);
+        assert_eq!(t.todos.len(), 2);
+        assert_eq!(t.todos[1].state, TodoState::Active);
+        assert_eq!(t.activity, Activity::Tool("todo_write".into()));
+        let echo =
+            r#"{"type":"message_end","message":{"role":"user","content":[{"type":"text","text":"テストも足して"}]}}"#;
+        let effect = t.apply(&parse_event(echo).unwrap(), &s);
+        assert_eq!(effect.delivered.as_deref(), Some("テストも足して"));
+        assert!(matches!(t.items.last(), Some(Item::User(u)) if u == "テストも足して"));
     }
 
     #[test]
