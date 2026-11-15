@@ -22,6 +22,8 @@ pi-tuiには、`patches/@earendil-works%2Fpi-tui@0.87.1.patch`を、ルートの
 | iced | sasacode-gui | ElectronやTauriのWebViewを使わず、GPU（なければCPU）で描くGUI。Elm型の更新で子プロセスのイベントを扱いやすく、Markdown表示、複数行の入力欄、IME対応（0.14〜）がそろっている。MIT | egui（毎フレーム描き直す方式で、長い会話ログに工夫が要る）、gpui（Zed本体向けで単体利用の文書が少ない）、Slint（GPLv3か独自ライセンス）、Dioxus（中身がTauriと同じWebView） |
 | tokio | sasacode-gui | 子プロセスの起動とstdin / stdoutの非同期読み書き。icedの`tokio`機能と同じランタイムを使う | async-std / smol：icedがtokioに対応しているので、ランタイムを2つ持たない |
 
+クレートのほかに、GUIはアイコンのフォントを1つ埋め込む。`crates/sasacode-gui/assets/icons.ttf` は [Lucide](https://lucide.dev)（ISC。一部はFeather由来でMIT）のアイコンフォントから、窓が使う32個だけを残したもので、11KBある。作り方は同じフォルダの `icons.py`（fonttoolsが要る。作るときだけ使い、実行時の依存ではない）、ライセンスの全文は `icons-LICENSE.txt` にある。文字や絵文字をアイコンの代わりにすると、OSごとに形が変わり、色も大きさもそろわないので、フォントにした。SVGを描くicedの機能（resvgが入る）は、アイコンのためだけには大きいので使っていない。
+
 ## pi-tui の Bun 上での検証（M1 冒頭）
 
 `@earendil-works/pi-tui@0.87.1`をBun 1.4.4で次の点について検証した。

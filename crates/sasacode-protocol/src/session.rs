@@ -153,6 +153,8 @@ pub struct SessionSummary {
     /// The first line of the first prompt.
     pub first_prompt: String,
     pub message_count: usize,
+    /// The model the conversation last used, as `provider/model`.
+    pub model: Option<String>,
 }
 
 /// The sessions started in `cwd`, newest first. Logs that cannot be read are left out.
@@ -197,5 +199,6 @@ pub fn summarize(path: &Path) -> Option<SessionSummary> {
             .unwrap_or(SystemTime::UNIX_EPOCH),
         first_prompt: first_prompt.lines().next().unwrap_or("").to_owned(),
         message_count: restored.messages.len(),
+        model: restored.model,
     })
 }

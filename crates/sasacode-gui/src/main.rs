@@ -4,8 +4,13 @@
 
 mod app;
 mod i18n;
+mod icon;
+mod palette;
+mod prefs;
 mod runner;
+mod style;
 mod transcript;
+mod view;
 
 use std::path::PathBuf;
 
@@ -44,17 +49,46 @@ fn main() -> iced::Result {
     if !cwd.is_dir() {
         exit_with(&format!("{} is not a folder", cwd.display()));
     }
+    // On macOS the window's own buttons sit on its content, with no bar of their own above it.
+    // `SASACODE_TITLEBAR=system` brings the system's title bar back.
+    let unified = cfg!(target_os = "macos") && std::env::var("SASACODE_TITLEBAR").as_deref() != Ok("system");
     let options = app::Options {
         program: program.unwrap_or_else(|| PathBuf::from("sasacode")),
         cwd,
+        unified,
     };
 
     iced::application(move || app::App::new(options.clone()), app::App::update, app::App::view)
         .title(app::App::title)
         .theme(app::App::theme)
         .subscription(app::App::subscription)
-        .window_size((1100.0, 760.0))
+        .font(icon::BYTES)
+        .default_font(style::UI)
+        .window(window(unified))
         .run()
+}
+
+/// The size the window opens with.
+pub(crate) const WINDOW: iced::Size = iced::Size::new(1120.0, 780.0);
+
+fn window(unified: bool) -> iced::window::Settings {
+    #[cfg(target_os = "macos")]
+    let platform_specific = iced::window::settings::PlatformSpecific {
+        title_hidden: unified,
+        titlebar_transparent: unified,
+        fullsize_content_view: unified,
+    };
+    #[cfg(not(target_os = "macos"))]
+    let platform_specific = {
+        let _ = unified;
+        iced::window::settings::PlatformSpecific::default()
+    };
+    iced::window::Settings {
+        size: WINDOW,
+        min_size: Some(iced::Size::new(560.0, 420.0)),
+        platform_specific,
+        ..iced::window::Settings::default()
+    }
 }
 
 fn exit_with(message: &str) -> ! {
