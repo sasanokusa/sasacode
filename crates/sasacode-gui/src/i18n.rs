@@ -12,50 +12,69 @@ use crate::transcript::Activity;
 pub struct Strings {
     pub ja: bool,
     pub new_session: &'static str,
-    pub search: &'static str,
+    pub find: &'static str,
+    pub within_day: &'static str,
+    pub within_week: &'static str,
+    pub older: &'static str,
     pub no_sessions: &'static str,
-    pub no_match: &'static str,
     pub untitled: &'static str,
     pub placeholder: &'static str,
     pub placeholder_running: &'static str,
-    pub keys: &'static str,
+    pub newline: &'static str,
     pub send: &'static str,
     pub stop: &'static str,
     pub allow: &'static str,
     pub always: &'static str,
     pub deny: &'static str,
     pub feedback: &'static str,
-    pub approval_keys: &'static str,
-    pub approval_why: &'static str,
-    pub allowed: &'static str,
-    pub always_allowed: &'static str,
     pub denied: &'static str,
     pub cancelled: &'static str,
     pub awaiting: &'static str,
+    pub title_awaiting: &'static str,
     pub thinking: &'static str,
-    pub work: &'static str,
-    pub changed: &'static str,
+    pub failed: &'static str,
     pub queued: &'static str,
     pub returned: &'static str,
     pub plan: &'static str,
     pub copy: &'static str,
     pub copied: &'static str,
+    pub model: &'static str,
+    pub permission_label: &'static str,
+    pub effort_label: &'static str,
     pub model_default: &'static str,
-    pub model_other: &'static str,
-    pub model_placeholder: &'static str,
-    pub model_set: &'static str,
+    pub model_default_note: &'static str,
     pub effort_default: &'static str,
+    pub effort_default_note: &'static str,
     pub context_full: &'static str,
     pub compacted: &'static str,
     pub retrying: &'static str,
     pub not_found: &'static str,
     pub exited: &'static str,
     pub empty_lead: &'static str,
-    pub empty_note: &'static str,
     pub more_lines: &'static str,
     pub usage_in: &'static str,
     pub usage_out: &'static str,
     pub usage_cache: &'static str,
+    pub changes: &'static str,
+    pub changes_empty: &'static str,
+    pub show_changes: &'static str,
+    pub hide_changes: &'static str,
+    pub show_sidebar: &'static str,
+    pub hide_sidebar: &'static str,
+    pub find_root: &'static str,
+    pub find_model: &'static str,
+    pub find_permission: &'static str,
+    pub find_effort: &'static str,
+    pub group_actions: &'static str,
+    pub group_sessions: &'static str,
+    pub do_new: &'static str,
+    pub do_model: &'static str,
+    pub do_permission: &'static str,
+    pub do_effort: &'static str,
+    pub do_stop: &'static str,
+    pub do_copy: &'static str,
+    pub find_keys: &'static str,
+    pub no_match: &'static str,
 }
 
 impl Strings {
@@ -68,6 +87,15 @@ impl Strings {
 
     pub fn get(lang: &str) -> Self {
         if lang.starts_with("ja") { JA } else { EN }
+    }
+
+    /// A shortcut as the keyboard in front of the person names it: `key("K")` is ⌘K on a Mac.
+    pub fn key(&self, key: &str) -> String {
+        if cfg!(target_os = "macos") {
+            format!("⌘{key}")
+        } else {
+            format!("Ctrl+{key}")
+        }
     }
 
     pub fn stopped(&self, cause: StopCause) -> &'static str {
@@ -116,6 +144,71 @@ impl Strings {
         }
     }
 
+    /// Why sasacode asks, from the reason it gives (`packages/agent/src/permission.ts`), as a
+    /// sentence. A reason the window does not know (a judging model's own words) is shown as it is.
+    pub fn approval_reason(&self, reason: &str) -> String {
+        let ja = self.ja;
+        if reason == "mode ask" {
+            return if ja {
+                "権限が「毎回確認」なので確認しています".into()
+            } else {
+                "Asked because the permission is \"Ask every time\"".into()
+            };
+        }
+        if reason == "mode edits" {
+            return if ja {
+                "いまの権限では、コマンドの実行とフォルダの外への操作を確認します".into()
+            } else {
+                "This permission asks before commands and anything outside the folder".into()
+            };
+        }
+        if reason == "mode agent: not judged" {
+            return if ja {
+                "危険度を判定できなかったので確認しています".into()
+            } else {
+                "Asked because the risk could not be judged".into()
+            };
+        }
+        if let Some(rule) = reason.strip_prefix("rule ask: ") {
+            return if ja {
+                format!("設定のルール（{rule}）に従って確認しています")
+            } else {
+                format!("Asked by a rule in the settings ({rule})")
+            };
+        }
+        if let Some(what) = reason.strip_prefix("cannot resolve ") {
+            return if ja {
+                format!("{what} の場所を確かめられないので確認しています")
+            } else {
+                format!("Asked because {what} could not be resolved")
+            };
+        }
+        if ja {
+            format!("確認の理由: {reason}")
+        } else {
+            format!("Asked because: {reason}")
+        }
+    }
+
+    /// A tool call whose arguments were mended before it ran.
+    pub fn repaired(&self, tool: &str, note: &str) -> String {
+        if self.ja {
+            format!("{tool} の呼び出しを直しました（{note}）")
+        } else {
+            format!("Mended the call to {tool}: {note}")
+        }
+    }
+
+    pub fn approval_more(&self, n: usize) -> String {
+        if self.ja {
+            format!("ほかに{n}件の確認が待っています")
+        } else if n == 1 {
+            "1 more is waiting".into()
+        } else {
+            format!("{n} more are waiting")
+        }
+    }
+
     pub fn activity(&self, activity: &Activity, awaiting_approval: bool) -> String {
         if awaiting_approval {
             return self.awaiting.into();
@@ -155,6 +248,30 @@ impl Strings {
         (if self.ja { ja } else { en }).into()
     }
 
+    /// What a permission mode lets sasacode do without asking, as `packages/agent/src/permission.ts`
+    /// decides it.
+    pub fn permission_note(&self, mode: &str) -> &'static str {
+        match (mode, self.ja) {
+            ("edits", true) => {
+                "作業フォルダの中の読み取りと編集は確認なしで進めます。コマンドの実行と、フォルダの外への操作は確認します。"
+            }
+            ("edits", false) => {
+                "Reads and edits inside the folder go ahead. Commands, and anything outside the folder, are asked first."
+            }
+            ("ask", true) => "ファイルの読み取りを含め、すべての操作を確認します。",
+            ("ask", false) => "Everything is asked first, reading a file included.",
+            ("agent", true) => {
+                "作業フォルダの中の読み取りは確認なしで進めます。ほかの操作はモデルが危険度を判定し、安全と判定できたものだけ確認なしで進めます。"
+            }
+            ("agent", false) => {
+                "Reads inside the folder go ahead. A model judges the rest, and only what it finds safe goes ahead unasked."
+            }
+            ("auto", true) => "すべての操作を確認なしで進めます。",
+            ("auto", false) => "Everything goes ahead without asking.",
+            _ => "",
+        }
+    }
+
     pub fn effort(&self, level: &str) -> String {
         let ja = match level {
             "off" => "推論なし",
@@ -168,11 +285,50 @@ impl Strings {
         if self.ja { ja.into() } else { format!("Effort {level}") }
     }
 
+    pub fn empty_note(&self, folder: &str) -> String {
+        if self.ja {
+            format!("sasacodeは {folder} のファイルを読み、編集し、コマンドを実行して依頼を進めます。")
+        } else {
+            format!("sasacode reads and edits the files in {folder} and runs commands there to do what you ask.")
+        }
+    }
+
+    pub fn earlier(&self, n: usize) -> String {
+        if self.ja {
+            format!("以前の依頼 {n}件")
+        } else if n == 1 {
+            "1 earlier request".into()
+        } else {
+            format!("{n} earlier requests")
+        }
+    }
+
     pub fn steps(&self, n: usize) -> String {
         if self.ja {
-            format!("{} {n}件", self.work)
+            format!("作業 {n}件")
+        } else if n == 1 {
+            "1 step".into()
         } else {
-            format!("{} · {n}", self.work)
+            format!("{n} steps")
+        }
+    }
+
+    /// The files a turn changed, as the line under its answer.
+    pub fn changed(&self, files: &[&str]) -> String {
+        match (files, self.ja) {
+            ([], _) => String::new(),
+            ([one], true) => format!("{one} を変更"),
+            ([one], false) => format!("Changed {one}"),
+            ([first, rest @ ..], true) => format!("{first} ほか{}個のファイルを変更", rest.len()),
+            ([first, rest @ ..], false) => format!("Changed {first} and {} more", rest.len()),
+        }
+    }
+
+    pub fn use_model(&self, name: &str) -> String {
+        if self.ja {
+            format!("「{name}」を使う")
+        } else {
+            format!("Use \"{name}\"")
         }
     }
 
@@ -210,97 +366,135 @@ impl Strings {
 const JA: Strings = Strings {
     ja: true,
     new_session: "新しい会話",
-    search: "会話を探す",
+    find: "探す、操作する",
+    within_day: "24時間以内",
+    within_week: "7日以内",
+    older: "それより前",
     no_sessions: "このフォルダにはまだ会話がありません",
-    no_match: "一致する会話がありません",
     untitled: "無題の会話",
     placeholder: "頼みたいことを書く",
     placeholder_running: "追加の指示を書く",
-    keys: "Enterで送信、Shift+Enterで改行",
+    newline: "改行",
     send: "送信",
     stop: "中断",
     allow: "許可",
     always: "常に許可",
     deny: "拒否",
     feedback: "拒否する理由（任意）",
-    approval_keys: "Ctrl+Enterでも許可できます",
-    approval_why: "確認の理由",
-    allowed: "許可しました",
-    always_allowed: "常に許可しました",
     denied: "拒否しました",
-    cancelled: "取り消されました",
+    cancelled: "答える前に実行が終わりました",
     awaiting: "承認を待っています",
+    title_awaiting: "承認待ち",
     thinking: "思考",
-    work: "作業の記録",
-    changed: "変更したファイル",
+    failed: "失敗",
     queued: "次のターンで届きます",
     returned: "届かなかった指示を入力欄に戻しました",
     plan: "作業リスト",
     copy: "コピー",
     copied: "コピーしました",
+    model: "モデル",
+    permission_label: "権限",
+    effort_label: "推論",
     model_default: "既定のモデル",
-    model_other: "モデル名を入力する",
-    model_placeholder: "provider/model の形で入力してEnter",
-    model_set: "決定",
+    model_default_note: "sasacodeの設定に従います",
     effort_default: "推論は既定",
+    effort_default_note: "モデルの既定に従います",
     context_full: "コンテキストの上限に近づいています",
     compacted: "会話を圧縮しました",
     retrying: "接続が切れたため、もう一度問い合わせています",
     not_found: "sasacode を起動できませんでした。PATHに入れるか、SASACODE_BIN か --sasacode で場所を指定してください",
     exited: "sasacode が終了しました（終了コード {code}）",
-    empty_lead: "このフォルダで頼みたいことを下の欄に書いてください",
-    empty_note: "sasacodeはファイルを編集したりコマンドを実行したりする前に、権限の設定に従って確認を求めます",
+    empty_lead: "頼みたいことを下の欄に書いてください",
     more_lines: "ほか {n} 行",
     usage_in: "入力",
     usage_out: "出力",
     usage_cache: "キャッシュ",
+    changes: "変更したファイル",
+    changes_empty: "この会話ではまだファイルを変更していません",
+    show_changes: "変更したファイルを表示する",
+    hide_changes: "変更したファイルを隠す",
+    show_sidebar: "会話の一覧を表示する",
+    hide_sidebar: "会話の一覧を隠す",
+    find_root: "会話や操作を探す",
+    find_model: "モデルを探す、または名前を入力する",
+    find_permission: "権限を選ぶ",
+    find_effort: "推論の強さを選ぶ",
+    group_actions: "操作",
+    group_sessions: "会話",
+    do_new: "新しい会話を始める",
+    do_model: "モデルを選ぶ",
+    do_permission: "権限を選ぶ",
+    do_effort: "推論の強さを選ぶ",
+    do_stop: "実行を中断する",
+    do_copy: "最後の答えをコピーする",
+    find_keys: "↑と↓で選択、Enterで決定、Escで戻る",
+    no_match: "一致するものがありません",
 };
 
 const EN: Strings = Strings {
     ja: false,
     new_session: "New conversation",
-    search: "Find a conversation",
+    find: "Find or run",
+    within_day: "Last 24 hours",
+    within_week: "Last 7 days",
+    older: "Earlier",
     no_sessions: "No conversations in this folder yet",
-    no_match: "No conversation matches",
     untitled: "Untitled conversation",
     placeholder: "Write what you want done",
     placeholder_running: "Add an instruction",
-    keys: "Enter to send, Shift+Enter for a new line",
+    newline: "New line",
     send: "Send",
     stop: "Stop",
     allow: "Allow",
     always: "Always allow",
     deny: "Deny",
     feedback: "Why not (optional)",
-    approval_keys: "Ctrl+Enter also allows",
-    approval_why: "Asked because",
-    allowed: "Allowed",
-    always_allowed: "Always allowed",
     denied: "Denied",
-    cancelled: "Cancelled",
+    cancelled: "The run ended before an answer",
     awaiting: "Waiting for your approval",
+    title_awaiting: "Needs approval",
     thinking: "Thinking",
-    work: "Work log",
-    changed: "Changed files",
+    failed: "Failed",
     queued: "Reaches the model at its next turn",
     returned: "An instruction did not reach the model and is back in the input",
     plan: "Task list",
     copy: "Copy",
     copied: "Copied",
+    model: "Model",
+    permission_label: "Permission",
+    effort_label: "Effort",
     model_default: "Default model",
-    model_other: "Type a model name",
-    model_placeholder: "provider/model, then Enter",
-    model_set: "Set",
+    model_default_note: "As sasacode is configured",
     effort_default: "Default effort",
+    effort_default_note: "As the model defaults",
     context_full: "The context window is nearly full",
     compacted: "The conversation was compacted",
     retrying: "The connection dropped; asking again",
     not_found: "Could not start sasacode. Put it on PATH, or give its location with SASACODE_BIN or --sasacode",
     exited: "sasacode exited (code {code})",
-    empty_lead: "Write below what you want done in this folder",
-    empty_note: "Before it edits a file or runs a command, sasacode asks as the permission setting says",
+    empty_lead: "Write below what you want done",
     more_lines: "{n} more lines",
     usage_in: "in",
     usage_out: "out",
     usage_cache: "cache",
+    changes: "Changed files",
+    changes_empty: "This conversation has not changed a file yet",
+    show_changes: "Show changed files",
+    hide_changes: "Hide changed files",
+    show_sidebar: "Show the conversations",
+    hide_sidebar: "Hide the conversations",
+    find_root: "Find a conversation or an action",
+    find_model: "Find a model, or type its name",
+    find_permission: "Choose a permission",
+    find_effort: "Choose an effort",
+    group_actions: "Actions",
+    group_sessions: "Conversations",
+    do_new: "Start a new conversation",
+    do_model: "Choose a model",
+    do_permission: "Choose a permission",
+    do_effort: "Choose an effort",
+    do_stop: "Stop the run",
+    do_copy: "Copy the last answer",
+    find_keys: "Up and Down to move, Enter to choose, Esc to go back",
+    no_match: "Nothing matches",
 };

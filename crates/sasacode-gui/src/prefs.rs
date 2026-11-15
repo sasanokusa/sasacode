@@ -14,6 +14,8 @@ pub struct Prefs {
     pub effort: Option<String>,
     /// Models used from this window, newest first.
     pub models: Vec<String>,
+    /// The list of conversations was put away.
+    pub hide_sidebar: bool,
 }
 
 fn file(home: &Path) -> PathBuf {
@@ -37,6 +39,7 @@ impl Prefs {
                 .and_then(Value::as_array)
                 .map(|a| a.iter().filter_map(Value::as_str).map(str::to_owned).collect())
                 .unwrap_or_default(),
+            hide_sidebar: v.get("hideSidebar").and_then(Value::as_bool).unwrap_or(false),
         }
     }
 
@@ -46,6 +49,7 @@ impl Prefs {
             "permission": self.permission,
             "effort": self.effort,
             "models": self.models,
+            "hideSidebar": self.hide_sidebar,
         });
         let _ = std::fs::create_dir_all(home);
         let _ = std::fs::write(file(home), format!("{v:#}\n"));
@@ -72,6 +76,7 @@ mod tests {
         p.remember_model("a/one");
         p.model = Some("a/one".into());
         p.effort = Some("high".into());
+        p.hide_sidebar = true;
         p.save(&home);
         let read = Prefs::load(&home);
         assert_eq!(read.models, ["a/one", "b/two"]);

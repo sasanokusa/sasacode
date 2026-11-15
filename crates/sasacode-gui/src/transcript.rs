@@ -64,14 +64,57 @@ pub struct Tool {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Approval {
     pub id: String,
+    /// The call it is about.
+    pub call: String,
     pub tool: String,
     pub detail: String,
     /// The call's arguments: an edit or a write is shown as the change it would make.
     pub args: serde_json::Value,
     pub reason: String,
     /// How it was answered, once it was.
-    pub answer: Option<String>,
+    pub answer: Option<Verdict>,
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Verdict {
+    Allowed,
+    Always,
+    Denied,
+    /// The run withdrew the question.
+    Cancelled,
+}
+
+/// How a turn stands, for its mark on the stalk.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Standing {
+    Running,
+    /// Waiting for an approval.
+    Asking,
+    Done,
+    Failed,
+    /// Ended without an answer: interrupted, or read back from a log that stops there.
+    Cut,
+}
+
+/// How an open turn is laid out: `folded` rows sit behind one line, `shown` rows are on the sheet.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Layout {
+    pub folded: Vec<usize>,
+    pub shown: Vec<usize>,
+}
+
+/// What a conversation did to one file.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileChange<'a> {
+    pub path: &'a str,
+    /// One per edit or write, in order: `-` lines leave, `+` lines come.
+    pub hunks: Vec<Vec<(char, String)>>,
+    pub added: usize,
+    pub removed: usize,
+}
+
+/// While a turn has no answer yet, this many of its latest rows stay on the sheet.
+const LIVE_ROWS: usize = 5;
 
 /// One line of the agent's task list (`todo_write`).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -149,7 +192,15 @@ impl Transcript {
         })
     }
 
-    pub fn answer_approval(&mut self, id: &str, answer: String) {
+    /// How many approvals wait for an answer.
+    pub fn pending_approvals(&self) -> usize {
+        self.items
+            .iter()
+            .filter(|i| matches!(i, Item::Approval(a) if a.answer.is_none()))
+            .count()
+    }
+
+    pub fn answer_approval(&mut self, id: &str, answer: Verdict) {
         for item in self.items.iter_mut().rev() {
             if let Item::Approval(a) = item
                 && a.id == id
@@ -195,11 +246,14 @@ impl Transcript {
             Event::ToolEnd { call, result, .. } => {
                 self.activity = Activity::Waiting;
                 let output = tail(&text_of(&result.content));
+                let refused = self.refused(&call.id);
                 match self.tool_mut(&call.id) {
                     Some(tool) => {
                         tool.output = output;
                         tool.is_error = Some(result.is_error);
                     }
+                    // A call that was refused never started: the refusal is its row.
+                    None if refused => {}
                     None => self.items.push(Item::Tool(Tool {
                         id: call.id.clone(),
                         name: call.name.clone(),
@@ -225,7 +279,7 @@ impl Transcript {
                 });
                 self.notice(s.retrying, false);
             }
-            Event::ToolRepaired { call, note, .. } => self.notice(format!("↻ {}: {note}", call.name), false),
+            Event::ToolRepaired { call, note, .. } => self.notice(s.repaired(&call.name, note), false),
             Event::AgentEnd { cause, stopped, error } => {
                 effect.ended = Some(*cause);
                 if let Some(error) = error {
@@ -238,10 +292,16 @@ impl Transcript {
                 }
             }
             Event::ApprovalRequest {
-                id, tool, args, reason, ..
+                id,
+                call_id,
+                tool,
+                args,
+                reason,
+                ..
             } => {
                 self.items.push(Item::Approval(Approval {
                     id: id.clone(),
+                    call: call_id.clone(),
                     tool: tool.clone(),
                     detail: describe(args),
                     args: args.clone(),
@@ -250,7 +310,7 @@ impl Transcript {
                 }));
                 effect.approval = Some(id.clone());
             }
-            Event::ApprovalCancelled { id } => self.answer_approval(id, s.cancelled.into()),
+            Event::ApprovalCancelled { id } => self.answer_approval(id, Verdict::Cancelled),
             Event::ControlError { error } => self.notice(format!("control: {error}"), true),
             Event::AgentStart | Event::TurnStart { .. } | Event::TurnEnd { .. } | Event::Unknown(_) => {}
         }
@@ -401,6 +461,127 @@ impl Transcript {
         out
     }
 
+    /// Whether an item gets a row of its own in an open turn. The task list has its own place, a
+    /// request heads the turn, and of approvals only a refusal is a row: one that waits is asked at
+    /// the foot of the sheet, and one that was allowed is the step that follows it.
+    fn is_row(&self, i: usize) -> bool {
+        match &self.items[i] {
+            Item::Tool(t) => t.name != "todo_write",
+            Item::Approval(a) => matches!(a.answer, Some(Verdict::Denied | Verdict::Cancelled)),
+            Item::User(_) | Item::Done { .. } => false,
+            Item::Assistant(_) | Item::Thinking(_) | Item::Notice { .. } => true,
+        }
+    }
+
+    /// A finished turn shows its answer and folds the work before it. A turn without an answer (still
+    /// running, or cut short) shows its latest rows and folds what scrolled past.
+    pub fn layout(&self, turn: Turn, live: bool) -> Layout {
+        let from = turn.start + usize::from(matches!(self.items[turn.start], Item::User(_)));
+        let rows: Vec<usize> = (from..turn.end).filter(|i| self.is_row(*i)).collect();
+        let cut = match self.answer(turn) {
+            Some(answer) if !live => rows.iter().position(|i| *i == answer).unwrap_or(0),
+            // One row is not worth a line that says "1 more".
+            _ => Some(rows.len().saturating_sub(LIVE_ROWS))
+                .filter(|n| *n > 1)
+                .unwrap_or(0),
+        };
+        Layout {
+            folded: rows[..cut].to_vec(),
+            shown: rows[cut..].to_vec(),
+        }
+    }
+
+    pub fn standing(&self, turn: Turn, live: bool) -> Standing {
+        let items = &self.items[turn.start..turn.end];
+        if live {
+            let asking = items
+                .iter()
+                .any(|i| matches!(i, Item::Approval(a) if a.answer.is_none()));
+            return if asking { Standing::Asking } else { Standing::Running };
+        }
+        if items.iter().any(|i| matches!(i, Item::Notice { error: true, .. })) {
+            Standing::Failed
+        } else if self.answer(turn).is_some() {
+            Standing::Done
+        } else {
+            Standing::Cut
+        }
+    }
+
+    /// The first line of a turn's answer as plain words, for the one line a closed turn gets.
+    pub fn preview(&self, turn: Turn) -> Option<String> {
+        let Item::Assistant(md) = &self.items[self.answer(turn)?] else {
+            return None;
+        };
+        // What is in a code block or a table is not a sentence.
+        let mut fenced = false;
+        let lines: Vec<&str> = md
+            .raw
+            .lines()
+            .filter(|line| {
+                let line = line.trim_start();
+                let fence = line.starts_with("```");
+                fenced ^= fence;
+                !(fenced || fence || line.starts_with('|'))
+            })
+            .collect();
+        // A sentence says more than a heading; an answer that is only headings still gets one.
+        let words = |heading: bool| {
+            lines
+                .iter()
+                .filter(|l| l.trim_start().starts_with('#') == heading)
+                .map(|l| plain(l))
+                .find(|l| !l.is_empty())
+        };
+        words(false).or_else(|| words(true))
+    }
+
+    /// The request a turn starts with.
+    pub fn request(&self, turn: Turn) -> Option<&str> {
+        match &self.items[turn.start] {
+            Item::User(text) => Some(text),
+            _ => None,
+        }
+    }
+
+    /// Everything the conversation's edits and writes did, by file, in the order the files were
+    /// first changed.
+    pub fn changes(&self) -> Vec<FileChange<'_>> {
+        let mut out: Vec<FileChange<'_>> = Vec::new();
+        for item in &self.items {
+            let Item::Tool(t) = item else { continue };
+            if t.is_error != Some(false) {
+                continue;
+            }
+            let (Some(path), Some(lines)) = (t.input.get("path").and_then(|p| p.as_str()), change(&t.name, &t.input))
+            else {
+                continue;
+            };
+            let added = lines.iter().filter(|(sign, _)| *sign == '+').count();
+            let removed = lines.len() - added;
+            match out.iter_mut().find(|f| f.path == path) {
+                Some(file) => {
+                    file.hunks.push(lines);
+                    file.added += added;
+                    file.removed += removed;
+                }
+                None => out.push(FileChange {
+                    path,
+                    hunks: vec![lines],
+                    added,
+                    removed,
+                }),
+            }
+        }
+        out
+    }
+
+    fn refused(&self, call: &str) -> bool {
+        self.items
+            .iter()
+            .any(|i| matches!(i, Item::Approval(a) if a.call == call && a.answer == Some(Verdict::Denied)))
+    }
+
     fn tool_mut(&mut self, id: &str) -> Option<&mut Tool> {
         self.items.iter_mut().rev().find_map(|i| match i {
             Item::Tool(t) if t.id == id => Some(t),
@@ -496,6 +677,17 @@ pub fn change(tool: &str, input: &serde_json::Value) -> Option<Vec<(char, String
         }
         _ => None,
     }
+}
+
+/// A line of Markdown as plain words: without the marks that open a heading, a list item or a quote,
+/// and without the marks around code and emphasis.
+fn plain(line: &str) -> String {
+    let line = line.trim().trim_start_matches(['#', '>', '-', '*', '+']).trim_start();
+    line.chars()
+        .filter(|c| !matches!(c, '`' | '*'))
+        .collect::<String>()
+        .trim()
+        .to_owned()
 }
 
 fn first_line(s: &str) -> String {
@@ -665,6 +857,175 @@ mod tests {
         let effect = t.apply(&parse_event(echo).unwrap(), &s);
         assert_eq!(effect.delivered.as_deref(), Some("テストも足して"));
         assert!(matches!(t.items.last(), Some(Item::User(u)) if u == "テストも足して"));
+    }
+
+    fn tool(id: &str, name: &str, input: serde_json::Value, is_error: Option<bool>) -> Item {
+        Item::Tool(Tool {
+            id: id.into(),
+            name: name.into(),
+            summary: brief(&input),
+            input,
+            output: String::new(),
+            is_error,
+        })
+    }
+
+    fn asked(id: &str, call: &str, answer: Option<Verdict>) -> Item {
+        Item::Approval(Approval {
+            id: id.into(),
+            call: call.into(),
+            tool: "bash".into(),
+            detail: "bun test".into(),
+            args: serde_json::json!({ "command": "bun test" }),
+            reason: "mode ask".into(),
+            answer,
+        })
+    }
+
+    #[test]
+    fn a_finished_turn_folds_its_work_behind_the_answer_and_a_running_one_keeps_its_latest_rows() {
+        let run = || serde_json::json!({ "command": "bun test" });
+        let mut t = Transcript {
+            items: vec![
+                Item::User("直して".into()),
+                Item::Thinking("まず読む。".into()),
+                tool("1", "read", serde_json::json!({ "path": "a.rs" }), Some(false)),
+                Item::Assistant(Markdown::new("直します。")),
+                tool("2", "edit", serde_json::json!({ "path": "a.rs" }), Some(false)),
+                tool("3", "todo_write", serde_json::json!({ "todos": [] }), Some(false)),
+                tool("4", "bash", run(), Some(false)),
+            ],
+            ..Transcript::default()
+        };
+        let live = |t: &Transcript| t.layout(t.turns()[0], true);
+        // The task list is not a row. Five rows are all on the sheet, and so are six: a line that
+        // says one more is hidden would take the room of the row it hides.
+        assert_eq!(live(&t).shown, [1, 2, 3, 4, 6]);
+        t.items.push(tool("5", "bash", run(), Some(false)));
+        assert_eq!(live(&t).folded, [] as [usize; 0]);
+        t.items.push(tool("6", "bash", run(), None));
+        let seven = Layout {
+            folded: vec![1, 2],
+            shown: vec![3, 4, 6, 7, 8],
+        };
+        assert_eq!(live(&t), seven);
+
+        t.items.push(Item::Assistant(Markdown::new("直しました。")));
+        t.items.push(Item::Done { seconds: 9 });
+        let turn = t.turns()[0];
+        let done = Layout {
+            folded: vec![1, 2, 3, 4, 6, 7, 8],
+            shown: vec![9],
+        };
+        assert_eq!(t.layout(turn, false), done);
+        assert_eq!(t.standing(turn, false), Standing::Done);
+        assert_eq!(t.standing(turn, true), Standing::Running);
+    }
+
+    #[test]
+    fn a_turn_stands_by_what_it_waits_for_and_how_it_ended() {
+        let stands = |rest: Vec<Item>, live: bool| {
+            let mut items = vec![Item::User("直して".into())];
+            items.extend(rest);
+            let t = Transcript {
+                items,
+                ..Transcript::default()
+            };
+            t.standing(t.turns()[0], live)
+        };
+        assert_eq!(stands(vec![asked("a", "1", None)], true), Standing::Asking);
+        assert_eq!(
+            stands(vec![asked("a", "1", Some(Verdict::Allowed))], true),
+            Standing::Running
+        );
+        let failed = Item::Notice {
+            text: "401".into(),
+            error: true,
+        };
+        assert_eq!(
+            stands(vec![Item::Assistant(Markdown::new("途中です。")), failed], false),
+            Standing::Failed
+        );
+        assert_eq!(stands(vec![Item::Thinking("考える。".into())], false), Standing::Cut);
+    }
+
+    #[test]
+    fn a_closed_turn_is_told_by_the_first_sentence_of_its_answer() {
+        let preview = |answer: &str| {
+            let t = Transcript {
+                items: vec![Item::User("直して".into()), Item::Assistant(Markdown::new(answer))],
+                ..Transcript::default()
+            };
+            t.preview(t.turns()[0])
+        };
+        assert_eq!(
+            preview("## 結果\n\n型チェックは**通りました**。").as_deref(),
+            Some("型チェックは通りました。")
+        );
+        assert_eq!(
+            preview("`sum()` が 1 を足していました。").as_deref(),
+            Some("sum() が 1 を足していました。")
+        );
+        assert_eq!(preview("```\nls\n```\n- 一覧です").as_deref(), Some("一覧です"));
+        assert_eq!(preview("# 結果").as_deref(), Some("結果"));
+        assert_eq!(preview("| a | b |"), None);
+    }
+
+    #[test]
+    fn the_changed_files_are_each_listed_once_with_every_change_that_was_made() {
+        let edit = |old: &str, new: &str| serde_json::json!({ "path": "a.rs", "old_string": old, "new_string": new });
+        let t = Transcript {
+            items: vec![
+                Item::User("直して".into()),
+                tool("1", "edit", edit("1", "2\n3"), Some(false)),
+                tool(
+                    "2",
+                    "write",
+                    serde_json::json!({ "path": "b.rs", "content": "x" }),
+                    Some(false),
+                ),
+                tool("3", "edit", edit("3", "4"), Some(false)),
+                // A change that failed, and one that has not been made yet, changed nothing.
+                tool("4", "edit", edit("5", "6"), Some(true)),
+                tool("5", "edit", edit("7", "8"), None),
+            ],
+            ..Transcript::default()
+        };
+        let files = t.changes();
+        assert_eq!(files.iter().map(|f| f.path).collect::<Vec<_>>(), ["a.rs", "b.rs"]);
+        assert_eq!((files[0].hunks.len(), files[0].added, files[0].removed), (2, 3, 2));
+        assert_eq!((files[1].hunks.len(), files[1].added, files[1].removed), (1, 1, 0));
+    }
+
+    #[test]
+    fn a_refused_call_is_one_row_and_an_allowed_one_is_only_its_step() {
+        let s = Strings::get("ja");
+        let mut t = Transcript::default();
+        t.send("テストして");
+        let ask = |id: &str, call: &str| {
+            format!(
+                r#"{{"type":"approval_request","id":"{id}","callId":"{call}","tool":"bash","args":{{"command":"bun test"}},"reason":"mode ask","cwd":"/x"}}"#
+            )
+        };
+        let end = |call: &str, error: bool| {
+            format!(
+                r#"{{"type":"tool_end","call":{{"type":"tool_call","id":"{call}","name":"bash","input":{{"command":"bun test"}}}},"result":{{"content":[{{"type":"text","text":"x"}}],"isError":{error}}}}}"#
+            )
+        };
+        t.apply(&parse_event(&ask("a1", "c1")).unwrap(), &s);
+        assert_eq!(t.pending_approvals(), 1);
+        // While it waits it is asked at the foot of the sheet, not in the conversation.
+        assert_eq!(t.layout(t.turns()[0], true).shown, [] as [usize; 0]);
+        t.answer_approval("a1", Verdict::Denied);
+        t.apply(&parse_event(&end("c1", true)).unwrap(), &s);
+        assert_eq!(kinds(&t)[1..], ["approval:bash:bun test:Some(Denied)"]);
+        assert_eq!(t.layout(t.turns()[0], true).shown, [1]);
+
+        t.apply(&parse_event(&ask("a2", "c2")).unwrap(), &s);
+        t.answer_approval("a2", Verdict::Allowed);
+        t.apply(&parse_event(&end("c2", false)).unwrap(), &s);
+        assert_eq!(t.pending_approval(), None);
+        assert_eq!(t.layout(t.turns()[0], true).shown, [1, 3]);
     }
 
     #[test]
