@@ -14,6 +14,9 @@ pub struct Prefs {
     pub effort: Option<String>,
     /// Models used from this window, newest first.
     pub models: Vec<String>,
+    /// The model a new conversation last answered with when none was chosen here: what the CLI
+    /// picks by itself, as far as the window has seen.
+    pub seen_model: Option<String>,
     /// The list of conversations was put away.
     pub hide_sidebar: bool,
 }
@@ -39,6 +42,7 @@ impl Prefs {
                 .and_then(Value::as_array)
                 .map(|a| a.iter().filter_map(Value::as_str).map(str::to_owned).collect())
                 .unwrap_or_default(),
+            seen_model: s("seenModel"),
             hide_sidebar: v.get("hideSidebar").and_then(Value::as_bool).unwrap_or(false),
         }
     }
@@ -49,6 +53,7 @@ impl Prefs {
             "permission": self.permission,
             "effort": self.effort,
             "models": self.models,
+            "seenModel": self.seen_model,
             "hideSidebar": self.hide_sidebar,
         });
         let _ = std::fs::create_dir_all(home);
@@ -76,6 +81,7 @@ mod tests {
         p.remember_model("a/one");
         p.model = Some("a/one".into());
         p.effort = Some("high".into());
+        p.seen_model = Some("c/three".into());
         p.hide_sidebar = true;
         p.save(&home);
         let read = Prefs::load(&home);

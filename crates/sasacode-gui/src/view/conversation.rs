@@ -555,7 +555,9 @@ impl App {
             .padding(2)
             .style(move |_| rim);
         let lead = column![
-            text(self.s.empty_lead).size(size::LEAD).font(BOLD),
+            text(self.s.empty_leads[self.lead % self.s.empty_leads.len()])
+                .size(size::LEAD)
+                .font(BOLD),
             text(self.s.empty_note(&self.folder_name()))
                 .size(size::BASE)
                 .line_height(1.6)
@@ -593,7 +595,7 @@ impl App {
                 self.s.permission_note(mode),
                 Mode::Permission,
             ),
-            setting(icon::GAUGE, self.s.effort_label, self.effort_label(), "", Mode::Effort),
+            setting(icon::GAUGE, self.s.effort_label, self.effort_level(), "", Mode::Effort),
         ]
         .spacing(1);
 

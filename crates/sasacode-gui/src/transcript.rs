@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 
 use iced::widget::markdown;
-use sasacode_protocol::{Content, Event, Message, StopCause, StreamDelta, ToolCall, Usage, text_of};
+use sasacode_protocol::{AssistantMessage, Content, Event, Message, StopCause, StreamDelta, ToolCall, Usage, text_of};
 
 use crate::i18n::Strings;
 
@@ -155,6 +155,9 @@ pub struct Transcript {
     /// The agent's task list as it last wrote it.
     pub todos: Vec<Todo>,
     pub activity: Activity,
+    /// The model the conversation last answered with, as `provider/model`. A run that is told no
+    /// model goes on with it.
+    pub model: Option<String>,
     /// Content index of the streaming reply → its item.
     streaming: HashMap<usize, usize>,
     /// Prompts shown when they were sent, so the run's echo of them is not shown twice.
@@ -373,6 +376,7 @@ impl Transcript {
             }
             Message::Assistant(a) => {
                 self.usage.add(&a.usage);
+                self.answered_by(a);
                 // A reply that did not stream (or streamed only in part) is shown from the whole message.
                 for (index, c) in a.content.iter().enumerate() {
                     if self.streaming.contains_key(&index) {
@@ -576,6 +580,12 @@ impl Transcript {
         out
     }
 
+    fn answered_by(&mut self, a: &AssistantMessage) {
+        if !a.provider.is_empty() && !a.model.is_empty() {
+            self.model = Some(format!("{}/{}", a.provider, a.model));
+        }
+    }
+
     fn refused(&self, call: &str) -> bool {
         self.items
             .iter()
@@ -597,6 +607,7 @@ impl Transcript {
                 Message::User { content, .. } => t.items.push(Item::User(text_of(content))),
                 Message::Assistant(a) => {
                     t.usage.add(&a.usage);
+                    t.answered_by(a);
                     for c in &a.content {
                         match c {
                             Content::Text { text } if !text.trim().is_empty() => {
@@ -761,6 +772,8 @@ mod tests {
             ]
         );
         assert!(effects[0].session_id.is_some());
+        // The conversation knows which model answered: a run told no model goes on with it.
+        assert!(t.model.as_deref().is_some_and(|m| m.split_once('/').is_some()));
         assert!(effects.iter().any(|e| e.approval.as_deref() == Some("approval-1")));
         assert_eq!(effects.last().unwrap().ended, Some(StopCause::Done));
     }

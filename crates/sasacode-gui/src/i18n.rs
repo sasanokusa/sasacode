@@ -50,7 +50,8 @@ pub struct Strings {
     pub retrying: &'static str,
     pub not_found: &'static str,
     pub exited: &'static str,
-    pub empty_lead: &'static str,
+    /// What the first screen opens with: one of these, another each time.
+    pub empty_leads: &'static [&'static str],
     pub more_lines: &'static str,
     pub usage_in: &'static str,
     pub usage_out: &'static str,
@@ -272,24 +273,39 @@ impl Strings {
         }
     }
 
-    pub fn effort(&self, level: &str) -> String {
+    /// A level of reasoning where what it is a level of is already said beside it.
+    pub fn effort_level(&self, level: &str) -> String {
         let ja = match level {
-            "off" => "推論なし",
-            "low" => "推論 低",
-            "medium" => "推論 中",
-            "high" => "推論 高",
-            "xhigh" => "推論 特に高い",
-            "max" => "推論 最大",
+            "off" => "なし",
+            "low" => "低",
+            "medium" => "中",
+            "high" => "高",
+            "xhigh" => "特に高い",
+            "max" => "最大",
             _ => return level.into(),
         };
-        if self.ja { ja.into() } else { format!("Effort {level}") }
+        if self.ja { ja.into() } else { level.into() }
     }
 
+    /// The same where it stands alone.
+    pub fn effort(&self, level: &str) -> String {
+        match (level, self.ja) {
+            ("off", true) => "推論なし".into(),
+            (_, true) => format!("推論 {}", self.effort_level(level)),
+            (_, false) => format!("Effort {level}"),
+        }
+    }
+
+    /// Under the first screen's opening line, which is not there to be useful: what to do here.
     pub fn empty_note(&self, folder: &str) -> String {
         if self.ja {
-            format!("sasacodeは {folder} のファイルを読み、編集し、コマンドを実行して依頼を進めます。")
+            format!(
+                "下の欄に頼みたいことを書くと、sasacodeが {folder} のファイルを読み、編集し、コマンドを実行して進めます。"
+            )
         } else {
-            format!("sasacode reads and edits the files in {folder} and runs commands there to do what you ask.")
+            format!(
+                "Write what you want done below. sasacode reads and edits the files in {folder} and runs commands there to do it."
+            )
         }
     }
 
@@ -385,7 +401,7 @@ const JA: Strings = Strings {
     cancelled: "答える前に実行が終わりました",
     awaiting: "承認を待っています",
     title_awaiting: "承認待ち",
-    thinking: "思考",
+    thinking: "Thinking",
     failed: "失敗",
     queued: "次のターンで届きます",
     returned: "届かなかった指示を入力欄に戻しました",
@@ -395,16 +411,25 @@ const JA: Strings = Strings {
     model: "モデル",
     permission_label: "権限",
     effort_label: "推論",
-    model_default: "既定のモデル",
+    model_default: "デフォルトのモデル",
     model_default_note: "sasacodeの設定に従います",
-    effort_default: "推論は既定",
-    effort_default_note: "モデルの既定に従います",
+    effort_default: "デフォルト",
+    effort_default_note: "sasacodeの設定に従います。設定がなければ「高」です",
     context_full: "コンテキストの上限に近づいています",
     compacted: "会話を圧縮しました",
     retrying: "接続が切れたため、もう一度問い合わせています",
     not_found: "sasacode を起動できませんでした。PATHに入れるか、SASACODE_BIN か --sasacode で場所を指定してください",
     exited: "sasacode が終了しました（終了コード {code}）",
-    empty_lead: "頼みたいことを下の欄に書いてください",
+    empty_leads: &[
+        "ささっと片付けましょう",
+        "「あとで直す」の「あと」が来ました",
+        "七夕でなくても、願いごとは受け付けています",
+        "今日はどのバグを笹舟で流しますか",
+        "パンダが来る前に、書いてしまいましょう",
+        "TODOコメントの供養、承ります",
+        "竹を割ったようなコードにします。笹ですが",
+        "笹の葉さらさら、コードもさらさら",
+    ],
     more_lines: "ほか {n} 行",
     usage_in: "入力",
     usage_out: "出力",
@@ -465,14 +490,23 @@ const EN: Strings = Strings {
     effort_label: "Effort",
     model_default: "Default model",
     model_default_note: "As sasacode is configured",
-    effort_default: "Default effort",
-    effort_default_note: "As the model defaults",
+    effort_default: "Default",
+    effort_default_note: "As sasacode is configured, or high when nothing is set",
     context_full: "The context window is nearly full",
     compacted: "The conversation was compacted",
     retrying: "The connection dropped; asking again",
     not_found: "Could not start sasacode. Put it on PATH, or give its location with SASACODE_BIN or --sasacode",
     exited: "sasacode exited (code {code})",
-    empty_lead: "Write below what you want done",
+    empty_leads: &[
+        "The \"later\" in \"fix it later\" is now",
+        "What are we untangling today?",
+        "Make a wish. It does not have to be Tanabata",
+        "Which bug goes down the river today?",
+        "Let's finish before the pandas show up",
+        "TODO comments laid to rest here",
+        "Clean as split bamboo. Well, bamboo grass",
+        "It works on your machine. Let's do the others",
+    ],
     more_lines: "{n} more lines",
     usage_in: "in",
     usage_out: "out",

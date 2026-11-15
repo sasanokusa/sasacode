@@ -75,6 +75,10 @@ pub struct App {
     pub(crate) scrolled: bool,
     /// The conversation's end is kept in sight while a run adds to it, until the person scrolls away.
     following: bool,
+    /// The model the settings name for this folder, read when the window opens and after each run.
+    configured: Option<String>,
+    /// Which of the first screen's opening lines is shown.
+    pub(crate) lead: usize,
     window: Option<window::Id>,
     focused: bool,
     /// How large the window is: what is drawn beside the conversation depends on the room there is.
@@ -89,6 +93,8 @@ pub(crate) struct Run {
     _handle: task::Handle,
     stderr: Vec<String>,
     ended: bool,
+    /// A new conversation, started without a model chosen here.
+    unchosen: bool,
     pub(crate) started: Instant,
 }
 
@@ -190,6 +196,8 @@ impl App {
             unified: options.unified,
             scrolled: false,
             following: true,
+            configured: None,
+            lead: moment(),
             window: None,
             focused: true,
             width: crate::WINDOW.width,
@@ -247,6 +255,7 @@ impl App {
         };
         self.clock = SystemTime::now();
         self.branch = branch(&self.cwd);
+        self.configured = configured_model(self.home.as_deref(), &self.cwd);
     }
 
     pub(crate) fn running(&self) -> bool {
@@ -279,8 +288,22 @@ impl App {
         out
     }
 
+    /// The model a run gets when none is chosen here, as far as the window can tell. The CLI goes
+    /// on with the model a conversation last answered with. A new conversation gets the one the
+    /// settings name, else the one the keys lead to, which the window knows only from the last
+    /// time it saw it answer.
+    pub(crate) fn unchosen_model(&self) -> Option<&str> {
+        self.transcript
+            .model
+            .as_deref()
+            .or(self.configured.as_deref())
+            .or(self.prefs.seen_model.as_deref())
+    }
+
+    /// The name of the model the next run gets. Only where nothing tells it is it called the default.
     pub(crate) fn model_label(&self) -> String {
-        self.prefs.model.clone().unwrap_or_else(|| self.s.model_default.into())
+        let name = self.prefs.model.as_deref().or(self.unchosen_model());
+        name.unwrap_or(self.s.model_default).to_owned()
     }
 
     /// The permission mode the next run gets: what the CLI does when it is told nothing is `edits`.
@@ -291,6 +314,14 @@ impl App {
     pub(crate) fn effort_label(&self) -> String {
         match &self.prefs.effort {
             Some(level) => self.s.effort(level),
+            None => self.s.effort_default.into(),
+        }
+    }
+
+    /// The same beside the word for what it is a level of.
+    pub(crate) fn effort_level(&self) -> String {
+        match &self.prefs.effort {
+            Some(level) => self.s.effort_level(level),
             None => self.s.effort_default.into(),
         }
     }
@@ -328,6 +359,9 @@ impl App {
     }
 
     fn clear_conversation(&mut self) {
+        // Another opening line each time, never the one that was just there.
+        let lines = self.s.empty_leads.len().max(2);
+        self.lead = (self.lead % lines + 1 + moment() % (lines - 1)) % lines;
         self.transcript = Transcript::default();
         self.turns.clear();
         self.earlier = false;
@@ -405,6 +439,10 @@ impl App {
                     let restored = restore(&entries);
                     self.clear_conversation();
                     self.transcript = Transcript::from_messages(&restored.messages);
+                    // A model switched to after the last answer is the one the conversation goes on with.
+                    if restored.model.is_some() {
+                        self.transcript.model = restored.model;
+                    }
                     self.session = self.sessions.iter().find(|s| s.path == path).map(|s| s.id.clone());
                     return self.settle();
                 }
@@ -655,6 +693,8 @@ impl App {
             permission: self.prefs.permission.clone(),
             thinking: self.prefs.effort.clone(),
         };
+        // A new conversation that is told no model shows which one the CLI picks by itself.
+        let unchosen = spec.resume.is_none() && spec.model.is_none();
         let (task, handle) = Task::run(runner::run(spec), Msg::Run).abortable();
         self.now = Instant::now();
         self.run = Some(Run {
@@ -662,6 +702,7 @@ impl App {
             _handle: handle.abort_on_drop(),
             stderr: Vec::new(),
             ended: false,
+            unchosen,
             started: self.now,
         });
         Task::batch([task, self.settle()])
@@ -732,7 +773,12 @@ impl App {
                     }
                     self.transcript.notice(text, true);
                 }
+                let seen = self.transcript.model.clone().filter(|_| run.unchosen);
                 self.run = None;
+                if seen.is_some() && seen != self.prefs.seen_model {
+                    self.prefs.seen_model = seen;
+                    self.save_prefs();
+                }
                 self.return_queued();
                 self.reload_sessions();
                 let rest = self.rest();
@@ -765,6 +811,26 @@ impl App {
         self.editor = text_editor::Content::with_text(&text);
         self.transcript.notice(self.s.returned, false);
     }
+}
+
+/// A number that differs from one moment to the next, for picking one of a few things.
+fn moment() -> usize {
+    SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map(|d| d.subsec_nanos() as usize)
+        .unwrap_or(0)
+}
+
+/// The `model` the settings name: the project's `.sasacode/config.json` first, then the user's own
+/// `config.json`. The CLI holds a project's choice of a provider it does not know until the
+/// project is trusted, which the window cannot tell; the name is then corrected by the first answer.
+fn configured_model(home: Option<&Path>, cwd: &Path) -> Option<String> {
+    let read = |path: PathBuf| {
+        let raw = std::fs::read_to_string(path).ok()?;
+        let config: serde_json::Value = serde_json::from_str(&raw).ok()?;
+        config.get("model")?.as_str().map(str::to_owned)
+    };
+    read(cwd.join(".sasacode").join("config.json")).or_else(|| home.and_then(|home| read(home.join("config.json"))))
 }
 
 /// Keys that work wherever the focus is, and what the window itself is told. Plain Enter belongs to
@@ -855,5 +921,25 @@ mod tests {
             Some("89a3acd")
         );
         assert_eq!(head_name(""), None);
+    }
+
+    #[test]
+    fn the_model_the_settings_name_is_the_projects_before_the_users_own() {
+        let root = std::env::temp_dir().join(format!("sasacode-gui-config-{}", std::process::id()));
+        let (home, cwd) = (root.join("home"), root.join("work"));
+        std::fs::create_dir_all(cwd.join(".sasacode")).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+        assert_eq!(configured_model(Some(&home), &cwd), None);
+        std::fs::write(home.join("config.json"), r#"{ "model": "a/one", "lang": "ja" }"#).unwrap();
+        assert_eq!(configured_model(Some(&home), &cwd).as_deref(), Some("a/one"));
+        // A project file that names no model, or cannot be read as JSON, leaves the user's own.
+        std::fs::write(cwd.join(".sasacode/config.json"), r#"{ "thinking": "low" }"#).unwrap();
+        assert_eq!(configured_model(Some(&home), &cwd).as_deref(), Some("a/one"));
+        std::fs::write(cwd.join(".sasacode/config.json"), "{").unwrap();
+        assert_eq!(configured_model(Some(&home), &cwd).as_deref(), Some("a/one"));
+        std::fs::write(cwd.join(".sasacode/config.json"), r#"{ "model": "b/two" }"#).unwrap();
+        assert_eq!(configured_model(Some(&home), &cwd).as_deref(), Some("b/two"));
+        assert_eq!(configured_model(None, &cwd).as_deref(), Some("b/two"));
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

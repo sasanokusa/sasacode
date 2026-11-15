@@ -152,6 +152,8 @@ impl App {
             Mode::Model => {
                 all.push(Entry {
                     note: s.model_default_note,
+                    // Which model that is now, where the window can tell.
+                    value: self.unchosen_model().unwrap_or("").to_owned(),
                     chosen: self.prefs.model.is_none(),
                     ..entry("", icon::BOX, s.model_default.into(), Command::Model(None))
                 });
