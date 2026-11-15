@@ -1,0 +1,13 @@
+[package]
+name = "sasacode-protocol"
+description = "Types for sasacode's JSONL events, its --control stdio messages and its session logs"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+sha2 = "0.10"

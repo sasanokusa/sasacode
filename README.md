@@ -369,6 +369,8 @@ bun run build       # dist/sasacode（このマシン向け）。--all で全タ
 | `@sasacode/mcp` / `@sasacode/skills` / `@sasacode/bundled` | MCPとSkillsのアダプタ、同梱プラグイン |
 | `@sasacode/host` | TUI・CLI・同梱プラグインが共有するもの：画面の言語（訳の表）、組み込みのプロバイダーと既知のモデル（価格・コンテキスト長）、セッションの索引 |
 
+デスクトップGUI（Rust、開発中）は `crates/` にある。`cargo run -p sasacode-gui -- <フォルダ>` で開き、入力ごとに `sasacode -p … --output jsonl --control stdio` をそのフォルダで動かす（`SASACODE_BIN` か `--sasacode` で実行ファイルを指定できる）。`cargo test` で、CLIの出力とセッションログを読めるかも確かめる。設計と段階は [docs/gui.md](docs/gui.md)。
+
 コア（ai・agent・plugin-api・tools）の行数の上限は 5,000 行で、1行は120桁まで（文字列だけの行を除く）。どちらかを超えるとテストが落ちる。いまの行数は `bun run improve` が出す。
 
 リポジトリのドキュメント：[要件](docs/requirements.md)、[マイルストーンの検証](docs/milestones.md)、[実行時依存の記録](docs/dependencies.md)、[プラグインAPI](docs/plugins.md)、[API互換性の確認表](docs/api-compatibility.md)、[ベンチマーク](docs/benchmarks.md)、[改善の回し方](docs/improvement.md)。改善は1周ずつ小さく積む。手順と観点、これまでの記録は [docs/improvement.md](docs/improvement.md) にある。

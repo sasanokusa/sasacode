@@ -21,3 +21,17 @@ jobs:
       # The repository's own checks (core line budget, the dependency record, the READMEs staying in
       # step with the CLI) run inside `bun test` too; this prints them next to the core's headroom.
       - run: bun run improve
+  rust:
+    # The Rust crates (crates/): the GUI and the types it shares with the CLI. Their tests read the
+    # CLI's TypeScript sources and a recorded run, so a change to the events shows up here too.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: rustup update stable && rustup default stable && rustup component add rustfmt clippy
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - run: cargo test --workspace --locked

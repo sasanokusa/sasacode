@@ -11,6 +11,17 @@
 
 pi-tuiには、`patches/@earendil-works%2Fpi-tui@0.87.1.patch`を、ルートの`package.json`の`patchedDependencies`で0.87.1に当てている。pi-tuiはEast Asian Ambiguous幅の文字（①、○ など）を常に1セルとして数えるので、これを2セルで表示する端末（CJK向けの設定）で行の幅がずれる。パッチは`setAmbiguousWidth(1 | 2)`を追加して`get-east-asian-width`に`ambiguousAsWide`を渡すようにし、`@sasacode/tui`が端末に合わせて呼ぶ（`SASACODE_AMBIGUOUS_WIDTH=1|2`で固定できる）。ほかに4か所を直している。入力欄の貼り付けマーカーは、挿入したときの形そのままのものだけを1回で展開する（手で書いた`[paste #1]`や、貼り付けた本文の中のマーカーは展開しない）。`Editor.moveToEnd()`を足す（Escで予約メッセージを下書きのあとへ戻すため）。会話内検索の案内文と「一致なし」を`setAltScreenSearchText()`で差し替えられるようにする（表示言語に合わせるため）。コマンドの引数の補完一覧は、候補の列を最大64桁まで広げる（`/model`の長いモデル名がピッカーと同じように最後まで見えるように。元は32桁で切れていた）。pi-tuiの版を上げるときは、パッチを作り直す。
 
+## Rustのクレート（GUI）
+
+`crates/` のRustクレートが使うもの。npmの依存とは別に、ここに理由を書く（先頭の列は検査の対象外にするため、名前をコードの書式にしない）。
+
+| クレート | 使う場所 | 理由 | 検討した代替 |
+| --- | --- | --- | --- |
+| serde / serde_json | sasacode-protocol、sasacode-gui | JSONLのイベントとセッションログを型に読み書きする。`type`で分けたTSの共用体を、そのまま`#[serde(tag = "type")]`で表せる | 手書きのパーサー：イベントの数が多く、TS側の変更に追いにくい |
+| sha2 | sasacode-protocol | セッションのフォルダ名に入る作業ディレクトリのSHA-256（TS側の`sessionDir`と同じ名前にする） | なし（ハッシュが一致しないとセッションを見つけられない） |
+| iced | sasacode-gui | ElectronやTauriのWebViewを使わず、GPU（なければCPU）で描くGUI。Elm型の更新で子プロセスのイベントを扱いやすく、Markdown表示、複数行の入力欄、IME対応（0.14〜）がそろっている。MIT | egui（毎フレーム描き直す方式で、長い会話ログに工夫が要る）、gpui（Zed本体向けで単体利用の文書が少ない）、Slint（GPLv3か独自ライセンス）、Dioxus（中身がTauriと同じWebView） |
+| tokio | sasacode-gui | 子プロセスの起動とstdin / stdoutの非同期読み書き。icedの`tokio`機能と同じランタイムを使う | async-std / smol：icedがtokioに対応しているので、ランタイムを2つ持たない |
+
 ## pi-tui の Bun 上での検証（M1 冒頭）
 
 `@earendil-works/pi-tui@0.87.1`をBun 1.4.4で次の点について検証した。
