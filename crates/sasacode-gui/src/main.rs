@@ -30,6 +30,7 @@ const USAGE: &str = "usage: sasacode-gui [--sasacode <path>] [--session <id>] [f
   folder              the project to work in (default: the current directory)
   --sasacode <path>   the sasacode executable (default: $SASACODE_BIN, else sasacode on PATH)
   --session <id>      open on this conversation of the folder (its id, or the start of it)
+  --at <x,y>          put the window's top left corner here, in points (a window opening another)
   -h, --help          show this
   -v, --version       show the version";
 
@@ -37,6 +38,7 @@ fn main() -> iced::Result {
     let mut program = std::env::var_os("SASACODE_BIN").map(PathBuf::from);
     let mut folder = None;
     let mut session = None;
+    let mut at = None;
     let mut args = std::env::args_os().skip(1);
     while let Some(arg) = args.next() {
         match arg.to_str() {
@@ -55,6 +57,10 @@ fn main() -> iced::Result {
             Some("--session") => match args.next().map(|id| id.to_string_lossy().into_owned()) {
                 Some(id) if !id.is_empty() => session = Some(id),
                 _ => exit_with("--session needs an id"),
+            },
+            Some("--at") => match args.next().as_deref().and_then(|at| at.to_str()).and_then(point) {
+                Some(p) => at = Some(p),
+                None => exit_with("--at needs x,y"),
             },
             Some(flag) if flag.starts_with('-') => exit_with(&format!("unknown option {flag}")),
             _ => folder = Some(PathBuf::from(arg)),
@@ -89,9 +95,17 @@ fn main() -> iced::Result {
             // What the system measures, as iced takes it: before the zoom it draws at.
             size: iced::Size::new(layout.size.width / zoom, layout.size.height / zoom),
             min_size: Some(layout::MIN_SIZE),
+            position: at.map_or(iced::window::Position::Default, iced::window::Position::Specific),
             ..iced::window::Settings::default()
         })
         .run()
+}
+
+/// `x,y`, as a point.
+fn point(text: &str) -> Option<iced::Point> {
+    let (x, y) = text.split_once(',')?;
+    let (x, y) = (x.trim().parse::<f32>().ok()?, y.trim().parse::<f32>().ok()?);
+    (x.is_finite() && y.is_finite()).then(|| iced::Point::new(x, y))
 }
 
 fn exit_with(message: &str) -> ! {

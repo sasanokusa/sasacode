@@ -395,6 +395,8 @@ pub enum Msg {
     FindInClose,
     /// Another folder sasacode was used in, in a window of its own.
     OpenProject(PathBuf),
+    /// Another window on a folder, open on a conversation if given, where this one is if known.
+    NewWindow(PathBuf, Option<String>, Option<iced::Point>),
     /// What is said in conversations, read for the search: by log, as of when it was changed.
     Indexed(Vec<(PathBuf, std::time::SystemTime, String)>),
     /// The repository looked at again, and as it was found.
@@ -466,10 +468,18 @@ impl App {
             );
         }
         let screen = window::oldest().and_then(|id| window::monitor_size(id).map(move |size| Msg::Screen(id, size)));
+        // In front when it opens: a window another one started is not brought there by the system.
+        let front = window::oldest().and_then(window::gain_focus);
         let git = app.refresh_git();
         (
             app,
-            Task::batch([iced::system::theme().map(Msg::ThemeMode), focus_input(), screen, git]),
+            Task::batch([
+                iced::system::theme().map(Msg::ThemeMode),
+                focus_input(),
+                screen,
+                front,
+                git,
+            ]),
         )
     }
 

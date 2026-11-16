@@ -283,8 +283,11 @@ impl App {
                 system::editor(&path);
                 Task::none()
             }
-            Msg::OpenProject(path) => {
-                system::new_window(&self.program, &path, None);
+            Msg::OpenProject(path) => self.new_window(path, None),
+            Msg::NewWindow(cwd, session, at) => {
+                // A little below and to the right of this one, so it is seen to open.
+                let at = at.map(|at| iced::Point::new(at.x + CASCADE, at.y + CASCADE));
+                system::new_window(&self.program, &cwd, session.as_deref(), at);
                 Task::none()
             }
             Msg::Pin(id) => self.set(|p| {
@@ -408,18 +411,32 @@ impl App {
     /// A git worktree of this folder's repository on a branch of its own, opened in a new window.
     pub(crate) fn worktree(&mut self) -> Task<Msg> {
         let s = self.s;
-        let note = match self.home.as_deref().map(|home| system::make_worktree(&self.cwd, home)) {
-            Some(Ok(path)) => {
-                system::new_window(&self.program, &path, None);
-                crate::i18n::fill(s.worktree_made, "path", path.display())
-            }
-            Some(Err(error)) => crate::i18n::fill(s.worktree_failed, "error", error),
+        let (note, task) = match self.home.as_deref().map(|home| system::make_worktree(&self.cwd, home)) {
+            Some(Ok(path)) => (
+                crate::i18n::fill(s.worktree_made, "path", path.display()),
+                self.new_window(path, None),
+            ),
+            Some(Err(error)) => (crate::i18n::fill(s.worktree_failed, "error", error), Task::none()),
             None => return Task::none(),
         };
         self.toast = Some(note);
-        Task::none()
+        task
+    }
+
+    /// Another window on `cwd`, open on `session` if given: where this one is is asked first.
+    pub(crate) fn new_window(&self, cwd: std::path::PathBuf, session: Option<String>) -> Task<Msg> {
+        iced::window::oldest().then(move |id| match id {
+            Some(id) => {
+                let (cwd, session) = (cwd.clone(), session.clone());
+                iced::window::position(id).map(move |at| Msg::NewWindow(cwd.clone(), session.clone(), at))
+            }
+            None => Task::done(Msg::NewWindow(cwd.clone(), session.clone(), None)),
+        })
     }
 }
+
+/// How far below and to the right of the window a window it opens is put.
+const CASCADE: f32 = 28.0;
 
 impl App {
     /// The repository looked at again, away from the window.

@@ -790,16 +790,16 @@ impl Transcript {
         if let Some(note) = note_text(content) {
             return self.note(Note::Harness(note));
         }
-        let text = said(content);
+        let mut text = said(content);
         if let Some((head, report)) = task_report(&text) {
             return self.note(Note::Task {
                 head: head.to_owned(),
                 report: report.to_owned(),
             });
         }
-        if let Some(pos) = self.queued.iter().position(|q| *q == text) {
-            self.queued.remove(pos);
-        } else if let Some(pos) = self.echoes.iter().position(|e| *e == text) {
+        if let Some(pos) = self.queued.iter().position(|q| sent_as(q, &text)) {
+            text = self.queued.remove(pos);
+        } else if let Some(pos) = self.echoes.iter().position(|e| sent_as(e, &text)) {
             self.echoes.remove(pos);
             return;
         }
@@ -864,6 +864,57 @@ impl Transcript {
                 _ => None,
             })
     }
+}
+
+/// Whether `arrived`, a message of the user's as the model was given it, is `sent`. The image
+/// plugin puts a label like `[Image 1: /work/shot.png]` where the message named an image it
+/// attached (`@shot.png`, or a path dropped in), so what is around the labels has to be the same and
+/// in the same order, and what stood in their place is not compared.
+fn sent_as(sent: &str, arrived: &str) -> bool {
+    if sent == arrived {
+        return true;
+    }
+    let mut around = Vec::new();
+    let (mut part, mut from) = (0, 0);
+    while let Some(found) = arrived[from..].find("[Image ") {
+        let start = from + found;
+        match label_len(&arrived[start..]) {
+            Some(len) => {
+                around.push(&arrived[part..start]);
+                part = start + len;
+                from = part;
+            }
+            None => from = start + 1,
+        }
+    }
+    if around.is_empty() {
+        return false;
+    }
+    around.push(&arrived[part..]);
+    let labels = around.len() - 1;
+    let (first, last) = (around[0], around[labels]);
+    let Some(mut left) = sent.strip_prefix(first) else {
+        return false;
+    };
+    for part in &around[1..labels] {
+        match left.find(part) {
+            Some(at) => left = &left[at + part.len()..],
+            None => return false,
+        }
+    }
+    left.ends_with(last)
+}
+
+/// The length of the image plugin's label at the start of `text`, as in `[Image 1: /work/shot.png]`.
+fn label_len(text: &str) -> Option<usize> {
+    let after = text.strip_prefix("[Image ")?;
+    let name = after.trim_start_matches(|c: char| c.is_ascii_digit());
+    if name.len() == after.len() {
+        return None;
+    }
+    let name = name.strip_prefix(": ")?;
+    let end = name.find([']', '\n'])?;
+    name[end..].starts_with(']').then(|| text.len() - name.len() + end + 1)
 }
 
 /// What the user wrote in a message: its text without the agent's mark of an interruption. A
@@ -1207,6 +1258,43 @@ mod tests {
         assert!(t.queued.is_empty());
         assert_eq!(t.exchanges.len(), 2);
         assert_eq!(t.exchanges[1].prompt, "やっぱり10秒でいい");
+    }
+
+    /// The image plugin puts a label where the message named an image. It is still the message that
+    /// was sent: shown once, as it was typed.
+    #[test]
+    fn a_message_with_an_image_attached_is_shown_once_as_it_was_typed() {
+        let mut t = Transcript::default();
+        let now = Instant::now();
+        let given = |text: &str| {
+            let message = serde_json::json!({"type": "message_end", "message": {"role": "user", "timestamp": 1,
+                "content": [{"type": "text", "text": text}, {"type": "image", "mediaType": "image/png", "data": "AA=="}]}});
+            parse_event(&message.to_string()).unwrap()
+        };
+        t.send("@/work/shot.png この画面は何？", now);
+        t.apply(&given("[Image 1: /work/shot.png] この画面は何？"), now);
+        assert_eq!(t.exchanges.len(), 1);
+        assert_eq!(t.exchanges[0].prompt, "@/work/shot.png この画面は何？");
+
+        t.queue("@a.png と @b.png を比べて");
+        t.apply(&given("[Image 1: /work/a.png] と [Image 2: /work/b.png] を比べて"), now);
+        assert!(t.queued.is_empty());
+        assert_eq!(t.exchanges.len(), 2);
+        assert_eq!(t.exchanges[1].prompt, "@a.png と @b.png を比べて");
+    }
+
+    #[test]
+    fn only_the_labels_of_images_are_passed_over_when_a_message_is_matched() {
+        assert!(sent_as("@a.png 見て", "[Image 1: /w/a.png] 見て"));
+        assert!(sent_as(
+            "前 @a.png 中 @b.png 後",
+            "前 [Image 1: /w/a.png] 中 [Image 2: /w/b.png] 後"
+        ));
+        assert!(sent_as("[Image x] そのまま", "[Image x] そのまま"));
+        assert!(!sent_as("@a.png 見て", "[Image 1: /w/a.png] 見ないで"));
+        assert!(!sent_as("前 @a.png 後", "後 [Image 1: /w/a.png] 前"));
+        assert!(!sent_as("[Image 1 見て", "[Image 1: /w/a.png 見て"));
+        assert!(!sent_as("別の文", "[Image : /w/a.png] 別の文"));
     }
 
     #[test]

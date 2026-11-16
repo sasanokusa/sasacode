@@ -284,8 +284,9 @@ pub fn clipboard_image(dir: &Path) -> Option<PathBuf> {
     }
 }
 
-/// Another window of this program, on `cwd`, open on `session` if given.
-pub fn new_window(program: &Path, cwd: &Path, session: Option<&str>) -> bool {
+/// Another window of this program, on `cwd`, open on `session` if given, with its top left corner
+/// at `at` (in the system's points) if given.
+pub fn new_window(program: &Path, cwd: &Path, session: Option<&str>, at: Option<iced::Point>) -> bool {
     let Ok(me) = std::env::current_exe() else {
         return false;
     };
@@ -293,6 +294,9 @@ pub fn new_window(program: &Path, cwd: &Path, session: Option<&str>) -> bool {
     c.arg("--sasacode").arg(program);
     if let Some(id) = session {
         c.args(["--session", id]);
+    }
+    if let Some(at) = at {
+        c.arg("--at").arg(format!("{},{}", at.x.round(), at.y.round()));
     }
     c.arg(cwd);
     spawn(c)

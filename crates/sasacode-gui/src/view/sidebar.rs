@@ -126,7 +126,7 @@ pub fn sidebar(app: &App) -> El<'_> {
         if let Some((color, _)) = mark {
             title_row = title_row
                 .push(Space::new().width(Length::Fill))
-                .push(icon(Icon::Dot, 9.0, color));
+                .push(icon(Icon::Dot, 15.0, color));
         }
         let item = button(column![title_row, text(meta).size(11.5).color(t.fg_3)].spacing(2))
             .width(Length::Fill)

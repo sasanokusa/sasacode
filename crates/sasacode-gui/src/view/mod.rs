@@ -14,7 +14,7 @@ mod timeline;
 use std::path::Path;
 
 use iced::font::Weight;
-use iced::widget::{Space, button, column, container, mouse_area, row, rule, stack, text, tooltip};
+use iced::widget::{Space, button, column, container, mouse_area, responsive, row, rule, stack, text, tooltip};
 use iced::{Alignment, Color, Element, Font, Length, mouse};
 
 use crate::app::{App, Clip, Edge, Msg, Status, Tab};
@@ -149,30 +149,6 @@ fn edge(app: &App, which: Edge) -> El<'_> {
 
 fn header(app: &App) -> El<'_> {
     let (t, s) = (app.t, app.s);
-    let title_text = |label: String| {
-        text(label)
-            .size(14)
-            .font(BOLD)
-            .color(t.fg)
-            .wrapping(text::Wrapping::None)
-    };
-    // A title that had to be cut says all of itself under the pointer.
-    let title: El<'_> = match app.chat.transcript.title() {
-        Some(prompt) => {
-            let shown = clip(first_line(prompt), 56);
-            if shown == prompt.trim() {
-                title_text(shown).into()
-            } else {
-                tip(
-                    t,
-                    title_text(shown),
-                    clip(prompt.trim(), 600),
-                    tooltip::Position::Bottom,
-                )
-            }
-        }
-        None => title_text(s.new_session.to_owned()).into(),
-    };
     let changed = app.chat.transcript.changes().count();
     let mut inspector = row![icon(Icon::Panel, 16.0, if app.insp { t.accent } else { t.fg_2 })]
         .spacing(6)
@@ -195,9 +171,18 @@ fn header(app: &App) -> El<'_> {
                 format!("{}  {MOD}B", s.a_side),
                 tooltip::Position::Bottom,
             ),
-            title,
-            pill(app),
-            Space::new().width(Length::Fill),
+            // The title is cut where the header runs out of room, so the state and the buttons stay.
+            responsive(move |room| {
+                let width = (room.width - pill_width(app)).max(0.0);
+                container(
+                    row![container(title(app)).max_width(width).clip(true), pill(app)]
+                        .spacing(10)
+                        .align_y(Alignment::Center),
+                )
+                .height(Length::Fill)
+                .align_y(Alignment::Center)
+                .into()
+            }),
             tip(
                 t,
                 button(icon(Icon::List, 16.0, t.fg_2))
@@ -283,10 +268,41 @@ fn find_bar(app: &App) -> El<'_> {
 }
 
 /// The state of the conversation, next to its title.
-fn pill(app: &App) -> El<'_> {
+/// The conversation's title: its first message, cut short. A title that had to be cut says all of
+/// itself under the pointer, and so does one long enough to be cut by the header's edge.
+fn title(app: &App) -> El<'_> {
     let (t, s) = (app.t, app.s);
-    let (label, fill, color, dot) = match app.status() {
-        Status::Blank => return Space::new().into(),
+    let title_text = |label: String| {
+        text(label)
+            .size(14)
+            .font(BOLD)
+            .color(t.fg)
+            .wrapping(text::Wrapping::None)
+    };
+    match app.chat.transcript.title() {
+        Some(prompt) => {
+            let shown = clip(first_line(prompt), 56);
+            if shown == prompt.trim() && shown.chars().count() <= 24 {
+                title_text(shown).into()
+            } else {
+                tip(
+                    t,
+                    title_text(shown),
+                    clip(prompt.trim(), 600),
+                    tooltip::Position::Bottom,
+                )
+            }
+        }
+        None => title_text(s.new_session.to_owned()).into(),
+    }
+}
+
+/// What the state beside the title says, its colours, and whether it has a dot: nothing for a
+/// conversation with nothing in it.
+fn state(app: &App) -> Option<(&'static str, Color, Color, bool)> {
+    let (t, s) = (app.t, app.s);
+    Some(match app.status() {
+        Status::Blank => return None,
         Status::Running => (s.st_running, t.accent_wash, t.accent, true),
         Status::Waiting => (s.st_waiting, t.warn_wash, t.warn, true),
         Status::Done => (s.st_done, t.inset, t.fg_2, false),
@@ -295,6 +311,21 @@ fn pill(app: &App) -> El<'_> {
         Status::MaxTurns => (s.st_max, t.warn_wash, t.warn, false),
         Status::Plugin => (s.st_plugin, t.warn_wash, t.warn, false),
         Status::Loaded => (s.st_loaded, t.inset, t.fg_3, false),
+    })
+}
+
+/// About how wide the state beside the title is, with the space before it.
+fn pill_width(app: &App) -> f32 {
+    let Some((label, _, _, dot)) = state(app) else {
+        return 0.0;
+    };
+    let letters: f32 = label.chars().map(|c| if c.is_ascii() { 7.0 } else { 12.5 }).sum();
+    letters + 16.0 + if dot { 15.0 } else { 0.0 } + 10.0
+}
+
+fn pill(app: &App) -> El<'_> {
+    let Some((label, fill, color, dot)) = state(app) else {
+        return Space::new().into();
     };
     let mut content = row![].spacing(5).align_y(Alignment::Center);
     if dot {
@@ -312,7 +343,8 @@ fn pill(app: &App) -> El<'_> {
 
 fn status_bar(app: &App) -> El<'_> {
     let (t, s) = (app.t, app.s);
-    let item = |label: String| text(label).size(11.5).color(t.fg_3);
+    // On one line: what does not fit on the left is cut at the bar's middle, not wrapped.
+    let item = |label: String| text(label).size(11.5).color(t.fg_3).wrapping(text::Wrapping::None);
     let dot = || text("·").size(11.5).color(t.line_2);
     let cwd = app.cwd.to_string_lossy();
     let shown = clip_start(&cwd, 46);
@@ -419,8 +451,7 @@ fn status_bar(app: &App) -> El<'_> {
     }
     container(
         row![
-            left,
-            Space::new().width(Length::Fill),
+            container(left).width(Length::Fill).clip(true),
             right,
             button(item(usage).font(MONO))
                 .padding([1, 6])

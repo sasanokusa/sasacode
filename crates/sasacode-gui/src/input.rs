@@ -349,9 +349,7 @@ impl App {
                 self.show_archived = !self.show_archived;
                 self.side = true;
             }
-            Command::Window => {
-                system::new_window(&self.program, &self.cwd, session.as_deref());
-            }
+            Command::Window => return self.new_window(self.cwd.clone(), session),
             Command::Folder => {
                 system::reveal(&self.cwd);
             }

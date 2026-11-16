@@ -16,15 +16,18 @@ use crate::theme::RADIUS_L;
 use crate::transcript::{Approval, Kind};
 
 pub fn dock(app: &App) -> El<'_> {
-    let mut col = column![].spacing(8);
+    // Keyed, so that the input is the same widget whatever comes and goes above it: in a plain
+    // column it would move down a place when the list after `/` or `@` opens, and lose the keys.
+    let mut col = iced::widget::keyed::Column::new().spacing(8);
     if let Some(approval) = app.chat.transcript.pending_approval() {
-        col = col.push(approval_card(app, approval));
+        col = col.push(Above::Approval, approval_card(app, approval));
     }
     if let Some(offer) = app.offer() {
-        col = col.push(offered(app, offer));
+        col = col.push(Above::Offer, offered(app, offer));
     }
     if app.dropping {
         col = col.push(
+            Above::Drop,
             container(
                 row![
                     icon(Icon::File, 14.0, t_accent(app)),
@@ -38,7 +41,7 @@ pub fn dock(app: &App) -> El<'_> {
             .style(app.t.boxed(app.t.accent_wash, app.t.accent, crate::theme::RADIUS)),
         );
     }
-    col = col.push(composer(app)).push(hints(app));
+    col = col.push(Above::Input, composer(app)).push(Above::Hints, hints(app));
     container(container(col).max_width(COL_W))
         .center_x(Length::Fill)
         .padding(iced::Padding {
@@ -48,6 +51,16 @@ pub fn dock(app: &App) -> El<'_> {
             left: 24.0,
         })
         .into()
+}
+
+/// What the dock holds, from the top.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Above {
+    Approval,
+    Offer,
+    Drop,
+    Input,
+    Hints,
 }
 
 fn t_accent(app: &App) -> iced::Color {

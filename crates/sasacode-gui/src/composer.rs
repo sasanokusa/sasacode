@@ -116,10 +116,17 @@ fn walk(cwd: &Path) -> Vec<String> {
 }
 
 /// A path as the input takes it: `@` and the path relative to the project when it is inside it,
-/// else the whole path, which the image plugin takes too. Quoted when it has a space.
+/// else the whole path, which the image plugin takes too. Quoted when it has a space. Inside also
+/// when the two are written different ways to the same place, as git writes the repository's folder
+/// without the links on the way to it (`/private/var/…` for `/var/…` on macOS).
 pub fn path_ref(path: &Path, cwd: &Path) -> String {
-    let shown = match path.strip_prefix(cwd) {
-        Ok(rel) if !rel.as_os_str().is_empty() => rel.to_string_lossy().replace('\\', "/"),
+    let inside = path.strip_prefix(cwd).ok().map(Path::to_path_buf).or_else(|| {
+        let real_cwd = cwd.canonicalize().ok()?;
+        let real = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+        real.strip_prefix(&real_cwd).ok().map(Path::to_path_buf)
+    });
+    let shown = match inside {
+        Some(rel) if !rel.as_os_str().is_empty() => rel.to_string_lossy().replace('\\', "/"),
         _ => path.to_string_lossy().into_owned(),
     };
     let shown = if path.is_dir() && !shown.ends_with('/') {
@@ -213,6 +220,27 @@ mod tests {
         let cwd = Path::new("/work/p");
         assert_eq!(path_ref(Path::new("/work/p/src/a.rs"), cwd), "@src/a.rs");
         assert_eq!(path_ref(Path::new("/tmp/shot 1.png"), cwd), "@\"/tmp/shot 1.png\"");
+    }
+
+    /// git names the repository's folder by where it really is; the window may have been opened on
+    /// it through a link.
+    #[cfg(unix)]
+    #[test]
+    fn a_path_is_relative_when_the_project_was_opened_through_a_link() {
+        let dir = std::env::temp_dir().join(format!("sasacode-gui-link-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let real = dir.join("real");
+        std::fs::create_dir_all(real.join("notes")).unwrap();
+        std::fs::write(real.join("notes/a.md"), "a").unwrap();
+        std::os::unix::fs::symlink(&real, dir.join("link")).unwrap();
+        let real = real.canonicalize().unwrap();
+        assert_eq!(path_ref(&real.join("notes/a.md"), &dir.join("link")), "@notes/a.md");
+        // One that is gone (a deleted file in the diff) too.
+        assert_eq!(
+            path_ref(&real.join("notes/gone.md"), &dir.join("link")),
+            "@notes/gone.md"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

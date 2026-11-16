@@ -230,7 +230,8 @@ pub fn write(file: &Path, layout: &Layout, prefs: &Prefs) -> io::Result<()> {
         "inspector": whole(layout.inspector),
         "enterSends": prefs.enter_sends,
         "theme": theme,
-        "zoom": (prefs.zoom * 100.0).round() / 100.0,
+        // Rounded as the number it is written as, so that 1.4 is not 1.399999976158142.
+        "zoom": (f64::from(prefs.zoom) * 100.0).round() / 100.0,
         "notify": prefs.notify,
         "awake": prefs.awake,
         "steps": prefs.steps,
@@ -413,6 +414,7 @@ mod tests {
         write(&file, &Layout::default(), &prefs).unwrap();
         assert_eq!(Prefs::read(&file), prefs);
         assert_eq!(Layout::read(&file), Layout::default());
+        assert!(std::fs::read_to_string(&file).unwrap().contains("\"zoom\": 1.2\n"));
 
         // An older file has none of it; a zoom too large is the largest; a blank name is none.
         std::fs::write(
