@@ -7,8 +7,7 @@ use iced::widget::tooltip;
 
 use super::timeline::{command_copies, todo_list};
 use super::{
-    BOLD, El, MOD, MONO, clip, clip_start, diff_view, first_line, hline, insp_w, output_block, plus_minus, short_path,
-    tag, tip,
+    BOLD, El, MOD, MONO, clip, clip_start, diff_view, first_line, hline, output_block, plus_minus, short_path, tag, tip,
 };
 use crate::app::{App, Msg, Tab};
 use crate::i18n::{compact, fill};
@@ -93,7 +92,7 @@ pub fn inspector(app: &App) -> El<'_> {
         ]
         .width(Length::Fill),
     )
-    .width(insp_w(app))
+    .width(app.insp_width())
     .height(Length::Fill)
     .style(t.fill(t.surface))
     .into()
@@ -119,7 +118,7 @@ fn empty<'a>(app: &App, mark: Icon, head: &'a str, body: &'a str) -> El<'a> {
 /// How many half-width cells of monospaced text a card's head has room for, when `rest` of the
 /// panel's width goes to everything else in it.
 fn cells(app: &App, rest: f32) -> usize {
-    ((insp_w(app) - rest) / 8.0).max(8.0) as usize
+    ((app.insp_width() - rest) / 8.0).max(8.0) as usize
 }
 
 /// The name in a card's head: it takes the room the rest of the head leaves and is cut there, so

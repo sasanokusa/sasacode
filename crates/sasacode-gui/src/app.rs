@@ -12,6 +12,7 @@ use sasacode_protocol::{ControlMessage, Decision, SessionSummary, StopCause, lis
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::i18n::{Strings, fill};
+use crate::layout::{self, Layout};
 use crate::runner::{self, RunSpec, RunUpdate};
 use crate::theme::{DARK, LIGHT, Tokens};
 use crate::transcript::{Answer, Note, Step, Transcript};
@@ -35,8 +36,31 @@ pub const PERMISSIONS: [&str; 4] = ["edits", "ask", "agent", "auto"];
 /// `--thinking`.
 pub const EFFORTS: [&str; 6] = ["off", "low", "medium", "high", "xhigh", "max"];
 
-/// Under this width the conversation list gives way while the inspector is open.
-pub const WIDE: f32 = 1180.0;
+/// The side panels' widths: what they open at, and how narrow and how wide a drag of their edge
+/// makes them.
+pub const SIDE_W: f32 = 244.0;
+pub const INSP_W: f32 = 380.0;
+pub(crate) const SIDE_MIN: f32 = 180.0;
+pub(crate) const SIDE_MAX: f32 = 480.0;
+pub(crate) const INSP_MIN: f32 = 280.0;
+pub(crate) const INSP_MAX: f32 = 760.0;
+/// The room the conversation keeps between the two side panels. Where the window has less, the
+/// list of conversations gives way while the inspector is open: at the widths they open at, under
+/// 1180 wide.
+const ROOM_BOTH: f32 = 554.0;
+/// The room it keeps next to one panel: the panel is drawn narrower where the window has less.
+const ROOM_ALONE: f32 = 440.0;
+/// A panel's edge dragged this far past its narrowest folds the panel away.
+const FOLD_PAST: f32 = 60.0;
+/// How long the window's size is left alone before it is kept: a resize is many sizes in a row.
+const RESIZE_REST: Duration = Duration::from_millis(500);
+
+/// The inner edge of a side panel, which a drag moves.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Edge {
+    Side,
+    Inspector,
+}
 
 #[derive(Debug, Clone)]
 pub struct Options {
@@ -44,6 +68,9 @@ pub struct Options {
     pub cwd: PathBuf,
     /// The conversation to open with, named as `sasacode -r` takes it.
     pub session: Option<String>,
+    /// How the window opens laid out, and the file it keeps how it is laid out in, if any.
+    pub layout: Layout,
+    pub layout_file: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -109,6 +136,17 @@ pub struct App {
     pub(crate) filter: String,
     pub(crate) side: bool,
     pub(crate) insp: bool,
+    /// The widths the side panels were given, drawn narrower only where the window has not the
+    /// room.
+    pub(crate) side_w: f32,
+    pub(crate) insp_w: f32,
+    /// The edge being dragged.
+    pub(crate) drag: Option<Edge>,
+    /// The dragged panel's width when its edge was taken: what it opens at again when the drag
+    /// folds it, rather than the narrowest it passed through on the way.
+    held: f32,
+    /// The edge under the pointer.
+    pub(crate) edge_hover: Option<Edge>,
     pub(crate) tab: Tab,
     /// Exchanges whose steps were opened or closed by hand.
     pub(crate) folds: HashMap<usize, bool>,
@@ -118,6 +156,12 @@ pub struct App {
     pub(crate) closed: HashSet<String>,
     pub(crate) now: Instant,
     pub(crate) width: f32,
+    pub(crate) height: f32,
+    /// Where how the window is laid out is kept, and what was last read from it or written to it.
+    layout_file: Option<PathBuf>,
+    kept: Layout,
+    /// Sizes the window was given, so that only the last one's rest keeps it.
+    resizes: u64,
     /// What was copied last, while its button says so.
     pub(crate) copied: Option<Clip>,
     /// Copies made, so that only the last one's time running out clears `copied`.
@@ -182,9 +226,23 @@ pub enum Msg {
     FindOpen,
     /// The keyboard back to the input.
     FocusInput,
+    /// A panel's edge was pressed, to be dragged.
+    Grab(Edge),
+    /// Where the pointer is while an edge is dragged: how far from the window's left.
+    Drag(f32),
+    /// The dragged edge was let go.
+    Drop,
+    /// A panel's edge was double-clicked: the panel back to the width it opened at.
+    ResetWidth(Edge),
+    /// The pointer came over a panel's edge, or left it.
+    HoverEdge(Option<Edge>),
     ThemeMode(theme::Mode),
     Tick(Instant),
     Resized(Size),
+    /// The window's size was left alone for a while since the size it is, by count.
+    Rested(u64),
+    /// The size of the screen the window opened on.
+    Screen(window::Id, Option<Size>),
 }
 
 impl App {
@@ -202,14 +260,16 @@ impl App {
                 app.cwd.display()
             );
         }
+        let screen = window::oldest().and_then(|id| window::monitor_size(id).map(move |size| Msg::Screen(id, size)));
         (
             app,
-            Task::batch([iced::system::theme().map(Msg::ThemeMode), focus_input()]),
+            Task::batch([iced::system::theme().map(Msg::ThemeMode), focus_input(), screen]),
         )
     }
 
     /// A window with no conversation and no list of sessions.
     pub(crate) fn blank(options: Options, s: Strings) -> Self {
+        let layout = options.layout;
         App {
             s,
             t: LIGHT,
@@ -230,12 +290,21 @@ impl App {
             filter: String::new(),
             side: true,
             insp: true,
+            side_w: layout.side,
+            insp_w: layout.inspector,
+            drag: None,
+            held: layout.side,
+            edge_hover: None,
             tab: Tab::Changes,
             folds: HashMap::new(),
             open: HashSet::new(),
             closed: HashSet::new(),
             now: Instant::now(),
-            width: 1280.0,
+            width: layout.size.width,
+            height: layout.size.height,
+            layout_file: options.layout_file,
+            kept: layout,
+            resizes: 0,
             copied: None,
             copies: 0,
             reading: false,
@@ -270,6 +339,10 @@ impl App {
         // The clock only moves what is shown while something runs.
         if self.running() {
             all.push(iced::time::every(Duration::from_secs(1)).map(Msg::Tick));
+        }
+        // A drag follows the pointer, and ends where the button is let go, outside the window too.
+        if self.drag.is_some() {
+            all.push(event::listen_with(dragging));
         }
         Subscription::batch(all)
     }
@@ -338,7 +411,61 @@ impl App {
 
     /// Whether the list of conversations is drawn: the inspector takes its room in a narrow window.
     pub(crate) fn shows_side(&self) -> bool {
-        self.side && (self.width >= WIDE || !self.insp)
+        self.side && (!self.insp || self.both_fit())
+    }
+
+    /// The window has room for both side panels at their widths and the conversation between.
+    fn both_fit(&self) -> bool {
+        self.width - self.side_w - self.insp_w - 2.0 >= ROOM_BOTH
+    }
+
+    /// How wide the list of conversations is drawn: as it was given, less where a narrow window
+    /// keeps the conversation's room.
+    pub(crate) fn side_width(&self) -> f32 {
+        self.side_w.min(self.width - 1.0 - ROOM_ALONE).max(SIDE_MIN)
+    }
+
+    /// How wide the inspector is drawn, likewise.
+    pub(crate) fn insp_width(&self) -> f32 {
+        self.insp_w.min(self.width - 1.0 - ROOM_ALONE).max(INSP_MIN)
+    }
+
+    /// The dragged edge follows the pointer at `x`, as far as the panel's bounds and the
+    /// conversation's room let it. Dragged far enough past its narrowest, the panel folds away,
+    /// keeping the width it had when the edge was taken; back out in the same drag, it opens again.
+    fn drag_to(&mut self, x: f32) {
+        match self.drag {
+            Some(Edge::Side) => {
+                let want = x;
+                self.side = want >= SIDE_MIN - FOLD_PAST;
+                if !self.side {
+                    self.side_w = self.held;
+                } else {
+                    // Next to the inspector both keep fitting; alone, the conversation its room.
+                    let most = if self.insp {
+                        self.width - self.insp_w - 2.0 - ROOM_BOTH
+                    } else {
+                        self.width - 1.0 - ROOM_ALONE
+                    };
+                    self.side_w = want.min(most.min(SIDE_MAX)).max(SIDE_MIN);
+                }
+            }
+            Some(Edge::Inspector) => {
+                let want = self.width - x - 1.0;
+                self.insp = want >= INSP_MIN - FOLD_PAST;
+                if !self.insp {
+                    self.insp_w = self.held;
+                } else {
+                    let most = if self.shows_side() {
+                        self.width - self.side_w - 2.0 - ROOM_BOTH
+                    } else {
+                        self.width - 1.0 - ROOM_ALONE
+                    };
+                    self.insp_w = want.min(most.min(INSP_MAX)).max(INSP_MIN);
+                }
+            }
+            None => {}
+        }
     }
 
     fn control(&self, message: ControlMessage) {
@@ -402,7 +529,7 @@ impl App {
             Msg::ToggleSide => {
                 self.side = !self.shows_side();
                 // In a narrow window the two side panels take turns.
-                if self.side && self.width < WIDE {
+                if self.side && !self.both_fit() {
                     self.insp = false;
                 }
             }
@@ -453,7 +580,7 @@ impl App {
             Msg::Find => {
                 if !self.shows_side() {
                     self.side = true;
-                    if self.width < WIDE {
+                    if !self.both_fit() {
                         self.insp = false;
                     }
                 }
@@ -471,11 +598,81 @@ impl App {
                 return focus_input();
             }
             Msg::FocusInput => return focus_input(),
+            Msg::Grab(edge) => {
+                self.drag = Some(edge);
+                self.held = match edge {
+                    Edge::Side => self.side_w,
+                    Edge::Inspector => self.insp_w,
+                };
+            }
+            Msg::Drag(x) => self.drag_to(x),
+            Msg::Drop => {
+                if self.drag.take().is_some() {
+                    self.keep_layout();
+                }
+            }
+            Msg::ResetWidth(edge) => {
+                // The second press of a double click grabbed the edge too: what it does is this.
+                self.drag = None;
+                match edge {
+                    Edge::Side => self.side_w = SIDE_W,
+                    Edge::Inspector => self.insp_w = INSP_W,
+                }
+                self.keep_layout();
+            }
+            Msg::HoverEdge(edge) => self.edge_hover = edge,
             Msg::ThemeMode(mode) => self.set_dark(mode == theme::Mode::Dark),
             Msg::Tick(now) => self.now = now,
-            Msg::Resized(size) => self.width = size.width,
+            Msg::Resized(size) => {
+                self.width = size.width;
+                self.height = size.height;
+                self.resizes += 1;
+                let n = self.resizes;
+                return Task::perform(async { tokio::time::sleep(RESIZE_REST).await }, move |()| {
+                    Msg::Rested(n)
+                });
+            }
+            Msg::Rested(n) => {
+                if n == self.resizes {
+                    self.keep_layout();
+                }
+            }
+            Msg::Screen(id, Some(screen)) => {
+                if let Some(size) = layout::fit(Size::new(self.width, self.height), screen) {
+                    return window::resize(id, size);
+                }
+            }
+            Msg::Screen(_, None) => {}
         }
         Task::none()
+    }
+
+    /// How the window is laid out now: the widths the panels were given, folded or not.
+    pub(crate) fn layout(&self) -> Layout {
+        Layout {
+            size: Size::new(self.width, self.height),
+            side: self.side_w,
+            inspector: self.insp_w,
+        }
+    }
+
+    /// Keeps how the window is laid out for the next launch, when it changed since it was read or
+    /// last written.
+    fn keep_layout(&mut self) {
+        let Some(file) = &self.layout_file else {
+            return;
+        };
+        let now = self.layout();
+        if now == self.kept {
+            return;
+        }
+        match now.write(file) {
+            Ok(()) => self.kept = now,
+            Err(e) => eprintln!(
+                "sasacode-gui: could not keep the window's layout in {}: {e}",
+                file.display()
+            ),
+        }
     }
 
     /// Shows the conversation a log holds, to be continued by the next message. False when the log
@@ -754,6 +951,17 @@ fn global_key(event: iced::Event, status: event::Status, _window: window::Id) ->
     shortcut(&key, modifiers)
 }
 
+/// While an edge is dragged: where the pointer goes, and the left button let go, wherever the
+/// pointer is. Out of the window the panel folds, or takes all the room it may.
+pub(crate) fn dragging(event: iced::Event, _status: event::Status, _window: window::Id) -> Option<Msg> {
+    use iced::mouse::{Button, Event as Mouse};
+    match event {
+        iced::Event::Mouse(Mouse::CursorMoved { position }) => Some(Msg::Drag(position.x)),
+        iced::Event::Mouse(Mouse::ButtonReleased(Button::Left)) => Some(Msg::Drop),
+        _ => None,
+    }
+}
+
 /// The window's shortcuts. None of them is a bare letter or a bare Enter: a key meant for the
 /// input must never answer an approval.
 pub(crate) fn shortcut(key: &Key, modifiers: keyboard::Modifiers) -> Option<Msg> {
@@ -825,6 +1033,8 @@ mod tests {
             program: "sasacode".into(),
             cwd,
             session: None,
+            layout: Layout::default(),
+            layout_file: None,
         };
         let mut app = App::blank(options, Strings::get("ja"));
         app.home = Some(home.clone());

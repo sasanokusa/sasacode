@@ -8,6 +8,7 @@ mod diff;
 mod drive;
 mod i18n;
 mod icons;
+mod layout;
 mod runner;
 #[cfg(test)]
 mod snapshots;
@@ -58,10 +59,14 @@ fn main() -> iced::Result {
     if !cwd.is_dir() {
         exit_with(&format!("{} is not a folder", cwd.display()));
     }
+    let layout_file = sasacode_protocol::sasacode_home().map(|home| home.join(layout::FILE));
+    let layout = layout_file.as_deref().map(layout::Layout::read).unwrap_or_default();
     let options = app::Options {
         program: program.unwrap_or_else(|| PathBuf::from("sasacode")),
         cwd,
         session,
+        layout,
+        layout_file,
     };
 
     iced::application(move || app::App::new(options.clone()), app::App::update, app::App::view)
@@ -70,8 +75,8 @@ fn main() -> iced::Result {
         .subscription(app::App::subscription)
         .default_font(view::UI)
         .window(iced::window::Settings {
-            size: iced::Size::new(1280.0, 800.0),
-            min_size: Some(iced::Size::new(760.0, 520.0)),
+            size: layout.size,
+            min_size: Some(layout::MIN_SIZE),
             ..iced::window::Settings::default()
         })
         .run()

@@ -13,10 +13,10 @@ mod timeline;
 use std::path::Path;
 
 use iced::font::Weight;
-use iced::widget::{Space, button, column, container, row, rule, text, tooltip};
-use iced::{Alignment, Color, Element, Font, Length};
+use iced::widget::{Space, button, column, container, mouse_area, row, rule, stack, text, tooltip};
+use iced::{Alignment, Color, Element, Font, Length, mouse};
 
-use crate::app::{App, Clip, Msg, Status, Tab};
+use crate::app::{App, Clip, Edge, Msg, Status, Tab};
 use crate::diff::{Diff, Sign};
 use crate::i18n::{Strings, compact, fill};
 use crate::icons::{Icon, icon};
@@ -50,20 +50,15 @@ pub(crate) const MONO: Font = if cfg!(target_os = "macos") {
     Font::MONOSPACE
 };
 
-const SIDE_W: f32 = 244.0;
-const INSP_W: f32 = 380.0;
 /// The conversation and the input keep to this width, centred.
 const COL_W: f32 = 760.0;
-
-/// How wide the inspector is drawn: narrower in a narrow window.
-fn insp_w(app: &App) -> f32 {
-    if app.width < 900.0 { 320.0 } else { INSP_W }
-}
+/// How wide a panel's edge is to the pointer: wider than its line, so as to be taken.
+const GRIP: f32 = 7.0;
 
 /// How wide the conversation is drawn, between the panels that are shown.
 pub(crate) fn room(app: &App) -> f32 {
-    let side = if app.shows_side() { SIDE_W + 1.0 } else { 0.0 };
-    let insp = if app.insp { insp_w(app) + 1.0 } else { 0.0 };
+    let side = if app.shows_side() { app.side_width() + 1.0 } else { 0.0 };
+    let insp = if app.insp { app.insp_width() + 1.0 } else { 0.0 };
     app.width - side - insp
 }
 
@@ -84,7 +79,64 @@ pub fn window(app: &App) -> El<'_> {
     if app.insp {
         body = body.push(vline(t)).push(inspector::inspector(app));
     }
-    chords::chords(container(column![body.height(Length::Fill), hline(t), status_bar(app)]).style(t.fill(t.bg)))
+    // The panels' edges lie over their lines. While one is dragged, a layer over everything keeps
+    // the pointer's shape, and nothing under it reacts to the pointer passing; the pointer itself
+    // is followed by `app::dragging`, out of the window too.
+    let mut panes = stack![body.height(Length::Fill), edges(app)]
+        .width(Length::Fill)
+        .height(Length::Fill);
+    if app.drag.is_some() {
+        panes = panes.push(
+            mouse_area(Space::new().width(Length::Fill).height(Length::Fill))
+                .interaction(mouse::Interaction::ResizingHorizontally),
+        );
+    }
+    chords::chords(container(column![panes, hline(t), status_bar(app)]).style(t.fill(t.bg)))
+}
+
+/// Where the side panels' inner edges are taken to be dragged: a strip over each one's line, with
+/// nothing in between. Drawn always, so that what is under it keeps its place in the window's tree.
+fn edges(app: &App) -> El<'_> {
+    let mut strip = row![];
+    if app.shows_side() {
+        // The line is at the list's width; its grip starts a little before it.
+        strip = strip
+            .push(Space::new().width(app.side_width() - 3.0))
+            .push(edge(app, Edge::Side));
+    }
+    strip = strip.push(Space::new().width(Length::Fill));
+    if app.insp {
+        // Clear of the conversation's scrollbar, which ends just before the inspector's line.
+        strip = strip
+            .push(edge(app, Edge::Inspector))
+            .push(Space::new().width(app.insp_width() + 1.0 + 2.0 - GRIP));
+    }
+    strip.height(Length::Fill).into()
+}
+
+/// A panel's edge: dragged, it sets the panel's width; double-clicked, the width it opened at. It
+/// lights up under the pointer and while it is dragged.
+fn edge(app: &App, which: Edge) -> El<'_> {
+    let t = app.t;
+    let lit = app.drag == Some(which) || app.edge_hover == Some(which);
+    let line: El<'_> = if lit {
+        container(Space::new())
+            .width(3)
+            .height(Length::Fill)
+            .style(t.fill(t.accent))
+            .into()
+    } else {
+        Space::new().into()
+    };
+    // Let go here too: a click quick enough is let go before anything follows the drag.
+    mouse_area(container(line).center_x(GRIP).height(Length::Fill))
+        .interaction(mouse::Interaction::ResizingHorizontally)
+        .on_press(Msg::Grab(which))
+        .on_release(Msg::Drop)
+        .on_double_click(Msg::ResetWidth(which))
+        .on_enter(Msg::HoverEdge(Some(which)))
+        .on_exit(Msg::HoverEdge(None))
+        .into()
 }
 
 fn header(app: &App) -> El<'_> {

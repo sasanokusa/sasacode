@@ -5,7 +5,7 @@ use std::time::SystemTime;
 use iced::widget::{Space, button, column, container, row, scrollable, text, text_input};
 use iced::{Alignment, Length};
 
-use super::{BOLD, El, MOD, SIDE_W, clip, tip};
+use super::{BOLD, El, MOD, clip, tip};
 use crate::app::{App, Msg, SEARCH};
 use crate::i18n::fill;
 use crate::icons::{Icon, icon};
@@ -13,6 +13,11 @@ use crate::icons::{Icon, icon};
 pub fn sidebar(app: &App) -> El<'_> {
     let (t, s) = (app.t, app.s);
     let busy = app.busy();
+    // What the names have room for, in half-width cells, as wide as the list is drawn: 26 for a
+    // conversation and 18 for the folder at the width it opens at.
+    let width = app.side_width();
+    let cells = ((width - 75.0) / 6.5).max(8.0) as usize;
+    let folder_cells = ((width - 136.0) / 6.0).max(6.0) as usize;
     let folder = app
         .cwd
         .file_name()
@@ -23,7 +28,7 @@ pub fn sidebar(app: &App) -> El<'_> {
         icon(Icon::Leaf, 16.0, t.accent),
         text("sasacode").size(14).font(BOLD).color(t.fg),
         Space::new().width(Length::Fill),
-        text(clip(&folder, 18))
+        text(clip(&folder, folder_cells))
             .size(12)
             .color(t.fg_3)
             .wrapping(text::Wrapping::None),
@@ -75,7 +80,7 @@ pub fn sidebar(app: &App) -> El<'_> {
         let title = if prompt.is_empty() {
             clip(&session.id, 8)
         } else {
-            clip(prompt, 26)
+            clip(prompt, cells)
         };
         // A title that had to be cut says all of itself under the pointer.
         let whole = (!prompt.is_empty() && title != prompt).then(|| clip(prompt, 600));
@@ -135,7 +140,7 @@ pub fn sidebar(app: &App) -> El<'_> {
         ]
         .spacing(8),
     )
-    .width(SIDE_W)
+    .width(width)
     .height(Length::Fill)
     .padding(10)
     .style(t.fill(t.surface))

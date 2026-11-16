@@ -8,7 +8,7 @@ use iced_test::Simulator;
 use sasacode_protocol::{ControlMessage, Decision, Event};
 use tokio::sync::mpsc::UnboundedReceiver;
 
-use crate::app::{App, Clip, INPUT, Msg, SEARCH, Tab, shortcut};
+use crate::app::{App, Clip, Edge, INPUT, INSP_W, Msg, SEARCH, SIDE_W, Tab, dragging, shortcut};
 use crate::snapshots::{LONG_LOG_LAST, REPLY_CODE, long_log, markdown_reply, play, window};
 use crate::transcript::{Answer, Kind, Note, Step};
 
@@ -429,6 +429,153 @@ fn the_steps_fold_and_the_tabs_switch_by_a_click() {
         ui.click(s.review).expect("a run that changed files says so");
     });
     assert!(app.insp && app.tab == Tab::Changes);
+}
+
+#[test]
+fn a_panels_edge_dragged_sets_its_width_as_far_as_the_conversation_has_room() {
+    let mut app = window("ja");
+    assert_eq!(app.width, 1280.0);
+    let _ = app.update(Msg::Grab(Edge::Side));
+    let _ = app.update(Msg::Drag(300.0));
+    assert_eq!(app.side_w, 300.0);
+    // No wider than leaves the conversation its room next to the inspector: 1280 - 380 - 2 - 554.
+    let _ = app.update(Msg::Drag(900.0));
+    assert_eq!(app.side_w, 344.0);
+    assert!(app.shows_side() && app.insp);
+    // No narrower than its narrowest, short of folding.
+    let _ = app.update(Msg::Drag(150.0));
+    assert_eq!(app.side_w, 180.0);
+    let _ = app.update(Msg::Drop);
+    // Let go, the pointer moves nothing.
+    let _ = app.update(Msg::Drag(260.0));
+    assert_eq!(app.side_w, 180.0);
+
+    // The inspector's edge is dragged from the right.
+    let _ = app.update(Msg::Grab(Edge::Inspector));
+    let _ = app.update(Msg::Drag(1280.0 - 1.0 - 420.0));
+    let _ = app.update(Msg::Drop);
+    assert_eq!(app.insp_w, 420.0);
+    // The conversation has what the panels leave it.
+    assert_eq!(crate::view::room(&app), 1280.0 - 181.0 - 421.0);
+
+    // In a window too narrow for both, a narrower inspector makes room for the list.
+    let mut app = window("ja");
+    app.width = 1100.0;
+    assert!(!app.shows_side());
+    let _ = app.update(Msg::Grab(Edge::Inspector));
+    let _ = app.update(Msg::Drag(1100.0 - 1.0 - 290.0));
+    let _ = app.update(Msg::Drop);
+    assert_eq!(app.insp_w, 290.0);
+    assert!(app.shows_side() && app.insp);
+}
+
+#[test]
+fn a_panel_dragged_past_its_narrowest_folds_and_opens_again_in_the_same_drag() {
+    // As a real drag goes: through every place on the way, its narrowest among them.
+    let drag = |app: &mut App, edge: Edge, path: &[f32]| {
+        let _ = app.update(Msg::Grab(edge));
+        for &x in path {
+            let _ = app.update(Msg::Drag(x));
+        }
+    };
+    let mut app = window("ja");
+    app.side_w = 300.0;
+    drag(&mut app, Edge::Side, &[260.0, 200.0, 170.0, 130.0, 100.0]);
+    assert!(!app.shows_side());
+    // It keeps the width it had when its edge was taken, not the narrowest it passed through.
+    assert_eq!(app.side_w, 300.0);
+    // Back out in the same drag, it opens where the pointer is.
+    let _ = app.update(Msg::Drag(200.0));
+    assert!(app.shows_side());
+    assert_eq!(app.side_w, 200.0);
+    let _ = app.update(Msg::Drag(40.0));
+    let _ = app.update(Msg::Drop);
+    assert!(!app.side);
+    // Its button opens it at that width.
+    let _ = app.update(Msg::ToggleSide);
+    assert!(app.shows_side());
+    assert_eq!(app.side_w, 300.0);
+
+    // The inspector folds toward the window's right edge, likewise.
+    drag(&mut app, Edge::Inspector, &[950.0, 1000.0, 1050.0, 1100.0, 1270.0]);
+    let _ = app.update(Msg::Drop);
+    assert!(!app.insp);
+    let _ = app.update(Msg::ToggleInspector);
+    assert!(app.insp);
+    assert_eq!(app.insp_w, INSP_W);
+}
+
+#[test]
+fn an_edge_is_taken_by_the_pointer_follows_it_and_is_let_go() {
+    use iced::Point;
+    use iced::mouse::{Button, Event as Mouse};
+    let moved = |x: f32| {
+        iced::Event::Mouse(Mouse::CursorMoved {
+            position: Point::new(x, 300.0),
+        })
+    };
+    let mut app = window("ja");
+    // The list's line is at its width: the pointer on it takes the edge.
+    act(&mut app, |ui| {
+        ui.point_at((SIDE_W + 0.5, 300.0));
+        ui.simulate([
+            moved(SIDE_W + 0.5),
+            iced::Event::Mouse(Mouse::ButtonPressed(Button::Left)),
+        ]);
+    });
+    assert_eq!(app.drag, Some(Edge::Side));
+    assert_eq!(app.edge_hover, Some(Edge::Side));
+    // While it is held, the pointer is followed by what listens to the whole window, out of it
+    // too: the simulator does not run it, so what it hears is given to it here.
+    let window = iced::window::Id::unique();
+    let hear = |app: &mut App, event: iced::Event| {
+        if let Some(msg) = dragging(event, iced::event::Status::Ignored, window) {
+            let _ = app.update(msg);
+        }
+    };
+    let release = || iced::Event::Mouse(Mouse::ButtonReleased(Button::Left));
+    hear(&mut app, moved(320.0));
+    assert_eq!(app.side_w, 320.0);
+    // Past the window's right, the list takes all the room the conversation leaves it.
+    hear(&mut app, moved(2000.0));
+    assert_eq!(app.side_w, 1280.0 - INSP_W - 2.0 - 554.0);
+    // Let go past its left, the list is folded, and opens again at the width it was taken at.
+    hear(&mut app, moved(-40.0));
+    hear(&mut app, release());
+    assert_eq!(app.drag, None);
+    assert!(!app.side);
+    let _ = app.update(Msg::ToggleSide);
+    assert!(app.side);
+    assert_eq!(app.side_w, SIDE_W);
+
+    // A click on the edge quick enough to be let go before anything follows the drag ends it all
+    // the same.
+    act(&mut app, |ui| {
+        ui.point_at((SIDE_W + 0.5, 300.0));
+        ui.simulate([
+            moved(SIDE_W + 0.5),
+            iced::Event::Mouse(Mouse::ButtonPressed(Button::Left)),
+            release(),
+        ]);
+    });
+    assert_eq!(app.drag, None);
+
+    // A double click on the inspector's edge gives it back the width it opened at.
+    app.insp_w = 500.0;
+    let line = 1280.0 - 500.0 - 1.0;
+    act(&mut app, |ui| {
+        ui.point_at((line + 0.5, 300.0));
+        let press = || iced::Event::Mouse(Mouse::ButtonPressed(Button::Left));
+        ui.simulate([moved(line + 0.5), press(), release(), press(), release()]);
+    });
+    assert_eq!(app.insp_w, INSP_W);
+    assert_eq!(app.drag, None);
+    // Off the edge, nothing is taken.
+    act(&mut app, |ui| {
+        ui.point_at((700.0, 300.0));
+        ui.simulate([moved(700.0), iced::Event::Mouse(Mouse::ButtonPressed(Button::Left))]);
+    });
+    assert_eq!(app.drag, None);
 }
 
 #[test]

@@ -15,6 +15,7 @@ use sasacode_protocol::{Event, SessionEntry, SessionSummary, parse_event};
 
 use crate::app::{App, Clip, Msg, Options, Tab};
 use crate::i18n::Strings;
+use crate::layout::Layout;
 use crate::transcript::Transcript;
 
 pub(crate) fn fixture(name: &str) -> String {
@@ -30,6 +31,8 @@ pub(crate) fn window(lang: &str) -> App {
             program: "sasacode".into(),
             cwd: "/Users/me/src/orders-api".into(),
             session: None,
+            layout: Layout::default(),
+            layout_file: None,
         },
         Strings::get(lang),
     );
@@ -227,6 +230,16 @@ fn snapshots() {
     // Scrolled back to read: the way to the newest.
     app.reading = true;
     shoot(&app, "19-reading-back", (1280.0, 520.0));
+
+    // Both side panels widened by their edges, the inspector's still held: its edge is lit, and
+    // the list's longer names show more of themselves.
+    let mut app = window("ja");
+    play(&mut app, "work.jsonl", "再試行を指数バックオフにして", |_| false);
+    app.width = 1440.0;
+    app.side_w = 340.0;
+    app.insp_w = 520.0;
+    app.drag = Some(crate::app::Edge::Inspector);
+    shoot(&app, "20-resized-panels", (1440.0, 800.0));
 
     // A conversation read back from its log, in English, in a narrow window.
     let mut app = window("en");
