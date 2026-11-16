@@ -1,0 +1,28 @@
+{"type":"session","id":"60d4e5c7","path":"/tmp/sasacode-e2e-LoNbV0/home/sessions/tmp-sasacode-e2e-LoNbV0-project-55f02d65/2026-11-15T13-31-27-856Z_60d4e5c7.jsonl"}
+{"type":"message_end","message":{"role":"user","content":[{"type":"text","text":"ファイルを作って"}],"timestamp":1794749487976}}
+{"type":"agent_start"}
+{"type":"turn_start","turn":1}
+{"type":"message_start"}
+{"type":"message_update","event":{"type":"thinking_delta","index":0,"delta":"まずファ"}}
+{"type":"message_update","event":{"type":"thinking_delta","index":0,"delta":"イルを作"}}
+{"type":"message_update","event":{"type":"thinking_delta","index":0,"delta":"る。"}}
+{"type":"message_update","event":{"type":"text_delta","index":1,"delta":"ファイル"}}
+{"type":"message_update","event":{"type":"text_delta","index":1,"delta":"を作りま"}}
+{"type":"message_update","event":{"type":"text_delta","index":1,"delta":"す。"}}
+{"type":"message_update","event":{"type":"toolcall_start","index":2,"id":"call_0_y1yd4s","name":"bash"}}
+{"type":"message_update","event":{"type":"toolcall_delta","index":2,"delta":"{\"command\":\"echo hi > made.txt\"}"}}
+{"type":"message_end","message":{"role":"assistant","content":[{"type":"thinking","thinking":"まずファイルを作る。","reasoningField":"reasoning_content"},{"type":"text","text":"ファイルを作ります。"},{"type":"tool_call","id":"call_0_y1yd4s","name":"bash","input":{"command":"echo hi > made.txt"}}],"api":"openai-chat","provider":"fake","model":"m","usage":{"input":100,"output":20,"cacheRead":0,"cacheWrite":0,"cost":0},"stopReason":"tool_use","timestamp":1794749487980,"replayScope":"c0cb84f3433678dc52a3ac67e52c81a7250f5b86bff3e479de5551d69f1eb84e"}}
+{"type":"approval_request","id":"approval-1","callId":"call_0_y1yd4s","tool":"bash","args":{"command":"echo hi > made.txt"},"reason":"mode ask","cwd":"/tmp/sasacode-e2e-LoNbV0/project"}
+{"type":"control_error","error":"a control message is a JSON object"}
+{"type":"tool_start","call":{"type":"tool_call","id":"call_0_y1yd4s","name":"bash","input":{"command":"echo hi > made.txt"}},"summary":"echo hi > made.txt"}
+{"type":"tool_end","call":{"type":"tool_call","id":"call_0_y1yd4s","name":"bash","input":{"command":"echo hi > made.txt"}},"result":{"content":[{"type":"text","text":"[exit code 0]"}],"isError":false,"details":{"exitCode":0}}}
+{"type":"message_end","message":{"role":"tool","toolCallId":"call_0_y1yd4s","toolName":"bash","content":[{"type":"text","text":"[exit code 0]"}],"isError":false,"timestamp":1794749488054}}
+{"type":"turn_end","turn":1}
+{"type":"turn_start","turn":2}
+{"type":"message_start"}
+{"type":"message_update","event":{"type":"text_delta","index":0,"delta":"**完了**しました。"}}
+{"type":"message_update","event":{"type":"text_delta","index":0,"delta":"`made.txt` "}}
+{"type":"message_update","event":{"type":"text_delta","index":0,"delta":"を作成しています。"}}
+{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"**完了**しました。`made.txt` を作成しています。"}],"api":"openai-chat","provider":"fake","model":"m","usage":{"input":100,"output":20,"cacheRead":0,"cacheWrite":0,"cost":0},"stopReason":"stop","timestamp":1794749488056,"replayScope":"c0cb84f3433678dc52a3ac67e52c81a7250f5b86bff3e479de5551d69f1eb84e"}}
+{"type":"turn_end","turn":2}
+{"type":"agent_end","cause":"done"}

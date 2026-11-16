@@ -135,7 +135,7 @@ stdinは1行1件のJSON（JSON Lines）で読む。
 | `/language` | 画面の言語を切り替える（`ja` / `en`。引数なしなら一覧から選ぶ）。その場で切り替わり、`~/.sasacode/config.json` の `lang` にも保存する。切り替え前に表示された文はそのまま |
 | `/copy` | 直前の応答をクリップボードにコピー（pbcopy / wl-copy / xclip、なければ端末経由） |
 | `/permission` `/help` `/exit`（`/quit`） | 権限モード / ヘルプ / 終了 |
-| `/usage` `/goal` `/bg` `/reconnect` `/compact` `/mcp` `/skills` `/skill:<name>` `/presets` `/browsr` `/web-search` `/undo` | 同梱プラグインのコマンド |
+| `/usage` `/goal` `/bg` `/reconnect` `/compact` `/mcp` `/skills` `/skill:<name>` `/presets` `/browsr` `/web-search` `/undo` `/gui` | 同梱プラグインのコマンド |
 
 フッターには、モデル、推論の深さ、権限モード、コンテキストの使用量（`ctx 77.6k/256k (30%)`）、セッションIDと、プラグインのステータス（MCPの接続数、TODOの進捗など）を出す。30 秒以上かかった実行が終わると、端末のベルを鳴らす（別の作業をしていても気づけるように。`"tui": { "bell": false }` で止める）。
 
@@ -277,6 +277,7 @@ sasacode plugin install sasacode-plugin-jev-guard
 | `background-sessions` | `bg_start` ツール。ビルドやテストなど長いコマンドをバックグラウンドで動かし、終わったら終了コードと出力の末尾を会話に届ける（待機中なら自動で続きを始める）。bashと同じ権限ルールで判定する（`permissionsAs`）。sasacodeを終了してもジョブは続き、次の起動で結果を知らせる。`/bg` で一覧・詳細・停止。WindowsではGit Bashで動かす |
 | `auto-reconnect` | 実行がエラーで終わったとき、使用中のエンドポイントに届かなければ、復旧を待って作業を自動で再開する（既定は最大10分）。サーバーが一時的なエラー（429・5xx）を返し続けたときは、間を空けて最大4回再試行する。`/reconnect` で手動でも同じことをする |
 | `checkpoints` | write / editが変えたファイルの直前の内容をセッションに退避する。`/undo` で直近の1件から1つずつ戻せる（`/undo list` で一覧、`/undo <path>` で対象を絞る。bashの変更は対象外） |
+| `gui` | `/gui` コマンド。デスクトップGUI（`sasacode-gui`、開発中）をこのフォルダで開き、進行中の会話を読み込んだ状態にする。`sasacode-gui` はPATHから探す（`plugins.settings.gui.command` で場所を指定できる）。開いたあとは、TUIとGUIのどちらか一方で続ける（互いの発言は読み込まない） |
 | `image-attach` | 画像対応モデルにメッセージと画像を送る。スクリーンショットは ⌘V（届かないターミナルでは ctrl+v）、ファイルはターミナルへドラッグ&ドロップすると、その場で読み込んで入力欄に `[Image #1]` と出る。続けてメッセージを書いて送れば一緒に届く。ほかに `@パス`、`/image パス…`、`/image` だけならクリップボード（macOS、Windows、Linuxは `wl-paste` か `xclip`）。形式は中身で判定（PNG / JPEG / GIF / WebP）、1枚 5 MB・1メッセージ 8 枚まで。`plugins.settings.image-attach` の `dropPaths: false` で `@` なしのパスを無視 |
 | `image-slim` | 履歴の画像を、毎回のリクエストで小さく送る。プロバイダーがどのみち縮める大きさ（約105万画素、`maxPixels`）を超える画像は縦横比を保って縮め、透明度のないPNGで100 KB以上のものはJPEG（品質90）にする。ツールが返した画像はその場で縮めてセッションに残し、座標を元の大きさに戻す倍率をモデルに伝える。古い画像は送らず短い注記に置き換え、新しい4〜11枚だけを送る（`keepImages`、`dropStep`。8枚ずつまとめて省くので、その間はプロンプトの先頭が変わらずキャッシュが効く）。最後のメッセージの画像は必ず送り、画像の合計が8 MiBを超えればさらに省く。`/image-slim` で直近のリクエストの枚数を出す。`models` で効かせるモデルを絞る |
 | `diagnostics` | APIの診断（既定で無効）。`/diagnostics on` で、リクエストの成否・停止理由・トークン数などのメタデータだけを記録し、`show` で直近100件を見る。本文や秘密値は記録しない |
@@ -368,6 +369,8 @@ bun run build       # dist/sasacode（このマシン向け）。--all で全タ
 | `@sasacode/cli` | 引数、設定、キー、モデル一覧、プラグインの検出・読み込み・信頼確認、ヘッドレス実行 |
 | `@sasacode/mcp` / `@sasacode/skills` / `@sasacode/bundled` | MCPとSkillsのアダプタ、同梱プラグイン |
 | `@sasacode/host` | TUI・CLI・同梱プラグインが共有するもの：画面の言語（訳の表）、組み込みのプロバイダーと既知のモデル（価格・コンテキスト長）、セッションの索引 |
+
+デスクトップGUI（Rust、開発中）は `crates/` にある。`cargo run -p sasacode-gui -- <フォルダ>` で開き、入力ごとに `sasacode -p … --output jsonl --control stdio` をそのフォルダで動かす（`SASACODE_BIN` か `--sasacode` で実行ファイルを指定できる）。`cargo install --locked --path crates/sasacode-gui` で入れておけば、`sasacode gui [フォルダ]` と、TUIの `/gui`（進行中の会話を読み込んだ状態で開く）でも開ける。`cargo test` で、CLIの出力とセッションログを読めるかも確かめる。設計と段階は [docs/gui.md](docs/gui.md)。
 
 コア（ai・agent・plugin-api・tools）の行数の上限は 5,000 行で、1行は120桁まで（文字列だけの行を除く）。どちらかを超えるとテストが落ちる。いまの行数は `bun run improve` が出す。
 

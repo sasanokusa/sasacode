@@ -1,11 +1,12 @@
 #!/usr/bin/env -S bun --no-env-file --config=/dev/null
 // ^ the working directory is an untrusted repository: ignore its .env and bunfig.toml.
-import { join } from "node:path";
+import { statSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { PERMISSION_MODES } from "@sasacode/agent";
 import { BUILTIN_PROVIDERS, resolveLang, setLang, t } from "@sasacode/host";
 import { hideFromChildren } from "@sasacode/plugin-api";
-import { codexLogin, codexLogout, codexStatus, installRustxng } from "@sasacode/bundled";
+import { codexLogin, codexLogout, codexStatus, installRustxng, openGui, ownProgram } from "@sasacode/bundled";
 import { loadConfig, sasacodeHome } from "./config.ts";
 import { dropBlankKeys, ensureEnvFile, loadEnvFile } from "./env.ts";
 import { controlMode } from "./control.ts";
@@ -53,6 +54,7 @@ Subcommands:
   sasacode login [status|logout]    use a ChatGPT plan instead of an API key (openai-codex/… models)
   sasacode update [--check] [tag]   download and install the newest release (checksum-verified)
   sasacode web-search install [tag] install RustXNG for the web_search tool (checksum-verified)
+  sasacode gui [folder]             open the desktop GUI on a folder (needs sasacode-gui: docs/gui.md)
   -h, --help
   -v, --version`;
 
@@ -77,6 +79,7 @@ async function main(): Promise<number> {
   if (process.argv[2] === "login") return loginCommand(process.argv[3]);
   if (process.argv[2] === "update") return updateCommand(process.argv.slice(3));
   if (process.argv[2] === "web-search") return webSearchCommand(process.argv.slice(3));
+  if (process.argv[2] === "gui") return guiCommand(process.argv.slice(3));
   const { values, positionals } = parseArgs({
     allowPositionals: true,
     options: {
@@ -166,6 +169,17 @@ async function webSearchCommand(args: string[]): Promise<number> {
   if (args[0] !== "install") throw new Error(t('unknown web-search subcommand "{sub}" (install)', { sub: args[0] ?? "" }));
   const { path, version } = await installRustxng({ tag: args[1], log: (m) => console.log(m) });
   console.log(t("installed {version}: {path} (web_search uses it from the next request)", { version, path }));
+  return 0;
+}
+
+/** `sasacode gui [folder]`: the desktop window (sasacode-gui) on a folder, left running on its own. */
+async function guiCommand(args: string[]): Promise<number> {
+  if (args.length > 1 || args[0]?.startsWith("-")) throw new Error(t("usage: sasacode gui [folder]"));
+  const cwd = resolve(args[0] ?? ".");
+  if (!statSync(cwd, { throwIfNoEntry: false })?.isDirectory()) throw new Error(t("{path} is not a folder", { path: cwd }));
+  // The program to start is the user's to name: a project's config is not asked (it is not trusted here).
+  const settings = loadConfig(cwd).config.plugins?.settings?.gui as { command?: string } | undefined;
+  await openGui({ command: settings?.command, cwd, program: ownProgram() });
   return 0;
 }
 

@@ -12,3 +12,6 @@ bench/
 .DS_Store
 .claude/worktrees/
 .agents
+
+# Rust
+/target/

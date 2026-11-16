@@ -8,6 +8,7 @@ import checkpoints from "./checkpoints.ts";
 import compaction from "./compaction.ts";
 import diagnostics from "./diagnostics.ts";
 import goal from "./goal.ts";
+import gui from "./gui.ts";
 import imageAttach from "./image-attach.ts";
 import imageSlim from "./image-slim.ts";
 import loopGuard from "./loop-guard.ts";
@@ -35,6 +36,7 @@ export { formatResults, matchesQuery, privateAddress } from "./web-search.ts";
 export { stripLineNumbers } from "./write-guard.ts";
 export { omit as omitImages, probe as probeImage, shrink as shrinkImage } from "./image-slim.ts";
 export { installRustxng, managedRustxng, rustxngTarget } from "./rustxng-install.ts";
+export { guiArgs, openGui, ownProgram } from "./gui.ts";
 export { byDay, graph, planLines, readRecords } from "./usage.ts";
 export { codexLogin, codexLogout, codexStatus, readCodexAuth } from "./openai-codex/index.ts";
 
@@ -64,6 +66,7 @@ export const bundledPlugins: Record<string, Plugin> = {
   "background-sessions": backgroundSessions,
   "auto-reconnect": autoReconnect,
   checkpoints,
+  gui,
   "image-attach": imageAttach,
   // After image-attach: it shrinks the images that one adds.
   "image-slim": imageSlim,

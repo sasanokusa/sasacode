@@ -1,0 +1,16 @@
+# Rust crates of sasacode. The TypeScript packages under packages/ are still the CLI and its core;
+# these crates are the first Rust parts (the GUI and the types it shares with a future Rust core).
+[workspace]
+resolver = "3"
+members = ["crates/sasacode-protocol", "crates/sasacode-gui"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+repository = "https://github.com/sasanokusa/sasacode"
+rust-version = "1.88"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

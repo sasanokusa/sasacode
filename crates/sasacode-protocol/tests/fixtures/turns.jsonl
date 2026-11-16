@@ -1,0 +1,13 @@
+{"type":"session","id":"e8d29ff1","path":"/var/folders/4n/9pdgw8nx7t18h088dwcj6n000000gn/T/sasacode-e2e-rIYuo2/home/sessions/vate-var-folders-4n-9pdgw8nx7t18h088dwcj6n000000gn-T-sasacode-e2e-rIYuo2-project-495dca64/2026-11-16T01-19-33-205Z_e8d29ff1.jsonl"}
+{"type":"message_end","message":{"role":"user","content":[{"type":"text","text":"読んで"}],"timestamp":1794791973233}}
+{"type":"agent_start"}
+{"type":"turn_start","turn":1}
+{"type":"message_start"}
+{"type":"message_update","event":{"type":"toolcall_start","index":0,"id":"call_0_7latoj","name":"read"}}
+{"type":"message_update","event":{"type":"toolcall_delta","index":0,"delta":"{\"path\":\"a.txt\"}"}}
+{"type":"message_end","message":{"role":"assistant","content":[{"type":"tool_call","id":"call_0_7latoj","name":"read","input":{"path":"a.txt"}}],"api":"openai-chat","provider":"fake","model":"m","usage":{"input":100,"output":20,"cacheRead":0,"cacheWrite":0,"cost":0},"stopReason":"tool_use","timestamp":1794791973236,"replayScope":"5fc48472b4e8289f842a55a4dc70a407f124f59566802654beb7b253aad6f1ca"}}
+{"type":"tool_start","call":{"type":"tool_call","id":"call_0_7latoj","name":"read","input":{"path":"a.txt"}},"summary":"a.txt"}
+{"type":"tool_end","call":{"type":"tool_call","id":"call_0_7latoj","name":"read","input":{"path":"a.txt"}},"result":{"content":[{"type":"text","text":"     1\ta"}]}}
+{"type":"message_end","message":{"role":"tool","toolCallId":"call_0_7latoj","toolName":"read","content":[{"type":"text","text":"     1\ta"}],"isError":false,"timestamp":1794791973244}}
+{"type":"turn_end","turn":1}
+{"type":"agent_end","cause":"max_turns"}
