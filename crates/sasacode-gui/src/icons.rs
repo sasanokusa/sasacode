@@ -39,10 +39,6 @@ pub enum Icon {
     Gear,
     Trash,
     Tag,
-    Play,
-    Eye,
-    Clock,
-    Columns,
 }
 
 impl Icon {
@@ -94,12 +90,6 @@ impl Icon {
             }
             Icon::Trash => r#"<path d="M2.5 4.5h11M6 4.5V3h4v1.5M4 4.5l.7 9h6.6l.7-9M6.8 7v4.5M9.2 7v4.5"/>"#,
             Icon::Tag => r#"<path d="M2.5 2.5h5.2l6 6-5.2 5.2-6-6zM5.3 5.3h.1"/>"#,
-            Icon::Play => r#"<path d="M5 3.5v9l7-4.5z"/>"#,
-            Icon::Eye => {
-                r#"<path d="M1.5 8S4 3.5 8 3.5 14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8z"/><circle cx="8" cy="8" r="2"/>"#
-            }
-            Icon::Clock => r#"<circle cx="8" cy="8" r="5.5"/><path d="M8 5v3.2l2.2 1.3"/>"#,
-            Icon::Columns => r#"<rect x="2" y="3" width="12" height="10" rx="1.5"/><path d="M8 3v10"/>"#,
         }
     }
 

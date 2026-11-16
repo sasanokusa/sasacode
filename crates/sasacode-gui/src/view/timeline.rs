@@ -827,6 +827,14 @@ impl<'a> markdown::Viewer<'a, Msg> for Reply<'a> {
     ) -> El<'a> {
         let t = self.app.t;
         let code = code.trim_end();
+        // Math and Mermaid are drawn; what cannot be, as while it streams, is shown as written.
+        let lang = language.map(str::to_ascii_lowercase);
+        let math = lang.as_deref().is_some_and(|l| crate::figure::MATH.contains(&l));
+        if (math || lang.as_deref() == Some("mermaid"))
+            && let Ok(figure) = crate::figure::figure(math, code)
+        {
+            return self.figure(language, code, math, figure);
+        }
         let body = scrollable(
             container(
                 text(code)
@@ -866,6 +874,69 @@ impl<'a> markdown::Viewer<'a, Msg> for Reply<'a> {
             .width(Length::Fill)
             .style(t.boxed(t.inset, t.inset, RADIUS))
             .into()
+    }
+}
+
+impl Reply<'_> {
+    /// Math, in the color of the text around it; a diagram, on the light ground it was drawn for.
+    /// Wider than the reply, it scrolls sideways, as code does.
+    fn figure<'a>(
+        &self,
+        language: Option<&'a str>,
+        code: &'a str,
+        math: bool,
+        figure: crate::figure::Figure,
+    ) -> El<'a> {
+        let t = self.app.t;
+        let picture = iced::widget::svg(figure.handle)
+            .width(Length::Fixed(figure.width))
+            .height(Length::Fixed(figure.height));
+        let picture: El<'a> = if math {
+            let fg = t.fg;
+            picture
+                .style(move |_, _| iced::widget::svg::Style { color: Some(fg) })
+                .into()
+        } else {
+            container(picture)
+                .padding(8)
+                .style(t.boxed(Color::WHITE, t.line, RADIUS))
+                .into()
+        };
+        let body = scrollable(container(picture).padding([6, 10]))
+            .direction(scrollable::Direction::Horizontal(
+                scrollable::Scrollbar::new().width(6).scroller_width(6).margin(1),
+            ))
+            .style(t.scroll());
+        let mut block = column![];
+        if self.copy && !math {
+            block = block.push(
+                row![
+                    text(language.unwrap_or_default())
+                        .size(11.5)
+                        .font(MONO)
+                        .color(t.fg_3)
+                        .wrapping(text::Wrapping::None),
+                    Space::new().width(Length::Fill),
+                    copy_button(self.app, Clip::Text(code.to_owned()), self.app.s.copy),
+                ]
+                .align_y(Alignment::Center)
+                .padding(Padding {
+                    top: 2.0,
+                    right: 2.0,
+                    bottom: 0.0,
+                    left: 10.0,
+                }),
+            );
+        }
+        let block = block.push(body).width(Length::Fill);
+        if math {
+            block.into()
+        } else {
+            container(block)
+                .width(Length::Fill)
+                .style(t.boxed(t.inset, t.inset, RADIUS))
+                .into()
+        }
     }
 }
 

@@ -8,6 +8,7 @@ mod diff;
 #[cfg(test)]
 mod drive;
 mod export;
+mod figure;
 mod fork;
 mod git;
 mod i18n;

@@ -104,13 +104,18 @@ impl Markdown {
     pub fn new(text: &str) -> Self {
         Self {
             raw: text.to_owned(),
-            content: markdown::Content::parse(text),
+            content: markdown::Content::parse(&crate::figure::prepare(text)),
         }
     }
 
+    /// More of it as it streams. With math in it the whole is parsed again: where its math ends
+    /// changes what came before.
     pub fn push(&mut self, delta: &str) {
         self.raw.push_str(delta);
-        self.content.push_str(delta);
+        match crate::figure::prepare(&self.raw) {
+            std::borrow::Cow::Borrowed(_) => self.content.push_str(delta),
+            std::borrow::Cow::Owned(prepared) => self.content = markdown::Content::parse(&prepared),
+        }
     }
 }
 

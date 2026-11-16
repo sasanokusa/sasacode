@@ -412,3 +412,29 @@ fn type_in(app: &mut App, text: &str) {
     app.dismissed = false;
     app.pick = 0;
 }
+
+#[test]
+#[ignore = "writes pictures to look at; run it by name"]
+fn snapshots_of_figures() {
+    let mut app = window("ja");
+    let now = Instant::now();
+    app.chat.session = Some("0a1b2c3d-0".into());
+    app.chat.transcript.send("式と図で説明して", now);
+    let reply = "誤差は $\\sigma^2 = \\frac{1}{n}\\sum_i (x_i - \\mu)^2$ で、全体は\n\n$$\n\\int_0^\\infty e^{-x^2}\\,dx = \\frac{\\sqrt{\\pi}}{2}\n$$\n\n流れはこうです。\n\n```mermaid\nflowchart LR\n  A[入力] --> B{判定}\n  B -->|はい| C[送る]\n  B -->|いいえ| D[戻す]\n```\n";
+    let event = serde_json::json!({
+        "type": "message_end",
+        "message": {"role": "assistant", "content": [{"type": "text", "text": reply}],
+            "provider": "fake", "model": "m", "usage": {"input": 10, "output": 10}, "stopReason": "stop"}
+    });
+    app.chat
+        .transcript
+        .apply(&parse_event(&event.to_string()).unwrap(), now + Duration::from_secs(1));
+    app.chat.transcript.apply(
+        &parse_event(r#"{"type":"agent_end","cause":"done"}"#).unwrap(),
+        now + Duration::from_secs(2),
+    );
+    app.now = now + Duration::from_secs(2);
+    shoot(&app, "30-figures", WIDE);
+    app.set_dark(true);
+    shoot(&app, "31-figures-dark", WIDE);
+}
