@@ -194,6 +194,19 @@ fn with_the_steps_hidden_a_reply_cut_short_still_says_why() {
     app.prefs.steps = true;
     app.chat.folds.insert(0, true);
     assert!(says(&app, "the stream ended before the reply was complete"));
+
+    // Answered after all, the exchange ended well: the error is one of the hidden steps again.
+    let mut lines = lines.to_vec();
+    lines.push(serde_json::json!({"type":"message","message":{"role":"assistant","content":[{"type":"text","text":"最後まで答えました"}],"provider":"p","model":"m","usage":{"input":1,"output":1},"stopReason":"stop","timestamp":3}}));
+    let entries: Vec<sasacode_protocol::SessionEntry> = lines
+        .iter()
+        .map(|l| serde_json::from_value(l.clone()).unwrap())
+        .collect();
+    app.chat.transcript = crate::transcript::Transcript::from_entries(&entries);
+    app.chat.folds.clear();
+    app.prefs.steps = false;
+    assert!(app.chat.transcript.exchanges[0].answer().is_some());
+    assert!(!says(&app, "the stream ended before the reply was complete"));
 }
 
 #[test]

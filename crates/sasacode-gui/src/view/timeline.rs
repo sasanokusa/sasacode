@@ -229,9 +229,9 @@ fn exchange<'a>(app: &'a App, i: usize, ex: &'a Exchange) -> El<'a> {
             );
         }
     }
-    if !app.prefs.steps {
+    if !app.prefs.steps && answer.is_none() {
         // What went wrong is how it ended, shown with the steps hidden too: read from a log, an
-        // exchange has no end of its run to say it.
+        // exchange has no end of its run to say it. One that was answered after all ended well.
         for (j, step) in work.iter().enumerate() {
             if let Step::Note(note @ Note::Error(_)) = step {
                 col = col.push(note_row(app, i, j, note));
