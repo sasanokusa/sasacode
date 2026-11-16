@@ -229,6 +229,15 @@ fn exchange<'a>(app: &'a App, i: usize, ex: &'a Exchange) -> El<'a> {
             );
         }
     }
+    if !app.prefs.steps {
+        // What went wrong is how it ended, shown with the steps hidden too: read from a log, an
+        // exchange has no end of its run to say it.
+        for (j, step) in work.iter().enumerate() {
+            if let Step::Note(note @ Note::Error(_)) = step {
+                col = col.push(note_row(app, i, j, note));
+            }
+        }
+    }
     if let Some(Step::Text(md)) = answer.map(|a| &ex.steps[a]) {
         col = col.push(reply(app, md, true));
     }

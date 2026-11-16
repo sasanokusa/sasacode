@@ -145,9 +145,9 @@ fn approval_card<'a>(app: &'a App, approval: &'a Approval) -> El<'a> {
     let waiting = app.chat.transcript.pending_approvals();
 
     let chord = if s.ja {
-        format!("{MOD}↵で{}", s.h_allow)
+        format!("{}で{}", chord_keys(app), s.h_allow)
     } else {
-        format!("{MOD}↵ to {}", s.h_allow)
+        format!("{} to {}", chord_keys(app), s.h_allow)
     };
     let mut head = row![
         icon(Icon::Alert, 15.0, t.warn),
@@ -309,12 +309,11 @@ fn composer(app: &App) -> El<'_> {
                 Key::Named(Named::ArrowUp) if recall_up && plain => Some(Binding::Custom(Msg::Recall(-1))),
                 Key::Named(Named::ArrowDown) if recall_down && plain => Some(Binding::Custom(Msg::Recall(1))),
                 // Enter sends and Shift+Enter breaks the line; or, as set, Enter breaks it and the
-                // chord sends, the chord's own work moving to the chord with Shift. The chords work
-                // from in here too.
+                // chord sends, the chord's own work moving to the chord with Shift. The chords
+                // never get here: the window takes them first (`chords`, `Msg::CommandEnter`).
                 Key::Named(Named::Enter) if enter_sends && m.shift() && !m.command() => Some(Binding::Enter),
                 Key::Named(Named::Enter) if enter_sends && !m.command() => Some(Binding::Custom(Msg::Send)),
                 Key::Named(Named::Enter) if !enter_sends && !m.command() => Some(Binding::Enter),
-                Key::Named(Named::Enter) if !enter_sends && !m.shift() => Some(Binding::Custom(Msg::Send)),
                 // A paste with no text on the clipboard takes its image.
                 Key::Character("v") if m.command() && !m.shift() && !m.alt() => Some(Binding::Custom(Msg::Paste)),
                 _ => match shortcut(&press.key, press.modifiers) {
@@ -457,6 +456,15 @@ fn composer(app: &App) -> El<'_> {
 }
 
 /// What the keys do right now.
+/// The chord's keys as Enter was set: ⌘↵, or ⌘⇧↵ where ⌘↵ sends.
+pub(crate) fn chord_keys(app: &App) -> String {
+    if app.prefs.enter_sends {
+        format!("{MOD}↵")
+    } else {
+        format!("{MOD}⇧↵")
+    }
+}
+
 fn hints(app: &App) -> El<'_> {
     let (t, s) = (app.t, app.s);
     let key = |keys: String, what: &'static str| -> El<'_> {
@@ -470,11 +478,12 @@ fn hints(app: &App) -> El<'_> {
     };
     let (waiting, running) = (app.chat.transcript.pending_approval().is_some(), app.running());
     // As Enter was set: it sends, or it breaks the line and the chord sends.
-    let (send, chord, newline) = if app.prefs.enter_sends {
-        ("↵".to_owned(), format!("{MOD}↵"), "⇧↵".to_owned())
+    let (send, newline) = if app.prefs.enter_sends {
+        ("↵".to_owned(), "⇧↵".to_owned())
     } else {
-        (format!("{MOD}↵"), format!("{MOD}⇧↵"), "↵".to_owned())
+        (format!("{MOD}↵"), "↵".to_owned())
     };
+    let chord = chord_keys(app);
     let mut keys = Vec::new();
     if waiting {
         keys.push(key(chord, s.h_allow));

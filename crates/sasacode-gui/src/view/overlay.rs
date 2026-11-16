@@ -128,14 +128,7 @@ fn keys(app: &App) -> El<'_> {
     let mut rows: Vec<(String, String)> = vec![
         (send, s.h_send.to_owned()),
         (newline, s.h_nl.to_owned()),
-        (
-            if app.prefs.enter_sends {
-                format!("{MOD}↵")
-            } else {
-                format!("{MOD}⇧↵")
-            },
-            format!("{} / {}", s.h_allow, s.h_now),
-        ),
+        (super::dock::chord_keys(app), format!("{} / {}", s.h_allow, s.h_now)),
         ("Esc".into(), s.stop.to_owned()),
         ("↑ ↓".into(), s.k_history.to_owned()),
         ("@".into(), s.c_mention.to_owned()),

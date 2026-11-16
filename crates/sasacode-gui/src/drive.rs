@@ -90,7 +90,7 @@ fn the_buttons_of_the_card_answer_the_approval_that_waits() {
         assert_eq!(answer_of(&app, &id), Some(answer));
         // Answered once: nothing waits, and no other key or click can answer it again.
         assert!(app.chat.transcript.pending_approval().is_none());
-        let _ = app.update(Msg::Chord);
+        let _ = app.update(Msg::CommandEnter { shift: false });
         assert!(written.try_recv().is_err());
     }
 }
@@ -118,7 +118,7 @@ fn a_reply_typed_while_an_approval_waits_denies_it_and_says_why() {
 #[test]
 fn the_chord_allows_only_when_nothing_is_typed() {
     let (mut app, mut written, id) = waiting();
-    let _ = app.update(Msg::Chord);
+    let _ = app.update(Msg::CommandEnter { shift: false });
     assert!(matches!(
         written.try_recv().ok(),
         Some(ControlMessage::Approval {
@@ -131,7 +131,7 @@ fn the_chord_allows_only_when_nothing_is_typed() {
     // With a reply typed it is the reply that counts: a denial with its reason.
     let (mut app, mut written, id) = waiting();
     app.chat.editor = text_editor::Content::with_text("先にテストを書いて");
-    let _ = app.update(Msg::Chord);
+    let _ = app.update(Msg::CommandEnter { shift: false });
     assert_eq!(
         written.try_recv().ok(),
         Some(ControlMessage::Approval {
@@ -142,12 +142,66 @@ fn the_chord_allows_only_when_nothing_is_typed() {
     );
 }
 
+/// Whether the window as it is drawn has `label` in it.
+fn says(app: &App, label: &str) -> bool {
+    let settings = Settings {
+        default_font: crate::view::UI,
+        ..Settings::default()
+    };
+    let mut ui = Simulator::with_size(settings, Size::new(app.width, 1400.0), app.view());
+    ui.find(label).is_ok()
+}
+
+/// With Enter set to break the line the chord is ⌘⇧↵, and the card says so: it said ⌘↵, which
+/// sends there, and an empty ⌘↵ allows nothing.
+#[test]
+fn with_enter_breaking_the_line_the_card_names_the_chord_that_allows() {
+    let (mut app, mut written, id) = waiting();
+    app.prefs.enter_sends = false;
+    assert!(says(&app, &format!("{}⇧↵で許可", crate::view::MOD)));
+    assert!(!says(&app, &format!("{}↵で許可", crate::view::MOD)));
+    let _ = app.update(Msg::CommandEnter { shift: false });
+    assert!(written.try_recv().is_err());
+    let _ = app.update(Msg::CommandEnter { shift: true });
+    assert!(matches!(
+        written.try_recv().ok(),
+        Some(ControlMessage::Approval {
+            decision: Decision::Allow,
+            ..
+        })
+    ));
+    assert_eq!(answer_of(&app, &id), Some(Answer::Allowed));
+}
+
+/// A reply that broke off says why with the steps hidden too. Read from a log, the exchange has no
+/// end of its run, and its error was one of the hidden steps: nothing was shown under the message.
+#[test]
+fn with_the_steps_hidden_a_reply_cut_short_still_says_why() {
+    let mut app = window("ja");
+    app.prefs.steps = false;
+    let lines = [
+        serde_json::json!({"type":"session","version":3,"id":"aaaa0000","cwd":"/w","createdAt":"2026-01-01T00:00:00.000Z"}),
+        serde_json::json!({"type":"message","message":{"role":"user","content":[{"type":"text","text":"ゆっくり答えて"}],"timestamp":1}}),
+        serde_json::json!({"type":"message","message":{"role":"assistant","content":[{"type":"text","text":"ゆっくり"}],"provider":"p","model":"m","usage":{"input":1,"output":1},"stopReason":"error","errorMessage":"the stream ended before the reply was complete","timestamp":2}}),
+    ];
+    let entries: Vec<sasacode_protocol::SessionEntry> = lines
+        .iter()
+        .map(|l| serde_json::from_value(l.clone()).unwrap())
+        .collect();
+    app.chat.transcript = crate::transcript::Transcript::from_entries(&entries);
+    assert!(says(&app, "the stream ended before the reply was complete"));
+    // With the steps shown it is among them, opened.
+    app.prefs.steps = true;
+    app.chat.folds.insert(0, true);
+    assert!(says(&app, "the stream ended before the reply was complete"));
+}
+
 #[test]
 fn no_bare_key_is_a_shortcut() {
     let none = Modifiers::empty();
     assert!(matches!(
         shortcut(&Key::Named(Named::Enter), Modifiers::COMMAND),
-        Some(Msg::Chord)
+        Some(Msg::CommandEnter { shift: false })
     ));
     assert!(shortcut(&Key::Named(Named::Enter), none).is_none());
     for letter in ["y", "n", "a", "b", "i"] {
@@ -395,22 +449,32 @@ fn one_esc_in_the_search_of_the_conversation_puts_it_away() {
     assert!(app.find_in.is_some());
     let _ = app.update(Msg::Stop);
     assert_eq!(app.find_in, None);
+
+    // Gone to the list's search with ⌘K, nothing typed yet: an Esc there is the search's.
+    let _ = app.update(Msg::Command(Command::Find));
+    let _ = app.update(Msg::Find);
+    let _ = app.update(Msg::Escaped);
+    assert!(app.find_in.is_some());
 }
 
 /// ⌘ and `key`, pressed and let go, as macOS sends them: the key comes with its letter as text.
 fn command_chord(letter: &str) -> Vec<iced::Event> {
+    pressed(Key::Character(letter.into()), Modifiers::COMMAND, letter)
+}
+
+/// `key` pressed and let go with `modifiers` held, coming with `text`.
+fn pressed(key: Key, modifiers: Modifiers, text: &str) -> Vec<iced::Event> {
     use iced::keyboard::{Event as K, Location, key::NativeCode, key::Physical};
-    let key = Key::Character(letter.into());
     let physical = Physical::Unidentified(NativeCode::Unidentified);
     vec![
-        iced::Event::Keyboard(K::ModifiersChanged(Modifiers::COMMAND)),
+        iced::Event::Keyboard(K::ModifiersChanged(modifiers)),
         iced::Event::Keyboard(K::KeyPressed {
             key: key.clone(),
             modified_key: key.clone(),
             physical_key: physical,
             location: Location::Standard,
-            modifiers: Modifiers::COMMAND,
-            text: Some(letter.into()),
+            modifiers,
+            text: Some(text.into()),
             repeat: false,
         }),
         iced::Event::Keyboard(K::KeyReleased {
@@ -418,10 +482,52 @@ fn command_chord(letter: &str) -> Vec<iced::Event> {
             modified_key: key,
             physical_key: physical,
             location: Location::Standard,
-            modifiers: Modifiers::COMMAND,
+            modifiers,
         }),
         iced::Event::Keyboard(K::ModifiersChanged(Modifiers::empty())),
     ]
+}
+
+/// With Enter set to break the line, ⌘↵ in the input adds to the run that works, and only ⌘⇧↵
+/// stops it and sends now. ⌘↵ used to be taken by the window as the chord: it stopped the run.
+#[test]
+fn with_enter_breaking_the_line_the_command_enter_adds_to_the_run_and_does_not_stop_it() {
+    let mut app = window("ja");
+    app.prefs.enter_sends = false;
+    play(&mut app, "stop.jsonl", "しばらく待って", |e| {
+        matches!(e, Event::ToolEnd { .. })
+    });
+    let mut written = app.pretend_running();
+    let enter = || Key::Named(Named::Enter);
+    act(&mut app, |ui| {
+        ui.click(iced::widget::Id::from(INPUT)).expect("the input is there");
+        ui.typewrite("一行目");
+        ui.simulate(pressed(enter(), Modifiers::empty(), "\r"));
+        ui.typewrite("二行目");
+    });
+    // Enter broke the line and sent nothing.
+    assert!(written.try_recv().is_err());
+    assert_eq!(app.chat.editor.text().trim(), "一行目\n二行目");
+    act(&mut app, |ui| {
+        ui.click(iced::widget::Id::from(INPUT)).expect("the input is there");
+        ui.simulate(pressed(enter(), Modifiers::COMMAND, "\r"));
+    });
+    assert_eq!(
+        written.try_recv().ok(),
+        Some(ControlMessage::Message {
+            text: "一行目\n二行目".into()
+        })
+    );
+    assert!(written.try_recv().is_err(), "the run was stopped");
+    assert!(app.running());
+
+    act(&mut app, |ui| {
+        ui.click(iced::widget::Id::from(INPUT)).expect("the input is there");
+        ui.typewrite("今すぐこれ");
+        ui.simulate(pressed(enter(), Modifiers::COMMAND | Modifiers::SHIFT, "\r"));
+    });
+    assert_eq!(written.try_recv().ok(), Some(ControlMessage::Abort));
+    assert_eq!(app.chat.next.as_deref(), Some("今すぐこれ"));
 }
 
 #[test]

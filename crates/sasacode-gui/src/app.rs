@@ -314,9 +314,11 @@ pub enum Msg {
     Edit(text_editor::Action),
     /// Enter in the input, or its button.
     Send,
-    /// The chord: allow the waiting approval when the input is empty, else stop what runs and
-    /// send the input next.
-    Chord,
+    /// ⌘↵ or ⌘⇧↵: the chord, which allows the waiting approval when the input is empty, else stops
+    /// what runs and sends the input next; or, with Enter set to break the line, ⌘↵ sends.
+    CommandEnter {
+        shift: bool,
+    },
     Stop,
     Continue,
     /// What a conversation's run said, by the conversation's key.
@@ -739,7 +741,13 @@ impl App {
         // Which field has the keyboard is not asked of iced; what was last typed in tells.
         match &msg {
             Msg::FindInText(_) => self.find_held = true,
-            Msg::Edit(_) | Msg::Model(_) | Msg::Filter(_) | Msg::CommitText(_) | Msg::FocusInput => {
+            Msg::Edit(_)
+            | Msg::Model(_)
+            | Msg::Filter(_)
+            | Msg::CommitText(_)
+            | Msg::FocusInput
+            | Msg::Find
+            | Msg::Command(Command::Model) => {
                 self.find_held = false;
             }
             _ => {}
@@ -751,25 +759,13 @@ impl App {
         match msg {
             Msg::Edit(action) => return self.edit(action),
             Msg::Send => return self.send(),
-            Msg::Chord => {
-                let empty = self.chat.editor.text().trim().is_empty();
-                if self.chat.transcript.pending_approval().is_some() {
-                    // A reply denies; only the empty chord allows.
-                    return if empty {
-                        self.answer(Decision::Allow)
-                    } else {
-                        self.send()
-                    };
-                }
-                if empty {
-                    return Task::none();
-                }
-                if self.running() {
-                    self.control(ControlMessage::Abort);
-                    self.queue_next();
-                    return Task::none();
-                }
-                return self.send();
+            // ⌘↵ is the chord; with Enter set to break the line it sends, and the chord is ⌘⇧↵.
+            Msg::CommandEnter { shift } => {
+                return if self.prefs.enter_sends || shift {
+                    self.chord()
+                } else {
+                    self.send()
+                };
             }
             Msg::Stop => {
                 if self.running() {
@@ -1354,6 +1350,29 @@ impl App {
         }
     }
 
+    /// Allows the waiting approval when nothing is typed; else stops what runs and sends the input
+    /// next.
+    fn chord(&mut self) -> Task<Msg> {
+        let empty = self.chat.editor.text().trim().is_empty();
+        if self.chat.transcript.pending_approval().is_some() {
+            // A reply denies; only the empty chord allows.
+            return if empty {
+                self.answer(Decision::Allow)
+            } else {
+                self.send()
+            };
+        }
+        if empty {
+            return Task::none();
+        }
+        if self.running() {
+            self.control(ControlMessage::Abort);
+            self.queue_next();
+            return Task::none();
+        }
+        self.send()
+    }
+
     fn answer(&mut self, decision: Decision) -> Task<Msg> {
         if let Some(approval) = self.chat.transcript.pending_approval() {
             let id = approval.id.clone();
@@ -1600,7 +1619,9 @@ pub(crate) fn shortcut(key: &Key, modifiers: keyboard::Modifiers) -> Option<Msg>
         return None;
     }
     match key.as_ref() {
-        Key::Named(Named::Enter) => Some(Msg::Chord),
+        Key::Named(Named::Enter) => Some(Msg::CommandEnter {
+            shift: modifiers.shift(),
+        }),
         Key::Character("b") => Some(Msg::ToggleSide),
         Key::Character("i") => Some(Msg::ToggleInspector),
         Key::Character("n") if modifiers.shift() => Some(Msg::Command(Command::Window)),
