@@ -601,3 +601,126 @@ fn in_a_narrow_window_the_two_side_panels_take_turns() {
     app.width = 1280.0;
     assert!(app.insp && app.shows_side());
 }
+
+/// What the input holds, all of it.
+fn typed(app: &App) -> String {
+    app.chat.editor.text().trim_end_matches('\n').to_owned()
+}
+
+#[test]
+fn an_at_sign_offers_files_and_tab_takes_the_one_chosen() {
+    let mut app = window("ja");
+    app.files = ["src/client.ts", "src/client.test.ts", "docs/clients.md", "README.md"]
+        .map(String::from)
+        .to_vec();
+    app.files_asked = true;
+    act(&mut app, |ui| {
+        ui.click(iced::widget::Id::from(INPUT)).expect("the input is there");
+        ui.typewrite("見て @cli");
+    });
+    assert!(app.offer().is_some(), "{:?}", typed(&app));
+    // The second of what is offered, chosen with the arrow and taken with Tab.
+    act(&mut app, |ui| {
+        ui.click(iced::widget::Id::from(INPUT)).expect("the input is there");
+        ui.tap_key(Named::ArrowDown);
+    });
+    assert_eq!(app.pick, 1);
+    act(&mut app, |ui| {
+        ui.click(iced::widget::Id::from(INPUT)).expect("the input is there");
+        ui.tap_key(Named::Tab);
+    });
+    assert_eq!(typed(&app), "見て @docs/clients.md ");
+    assert!(app.offer().is_none());
+}
+
+#[test]
+fn a_slash_command_is_run_from_the_input_by_enter() {
+    let mut app = window("ja");
+    assert!(app.prefs.steps);
+    act(&mut app, |ui| {
+        ui.click(iced::widget::Id::from(INPUT)).expect("the input is there");
+        ui.typewrite("/ste");
+    });
+    act(&mut app, |ui| {
+        ui.click(iced::widget::Id::from(INPUT)).expect("the input is there");
+        ui.tap_key(Named::Enter);
+    });
+    // Run, not sent: the input is empty again and no run started.
+    assert!(!app.prefs.steps);
+    assert_eq!(typed(&app), "");
+    assert!(app.chat.transcript.exchanges.is_empty());
+}
+
+#[test]
+fn the_up_arrow_in_an_empty_input_brings_back_what_was_sent() {
+    let mut app = window("ja");
+    app.history = vec!["一つ目".into(), "二つ目".into()];
+    for want in ["二つ目", "一つ目"] {
+        act(&mut app, |ui| {
+            ui.click(iced::widget::Id::from(INPUT)).expect("the input is there");
+            ui.tap_key(Named::ArrowUp);
+        });
+        assert_eq!(typed(&app), want);
+    }
+}
+
+#[test]
+fn the_palette_finds_what_is_typed_and_runs_it_by_enter() {
+    let mut app = window("ja");
+    let _ = app.update(Msg::Show(Some(crate::overlay::Overlay::palette())));
+    act(&mut app, |ui| {
+        ui.click(iced::widget::Id::from(crate::app::PALETTE))
+            .expect("the palette's field is there");
+        ui.typewrite("ダーク");
+    });
+    act(&mut app, |ui| {
+        ui.click(iced::widget::Id::from(crate::app::PALETTE))
+            .expect("the palette's field is there");
+        ui.tap_key(Named::Enter);
+    });
+    assert_eq!(app.prefs.dark, Some(true));
+    assert!(app.overlay.is_none());
+}
+
+#[test]
+fn a_file_is_staged_by_its_button_and_discarded_only_on_the_second_press() {
+    let mut app = window("ja");
+    let s = app.s;
+    app.git = crate::git::Status {
+        repo: true,
+        top: app.cwd.clone(),
+        branch: Some("main".into()),
+        files: vec![crate::git::File {
+            path: "a.txt".into(),
+            index: ' ',
+            tree: 'M',
+            diff: crate::diff::Diff::parse("@@ -1 +1 @@\n-a\n+b\n"),
+        }],
+        ..Default::default()
+    };
+    app.tab = Tab::Git;
+    let pressed = |app: &App, label: &str| -> Vec<Msg> {
+        let settings = Settings {
+            default_font: crate::view::UI,
+            ..Settings::default()
+        };
+        let mut ui = Simulator::with_size(settings, Size::new(app.width, 1400.0), app.view());
+        ui.click(label).expect("the button is there");
+        ui.into_messages().collect()
+    };
+    let stage = pressed(&app, s.stage);
+    assert!(
+        matches!(&stage[..], [Msg::GitDo(crate::git::Op::Stage(p))] if p == "a.txt"),
+        "{stage:?}"
+    );
+    // Discarding: the first press only asks again.
+    for msg in pressed(&app, s.discard) {
+        let _ = app.update(msg);
+    }
+    assert_eq!(app.confirm_discard.as_deref(), Some("a.txt"));
+    assert!(!app.git_busy);
+    for msg in pressed(&app, s.discard_sure) {
+        let _ = app.update(msg);
+    }
+    assert!(app.confirm_discard.is_none() && app.git_busy);
+}
