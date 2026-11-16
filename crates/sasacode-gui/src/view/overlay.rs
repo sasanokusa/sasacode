@@ -146,20 +146,27 @@ fn keys(app: &App) -> El<'_> {
             .into_iter()
             .filter_map(|e| Some((e.keys.filter(|k| k.starts_with(MOD))?, e.label))),
     );
-    let mut list = column![].spacing(4);
+    let mut list = column![]
+        .spacing(4)
+        .width(Length::Fill)
+        .padding(iced::Padding::ZERO.right(14));
     for (keys, what) in rows {
         list = list.push(
             row![
                 text(keys).size(12).font(MONO).color(t.fg_2).width(110),
-                text(what).size(13).color(t.fg),
+                text(what).size(13).color(t.fg).width(Length::Fill),
             ]
             .spacing(12)
+            .width(Length::Fill)
             .align_y(Alignment::Center),
         );
     }
     let body = column![
         title(app, s.keys_title),
-        scrollable(list).height(Length::Shrink).style(t.scroll()),
+        scrollable(list)
+            .width(Length::Fill)
+            .height(Length::Shrink)
+            .style(t.scroll()),
     ]
     .spacing(12);
     container(body).max_height(560).into()

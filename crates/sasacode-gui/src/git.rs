@@ -160,7 +160,8 @@ fn file_diff(top: &Path, path: &str, untracked: bool) -> Diff {
 
 /// The line number in the new file of each line of `diff`, where it has one.
 pub fn numbers(diff: &Diff) -> Vec<Option<usize>> {
-    let mut next = 0usize;
+    // A new file's diff has no hunk line to say where it starts: at its first line.
+    let mut next = 1usize;
     diff.lines
         .iter()
         .map(|line| match line.sign {
@@ -257,6 +258,7 @@ mod tests {
         assert_eq!((a.diff.added, a.diff.removed), (2, 1));
         assert_eq!(numbers(&a.diff), vec![None, Some(1), None, Some(2), Some(3)]);
         assert!(s.files[1].untracked() && s.files[1].diff.added == 1);
+        assert_eq!(numbers(&s.files[1].diff), vec![Some(1)]);
 
         // Staged, then unstaged; discarded, the new file is gone.
         apply(&dir, &Op::Stage("a.txt".into()), None).unwrap();

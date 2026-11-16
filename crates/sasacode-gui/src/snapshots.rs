@@ -13,9 +13,11 @@ use iced::{Settings, Size};
 use iced_test::Simulator;
 use sasacode_protocol::{Event, SessionEntry, SessionSummary, parse_event};
 
-use crate::app::{App, Clip, Msg, Options, Tab};
+use crate::app::{App, Chat, Clip, Msg, Options, Tab};
+use crate::diff::Diff;
 use crate::i18n::Strings;
 use crate::layout::Layout;
+use crate::overlay::Overlay;
 use crate::transcript::Transcript;
 
 pub(crate) fn fixture(name: &str) -> String {
@@ -279,4 +281,116 @@ fn snapshots() {
         app.width = size.0;
         shoot(&app, name, size);
     }
+
+    // What opens over a conversation: the command palette, as opened and as typed in, the
+    // settings and the list of keys.
+    let mut app = window("ja");
+    play(&mut app, "work.jsonl", "再試行を指数バックオフにして", never);
+    app.overlay = Some(Overlay::palette());
+    shoot(&app, "21-palette", WIDE);
+    app.overlay = Some(Overlay::Palette {
+        query: "テーマ".into(),
+        at: 1,
+    });
+    shoot(&app, "22-palette-found", WIDE);
+    app.overlay = Some(Overlay::Settings);
+    shoot(&app, "23-settings", WIDE);
+    app.overlay = Some(Overlay::Keys);
+    shoot(&app, "24-keys", (1280.0, 900.0));
+
+    // `@` offers the project's files, `/` the window's commands.
+    let mut app = window("ja");
+    app.files = [
+        "src/client.ts",
+        "src/client.test.ts",
+        "docs/clients.md",
+        "README.md",
+        "src/",
+    ]
+    .map(String::from)
+    .to_vec();
+    app.files_asked = true;
+    type_in(&mut app, "ここを見て @cli");
+    app.insp = false;
+    shoot(&app, "25-mention", (1280.0, 640.0));
+    type_in(&mut app, "/");
+    shoot(&app, "26-slash", (1280.0, 800.0));
+
+    // The git tab: the branch ahead of its upstream, a changed file and a new one, and how full
+    // the conversation is in the status bar.
+    let mut app = window("ja");
+    app.chat.transcript.apply(
+        &parse_event(r#"{"type":"session","id":"0a1b2c3d-0","path":"/s.jsonl","contextWindow":64000}"#).unwrap(),
+        app.now,
+    );
+    play(&mut app, "work.jsonl", "再試行を指数バックオフにして", never);
+    app.git = crate::git::Status {
+        repo: true,
+        top: "/Users/me/src/orders-api".into(),
+        branch: Some("retry-backoff".into()),
+        upstream: true,
+        ahead: 2,
+        files: vec![
+            crate::git::File {
+                path: "src/client.ts".into(),
+                index: 'M',
+                tree: ' ',
+                diff: Diff::parse(
+                    "@@ -10,4 +10,4 @@\n   for (let attempt = 0; ; attempt++) {\n-    await sleep(200);\n+    await sleep(200 * 2 ** attempt);\n     if (attempt > 2) throw err;\n   }\n",
+                ),
+            },
+            crate::git::File {
+                path: "notes/retry.md".into(),
+                index: '?',
+                tree: '?',
+                diff: Diff::create("# 再試行\n\n待ち時間は倍々にする。\n"),
+            },
+        ],
+    };
+    app.tab = Tab::Git;
+    app.commit_msg = "再試行を指数バックオフに".into();
+    shoot(&app, "27-git", WIDE);
+
+    // The list with a conversation named, one pinned, one archived away, one with news, and the
+    // pointer on another; the last message found by what it says; a message's actions on hover.
+    let mut app = window("ja");
+    play(&mut app, "work.jsonl", "再試行を指数バックオフにして", never);
+    app.prefs.names.insert("0a1b2c3d-2".into(), "README整備".into());
+    app.prefs.pinned = vec!["0a1b2c3d-3".into()];
+    app.prefs.archived.insert("0a1b2c3d-1".into());
+    let mut news = Chat::new(7);
+    news.session = Some("0a1b2c3d-2".into());
+    news.unread = true;
+    app.parked.push(news);
+    app.row_hover = Some("0a1b2c3d-3".into());
+    app.find_in = Some("テスト".into());
+    app.ex_hover = Some(0);
+    app.insp = false;
+    shoot(&app, "28-list-and-find", WIDE);
+
+    // A side question, answered over the conversation.
+    let mut app = window("ja");
+    play(&mut app, "work.jsonl", "再試行を指数バックオフにして", never);
+    let mut side = Chat::new(crate::overlay::SIDE);
+    let mut now = app.now;
+    side.transcript.send("リトライの上限はどこで決めてる？", now);
+    for line in [
+        r#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"`src/client.ts`の`attempt > 2`です。3回目の失敗でそのまま投げます。"}],"provider":"fake","model":"m","usage":{"input":900,"output":30},"stopReason":"stop"}}"#,
+        r#"{"type":"agent_end","cause":"done"}"#,
+    ] {
+        now += Duration::from_secs(2);
+        side.transcript.apply(&parse_event(line).unwrap(), now);
+    }
+    app.aside = Some(side);
+    app.overlay = Some(Overlay::Side);
+    shoot(&app, "29-side-question", WIDE);
+}
+
+/// `text` in the input, the cursor at its end, as if typed.
+fn type_in(app: &mut App, text: &str) {
+    use iced::widget::text_editor::{Action, Content, Motion};
+    app.chat.editor = Content::with_text(text);
+    app.chat.editor.perform(Action::Move(Motion::DocumentEnd));
+    app.dismissed = false;
+    app.pick = 0;
 }

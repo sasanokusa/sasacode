@@ -84,6 +84,7 @@ impl App {
             entry(s.tab_plan, key("2"), Msg::Tab(Tab::Plan)),
             entry(s.tab_cmd, key("3"), Msg::Tab(Tab::Commands)),
             entry(s.tab_usage, key("4"), Msg::Tab(Tab::Usage)),
+            entry(s.tab_git, key("5"), Msg::Tab(Tab::Git)),
             entry(s.c_window, key("⇧N"), Msg::Command(Command::Window)),
             entry(s.c_folder, None, Msg::Command(Command::Folder)),
             entry(s.c_terminal, None, Msg::Command(Command::Terminal)),

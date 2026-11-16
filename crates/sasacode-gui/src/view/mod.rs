@@ -391,7 +391,13 @@ fn status_bar(app: &App) -> El<'_> {
         };
         left = left.push(dot()).push(tip(
             t,
-            item(format!("{} {:.0}%", s.context, share * 100.0)).color(color),
+            // Under one percent is not nothing.
+            item(if share < 0.01 {
+                format!("{} <1%", s.context)
+            } else {
+                format!("{} {:.0}%", s.context, share * 100.0)
+            })
+            .color(color),
             format!("{} / {}", compact(tr.last_input), compact(window)),
             tooltip::Position::Top,
         ));
