@@ -106,7 +106,7 @@ pub fn editor(path: &Path) -> bool {
 }
 
 /// A notification from the system, for when the window is behind others. None on Windows, where
-/// the taskbar button is flashed instead.
+/// the window asks for attention instead (its taskbar button flashes), as it does everywhere.
 pub fn notify(title: &str, body: &str) {
     if cfg!(target_os = "macos") {
         // AppleScript's strings take `\` and `"` escaped.

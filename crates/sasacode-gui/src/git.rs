@@ -4,12 +4,19 @@
 //! folder, away from the window.
 
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, Stdio};
+use std::time::Duration;
 
 use crate::diff::{Diff, Sign};
 
 /// A file bigger than this that git does not know yet is not read to be shown.
 const UNTRACKED_MAX: u64 = 256 * 1024;
+/// How many files get their diff read; the rest are listed without one. A folder with thousands of
+/// files git does not know (a build left unignored) would take long to read whole.
+const DIFFED: usize = 200;
+/// How long a push or a pull request may take; one that waits for a password nobody can type is
+/// stopped, rather than leaving the git tab busy for good.
+const REMOTE_WAIT: Duration = Duration::from_secs(120);
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Status {
@@ -62,17 +69,61 @@ pub enum Op {
 }
 
 fn run(cwd: &Path, program: &str, args: &[&str]) -> Result<String, String> {
-    let out = Command::new(program)
+    run_within(cwd, program, args, None)
+}
+
+/// Runs `program` in `cwd` with nothing to read from, so that nothing it asks waits for an answer:
+/// git and gh are told not to ask on the terminal, and with `wait`, what takes longer is stopped.
+fn run_within(cwd: &Path, program: &str, args: &[&str], wait: Option<Duration>) -> Result<String, String> {
+    use std::io::Read;
+    let mut child = Command::new(program)
         .args(args)
         .current_dir(cwd)
-        .output()
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GH_PROMPT_DISABLED", "1")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
         .map_err(|e| format!("{program}: {e}"))?;
-    let text = |b: &[u8]| String::from_utf8_lossy(b).trim().to_owned();
-    if out.status.success() {
-        Ok(text(&out.stdout))
+    let read = |pipe: Option<Box<dyn Read + Send>>| {
+        std::thread::spawn(move || {
+            let mut bytes = Vec::new();
+            if let Some(mut pipe) = pipe {
+                let _ = pipe.read_to_end(&mut bytes);
+            }
+            bytes
+        })
+    };
+    let out = read(child.stdout.take().map(|p| Box::new(p) as Box<dyn Read + Send>));
+    let err = read(child.stderr.take().map(|p| Box::new(p) as Box<dyn Read + Send>));
+    let until = wait.map(|w| std::time::Instant::now() + w);
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break Ok(status),
+            Ok(None) if until.is_none_or(|u| std::time::Instant::now() < u) => {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            Ok(None) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                break Err(format!(
+                    "{program}: gave up after {}s",
+                    wait.unwrap_or_default().as_secs()
+                ));
+            }
+            Err(e) => break Err(format!("{program}: {e}")),
+        }
+    };
+    let text = |b: Vec<u8>| String::from_utf8_lossy(&b).trim().to_owned();
+    let (out, err) = (
+        text(out.join().unwrap_or_default()),
+        text(err.join().unwrap_or_default()),
+    );
+    if status?.success() {
+        Ok(out)
     } else {
-        let err = text(&out.stderr);
-        Err(if err.is_empty() { text(&out.stdout) } else { err })
+        Err(if err.is_empty() { out } else { err })
     }
 }
 
@@ -124,7 +175,11 @@ pub fn status(cwd: &Path) -> Status {
         if index == 'R' || index == 'C' {
             entries.next();
         }
-        let diff = file_diff(&top, &path, index == '?');
+        let diff = if status.files.len() < DIFFED {
+            file_diff(&top, &path, index == '?')
+        } else {
+            Diff::default()
+        };
         status.files.push(File {
             path,
             index,
@@ -211,13 +266,15 @@ pub fn apply(cwd: &Path, op: &Op, branch: Option<&str>) -> Result<String, String
         Op::Push => {
             let upstream = git(&top, &["rev-parse", "--abbrev-ref", "@{upstream}"]).is_ok();
             match (upstream, branch) {
-                (true, _) => git(&top, &["push", "-q"]),
-                (false, Some(branch)) => git(&top, &["push", "-q", "-u", "origin", branch]),
+                (true, _) => run_within(&top, "git", &["push", "-q"], Some(REMOTE_WAIT)),
+                (false, Some(branch)) => {
+                    run_within(&top, "git", &["push", "-q", "-u", "origin", branch], Some(REMOTE_WAIT))
+                }
                 (false, None) => Err("no branch to push".into()),
             }
             .map(|out| if out.is_empty() { "pushed".to_owned() } else { out })
         }
-        Op::Pr => run(&top, "gh", &["pr", "create", "--fill"]),
+        Op::Pr => run_within(&top, "gh", &["pr", "create", "--fill"], Some(REMOTE_WAIT)),
     }
 }
 
@@ -273,6 +330,45 @@ mod tests {
         assert!(said.ends_with("second"));
         assert!(status(&dir).files.is_empty());
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_branch_is_pushed_to_its_remote_and_many_files_are_listed_without_reading_all() {
+        let dir = repo("push");
+        let bare = dir.with_extension("remote.git");
+        let _ = std::fs::remove_dir_all(&bare);
+        git(&dir, &["init", "-q", "--bare", bare.to_str().unwrap()]).unwrap();
+        git(&dir, &["remote", "add", "origin", bare.to_str().unwrap()]).unwrap();
+        std::fs::write(dir.join("a.txt"), "one\n").unwrap();
+        apply(&dir, &Op::Commit("first".into()), None).unwrap();
+        assert!(!status(&dir).upstream);
+        apply(&dir, &Op::Push, Some("main")).unwrap();
+        let s = status(&dir);
+        assert!(s.upstream && s.ahead == 0);
+        assert_eq!(git(&bare, &["log", "-1", "--format=%s", "main"]).unwrap(), "first");
+
+        for n in 0..DIFFED + 5 {
+            std::fs::write(dir.join(format!("new{n:03}.txt")), "x\n").unwrap();
+        }
+        let s = status(&dir);
+        assert_eq!(s.files.len(), DIFFED + 5);
+        assert!(s.files[..DIFFED].iter().all(|f| f.diff.added == 1));
+        assert!(s.files[DIFFED..].iter().all(|f| f.diff.lines.is_empty()));
+        std::fs::remove_dir_all(dir).unwrap();
+        std::fs::remove_dir_all(bare).unwrap();
+    }
+
+    #[test]
+    fn a_program_that_waits_too_long_is_stopped() {
+        let dir = std::env::temp_dir();
+        #[cfg(unix)]
+        {
+            let start = std::time::Instant::now();
+            let said = run_within(&dir, "sleep", &["5"], Some(Duration::from_millis(200)));
+            assert!(said.is_err_and(|e| e.contains("gave up")));
+            assert!(start.elapsed() < Duration::from_secs(3));
+        }
+        assert!(run_within(&dir, "git", &["--version"], Some(REMOTE_WAIT)).is_ok_and(|v| v.starts_with("git")));
     }
 
     #[test]

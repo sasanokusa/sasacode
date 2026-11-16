@@ -944,9 +944,8 @@ impl App {
                 }
             }
             Msg::Screen(id, Some(screen)) => {
-                let zoom = self.prefs.zoom;
-                if let Some(size) = layout::fit(self.layout().size, screen) {
-                    return window::resize(id, Size::new(size.width / zoom, size.height / zoom));
+                if let Some(size) = self.fitted(screen) {
+                    return window::resize(id, size);
                 }
             }
             Msg::Screen(_, None) => {}
@@ -964,6 +963,14 @@ impl App {
             side: self.side_w,
             inspector: self.insp_w,
         }
+    }
+
+    /// The window's size made to fit `screen`, when it does not: both as iced measures them, in what
+    /// is drawn at the zoom (iced divides the screen's size by the zoom too).
+    pub(crate) fn fitted(&self, screen: Size) -> Option<Size> {
+        let zoom = self.prefs.zoom;
+        let on_screen = Size::new(screen.width * zoom, screen.height * zoom);
+        layout::fit(self.layout().size, on_screen).map(|size| Size::new(size.width / zoom, size.height / zoom))
     }
 
     /// Keeps how the window is laid out for the next launch, when it changed since it was read or
@@ -1475,21 +1482,22 @@ impl App {
             attention = true;
         }
         self.hold_awake();
-        let git = if git { self.refresh_git() } else { Task::none() };
+        let mut tasks = Vec::new();
+        // The branch, the git tab's count and its files, as the run left them.
+        if git {
+            tasks.push(self.refresh_git());
+        }
         if let Some(prompt) = next {
-            return Task::batch([git, self.start(key, prompt)]);
+            tasks.push(self.start(key, prompt));
+        } else if attention {
+            // The run waits for the user or ended: say so even when the window is behind others
+            // (on Windows, where no notification is sent, the taskbar button flashes).
+            tasks.push(
+                window::latest()
+                    .and_then(|id| window::request_user_attention(id, Some(window::UserAttention::Informational))),
+            );
         }
-        if !matches!(self.tab, Tab::Git) || !self.insp {
-            // Not in view: looked at again when it is.
-        } else {
-            return git;
-        }
-        if attention {
-            // The run waits for the user: say so even when the window is behind others.
-            return window::latest()
-                .and_then(|id| window::request_user_attention(id, Some(window::UserAttention::Informational)));
-        }
-        Task::none()
+        Task::batch(tasks)
     }
 }
 
@@ -1601,6 +1609,23 @@ mod tests {
     use std::time::SystemTime;
 
     use super::*;
+
+    #[test]
+    fn a_zoomed_window_is_fitted_to_the_screen_as_iced_measures_both() {
+        let mut app = crate::snapshots::window("ja");
+        app.prefs.zoom = 1.25;
+        // 1250 by 875 on a screen of 1512 by 982, both as iced gives them at this zoom.
+        app.width = 1000.0;
+        app.height = 700.0;
+        assert_eq!(app.fitted(Size::new(1512.0 / 1.25, 982.0 / 1.25)), None);
+        // Taller than the screen: as tall as it, measured at the zoom again.
+        app.height = 900.0;
+        let fit = app.fitted(Size::new(1512.0 / 1.25, 982.0 / 1.25)).unwrap();
+        assert!(
+            (fit.width - 1000.0).abs() < 0.01 && (fit.height - 785.6).abs() < 0.01,
+            "{fit:?}"
+        );
+    }
 
     /// A window on a folder whose logs are the recorded conversation under each of `ids`, the
     /// first the newest. The home it reads them from is returned to be removed.
