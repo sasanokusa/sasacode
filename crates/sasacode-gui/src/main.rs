@@ -15,6 +15,7 @@ mod icons;
 mod input;
 mod layout;
 mod overlay;
+mod review;
 mod runner;
 #[cfg(test)]
 mod snapshots;
@@ -22,6 +23,7 @@ mod system;
 mod theme;
 mod transcript;
 mod view;
+mod words;
 
 use std::path::PathBuf;
 

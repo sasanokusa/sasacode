@@ -290,6 +290,11 @@ impl Strings {
         if lang.starts_with("ja") { JA } else { EN }
     }
 
+    /// The words of what was added later, in the same language.
+    pub fn w(&self) -> &'static crate::words::Words {
+        if self.ja { &crate::words::JA } else { &crate::words::EN }
+    }
+
     /// `1分12秒` / `1m 12s`. Under a second shows as one: a call that ran did take time.
     pub fn duration(&self, d: Duration) -> String {
         let s = d.as_secs().max(1);

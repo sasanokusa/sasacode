@@ -41,6 +41,9 @@ pub fn dock(app: &App) -> El<'_> {
             .style(app.t.boxed(app.t.accent_wash, app.t.accent, crate::theme::RADIUS)),
         );
     }
+    if !app.chat.comments.is_empty() {
+        col = col.push(Above::Comments, comments(app));
+    }
     col = col.push(Above::Input, composer(app)).push(Above::Hints, hints(app));
     container(container(col).max_width(COL_W))
         .center_x(Length::Fill)
@@ -59,12 +62,44 @@ enum Above {
     Approval,
     Offer,
     Drop,
+    Comments,
     Input,
     Hints,
 }
 
 fn t_accent(app: &App) -> iced::Color {
     app.t.accent
+}
+
+/// The comments on a diff that go with the next message, each where it was made and with the way
+/// to take it back.
+fn comments(app: &App) -> El<'_> {
+    let (t, s) = (app.t, app.s);
+    let mut list = column![text(s.w().comments_head).size(11.5).color(t.fg_3)].spacing(3);
+    for (i, c) in app.chat.comments.iter().enumerate() {
+        let place = crate::review::place(&c.path, c.line, &app.cwd);
+        list = list.push(
+            row![
+                text(clip_start(&place, 36)).size(12).font(MONO).color(t.fg_2),
+                text(c.text.as_str())
+                    .size(12.5)
+                    .color(t.fg)
+                    .width(Length::Fill)
+                    .wrapping(text::Wrapping::WordOrGlyph),
+                button(icon(Icon::Close, 10.0, t.fg_3))
+                    .padding(2)
+                    .style(t.ghost(t.fg_3, false))
+                    .on_press(Msg::CommentRemove(i)),
+            ]
+            .spacing(8)
+            .align_y(Alignment::Center),
+        );
+    }
+    container(list)
+        .width(Length::Fill)
+        .padding([6, 12])
+        .style(app.t.boxed(app.t.accent_wash, app.t.line, crate::theme::RADIUS))
+        .into()
 }
 
 /// What the input offers where its cursor is: files after `@`, commands after `/`. ↑ and ↓ choose,
@@ -262,7 +297,8 @@ fn composer(app: &App) -> El<'_> {
     let (t, s) = (app.t, app.s);
     let waiting = app.chat.transcript.pending_approval().is_some();
     let running = app.running();
-    let empty = app.chat.editor.text().trim().is_empty();
+    // Comments alone are a message too.
+    let empty = app.chat.editor.text().trim().is_empty() && app.chat.comments.is_empty();
     let placeholder = if waiting {
         s.ph_waiting
     } else if running {

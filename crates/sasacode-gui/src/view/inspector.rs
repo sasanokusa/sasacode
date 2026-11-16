@@ -227,12 +227,21 @@ fn file_actions<'a>(app: &'a App, file: std::path::PathBuf, git: Option<&'a crat
     if let Some(f) = git {
         use crate::git::Op;
         let busy = app.git_busy;
-        let (label, op) = if f.staged() {
-            (s.unstage, Op::Unstage(f.path.clone()))
-        } else {
-            (s.stage, Op::Stage(f.path.clone()))
-        };
-        line = line.push(small(label, t.fg_2, (!busy).then_some(Msg::GitDo(op))));
+        // The whole file: what of it is not staged, staged; what is, unstaged.
+        if f.unstaged() || f.untracked() {
+            line = line.push(small(
+                s.stage,
+                t.fg_2,
+                (!busy).then(|| Msg::GitDo(Op::Stage(f.path.clone()))),
+            ));
+        }
+        if f.staged() {
+            line = line.push(small(
+                s.unstage,
+                t.fg_2,
+                (!busy).then(|| Msg::GitDo(Op::Unstage(f.path.clone()))),
+            ));
+        }
         let sure = app.confirm_discard.as_ref() == Some(&f.path);
         line = line.push(small(
             if sure { s.discard_sure } else { s.discard },
@@ -257,20 +266,32 @@ fn git_tab(app: &App) -> El<'_> {
     if !g.repo {
         return empty(app, Icon::Branch, s.tab_git, s.git_none);
     }
+    let w = s.w();
     let mut head = row![icon(Icon::Branch, 14.0, t.fg_3)]
         .spacing(8)
         .align_y(Alignment::Center);
-    if let Some(branch) = &g.branch {
-        head = head.push(tip(
-            t,
-            button(text(branch.as_str()).size(12.5).font(MONO).color(t.fg))
-                .padding([2, 6])
-                .style(t.ghost(t.fg, false))
-                .on_press(Msg::Copy(crate::app::Clip::Text(branch.clone()))),
-            s.copy_branch.to_owned(),
-            tooltip::Position::Bottom,
-        ));
-    }
+    // The branch: a click lists the others to switch to, or makes a new one.
+    head = head.push(tip(
+        t,
+        button(
+            row![
+                text(g.branch.as_deref().unwrap_or("HEAD"))
+                    .size(12.5)
+                    .font(MONO)
+                    .color(t.fg),
+                icon(Icon::ChevronDown, 10.0, t.fg_3),
+            ]
+            .spacing(4)
+            .align_y(Alignment::Center),
+        )
+        .padding([2, 6])
+        .style(t.ghost(t.fg, false))
+        .on_press(Msg::Show(Some(crate::overlay::Overlay::picker(
+            crate::overlay::Pick::Branches,
+        )))),
+        w.branch_switch.to_owned(),
+        tooltip::Position::Bottom,
+    ));
     if g.ahead > 0 {
         head = head.push(tag(t, fill(s.ahead, "n", g.ahead), t.accent_wash, t.accent));
     }
@@ -309,7 +330,7 @@ fn git_tab(app: &App) -> El<'_> {
             button(text(s.pr).size(12.5))
                 .padding([5, 12])
                 .style(t.outline(t.fg))
-                .on_press_maybe((!busy && g.branch.is_some()).then_some(Msg::GitDo(Op::Pr))),
+                .on_press_maybe((!busy && g.branch.is_some() && app.pr.is_none()).then_some(Msg::GitDo(Op::Pr(None)))),
         ]
         .spacing(6)
         .wrap(),
@@ -317,11 +338,12 @@ fn git_tab(app: &App) -> El<'_> {
     ]
     .spacing(6);
     col = col.push(commit);
+    col = col.push(pr_part(app));
 
     if g.files.is_empty() {
         return col.push(empty(app, Icon::Check, s.git_clean, "")).into();
     }
-    col = col.push(text(s.quote_hint).size(11.5).color(t.fg_3));
+    col = col.push(text(w.quote_hint).size(11.5).color(t.fg_3));
     for f in &g.files {
         let letters = format!("{}{}", f.index, f.tree).replace(' ', "·");
         let path = clip_start(&f.path, cells(app, 130.0));
@@ -337,26 +359,226 @@ fn git_tab(app: &App) -> El<'_> {
         if f.untracked() {
             head = head.push(tag(t, s.new_file, t.accent_wash, t.accent));
         }
-        head = head.push(plus_minus(t, f.diff.added, f.diff.removed));
+        let (added, removed) = f.counts();
+        head = head.push(plus_minus(t, added, removed));
         let file = g.top.join(&f.path);
-        let body = column![file_actions(app, file, Some(f)), quotable_diff(app, f)].spacing(6);
+        let mut body = column![file_actions(app, file, Some(f))].spacing(6);
+        // What is staged and what is not, apart: each hunk is staged, unstaged or thrown away
+        // by itself. A file git does not know yet is staged whole.
+        let both = !f.staged_diff.is_empty() && !f.unstaged_diff.is_empty();
+        if !f.staged_diff.is_empty() {
+            if both {
+                body = body.push(text(w.staged_head).size(11.5).color(t.fg_3));
+            }
+            body = body.push(hunks(app, f, true));
+        }
+        if !f.unstaged_diff.is_empty() {
+            if both {
+                body = body.push(text(w.unstaged_head).size(11.5).color(t.fg_3));
+            }
+            body = body.push(hunks(app, f, false));
+        }
         col = col.push(card(app, &f.path, head.into(), Some(body.into())));
     }
     col.into()
 }
 
-/// A file's diff whose lines put where they are into the input when clicked.
-fn quotable_diff<'a>(app: &'a App, f: &'a crate::git::File) -> El<'a> {
+/// The branch's pull request: its state, its checks, what its reviewers said, and what can be done
+/// about them. Nothing while it is not known whether there is one.
+fn pr_part(app: &App) -> El<'_> {
+    use crate::git::{CheckState, Op};
+    let (t, s) = (app.t, app.s);
+    let w = s.w();
+    let Some(pr) = &app.pr else {
+        let said = if app.pr_loading { w.pr_loading } else { w.pr_none };
+        return text(said).size(11.5).color(t.fg_3).into();
+    };
+    let small = |label: &'static str, color: iced::Color, msg: Option<Msg>| {
+        button(text(label).size(11.5).color(color).wrapping(text::Wrapping::None))
+            .padding([3, 8])
+            .style(t.ghost(color, false))
+            .on_press_maybe(msg)
+    };
+    let state = match pr.state.as_str() {
+        "MERGED" => tag(t, app.pr_state(pr), t.accent_wash, t.accent),
+        "CLOSED" => tag(t, app.pr_state(pr), t.inset, t.fg_2),
+        _ => tag(t, app.pr_state(pr), t.add_wash, t.add),
+    };
+    let mut head = row![
+        text(format!("#{}", pr.number)).size(12.5).font(MONO).color(t.fg_2),
+        name(text(pr.title.as_str()).size(12.5).font(BOLD).color(t.fg)),
+        state,
+    ]
+    .spacing(8)
+    .align_y(Alignment::Center);
+    let decision = match pr.decision.as_str() {
+        "APPROVED" => Some((w.approved, t.add)),
+        "CHANGES_REQUESTED" => Some((w.changes_requested, t.err)),
+        "REVIEW_REQUIRED" => Some((w.review_required, t.fg_3)),
+        _ => None,
+    };
+    if let Some((label, color)) = decision {
+        head = head.push(text(label).size(11.5).color(color).wrapping(text::Wrapping::None));
+    }
+    let mut col = column![head].spacing(6);
+
+    if !pr.checks.is_empty() {
+        let mut checks = column![text(w.checks).size(11.5).color(t.fg_3)].spacing(2);
+        for c in &pr.checks {
+            let (mark, color, said) = match c.state {
+                CheckState::Passed => (Icon::Check, t.add, w.check_passed),
+                CheckState::Failed => (Icon::Close, t.err, w.check_failed),
+                CheckState::Pending => (Icon::Dot, t.warn, w.check_pending),
+                CheckState::Skipped => (Icon::Dot, t.fg_3, w.check_skipped),
+            };
+            let line = row![
+                icon(mark, 12.0, color),
+                name(text(c.name.as_str()).size(12).font(MONO).color(t.fg)),
+                text(said).size(11.5).color(color).wrapping(text::Wrapping::None),
+            ]
+            .spacing(6)
+            .align_y(Alignment::Center);
+            checks = checks.push(if c.url.is_empty() {
+                El::from(line)
+            } else {
+                iced::widget::mouse_area(line)
+                    .interaction(iced::mouse::Interaction::Pointer)
+                    .on_press(Msg::Link(c.url.clone()))
+                    .into()
+            });
+        }
+        col = col.push(checks);
+    }
+
+    let busy = app.git_busy;
+    let mut actions = row![small(w.open_browser, t.fg_2, Some(Msg::Link(pr.url.clone())))]
+        .spacing(2)
+        .align_y(Alignment::Center);
+    if pr.failing().next().is_some() {
+        actions = actions.push(small(w.fix_checks, t.err, Some(Msg::FixChecks)));
+    }
+    if pr.state == "OPEN" {
+        actions = actions.push(small(
+            if app.confirm_merge { w.merge_sure } else { w.merge },
+            t.accent,
+            (!busy).then_some(Msg::GitDo(Op::Merge)),
+        ));
+    }
+    actions = actions.push(small(
+        s.git_refresh,
+        t.fg_2,
+        (!app.pr_loading).then_some(Msg::PrRefresh),
+    ));
+    col = col.push(actions.wrap());
+
+    if !pr.comments.is_empty() {
+        let mut said = column![text(w.reviews).size(11.5).color(t.fg_3)].spacing(6);
+        for (i, remark) in pr.comments.iter().enumerate() {
+            let mut who = row![text(remark.author.as_str()).size(12).font(BOLD).color(t.fg)]
+                .spacing(6)
+                .align_y(Alignment::Center);
+            if let (Some(path), Some(line)) = (&remark.path, remark.line) {
+                who = who.push(
+                    text(clip_start(&format!("{path}:{line}"), cells(app, 190.0)))
+                        .size(11.5)
+                        .font(MONO)
+                        .color(t.fg_3),
+                );
+            }
+            who = who.push(Space::new().width(Length::Fill));
+            who = who.push(small(w.address, t.fg_2, Some(Msg::Address(i))));
+            said = said.push(
+                container(
+                    column![
+                        who,
+                        text(clip(remark.body.trim(), 600))
+                            .size(12)
+                            .color(t.fg_2)
+                            .wrapping(text::Wrapping::WordOrGlyph),
+                    ]
+                    .spacing(2),
+                )
+                .width(Length::Fill)
+                .padding([6, 8])
+                .style(t.boxed(t.raised, t.line, RADIUS)),
+            );
+        }
+        col = col.push(said);
+    }
+    container(col)
+        .width(Length::Fill)
+        .padding([8, 10])
+        .style(t.boxed(t.bg, t.line, RADIUS_L))
+        .into()
+}
+
+/// The hunks of a file's staged diff, or of what is not staged: each with what can be done to it
+/// alone, its lines taking a comment when clicked.
+fn hunks<'a>(app: &'a App, f: &'a crate::git::File, staged: bool) -> El<'a> {
     use crate::diff::Sign;
-    let t = app.t;
-    let numbers = crate::git::numbers(&f.diff);
+    use crate::git::{HunkAct, Op};
+    let (t, s) = (app.t, app.s);
+    let w = s.w();
+    let diff = if staged { &f.staged_diff } else { &f.unstaged_diff };
+    let path = app.git.top.join(&f.path);
+    let numbers = crate::git::numbers(diff);
+    let small = |label: &'a str, color: iced::Color, msg: Option<Msg>| {
+        button(text(label).size(11).color(color).wrapping(text::Wrapping::None))
+            .padding([1, 6])
+            .style(t.ghost(color, false))
+            .on_press_maybe(msg)
+    };
+    let busy = app.git_busy;
     let mut lines = column![];
-    for (line, n) in f.diff.lines.iter().zip(numbers).take(300) {
+    let mut hunk = 0usize;
+    for (line, n) in diff.lines.iter().zip(numbers).take(300) {
+        if line.sign == Sign::Hunk {
+            let at = hunk;
+            hunk += 1;
+            let op = |act| {
+                Msg::GitDo(Op::Hunk {
+                    path: f.path.clone(),
+                    act,
+                    at,
+                    head: line.text.clone(),
+                })
+            };
+            let mut bar = row![
+                text(line.text.as_str())
+                    .size(11.5)
+                    .font(MONO)
+                    .color(t.fg_3)
+                    .width(Length::Fill)
+                    .wrapping(text::Wrapping::None),
+            ]
+            .spacing(2)
+            .align_y(Alignment::Center);
+            if f.untracked() {
+                // A new file is staged whole, above.
+            } else if staged {
+                bar = bar.push(small(s.unstage, t.fg_2, (!busy).then(|| op(HunkAct::Unstage))));
+            } else {
+                let sure = app.confirm_discard.as_deref() == Some(format!("{}#{at}", f.path).as_str());
+                bar = bar
+                    .push(small(s.stage, t.fg_2, (!busy).then(|| op(HunkAct::Stage))))
+                    .push(small(
+                        if sure { s.discard_sure } else { s.discard },
+                        t.err,
+                        (!busy).then(|| op(HunkAct::Discard)),
+                    ));
+            }
+            lines = lines.push(
+                container(bar.clip(true))
+                    .width(Length::Fill)
+                    .padding([2, 6])
+                    .style(t.fill(t.inset)),
+            );
+            continue;
+        }
         let (mark, color, wash) = match line.sign {
             Sign::Add => ("+", t.add, Some(t.add_wash)),
             Sign::Del => ("−", t.del, Some(t.del_wash)),
-            Sign::Context => (" ", t.fg_2, None),
-            Sign::Hunk => ("", t.fg_3, None),
+            _ => (" ", t.fg_2, None),
         };
         let shown = container(
             row![
@@ -369,7 +591,7 @@ fn quotable_diff<'a>(app: &'a App, f: &'a crate::git::File) -> El<'a> {
                 text(line.text.as_str())
                     .size(12)
                     .font(MONO)
-                    .color(if line.sign == Sign::Hunk { t.fg_3 } else { t.fg })
+                    .color(t.fg)
                     .wrapping(text::Wrapping::WordOrGlyph),
             ]
             .spacing(2),
@@ -380,13 +602,54 @@ fn quotable_diff<'a>(app: &'a App, f: &'a crate::git::File) -> El<'a> {
             background: wash.map(Into::into),
             ..container::Style::default()
         });
-        lines = lines.push(match n {
-            Some(n) => iced::widget::mouse_area(shown)
+        let Some(n) = n else {
+            lines = lines.push(shown);
+            continue;
+        };
+        lines = lines.push(
+            iced::widget::mouse_area(shown)
                 .interaction(iced::mouse::Interaction::Pointer)
-                .on_press(Msg::Quote(app.git.top.join(&f.path), n))
-                .into(),
-            None => El::from(shown),
-        });
+                .on_press(Msg::CommentAt(path.clone(), n, staged)),
+        );
+        // What was said about this line, and the comment being written under it.
+        for (i, c) in app.chat.comments.iter().enumerate() {
+            if c.path == path && c.line == n {
+                lines = lines.push(comment_note(app, i, c));
+            }
+        }
+        if let Some(draft) = &app.commenting
+            && draft.path == path
+            && draft.line == n
+            && draft.staged == staged
+        {
+            lines = lines.push(
+                container(
+                    column![
+                        iced::widget::text_input(w.comment_ph, &draft.text)
+                            .id(crate::review::COMMENT)
+                            .on_input(Msg::CommentText)
+                            .on_submit(Msg::CommentSave)
+                            .size(12.5)
+                            .padding([5, 8])
+                            .style(t.input()),
+                        row![
+                            button(text(w.comment_add).size(12))
+                                .padding([3, 10])
+                                .style(t.primary())
+                                .on_press_maybe((!draft.text.trim().is_empty()).then_some(Msg::CommentSave)),
+                            small(w.comment_quote, t.fg_2, Some(Msg::CommentQuote)),
+                            small(w.cancel, t.fg_2, Some(Msg::CommentCancel)),
+                        ]
+                        .spacing(4)
+                        .align_y(Alignment::Center)
+                        .wrap(),
+                    ]
+                    .spacing(4),
+                )
+                .padding([6, 8])
+                .style(t.fill(t.surface)),
+            );
+        }
     }
     container(lines)
         .width(Length::Fill)
@@ -394,6 +657,31 @@ fn quotable_diff<'a>(app: &'a App, f: &'a crate::git::File) -> El<'a> {
         .clip(true)
         .style(t.boxed(t.raised, t.line, RADIUS))
         .into()
+}
+
+/// A comment kept under the line it was made on, with the way to take it back.
+fn comment_note<'a>(app: &'a App, i: usize, c: &'a crate::review::Comment) -> El<'a> {
+    let t = app.t;
+    container(
+        row![
+            icon(Icon::Pencil, 11.0, t.accent),
+            text(c.text.as_str())
+                .size(12)
+                .color(t.fg)
+                .width(Length::Fill)
+                .wrapping(text::Wrapping::WordOrGlyph),
+            button(icon(Icon::Close, 10.0, t.fg_3))
+                .padding(2)
+                .style(t.ghost(t.fg_3, false))
+                .on_press(Msg::CommentRemove(i)),
+        ]
+        .spacing(6)
+        .align_y(Alignment::Center),
+    )
+    .width(Length::Fill)
+    .padding([4, 8])
+    .style(t.fill(t.accent_wash))
+    .into()
 }
 
 fn plan_tab(app: &App) -> El<'_> {

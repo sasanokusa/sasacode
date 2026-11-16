@@ -10,6 +10,7 @@ use crate::app::{App, Msg, Overlay, PALETTE, RENAME};
 use crate::i18n::fill;
 use crate::icons::{Icon, icon};
 use crate::layout::{ZOOM_MAX, ZOOM_MIN};
+use crate::overlay::Pick;
 use crate::theme::RADIUS_L;
 use crate::transcript::Step;
 
@@ -23,7 +24,7 @@ pub fn over<'a>(app: &'a App, base: El<'a>) -> El<'a> {
     };
     let t = app.t;
     let (panel, width, top) = match overlay {
-        Overlay::Palette { query, at } => (palette(app, query, *at), 580.0, 70.0),
+        Overlay::Palette { query, at, pick } => (palette(app, query, *at, *pick), 580.0, 70.0),
         Overlay::Keys => (keys(app), 560.0, 60.0),
         Overlay::Settings => (settings(app), 560.0, 60.0),
         Overlay::Rename { name, .. } => (rename(app, name), 460.0, 120.0),
@@ -71,10 +72,14 @@ fn title<'a>(app: &App, label: &'a str) -> El<'a> {
     .into()
 }
 
-fn palette<'a>(app: &'a App, query: &'a str, at: usize) -> El<'a> {
+fn palette<'a>(app: &'a App, query: &'a str, at: usize, pick: Pick) -> El<'a> {
     let (t, s) = (app.t, app.s);
     let found = app.found_entries();
-    let field = text_input(s.palette_ph, query)
+    let placeholder = match pick {
+        Pick::Commands => s.palette_ph,
+        Pick::Branches => s.w().branch_ph,
+    };
+    let field = text_input(placeholder, query)
         .id(PALETTE)
         .on_input(Msg::OverlayText)
         .on_submit(Msg::PaletteRun(at))
@@ -82,7 +87,9 @@ fn palette<'a>(app: &'a App, query: &'a str, at: usize) -> El<'a> {
         .padding([8, 10])
         .style(t.input());
     let mut list = column![].spacing(1);
-    if found.is_empty() {
+    if pick == Pick::Branches && app.branch_list.is_none() {
+        list = list.push(container(text(s.w().branch_loading).size(13).color(t.fg_3)).padding([8, 10]));
+    } else if found.is_empty() {
         list = list.push(container(text(s.nothing).size(13).color(t.fg_3)).padding([8, 10]));
     }
     for (i, entry) in found.into_iter().enumerate() {
@@ -252,6 +259,7 @@ fn settings(app: &App) -> El<'_> {
         switch(s.set_notify, p.notify, Msg::SetNotify),
         switch(s.set_awake, p.awake, Msg::SetAwake),
         switch(s.set_steps, p.steps, Msg::SetSteps),
+        switch(s.w().set_auto_archive, p.auto_archive, Msg::SetAutoArchive),
         text(s.set_kept).size(11.5).color(t.fg_3),
     ]
     .spacing(16)

@@ -291,6 +291,7 @@ fn snapshots() {
     app.overlay = Some(Overlay::Palette {
         query: "テーマ".into(),
         at: 1,
+        pick: crate::overlay::Pick::Commands,
     });
     shoot(&app, "22-palette-found", WIDE);
     app.overlay = Some(Overlay::Settings);
@@ -335,7 +336,8 @@ fn snapshots() {
                 path: "src/client.ts".into(),
                 index: 'M',
                 tree: ' ',
-                diff: Diff::parse(
+                unstaged_diff: Diff::default(),
+                staged_diff: Diff::parse(
                     "@@ -10,4 +10,4 @@\n   for (let attempt = 0; ; attempt++) {\n-    await sleep(200);\n+    await sleep(200 * 2 ** attempt);\n     if (attempt > 2) throw err;\n   }\n",
                 ),
             },
@@ -343,7 +345,8 @@ fn snapshots() {
                 path: "notes/retry.md".into(),
                 index: '?',
                 tree: '?',
-                diff: Diff::create("# 再試行\n\n待ち時間は倍々にする。\n"),
+                staged_diff: Diff::default(),
+                unstaged_diff: Diff::create("# 再試行\n\n待ち時間は倍々にする。\n"),
             },
         ],
     };

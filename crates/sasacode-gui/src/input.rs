@@ -35,11 +35,12 @@ pub enum Command {
     Keys,
     Attention,
     Mention,
+    Branch,
 }
 
 impl Command {
     /// What `/` offers, by the word typed after it.
-    pub const SLASH: [(&'static str, Command); 16] = [
+    pub const SLASH: &'static [(&'static str, Command)] = &[
         ("new", Command::New),
         ("btw", Command::Btw),
         ("find", Command::Find),
@@ -56,6 +57,7 @@ impl Command {
         ("worktree", Command::Worktree),
         ("settings", Command::Settings),
         ("keys", Command::Keys),
+        ("branch", Command::Branch),
     ];
 
     pub fn what(self, s: &Strings) -> &'static str {
@@ -79,6 +81,7 @@ impl Command {
             Command::Keys => s.c_keys,
             Command::Attention => s.c_attention,
             Command::Mention => s.c_mention,
+            Command::Branch => s.w().branch_switch,
         }
     }
 
@@ -364,6 +367,9 @@ impl App {
             Command::Settings => self.overlay = Some(Overlay::Settings),
             Command::Keys => self.overlay = Some(Overlay::Keys),
             Command::Attention => return self.attention(),
+            Command::Branch => {
+                return self.update(Msg::Show(Some(Overlay::picker(crate::overlay::Pick::Branches))));
+            }
             Command::Mention => {
                 // An `@` where the cursor is, a word of its own: the files are offered.
                 let cursor = self.chat.editor.cursor().position;

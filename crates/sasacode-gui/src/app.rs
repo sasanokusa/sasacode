@@ -63,6 +63,9 @@ const ROOM_BOTH: f32 = 554.0;
 const ROOM_ALONE: f32 = 440.0;
 /// A panel's edge dragged this far past its narrowest folds the panel away.
 const FOLD_PAST: f32 = 60.0;
+/// How often conversations whose pull request was merged or closed are looked for, while the
+/// settings say to archive them.
+const SWEEP_EVERY: Duration = Duration::from_secs(600);
 /// How long the window's size is left alone before it is kept: a resize is many sizes in a row.
 const RESIZE_REST: Duration = Duration::from_millis(500);
 
@@ -209,8 +212,18 @@ pub struct App {
     pub(crate) git_busy: bool,
     /// The message of the next commit.
     pub(crate) commit_msg: String,
-    /// The file whose changes a second click discards.
+    /// The file, or the hunk (`path#n` of what is not staged), whose changes a second click
+    /// discards.
     pub(crate) confirm_discard: Option<String>,
+    /// The pull request a second click merges.
+    pub(crate) confirm_merge: bool,
+    /// The branches there are to switch to, once listed.
+    pub(crate) branch_list: Option<Vec<String>>,
+    /// The branch's pull request, as last read, and whether it is being read.
+    pub(crate) pr: Option<crate::git::Pr>,
+    pub(crate) pr_loading: bool,
+    /// The comment being written under a line of a diff.
+    pub(crate) commenting: Option<crate::review::Draft>,
     /// The message of the conversation under the pointer, which shows what can be done with it.
     pub(crate) ex_hover: Option<usize>,
     /// What is said in each conversation, lower case, for the search, as of when its log changed;
@@ -252,6 +265,8 @@ pub(crate) struct Chat {
     pub(crate) closed: HashSet<String>,
     /// Something happened while it was not shown: its run ended, or it waits for an answer.
     pub(crate) unread: bool,
+    /// Comments on lines of a diff, to go with the next message.
+    pub(crate) comments: Vec<crate::review::Comment>,
 }
 
 impl Chat {
@@ -268,6 +283,7 @@ impl Chat {
             open: HashSet::new(),
             closed: HashSet::new(),
             unread: false,
+            comments: Vec::new(),
         }
     }
 
@@ -285,7 +301,11 @@ impl Chat {
     /// to be sent, or has news not seen yet. Anything else is read back from its log when it is
     /// opened again.
     fn wanted(&self) -> bool {
-        self.busy() || self.unread || self.next.is_some() || !self.editor.text().trim().is_empty()
+        self.busy()
+            || self.unread
+            || self.next.is_some()
+            || !self.editor.text().trim().is_empty()
+            || !self.comments.is_empty()
     }
 
     /// A new conversation nothing was sent in yet.
@@ -412,6 +432,30 @@ pub enum Msg {
     CommitText(String),
     /// A line of a diff: where it is goes into the input, to be talked about.
     Quote(PathBuf, usize),
+    /// A comment on line `n` of a file's diff, in its staged part or not: asked for under the line,
+    /// typed, kept to go with the next message, its place put in the input instead, or let go.
+    CommentAt(PathBuf, usize, bool),
+    CommentText(String),
+    CommentSave,
+    CommentQuote,
+    CommentCancel,
+    /// A comment kept to go with the next message, taken back.
+    CommentRemove(usize),
+    /// The branches there are to switch to.
+    Branches(Vec<String>),
+    /// The branch's pull request read again, and as it was found.
+    PrRefresh,
+    PrLoaded(Option<Box<crate::git::Pr>>),
+    /// The failed checks' logs read, to ask the agent to fix them; and as they were read.
+    FixChecks,
+    FixReady(String),
+    /// What a reviewer said, put in the input for the agent to address.
+    Address(usize),
+    /// Conversations are archived when their branch's pull request is merged or closed, or not.
+    SetAutoArchive(bool),
+    /// Conversations whose branch's pull request was merged or closed are looked for; and found.
+    Sweep,
+    Swept(Vec<String>),
     /// A new conversation branched off before message `i`, the message in its input to be changed
     /// and sent; or before the last message, sent again as it was.
     Fork(usize),
@@ -477,6 +521,7 @@ impl App {
         // In front when it opens: a window another one started is not brought there by the system.
         let front = window::oldest().and_then(window::gain_focus);
         let git = app.refresh_git();
+        let sweep = app.sweep();
         (
             app,
             Task::batch([
@@ -485,6 +530,7 @@ impl App {
                 screen,
                 front,
                 git,
+                sweep,
             ]),
         )
     }
@@ -546,6 +592,11 @@ impl App {
             git_busy: false,
             commit_msg: String::new(),
             confirm_discard: None,
+            confirm_merge: false,
+            branch_list: None,
+            pr: None,
+            pr_loading: false,
+            commenting: None,
             ex_hover: None,
             aside: None,
             toast: None,
@@ -592,6 +643,10 @@ impl App {
             event::listen_with(global_key),
             event::listen_with(window_event),
         ];
+        // Conversations whose pull request was merged or closed are looked for now and then.
+        if self.prefs.auto_archive {
+            all.push(iced::time::every(SWEEP_EVERY).map(|_| Msg::Sweep));
+        }
         // The clock only moves what is shown while something runs.
         if self.running() {
             all.push(iced::time::every(Duration::from_secs(1)).map(Msg::Tick));
@@ -864,7 +919,7 @@ impl App {
                 self.tab = tab;
                 self.insp = true;
                 if tab == Tab::Git {
-                    return self.refresh_git();
+                    return Task::batch([self.refresh_git(), self.refresh_pr()]);
                 }
             }
             Msg::Fold(i) => {
@@ -1046,6 +1101,9 @@ impl App {
         self.prefs.names = held.names;
         self.prefs.pinned = held.pinned;
         self.prefs.archived = held.archived;
+        self.prefs.branches = held.branches;
+        self.prefs.groups = held.groups;
+        self.prefs.scripts = held.scripts;
         self.kept_prefs = self.prefs.clone();
     }
 
@@ -1286,17 +1344,20 @@ impl App {
 
     /// What was typed, taken out of the input and remembered with what was sent before.
     fn take_input(&mut self) -> Option<String> {
-        let text = self.chat.editor.text().trim().to_owned();
-        if text.is_empty() {
+        let typed = self.chat.editor.text().trim().to_owned();
+        if typed.is_empty() && self.chat.comments.is_empty() {
             return None;
         }
+        // What is remembered under ↑ is what was typed; the comments go with the message only.
+        let comments = std::mem::take(&mut self.chat.comments);
+        let text = crate::review::with_comments(&typed, &comments, &self.cwd, self.s.w().comments_block);
         self.chat.editor = text_editor::Content::new();
         self.recall = None;
         self.dismissed = false;
-        if self.history.last() != Some(&text) {
-            self.history.push(text.clone());
+        if !typed.is_empty() && self.history.last() != Some(&typed) {
+            self.history.push(typed.clone());
             if let Some(file) = &self.history_file {
-                crate::composer::append_history(file, &text);
+                crate::composer::append_history(file, &typed);
             }
         }
         Some(text)
@@ -1451,12 +1512,15 @@ impl App {
         // What the system is told when the window is behind others.
         let mut news: Option<&'static str> = None;
         let mut git = false;
+        // A conversation's id, once its run names it: the branch it was started on is kept.
+        let mut named = None;
         match update {
             RunUpdate::Started(control) => run.control = Some(control),
             RunUpdate::Event(event) => {
                 let effect = chat.transcript.apply(&event, now);
                 if let Some(id) = effect.session_id {
-                    chat.session = Some(id);
+                    chat.session = Some(id.clone());
+                    named = Some(id);
                 }
                 if let Some(cause) = effect.ended {
                     run.ended = true;
@@ -1535,6 +1599,15 @@ impl App {
             self.reload_sessions();
         }
         self.now = now;
+        if let Some(id) = named
+            && key != SIDE
+            && let Some(branch) = self.git.branch.clone()
+            && !self.prefs.branches.contains_key(&id)
+        {
+            let _ = self.set(|p| {
+                p.branches.insert(id, branch);
+            });
+        }
         if let Some(body) = news
             && !self.focused
         {

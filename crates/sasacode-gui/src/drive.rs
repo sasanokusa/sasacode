@@ -889,7 +889,8 @@ fn a_file_is_staged_by_its_button_and_discarded_only_on_the_second_press() {
             path: "a.txt".into(),
             index: ' ',
             tree: 'M',
-            diff: crate::diff::Diff::parse("@@ -1 +1 @@\n-a\n+b\n"),
+            staged_diff: crate::diff::Diff::default(),
+            unstaged_diff: crate::diff::Diff::parse("@@ -1 +1 @@\n-a\n+b\n"),
         }],
         ..Default::default()
     };
@@ -942,4 +943,145 @@ fn the_paste_chord_in_the_input_asks_for_the_clipboard_and_puts_in_what_it_has()
     assert_eq!(typed(&app), "貼った文 @/tmp/pasted-1.png ");
     let _ = app.update(Msg::PastedImage(None));
     assert_eq!(typed(&app), "貼った文 @/tmp/pasted-1.png ");
+}
+
+/// A repository with one file changed in two places, shown in the git tab.
+fn changed_repo(app: &mut App) {
+    app.git = crate::git::Status {
+        repo: true,
+        top: app.cwd.clone(),
+        branch: Some("main".into()),
+        files: vec![crate::git::File {
+            path: "a.txt".into(),
+            index: 'M',
+            tree: 'M',
+            staged_diff: crate::diff::Diff::parse("@@ -1 +1 @@\n-a\n+b\n"),
+            unstaged_diff: crate::diff::Diff::parse("@@ -9 +9 @@\n-c\n+d\n"),
+        }],
+        ..Default::default()
+    };
+    app.tab = Tab::Git;
+}
+
+#[test]
+fn a_comment_on_a_line_of_a_diff_goes_with_the_next_message_and_not_into_the_history() {
+    let mut app = window("ja");
+    let w = app.s.w();
+    changed_repo(&mut app);
+    // Staged and not, apart, each hunk with its own buttons.
+    assert!(says(&app, w.staged_head) && says(&app, w.unstaged_head));
+    let path = app.cwd.join("a.txt");
+    let _ = app.update(Msg::CommentAt(path.clone(), 9, false));
+    assert!(says(&app, w.comment_add));
+    let _ = app.update(Msg::CommentText("  ここは逆では？ ".into()));
+    let _ = app.update(Msg::CommentSave);
+    assert!(app.commenting.is_none());
+    assert_eq!(app.chat.comments.len(), 1);
+    // Shown under its line and above the input, where it can be taken back.
+    assert!(says(&app, w.comments_head) && says(&app, "ここは逆では？"));
+
+    // An empty comment puts where the line is into the input instead, as a click did before.
+    let _ = app.update(Msg::CommentAt(path, 1, true));
+    let _ = app.update(Msg::CommentSave);
+    assert_eq!(typed(&app), "@a.txt:1 ");
+
+    let _ = app.update(Msg::Send);
+    let sent = &app.chat.transcript.exchanges[0].prompt;
+    assert_eq!(
+        sent,
+        &format!("@a.txt:1\n\n{}\n- @a.txt:9: ここは逆では？", w.comments_block)
+    );
+    assert!(app.chat.comments.is_empty());
+    assert_eq!(app.history.last().map(String::as_str), Some("@a.txt:1"));
+}
+
+#[test]
+fn comments_alone_can_be_sent() {
+    let mut app = window("ja");
+    changed_repo(&mut app);
+    let _ = app.update(Msg::CommentAt(app.cwd.join("a.txt"), 9, false));
+    let _ = app.update(Msg::CommentText("名前を変えて".into()));
+    let _ = app.update(Msg::CommentSave);
+    let _ = app.update(Msg::Send);
+    assert!(
+        app.chat.transcript.exchanges[0]
+            .prompt
+            .ends_with("- @a.txt:9: 名前を変えて")
+    );
+    assert!(app.history.is_empty());
+}
+
+#[test]
+fn a_hunk_is_discarded_and_a_pull_request_merged_only_on_the_second_press() {
+    let mut app = window("ja");
+    changed_repo(&mut app);
+    let discard = Msg::GitDo(crate::git::Op::Hunk {
+        path: "a.txt".into(),
+        act: crate::git::HunkAct::Discard,
+        at: 0,
+        head: "@@ -9 +9 @@".into(),
+    });
+    let _ = app.update(discard.clone());
+    assert_eq!(app.confirm_discard.as_deref(), Some("a.txt#0"));
+    assert!(says(&app, app.s.discard_sure) && !app.git_busy);
+    let _ = app.update(discard);
+    assert!(app.git_busy && app.confirm_discard.is_none());
+
+    let mut app = window("ja");
+    changed_repo(&mut app);
+    app.pr = Some(crate::git::Pr {
+        number: 7,
+        title: "再試行".into(),
+        state: "OPEN".into(),
+        checks: vec![crate::git::Check {
+            name: "rust".into(),
+            state: crate::git::CheckState::Failed,
+            url: String::new(),
+        }],
+        ..Default::default()
+    });
+    let w = app.s.w();
+    assert!(says(&app, w.fix_checks) && says(&app, w.check_failed));
+    let _ = app.update(Msg::GitDo(crate::git::Op::Merge));
+    assert!(app.confirm_merge && !app.git_busy && says(&app, w.merge_sure));
+    let _ = app.update(Msg::GitDo(crate::git::Op::Merge));
+    assert!(app.git_busy && !app.confirm_merge);
+}
+
+#[test]
+fn the_branch_list_checks_out_what_is_found_and_makes_a_new_one_only_by_its_whole_name() {
+    let mut app = window("ja");
+    changed_repo(&mut app);
+    app.branch_list = Some(vec!["main".into(), "topic/retry".into()]);
+    let _ = app.update(Msg::Command(Command::Branch));
+    // Asked for again whenever the list opens.
+    assert!(app.branch_list.is_none());
+    app.branch_list = Some(vec!["main".into(), "topic/retry".into()]);
+    let _ = app.update(Msg::OverlayText("retry".into()));
+    let found: Vec<Msg> = app.found_entries().into_iter().map(|e| e.msg).collect();
+    assert!(matches!(&found[..], [
+        Msg::GitDo(crate::git::Op::Switch(b)),
+        Msg::GitDo(crate::git::Op::NewBranch(n)),
+    ] if b == "topic/retry" && n == "retry"));
+    // Enter takes the first: the branch found, not a new one.
+    let _ = app.update(Msg::PaletteRun(0));
+    assert!(app.overlay.is_none() && app.git_busy);
+
+    let mut app = window("ja");
+    changed_repo(&mut app);
+    app.overlay = Some(crate::overlay::Overlay::picker(crate::overlay::Pick::Branches));
+    app.branch_list = Some(vec!["main".into()]);
+    let _ = app.update(Msg::OverlayText("main".into()));
+    assert_eq!(app.found_entries().len(), 1);
+    let _ = app.update(Msg::OverlayText("two words".into()));
+    assert!(app.found_entries().is_empty());
+}
+
+#[test]
+fn conversations_whose_pull_request_closed_are_archived_when_the_settings_say_so() {
+    let mut app = window("ja");
+    let _ = app.update(Msg::SetAutoArchive(true));
+    let _ = app.update(Msg::Swept(vec!["a".into(), "b".into()]));
+    assert!(app.prefs.archived.contains("a") && app.prefs.archived.contains("b"));
+    assert!(app.toast.as_deref().is_some_and(|t| t.contains('2')));
 }

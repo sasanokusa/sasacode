@@ -16,10 +16,11 @@ pub const SIDE: u64 = u64::MAX;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Overlay {
-    /// What is typed, and which of what it finds is chosen.
+    /// What is typed, and which of what it finds is chosen, among what it picks from.
     Palette {
         query: String,
         at: usize,
+        pick: Pick,
     },
     Keys,
     Settings,
@@ -32,11 +33,25 @@ pub enum Overlay {
     Side,
 }
 
+/// What a palette picks from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Pick {
+    /// The window's commands, and the rest the command palette lists.
+    Commands,
+    /// The branches to check out, or a new one to make.
+    Branches,
+}
+
 impl Overlay {
     pub fn palette() -> Overlay {
+        Overlay::picker(Pick::Commands)
+    }
+
+    pub fn picker(pick: Pick) -> Overlay {
         Overlay::Palette {
             query: String::new(),
             at: 0,
+            pick,
         }
     }
 }
@@ -134,11 +149,48 @@ impl App {
         all
     }
 
+    /// The branches whose names have every word typed, the one checked out marked; then, when what
+    /// is typed is a name no branch has, a new branch of that name: last, so that Enter on a part
+    /// of a name checks that branch out rather than making another.
+    fn branch_entries(&self, query: &str) -> Vec<Entry> {
+        let w = self.s.w();
+        let here = self.git.branch.as_deref();
+        let words: Vec<String> = query.split_whitespace().map(str::to_lowercase).collect();
+        let mut all: Vec<Entry> = self
+            .branch_list
+            .iter()
+            .flatten()
+            .filter(|b| words.iter().all(|w| b.to_lowercase().contains(w)))
+            .map(|b| Entry {
+                label: if Some(b.as_str()) == here {
+                    format!("{b} {}", w.branch_here)
+                } else {
+                    b.clone()
+                },
+                keys: None,
+                msg: Msg::GitDo(crate::git::Op::Switch(b.clone())),
+            })
+            .collect();
+        let name = query.trim();
+        let valid = !name.is_empty() && !name.contains(char::is_whitespace);
+        if valid && !self.branch_list.iter().flatten().any(|b| b == name) {
+            all.push(Entry {
+                label: crate::i18n::fill(w.branch_new, "name", name),
+                keys: None,
+                msg: Msg::GitDo(crate::git::Op::NewBranch(name.to_owned())),
+            });
+        }
+        all
+    }
+
     /// What the palette finds for what is typed: entries that have every word of it.
     pub(crate) fn found_entries(&self) -> Vec<Entry> {
-        let Some(Overlay::Palette { query, .. }) = &self.overlay else {
+        let Some(Overlay::Palette { query, pick, .. }) = &self.overlay else {
             return Vec::new();
         };
+        if *pick == Pick::Branches {
+            return self.branch_entries(query);
+        }
         let words: Vec<String> = query.split_whitespace().map(str::to_lowercase).collect();
         self.entries()
             .into_iter()
@@ -154,6 +206,9 @@ impl App {
         let task = match msg {
             Msg::Show(overlay) => {
                 let focus = match &overlay {
+                    Some(Overlay::Palette {
+                        pick: Pick::Branches, ..
+                    }) => Task::batch([operation::focus(PALETTE), self.list_branches()]),
                     Some(Overlay::Palette { .. }) => operation::focus(PALETTE),
                     Some(Overlay::Rename { .. }) => {
                         Task::batch([operation::focus(RENAME), operation::select_all(RENAME)])
@@ -170,7 +225,7 @@ impl App {
             }
             Msg::OverlayText(text) => {
                 match &mut self.overlay {
-                    Some(Overlay::Palette { query, at }) => {
+                    Some(Overlay::Palette { query, at, .. }) => {
                         *query = text;
                         *at = 0;
                     }
@@ -339,7 +394,7 @@ impl App {
     }
 
     /// Changes a setting, and keeps it.
-    fn set(&mut self, change: impl FnOnce(&mut crate::layout::Prefs)) -> Task<Msg> {
+    pub(crate) fn set(&mut self, change: impl FnOnce(&mut crate::layout::Prefs)) -> Task<Msg> {
         change(&mut self.prefs);
         self.keep_layout();
         Task::none()
@@ -473,7 +528,12 @@ impl App {
         let task = match msg {
             Msg::GitRefresh => self.refresh_git(),
             Msg::GitStatus(status) => {
+                // Another branch has another pull request, if any.
+                let moved = self.git.branch != status.branch;
                 self.git = *status;
+                if moved && self.tab == Tab::Git {
+                    return Ok(self.refresh_pr());
+                }
                 Task::none()
             }
             Msg::CommitText(text) => {
@@ -481,14 +541,34 @@ impl App {
                 Task::none()
             }
             Msg::GitDo(op) => {
-                // Discarding asks twice: what it throws away is not kept anywhere.
-                if let Op::Discard(path) = &op
-                    && self.confirm_discard.as_ref() != Some(path)
+                // Discarding asks twice: what it throws away is not kept anywhere. So does a merge,
+                // which others see.
+                let sure = match &op {
+                    Op::Discard(path) => Some(path.clone()),
+                    Op::Hunk {
+                        path,
+                        act: crate::git::HunkAct::Discard,
+                        at,
+                        ..
+                    } => Some(format!("{path}#{at}")),
+                    _ => None,
+                };
+                if let Some(key) = sure
+                    && self.confirm_discard.as_ref() != Some(&key)
                 {
-                    self.confirm_discard = Some(path.clone());
+                    self.confirm_discard = Some(key);
+                    return Ok(Task::none());
+                }
+                if op == Op::Merge && !std::mem::take(&mut self.confirm_merge) {
+                    self.confirm_merge = true;
                     return Ok(Task::none());
                 }
                 self.confirm_discard = None;
+                self.confirm_merge = false;
+                // A branch picked in the list: the list goes.
+                if matches!(op, Op::Switch(_) | Op::NewBranch(_)) {
+                    self.overlay = None;
+                }
                 if self.git_busy || matches!(&op, Op::Commit(m) if m.trim().is_empty()) {
                     return Ok(Task::none());
                 }
@@ -517,22 +597,22 @@ impl App {
                     let _ = self.update(Msg::Link(said.clone()));
                 }
                 self.toast = (!said.is_empty()).then_some(said);
+                // What was pushed, opened or merged shows in the pull request's part of the tab.
+                if self.tab == Tab::Git {
+                    return Ok(Task::batch([self.refresh_git(), self.refresh_pr()]));
+                }
                 self.refresh_git()
             }
             Msg::Quote(path, line) => {
                 // As `@path:line`, the path as a dropped file's is given.
-                let at = crate::composer::path_ref(&path, &self.cwd);
-                let text = match at.strip_suffix('"') {
-                    Some(quoted) => format!("{quoted}:{line}\" "),
-                    None => format!("{at}:{line} "),
-                };
+                let text = format!("{} ", crate::review::place(&path, line, &self.cwd));
                 self.chat.editor.perform(iced::widget::text_editor::Action::Edit(
                     iced::widget::text_editor::Edit::Paste(std::sync::Arc::new(text)),
                 ));
                 self.dismissed = true;
                 operation::focus(crate::app::INPUT)
             }
-            other => return Err(other),
+            other => return self.update_review(other),
         };
         Ok(task)
     }

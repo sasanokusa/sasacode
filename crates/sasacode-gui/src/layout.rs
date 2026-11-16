@@ -105,6 +105,25 @@ pub struct Prefs {
     pub pinned: Vec<String>,
     /// Conversations taken out of the list.
     pub archived: BTreeSet<String>,
+    /// A conversation is taken out of the list when its branch's pull request is merged or closed.
+    pub auto_archive: bool,
+    /// After a run ends, the model is asked what to say next, offered in the input.
+    pub suggest: bool,
+    /// The branch each conversation was started on, by session id.
+    pub branches: BTreeMap<String, String>,
+    /// The group of the list each conversation was put in, by session id.
+    pub groups: BTreeMap<String, String>,
+    /// Keys given to the window's actions in place of their own, by action: `cmd+shift+k`.
+    pub keys: BTreeMap<String, String>,
+    /// Each folder's scripts, run from the window: by the folder's path.
+    pub scripts: BTreeMap<String, Vec<Script>>,
+}
+
+/// A command a folder's scripts run, by the name it is listed as.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Script {
+    pub name: String,
+    pub command: String,
 }
 
 impl Default for Prefs {
@@ -119,8 +138,49 @@ impl Default for Prefs {
             names: BTreeMap::new(),
             pinned: Vec::new(),
             archived: BTreeSet::new(),
+            auto_archive: false,
+            suggest: false,
+            branches: BTreeMap::new(),
+            groups: BTreeMap::new(),
+            keys: BTreeMap::new(),
+            scripts: BTreeMap::new(),
         }
     }
+}
+
+/// What `held` has under `key` as words by name, each trimmed, blank ones left out.
+fn words(held: &Value, key: &str) -> BTreeMap<String, String> {
+    held[key]
+        .as_object()
+        .map(|all| {
+            all.iter()
+                .filter_map(|(id, name)| Some((id.clone(), name.as_str()?.trim().to_owned())))
+                .filter(|(_, name)| !name.is_empty())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// `mine` laid over `disk` entry by entry: what this window changed since `kept`, added, changed or
+/// taken away, and what another window wrote for the rest.
+fn merge_map<V: PartialEq + Clone>(
+    mine: &BTreeMap<String, V>,
+    kept: &BTreeMap<String, V>,
+    disk: &BTreeMap<String, V>,
+) -> BTreeMap<String, V> {
+    let mut all = disk.clone();
+    for id in kept.keys().chain(mine.keys()) {
+        match mine.get(id) {
+            now if now == kept.get(id) => {}
+            Some(value) => {
+                all.insert(id.clone(), value.clone());
+            }
+            None => {
+                all.remove(id);
+            }
+        }
+    }
+    all
 }
 
 impl Prefs {
@@ -152,17 +212,37 @@ impl Prefs {
             notify: flag("notify", start.notify),
             awake: flag("awake", start.awake),
             steps: flag("steps", start.steps),
-            names: held["names"]
+            names: words(&held, "names"),
+            pinned,
+            archived: ids("archived").into_iter().collect(),
+            auto_archive: flag("autoArchive", start.auto_archive),
+            suggest: flag("suggest", start.suggest),
+            branches: words(&held, "branches"),
+            groups: words(&held, "groups"),
+            keys: words(&held, "keys"),
+            scripts: held["scripts"]
                 .as_object()
                 .map(|all| {
                     all.iter()
-                        .filter_map(|(id, name)| Some((id.clone(), name.as_str()?.trim().to_owned())))
-                        .filter(|(_, name)| !name.is_empty())
+                        .map(|(folder, list)| {
+                            let list = list
+                                .as_array()
+                                .into_iter()
+                                .flatten()
+                                .filter_map(|s| {
+                                    let name = s["name"].as_str()?.trim();
+                                    let command = s["command"].as_str()?.trim();
+                                    (!name.is_empty() && !command.is_empty()).then(|| Script {
+                                        name: name.to_owned(),
+                                        command: command.to_owned(),
+                                    })
+                                })
+                                .collect();
+                            (folder.clone(), list)
+                        })
                         .collect()
                 })
                 .unwrap_or_default(),
-            pinned,
-            archived: ids("archived").into_iter().collect(),
         }
     }
 
@@ -174,18 +254,7 @@ impl Prefs {
         fn pick<T: PartialEq + Clone>(mine: &T, kept: &T, disk: &T) -> T {
             if mine != kept { mine.clone() } else { disk.clone() }
         }
-        let mut names = disk.names.clone();
-        for id in kept.names.keys().chain(self.names.keys()) {
-            match self.names.get(id) {
-                mine if mine == kept.names.get(id) => {}
-                Some(name) => {
-                    names.insert(id.clone(), name.clone());
-                }
-                None => {
-                    names.remove(id);
-                }
-            }
-        }
+        let names = merge_map(&self.names, &kept.names, &disk.names);
         let mut archived = disk.archived.clone();
         archived.extend(self.archived.difference(&kept.archived).cloned());
         for id in kept.archived.difference(&self.archived) {
@@ -208,6 +277,12 @@ impl Prefs {
             names,
             pinned,
             archived,
+            auto_archive: pick(&self.auto_archive, &kept.auto_archive, &disk.auto_archive),
+            suggest: pick(&self.suggest, &kept.suggest, &disk.suggest),
+            branches: merge_map(&self.branches, &kept.branches, &disk.branches),
+            groups: merge_map(&self.groups, &kept.groups, &disk.groups),
+            keys: merge_map(&self.keys, &kept.keys, &disk.keys),
+            scripts: merge_map(&self.scripts, &kept.scripts, &disk.scripts),
         }
     }
 }
@@ -238,6 +313,22 @@ pub fn write(file: &Path, layout: &Layout, prefs: &Prefs) -> io::Result<()> {
         "names": prefs.names,
         "pinned": prefs.pinned,
         "archived": prefs.archived,
+        "autoArchive": prefs.auto_archive,
+        "suggest": prefs.suggest,
+        "branches": prefs.branches,
+        "groups": prefs.groups,
+        "keys": prefs.keys,
+        "scripts": prefs
+            .scripts
+            .iter()
+            .map(|(folder, list)| {
+                let list: Vec<Value> = list
+                    .iter()
+                    .map(|s| json!({ "name": s.name, "command": s.command }))
+                    .collect();
+                (folder.clone(), Value::Array(list))
+            })
+            .collect::<serde_json::Map<String, Value>>(),
     }))?;
     let part = file.with_extension(format!("json.{}.part", std::process::id()));
     std::fs::write(&part, text + "\n")?;
@@ -410,6 +501,19 @@ mod tests {
             names: [("aaaa".to_owned(), "名前".to_owned())].into(),
             pinned: vec!["bbbb".into(), "aaaa".into()],
             archived: ["cccc".to_owned()].into(),
+            auto_archive: true,
+            suggest: true,
+            branches: [("aaaa".to_owned(), "topic/x".to_owned())].into(),
+            groups: [("bbbb".to_owned(), "調査".to_owned())].into(),
+            keys: [("palette".to_owned(), "cmd+shift+k".to_owned())].into(),
+            scripts: [(
+                "/work/p".to_owned(),
+                vec![Script {
+                    name: "テスト".into(),
+                    command: "cargo test".into(),
+                }],
+            )]
+            .into(),
         };
         write(&file, &Layout::default(), &prefs).unwrap();
         assert_eq!(Prefs::read(&file), prefs);
