@@ -39,7 +39,7 @@ GUIが使うのは、すでにあるヘッドレスの出力と制御だけ（[R
 - 実行中に送ったメッセージは、次のターンで新しいユーザーメッセージとしてモデルに渡る。中断のあとに渡るときは、先頭に`[The user interrupted the previous response.]`というテキストの部品が付く（ユーザーの言葉ではないので、画面には出さない）。
 - ハーネスがユーザーの代わりに送る注意（`[Reminder from sasacode, not from the user] `で始まる）と、サブエージェントの終了報告も、ユーザーのメッセージとして届く。吹き出しにはせず、注記として出す。
 
-TS側が正。`crates/sasacode-protocol/tests/fixtures` に実際の実行の出力とそのセッションログを置き、`cargo test` で読めるかを確かめる。テストはTSのソース（`events.ts`、`control.ts`、`session.ts`）も読み、Rust側の知らないイベントの種類が増えたら落ちる。出力やログの形を変えたら `bun crates/sasacode-protocol/tests/fixtures/generate.ts` でフィクスチャを作り直す。
+TS側が正。`crates/sasacode-protocol/tests/fixtures` に実際の実行の出力とそのセッションログを置き、`cargo test` で読めるかを確かめる。テストはTSのソース（`events.ts`、`control.ts`、`session.ts`）も読み、Rust側の知らないイベントの種類が増えたら落ちる。出力やログの形を変えたら `bun crates/sasacode-protocol/tests/fixtures/generate.ts` でフィクスチャを作り直す。今のフィクスチャは、`session`行に`contextWindow`を足す前のCLIの出力のまま。GUIが古いCLIの行も読めることの確かめを兼ねる（新しい行は`tests/protocol.rs`で確かめる）。
 
 ## 使い方
 

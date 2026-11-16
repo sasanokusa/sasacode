@@ -125,4 +125,55 @@ mod tests {
         );
         std::fs::remove_dir_all(dir).unwrap();
     }
+
+    /// The real CLI against a fake model: `SASACODE_FAKE` runs it, in the project
+    /// `SASACODE_FAKE_PROJECT`. A branched log is continued with `-r` and holds what came before
+    /// it; `--no-session` (a side question) leaves the log as it was; the session line says the
+    /// context window.
+    #[test]
+    #[ignore = "needs a fake model server and a CLI pointed at it"]
+    fn the_cli_continues_a_branch_and_keeps_a_side_question_out_of_the_log() {
+        let (Ok(cli), Ok(project)) = (std::env::var("SASACODE_FAKE"), std::env::var("SASACODE_FAKE_PROJECT")) else {
+            panic!("set SASACODE_FAKE and SASACODE_FAKE_PROJECT");
+        };
+        let run = |args: &[&str]| -> serde_json::Value {
+            let out = std::process::Command::new(&cli)
+                .args(args)
+                .args(["--output", "jsonl"])
+                .current_dir(&project)
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+            let text = String::from_utf8(out.stdout).unwrap();
+            serde_json::from_str(text.lines().next().unwrap()).unwrap()
+        };
+        let first = run(&["-p", "一つ目"]);
+        assert_eq!(first["type"], "session");
+        assert!(first["contextWindow"].as_u64().is_some_and(|n| n > 0), "{first}");
+        let id = first["id"].as_str().unwrap().to_owned();
+        let log = PathBuf::from(first["path"].as_str().unwrap());
+        run(&["-r", &id, "-p", "二つ目"]);
+        let prompts = |path: &Path| -> Vec<String> {
+            Transcript::from_entries(&sasacode_protocol::read_entries(path).unwrap())
+                .exchanges
+                .iter()
+                .map(|e| e.prompt.clone())
+                .collect()
+        };
+        assert_eq!(prompts(&log), ["一つ目", "二つ目"]);
+
+        // A side question reads the conversation and writes nothing.
+        let before = std::fs::read(&log).unwrap();
+        let side = run(&["-r", &id, "--no-session", "-p", "脇の質問"]);
+        assert_eq!(side["type"], "session");
+        assert_eq!(std::fs::read(&log).unwrap(), before);
+
+        // The second message, edited and sent again on a branch.
+        let (branch, path) = fork(&log, 1, "二つ目").unwrap();
+        let again = run(&["-r", &branch, "-p", "直した二つ目"]);
+        assert_eq!(again["id"].as_str(), Some(branch.as_str()));
+        assert_eq!(PathBuf::from(again["path"].as_str().unwrap()), path);
+        assert_eq!(prompts(&path), ["一つ目", "直した二つ目"]);
+        assert_eq!(std::fs::read(&log).unwrap(), before);
+    }
 }

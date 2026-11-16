@@ -346,7 +346,7 @@ A published plugin shows up in everyone's `search` through the npm keyword `sasa
 
 ## Sessions
 
-Saved to `~/.sasacode/sessions/<working directory>-<hash>/<date>_<id>.jsonl`, one message or tool result per line as it happens, so a session can be resumed after a crash. A call that stopped before its result was saved is reported to the model as "unknown whether it ran", so it checks before retrying. A half-written last line is moved to `<file>.torn`. The session id is shown in the TUI footer, `/session`, the exit summary, and headless output (the last stderr line in text mode, the first `{"type":"session"}` line in JSONL). `SASACODE_HOME` moves `~/.sasacode`.
+Saved to `~/.sasacode/sessions/<working directory>-<hash>/<date>_<id>.jsonl`, one message or tool result per line as it happens, so a session can be resumed after a crash. A call that stopped before its result was saved is reported to the model as "unknown whether it ran", so it checks before retrying. A half-written last line is moved to `<file>.torn`. The session id is shown in the TUI footer, `/session`, the exit summary, and headless output (the last stderr line in text mode, the first `{"type":"session"}` line in JSONL, whose `contextWindow` is the model's context length, or `null` when unknown). `SASACODE_HOME` moves `~/.sasacode`.
 
 ## Development
 

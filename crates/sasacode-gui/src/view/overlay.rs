@@ -146,6 +146,9 @@ fn keys(app: &App) -> El<'_> {
             .into_iter()
             .filter_map(|e| Some((e.keys.filter(|k| k.starts_with(MOD))?, e.label))),
     );
+    // The palette is not one of its own entries; the input is reached from anywhere.
+    rows.push((format!("{MOD}⇧P"), s.c_palette.to_owned()));
+    rows.push((format!("{MOD}L"), s.k_input.to_owned()));
     let mut list = column![]
         .spacing(4)
         .width(Length::Fill)

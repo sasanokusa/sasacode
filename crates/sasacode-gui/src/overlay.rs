@@ -227,6 +227,10 @@ impl App {
             Msg::SetSteps(on) => self.set(|p| p.steps = on),
             Msg::Focus(on) => {
                 self.focused = on;
+                // Back in front: what another window said about conversations meanwhile is shown.
+                if on {
+                    self.read_others();
+                }
                 Task::none()
             }
             Msg::Hover(on) => {

@@ -166,6 +166,44 @@ impl Drop for Awake {
     }
 }
 
+/// How long reading the clipboard may take, as the TUI waits for it.
+const PASTE_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// What `c` prints when it ends well within `wait`; none when it fails or takes longer, when it is
+/// stopped.
+fn bounded(mut c: Command, wait: std::time::Duration) -> Option<Vec<u8>> {
+    use std::io::Read;
+    let mut child = c
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+    // Read meanwhile: an image is more than a pipe holds, and the program would wait for room.
+    let mut out = child.stdout.take()?;
+    let reader = std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        let _ = out.read_to_end(&mut bytes);
+        bytes
+    });
+    let until = std::time::Instant::now() + wait;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break Some(status),
+            Ok(None) if std::time::Instant::now() < until => {
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                break None;
+            }
+        }
+    };
+    let bytes = reader.join().unwrap_or_default();
+    status.filter(|s| s.success()).map(|_| bytes)
+}
+
 /// How long an image pasted from the clipboard is kept, for the message it went into to be sent.
 const PASTED_KEPT: std::time::Duration = std::time::Duration::from_secs(7 * 86_400);
 
@@ -191,10 +229,7 @@ pub fn clipboard_image(dir: &Path) -> Option<PathBuf> {
         .unwrap_or_default()
         .subsec_millis();
     let file = dir.join(format!("pasted-{}-{millis:03}.png", stamp(now)));
-    let quiet = |mut c: Command| {
-        c.stdin(Stdio::null()).stderr(Stdio::null());
-        c.output().ok().filter(|out| out.status.success())
-    };
+    let quiet = |c: Command| bounded(c, PASTE_WAIT);
     if cfg!(target_os = "macos") {
         let path = file.to_string_lossy().replace('\\', "\\\\").replace('"', "\\\"");
         let open = format!("set fh to open for access POSIX file \"{path}\" with write permission");
@@ -237,7 +272,7 @@ pub fn clipboard_image(dir: &Path) -> Option<PathBuf> {
         .find_map(|(program, args)| {
             let mut c = command(program);
             c.args(*args);
-            quiet(c).map(|out| out.stdout).filter(|png| !png.is_empty())
+            quiet(c).filter(|png| !png.is_empty())
         })?;
         std::fs::write(&file, png).ok()?;
     }
@@ -372,6 +407,20 @@ mod tests {
         assert_eq!(stamp(std::time::UNIX_EPOCH), "19700101-000000");
         let at = at + std::time::Duration::from_millis(7);
         assert_eq!(iso(at), "2026-11-17T09:30:12.007Z");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_program_that_takes_too_long_is_stopped() {
+        let start = std::time::Instant::now();
+        let mut slow = Command::new("sleep");
+        slow.arg("5");
+        assert_eq!(bounded(slow, std::time::Duration::from_millis(200)), None);
+        assert!(start.elapsed() < std::time::Duration::from_secs(3));
+        let mut quick = Command::new("printf");
+        quick.arg("abc");
+        assert_eq!(bounded(quick, PASTE_WAIT).as_deref(), Some(&b"abc"[..]));
+        assert_eq!(bounded(Command::new("false"), PASTE_WAIT), None);
     }
 
     #[test]

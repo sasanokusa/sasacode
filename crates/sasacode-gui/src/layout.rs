@@ -165,6 +165,51 @@ impl Prefs {
             archived: ids("archived").into_iter().collect(),
         }
     }
+
+    /// This window's choices laid over `disk`, what the file holds now, which another window may
+    /// have written since this one read or wrote `kept`: what this window changed since then is
+    /// taken from it, the rest from the file. Names, pins and the archive go entry by entry, so
+    /// two windows naming two conversations keep both names.
+    pub fn over(&self, kept: &Prefs, disk: &Prefs) -> Prefs {
+        fn pick<T: PartialEq + Clone>(mine: &T, kept: &T, disk: &T) -> T {
+            if mine != kept { mine.clone() } else { disk.clone() }
+        }
+        let mut names = disk.names.clone();
+        for id in kept.names.keys().chain(self.names.keys()) {
+            match self.names.get(id) {
+                mine if mine == kept.names.get(id) => {}
+                Some(name) => {
+                    names.insert(id.clone(), name.clone());
+                }
+                None => {
+                    names.remove(id);
+                }
+            }
+        }
+        let mut archived = disk.archived.clone();
+        archived.extend(self.archived.difference(&kept.archived).cloned());
+        for id in kept.archived.difference(&self.archived) {
+            archived.remove(id);
+        }
+        let unpinned = |id: &String| kept.pinned.contains(id) && !self.pinned.contains(id);
+        let mut pinned: Vec<String> = disk.pinned.iter().filter(|id| !unpinned(id)).cloned().collect();
+        for id in &self.pinned {
+            if !kept.pinned.contains(id) && !pinned.contains(id) {
+                pinned.push(id.clone());
+            }
+        }
+        Prefs {
+            enter_sends: pick(&self.enter_sends, &kept.enter_sends, &disk.enter_sends),
+            dark: pick(&self.dark, &kept.dark, &disk.dark),
+            zoom: pick(&self.zoom, &kept.zoom, &disk.zoom),
+            notify: pick(&self.notify, &kept.notify, &disk.notify),
+            awake: pick(&self.awake, &kept.awake, &disk.awake),
+            steps: pick(&self.steps, &kept.steps, &disk.steps),
+            names,
+            pinned,
+            archived,
+        }
+    }
 }
 
 /// Writes how the window is laid out and what was chosen to `file`, whole or not at all: a window
@@ -193,7 +238,7 @@ pub fn write(file: &Path, layout: &Layout, prefs: &Prefs) -> io::Result<()> {
         "pinned": prefs.pinned,
         "archived": prefs.archived,
     }))?;
-    let part = file.with_extension("json.part");
+    let part = file.with_extension(format!("json.{}.part", std::process::id()));
     std::fs::write(&part, text + "\n")?;
     std::fs::rename(&part, file)
 }
@@ -213,6 +258,47 @@ mod tests {
     use std::path::PathBuf;
 
     use super::*;
+
+    #[test]
+    fn two_windows_keep_what_each_said_about_conversations() {
+        let dir = std::env::temp_dir().join(format!("sasacode-gui-two-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let file = dir.join("gui.json");
+        let mut first = Prefs::default();
+        first.names.insert("a".into(), "前からの名前".into());
+        first.pinned.push("p".into());
+        write(&file, &Layout::default(), &first).unwrap();
+
+        // Both windows open on what the file holds.
+        let kept = Prefs::read(&file);
+        let (mut one, mut two) = (kept.clone(), kept.clone());
+        // One names a conversation and archives another, and is written.
+        one.names.insert("b".into(), "一つ目の窓".into());
+        one.archived.insert("x".into());
+        let written = one.over(&kept, &Prefs::read(&file));
+        write(&file, &Layout::default(), &written).unwrap();
+        // The other, which still has neither, unpins one, names one, and zooms.
+        two.pinned.clear();
+        two.names.insert("c".into(), "二つ目の窓".into());
+        two.zoom = 1.2;
+        let written = two.over(&kept, &Prefs::read(&file));
+        write(&file, &Layout::default(), &written).unwrap();
+
+        let now = Prefs::read(&file);
+        assert_eq!(
+            now.names.keys().map(String::as_str).collect::<Vec<_>>(),
+            ["a", "b", "c"]
+        );
+        assert!(now.archived.contains("x"));
+        assert!(now.pinned.is_empty());
+        assert_eq!(now.zoom, 1.2);
+        // What neither changed stays as the file had it; a name taken away is gone.
+        let mut three = now.clone();
+        three.names.remove("a");
+        let after = three.over(&now, &now);
+        assert!(!after.names.contains_key("a") && after.zoom == 1.2);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
     use crate::app::{App, Edge, Msg, Options};
     use crate::i18n::Strings;
 

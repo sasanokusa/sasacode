@@ -976,16 +976,37 @@ impl App {
         if now == self.kept && self.prefs == self.kept_prefs {
             return;
         }
-        match layout::write(file, &now, &self.prefs) {
+        // Another window may have written since: what this one did not change is left as it is.
+        let prefs = self.prefs.over(&self.kept_prefs, &Prefs::read(file));
+        match layout::write(file, &now, &prefs) {
             Ok(()) => {
                 self.kept = now;
-                self.kept_prefs = self.prefs.clone();
+                self.adopt(prefs);
             }
             Err(e) => eprintln!(
                 "sasacode-gui: could not keep the window's layout in {}: {e}",
                 file.display()
             ),
         }
+    }
+
+    /// Shows what other windows said about conversations since this one last read or wrote the
+    /// file. This window's own settings stay as they are, as shown; the file keeps another window's
+    /// until this one changes them.
+    pub(crate) fn read_others(&mut self) {
+        if let Some(file) = &self.layout_file {
+            let held = self.prefs.over(&self.kept_prefs, &Prefs::read(file));
+            self.adopt(held);
+        }
+    }
+
+    /// Takes what other windows said about conversations from `held`: what the file holds, as this
+    /// window wrote or read it.
+    fn adopt(&mut self, held: Prefs) {
+        self.prefs.names = held.names;
+        self.prefs.pinned = held.pinned;
+        self.prefs.archived = held.archived;
+        self.kept_prefs = self.prefs.clone();
     }
 
     /// Shows the conversation a log holds, to be continued by the next message: as it was left

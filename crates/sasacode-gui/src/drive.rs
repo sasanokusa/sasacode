@@ -724,3 +724,27 @@ fn a_file_is_staged_by_its_button_and_discarded_only_on_the_second_press() {
     }
     assert!(app.confirm_discard.is_none() && app.git_busy);
 }
+
+#[test]
+fn the_paste_chord_in_the_input_asks_for_the_clipboard_and_puts_in_what_it_has() {
+    let mut app = window("ja");
+    let mut seen = Vec::new();
+    {
+        let settings = Settings {
+            default_font: crate::view::UI,
+            ..Settings::default()
+        };
+        let mut ui = Simulator::with_size(settings, Size::new(app.width, 1400.0), app.view());
+        ui.click(iced::widget::Id::from(INPUT)).expect("the input is there");
+        ui.simulate(command_chord("v"));
+        seen.extend(ui.into_messages());
+    }
+    assert!(seen.iter().any(|m| matches!(m, Msg::Paste)), "{seen:?}");
+    // Text goes in where the cursor is; with none, an image goes in as its path.
+    let _ = app.update(Msg::Pasted(Some("貼った文".into())));
+    assert_eq!(typed(&app), "貼った文");
+    let _ = app.update(Msg::PastedImage(Some("/tmp/pasted-1.png".into())));
+    assert_eq!(typed(&app), "貼った文 @/tmp/pasted-1.png ");
+    let _ = app.update(Msg::PastedImage(None));
+    assert_eq!(typed(&app), "貼った文 @/tmp/pasted-1.png ");
+}
