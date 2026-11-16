@@ -585,7 +585,7 @@ const JA: Strings = Strings {
     fork_hint: "このメッセージの前で分かれた、新しい会話になります。元の会話は残ります",
     fork_failed: "分岐できませんでした：{error}",
     retract: "取り消して入力欄に戻す",
-    context: "コンテキスト",
+    context: "コンテキスト{n}%",
     recent_models: "モデルを使う：{model}",
 };
 
@@ -845,7 +845,7 @@ const EN: Strings = Strings {
     fork_hint: "Starts a new conversation branched off before this message; the original stays",
     fork_failed: "Could not branch off: {error}",
     retract: "Take back into the input",
-    context: "Context",
+    context: "Context {n}%",
     recent_models: "Use model: {model}",
 };
 

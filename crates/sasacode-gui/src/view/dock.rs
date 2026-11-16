@@ -302,6 +302,8 @@ fn composer(app: &App) -> El<'_> {
                 Key::Named(Named::Enter) if enter_sends && !m.command() => Some(Binding::Custom(Msg::Send)),
                 Key::Named(Named::Enter) if !enter_sends && !m.command() => Some(Binding::Enter),
                 Key::Named(Named::Enter) if !enter_sends && !m.shift() => Some(Binding::Custom(Msg::Send)),
+                // A paste with no text on the clipboard takes its image.
+                Key::Character("v") if m.command() && !m.shift() && !m.alt() => Some(Binding::Custom(Msg::Paste)),
                 _ => match shortcut(&press.key, press.modifiers) {
                     Some(msg) => Some(text_editor::Binding::Custom(msg)),
                     None => text_editor::Binding::from_key_press(press),

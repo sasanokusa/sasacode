@@ -166,6 +166,89 @@ impl Drop for Awake {
     }
 }
 
+/// How long an image pasted from the clipboard is kept, for the message it went into to be sent.
+const PASTED_KEPT: std::time::Duration = std::time::Duration::from_secs(7 * 86_400);
+
+/// The image on the system clipboard, written as a PNG file in `dir`, as the TUI reads it: macOS
+/// through AppleScript, Windows through PowerShell, elsewhere `wl-paste` or `xclip`. None when the
+/// clipboard has no image. Files pasted before and older than a week are removed.
+pub fn clipboard_image(dir: &Path) -> Option<PathBuf> {
+    std::fs::create_dir_all(dir).ok()?;
+    let now = std::time::SystemTime::now();
+    if let Ok(old) = std::fs::read_dir(dir) {
+        for f in old.filter_map(Result::ok) {
+            let stale = f
+                .metadata()
+                .and_then(|m| m.modified())
+                .is_ok_and(|at| now.duration_since(at).unwrap_or_default() > PASTED_KEPT);
+            if stale {
+                let _ = std::fs::remove_file(f.path());
+            }
+        }
+    }
+    let millis = now
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .subsec_millis();
+    let file = dir.join(format!("pasted-{}-{millis:03}.png", stamp(now)));
+    let quiet = |mut c: Command| {
+        c.stdin(Stdio::null()).stderr(Stdio::null());
+        c.output().ok().filter(|out| out.status.success())
+    };
+    if cfg!(target_os = "macos") {
+        let path = file.to_string_lossy().replace('\\', "\\\\").replace('"', "\\\"");
+        let open = format!("set fh to open for access POSIX file \"{path}\" with write permission");
+        let mut c = command("osascript");
+        for line in [
+            "try",
+            "set d to the clipboard as «class PNGf»",
+            "on error",
+            "error \"no image\"",
+            "end try",
+            &open,
+            "set eof of fh to 0",
+            "write d to fh",
+            "close access fh",
+        ] {
+            c.args(["-e", line]);
+        }
+        quiet(c)?;
+    } else if cfg!(windows) {
+        // The clipboard needs a single-threaded apartment; '' is a ' inside a PowerShell string.
+        let script = [
+            "Add-Type -AssemblyName System.Windows.Forms, System.Drawing".to_owned(),
+            "$i = [System.Windows.Forms.Clipboard]::GetImage()".to_owned(),
+            "if ($i -eq $null) { exit 1 }".to_owned(),
+            format!(
+                "$i.Save('{}', [System.Drawing.Imaging.ImageFormat]::Png)",
+                file.to_string_lossy().replace('\'', "''")
+            ),
+        ]
+        .join("; ");
+        let mut c = command("powershell.exe");
+        c.args(["-NoProfile", "-NonInteractive", "-STA", "-Command", &script]);
+        quiet(c)?;
+    } else {
+        let png = [
+            ("wl-paste", &["--type", "image/png"][..]),
+            ("xclip", &["-selection", "clipboard", "-t", "image/png", "-o"]),
+        ]
+        .iter()
+        .find_map(|(program, args)| {
+            let mut c = command(program);
+            c.args(*args);
+            quiet(c).map(|out| out.stdout).filter(|png| !png.is_empty())
+        })?;
+        std::fs::write(&file, png).ok()?;
+    }
+    if std::fs::metadata(&file).is_ok_and(|m| m.len() > 0) {
+        Some(file)
+    } else {
+        let _ = std::fs::remove_file(&file);
+        None
+    }
+}
+
 /// Another window of this program, on `cwd`, open on `session` if given.
 pub fn new_window(program: &Path, cwd: &Path, session: Option<&str>) -> bool {
     let Ok(me) = std::env::current_exe() else {
@@ -289,6 +372,34 @@ mod tests {
         assert_eq!(stamp(std::time::UNIX_EPOCH), "19700101-000000");
         let at = at + std::time::Duration::from_millis(7);
         assert_eq!(iso(at), "2026-11-17T09:30:12.007Z");
+    }
+
+    #[test]
+    fn a_paste_leaves_a_file_only_when_the_clipboard_had_an_image() {
+        let dir = std::env::temp_dir().join(format!("sasacode-gui-pasted-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        // One pasted long ago is let go.
+        let old = dir.join("pasted-old.png");
+        std::fs::write(&old, b"x").unwrap();
+        let long_ago = std::time::SystemTime::now() - std::time::Duration::from_secs(8 * 86_400);
+        std::fs::File::options()
+            .write(true)
+            .open(&old)
+            .unwrap()
+            .set_modified(long_ago)
+            .unwrap();
+        // What the clipboard holds is the machine's; either way, no empty file is left.
+        let left: Vec<_> = match clipboard_image(&dir) {
+            Some(file) => {
+                assert!(std::fs::metadata(&file).unwrap().len() > 0);
+                vec![file]
+            }
+            None => Vec::new(),
+        };
+        let files: Vec<_> = std::fs::read_dir(&dir).unwrap().map(|f| f.unwrap().path()).collect();
+        assert_eq!(files, left);
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

@@ -363,6 +363,10 @@ pub enum Msg {
     /// Files were held over the window, or taken away.
     Hover(bool),
     Dropped(PathBuf),
+    /// Cmd+V in the input: the clipboard's text, or else its image as a file.
+    Paste,
+    Pasted(Option<String>),
+    PastedImage(Option<PathBuf>),
     /// What was sent before: further back (-1) or forward (1).
     Recall(i8),
     /// The project's files, for `@`.

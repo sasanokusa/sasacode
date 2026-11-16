@@ -234,6 +234,25 @@ impl App {
                 Task::none()
             }
             Msg::Dropped(path) => self.dropped(&path),
+            Msg::Paste => iced::clipboard::read().map(Msg::Pasted),
+            Msg::Pasted(Some(text)) if !text.is_empty() => self.edit(iced::widget::text_editor::Action::Edit(
+                iced::widget::text_editor::Edit::Paste(std::sync::Arc::new(text)),
+            )),
+            // No text: an image, as a file the message names, kept where sasacode keeps its own.
+            Msg::Pasted(_) => {
+                let dir = self.home.clone().unwrap_or_else(std::env::temp_dir).join("pasted");
+                Task::perform(
+                    async move {
+                        tokio::task::spawn_blocking(move || system::clipboard_image(&dir))
+                            .await
+                            .ok()
+                            .flatten()
+                    },
+                    Msg::PastedImage,
+                )
+            }
+            Msg::PastedImage(Some(path)) => self.dropped(&path),
+            Msg::PastedImage(None) => Task::none(),
             Msg::Recall(step) => self.recall(step),
             Msg::Files(files) => {
                 self.files = files;
