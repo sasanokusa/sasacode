@@ -1319,16 +1319,24 @@ mod tests {
 
     #[test]
     fn a_message_read_from_its_log_names_its_images_as_they_were_typed() {
-        let cwd = Path::new("/work/p");
+        // The plugin writes the absolute path as the system writes it: `C:\…` on Windows.
+        let root = if cfg!(windows) { r"C:\" } else { "/" };
+        let cwd = Path::new(root).join("work").join("p");
+        let other = Path::new(root).join("else").join("b.png");
+        let label = |n: usize, path: &Path| format!("[Image {n}: {}]", path.display());
+        let cwd = cwd.as_path();
         assert_eq!(
-            as_typed("[Image 1: /work/p/shot.png] これを見て", cwd),
+            as_typed(&format!("{} これを見て", label(1, &cwd.join("shot.png"))), cwd),
             "@shot.png これを見て"
         );
         assert_eq!(
-            as_typed("[Image 1: /work/p/a.png][Image 2: /else/b.png]と比べて", cwd),
-            "@a.png @/else/b.png と比べて"
+            as_typed(
+                &format!("{}{}と比べて", label(1, &cwd.join("a.png")), label(2, &other)),
+                cwd
+            ),
+            format!("@a.png @{} と比べて", other.display())
         );
-        assert_eq!(as_typed("[Image 1: /work/p/my shot.png]", cwd), "@\"my shot.png\"");
+        assert_eq!(as_typed(&label(1, &cwd.join("my shot.png")), cwd), "@\"my shot.png\"");
         // Not a file's label, or not a label: left as it is.
         assert_eq!(as_typed("[Image 1: image] 貼った", cwd), "[Image 1: image] 貼った");
         assert_eq!(as_typed("[Image のこと", cwd), "[Image のこと");
