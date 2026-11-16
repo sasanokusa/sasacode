@@ -42,6 +42,10 @@ pub enum Event {
     Session {
         id: Option<String>,
         path: Option<String>,
+        /// How many tokens the model takes in, as the CLI knows it at the start of the run. A CLI
+        /// before 0.8 does not say.
+        #[serde(default, rename = "contextWindow")]
+        context_window: Option<u64>,
     },
     AgentStart,
     TurnStart {

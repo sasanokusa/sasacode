@@ -73,7 +73,9 @@ async function run(h: Harness, prompt: string, output: "text" | "jsonl", control
     else if (e.type === "plugin_error") out.stderr(`${t("plugin {plugin} ({hook}): {error}", { plugin: e.plugin, hook: e.hook, error: e.error })}\n`);
   });
   const session = agent.session;
-  if (output === "jsonl") write(`${JSON.stringify({ type: "session", id: session?.id ?? null, path: session?.path ?? null })}\n`);
+  // The context window lets a window (the GUI) say how full the conversation is before it is full.
+  if (output === "jsonl")
+    write(`${JSON.stringify({ type: "session", id: session?.id ?? null, path: session?.path ?? null, contextWindow: agent.model.contextWindow || null })}\n`);
   // Through the writer above, so a control line never lands in the middle of an event.
   const controller = control && startControl(agent, control, (m) => write(`${JSON.stringify(m)}\n`));
   // A local server knows the context the model really gets: asked while the plugins load, as the

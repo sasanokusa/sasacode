@@ -32,6 +32,11 @@ pub enum Icon {
     Half,
     Copy,
     Down,
+    Close,
+    Pin,
+    Archive,
+    Branch,
+    Gear,
 }
 
 impl Icon {
@@ -72,6 +77,15 @@ impl Icon {
                 r#"<rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M10.5 3.5V3A1 1 0 0 0 9.5 2h-6A1 1 0 0 0 2.5 3v6a1 1 0 0 0 1 1h.5"/>"#
             }
             Icon::Down => r#"<path d="M8 3v10M4 9l4 4 4-4"/>"#,
+            Icon::Close => r#"<path d="M4 4l8 8M12 4l-8 8"/>"#,
+            Icon::Pin => r#"<path d="M6 2.5h4M7 2.5v4L4.5 9h7L9 6.5v-4M8 9v4.5"/>"#,
+            Icon::Archive => r#"<rect x="2" y="3" width="12" height="3" rx="0.8"/><path d="M3 6v7h10V6M6.5 8.5h3"/>"#,
+            Icon::Branch => {
+                r#"<circle cx="5" cy="3.5" r="1.5"/><circle cx="5" cy="12.5" r="1.5"/><circle cx="11" cy="6" r="1.5"/><path d="M5 5v6M11 7.5c0 2-6 1.5-6 3.5"/>"#
+            }
+            Icon::Gear => {
+                r#"<circle cx="8" cy="8" r="2.2"/><path d="M8 1.8v2M8 12.2v2M1.8 8h2M12.2 8h2M3.6 3.6 5 5M11 11l1.4 1.4M3.6 12.4 5 11M11 5l1.4-1.4"/>"#
+            }
         }
     }
 

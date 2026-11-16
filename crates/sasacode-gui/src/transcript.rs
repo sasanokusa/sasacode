@@ -8,7 +8,7 @@
 //! and no diffs, so a change read back from one is rebuilt from the call's arguments.
 
 use std::collections::HashMap;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use iced::widget::markdown;
 use sasacode_protocol::{
@@ -50,6 +50,11 @@ pub struct Exchange {
     pub started: Option<Instant>,
     /// From the prompt to the end of the run.
     pub elapsed: Option<Duration>,
+    /// When the message was sent, by the clock: as the log has it, or when it was sent here.
+    pub at: Option<SystemTime>,
+    /// Read from a log: the entry of the log the message is, where a conversation can be branched
+    /// off before it. None for one sent here, and for one only a compaction's rewrite has.
+    pub entry: Option<usize>,
 }
 
 #[derive(Debug)]
@@ -239,6 +244,8 @@ pub struct Transcript {
     repairs: HashMap<String, String>,
     /// Read from a log: a tool's result message is all there is of its run.
     replay: bool,
+    /// While a log is read: the entry being read, when it is a message of its own.
+    at_entry: Option<usize>,
 }
 
 /// What an event changed beyond the conversation.
@@ -392,6 +399,7 @@ impl Transcript {
         self.exchanges.push(Exchange {
             prompt: text.to_owned(),
             started: Some(now),
+            at: Some(SystemTime::now()),
             ..Exchange::default()
         });
         self.echoes.push(text.to_owned());
@@ -504,7 +512,12 @@ impl Transcript {
     pub fn apply(&mut self, event: &Event, now: Instant) -> Effect {
         let mut effect = Effect::default();
         match event {
-            Event::Session { id, .. } => effect.session_id = id.clone(),
+            Event::Session { id, context_window, .. } => {
+                effect.session_id = id.clone();
+                if context_window.is_some() {
+                    self.context_window = *context_window;
+                }
+            }
             Event::AgentStart => {
                 self.current().started.get_or_insert(now);
             }
@@ -614,9 +627,13 @@ impl Transcript {
             replay: true,
             ..Transcript::default()
         };
-        for e in entries {
+        for (k, e) in entries.iter().enumerate() {
             match e {
-                SessionEntry::Message { message } => t.message(message, None, true),
+                SessionEntry::Message { message } => {
+                    t.at_entry = Some(k);
+                    t.message(message, None, true);
+                    t.at_entry = None;
+                }
                 SessionEntry::Replace { messages } => {
                     // The conversation was rewritten. What its messages used is already counted.
                     t.exchanges.clear();
@@ -690,7 +707,7 @@ impl Transcript {
 
     fn message(&mut self, message: &Message, now: Option<Instant>, count: bool) {
         match message {
-            Message::User { content, .. } => self.user(content, now),
+            Message::User { content, timestamp } => self.user(content, now, *timestamp),
             Message::Assistant(a) => {
                 if count {
                     self.usage.add(&a.usage);
@@ -768,7 +785,8 @@ impl Transcript {
         }
     }
 
-    fn user(&mut self, content: &[Content], now: Option<Instant>) {
+    /// `timestamp`: milliseconds since 1970, as the agent stamps a message; 0 when it has none.
+    fn user(&mut self, content: &[Content], now: Option<Instant>, timestamp: f64) {
         if let Some(note) = note_text(content) {
             return self.note(Note::Harness(note));
         }
@@ -790,9 +808,13 @@ impl Transcript {
         {
             before.elapsed = before.started.map(|s| now.saturating_duration_since(s));
         }
+        let at = (timestamp.is_finite() && timestamp > 0.0)
+            .then(|| SystemTime::UNIX_EPOCH + Duration::from_millis(timestamp as u64));
         self.exchanges.push(Exchange {
             prompt: text,
             started: now,
+            at,
+            entry: self.at_entry,
             ..Exchange::default()
         });
     }

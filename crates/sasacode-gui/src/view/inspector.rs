@@ -48,7 +48,7 @@ pub fn inspector(app: &App) -> El<'_> {
         tip(
             t,
             button(content)
-                .padding([5, 10])
+                .padding([5, 8])
                 .style(t.ghost(t.fg_2, on))
                 .on_press(Msg::Tab(tab)),
             format!("{MOD}{key}"),
@@ -70,14 +70,21 @@ pub fn inspector(app: &App) -> El<'_> {
             (commands > 0).then(|| commands.to_string())
         ),
         tab(Tab::Usage, 4, s.tab_usage, None),
+        tab(
+            Tab::Git,
+            5,
+            s.tab_git,
+            (!app.git.files.is_empty()).then(|| app.git.files.len().to_string())
+        ),
     ]
-    .spacing(2);
+    .spacing(1);
 
     let body = match app.tab {
         Tab::Changes => changes_tab(app),
         Tab::Plan => plan_tab(app),
         Tab::Commands => commands_tab(app),
         Tab::Usage => usage_tab(app),
+        Tab::Git => git_tab(app),
     };
     container(
         column![
@@ -191,14 +198,202 @@ fn changes_tab(app: &App) -> El<'_> {
             head = head.push(tag(t, s.new_file, t.accent_wash, t.accent));
         }
         head = head.push(plus_minus(t, change.diff.added, change.diff.removed));
+        let file = app.cwd.join(&change.path);
         col = col.push(card(
             app,
             &tool.id,
             head.into(),
-            Some(diff_view(t, s, &change.diff, 200)),
+            Some(
+                column![file_actions(app, file, None), diff_view(t, s, &change.diff, 200)]
+                    .spacing(6)
+                    .into(),
+            ),
         ));
     }
     col.into()
+}
+
+/// What can be done with a changed file: opened in an editor, shown in its folder, and in the git
+/// tab staged, unstaged or discarded.
+fn file_actions<'a>(app: &'a App, file: std::path::PathBuf, git: Option<&'a crate::git::File>) -> El<'a> {
+    let (t, s) = (app.t, app.s);
+    let small = |label: &'a str, color: iced::Color, msg: Option<Msg>| {
+        button(text(label).size(11.5).color(color).wrapping(text::Wrapping::None))
+            .padding([3, 8])
+            .style(t.ghost(color, false))
+            .on_press_maybe(msg)
+    };
+    let mut line = row![].spacing(2).align_y(Alignment::Center);
+    if let Some(f) = git {
+        use crate::git::Op;
+        let busy = app.git_busy;
+        let (label, op) = if f.staged() {
+            (s.unstage, Op::Unstage(f.path.clone()))
+        } else {
+            (s.stage, Op::Stage(f.path.clone()))
+        };
+        line = line.push(small(label, t.fg_2, (!busy).then_some(Msg::GitDo(op))));
+        let sure = app.confirm_discard.as_ref() == Some(&f.path);
+        line = line.push(small(
+            if sure { s.discard_sure } else { s.discard },
+            t.err,
+            (!busy).then(|| Msg::GitDo(Op::Discard(f.path.clone()))),
+        ));
+    }
+    if file.exists() {
+        line = line
+            .push(small(s.open_editor, t.fg_2, Some(Msg::Editor(file.clone()))))
+            .push(small(s.reveal, t.fg_2, Some(Msg::Reveal(file))));
+    }
+    line.wrap().into()
+}
+
+/// The folder's repository: its branch, what is not committed with each file's diff, and the way to
+/// commit, push and open a pull request.
+fn git_tab(app: &App) -> El<'_> {
+    use crate::git::Op;
+    let (t, s) = (app.t, app.s);
+    let g = &app.git;
+    if !g.repo {
+        return empty(app, Icon::Branch, s.tab_git, s.git_none);
+    }
+    let mut head = row![icon(Icon::Branch, 14.0, t.fg_3)]
+        .spacing(8)
+        .align_y(Alignment::Center);
+    if let Some(branch) = &g.branch {
+        head = head.push(tip(
+            t,
+            button(text(branch.as_str()).size(12.5).font(MONO).color(t.fg))
+                .padding([2, 6])
+                .style(t.ghost(t.fg, false))
+                .on_press(Msg::Copy(crate::app::Clip::Text(branch.clone()))),
+            s.copy_branch.to_owned(),
+            tooltip::Position::Bottom,
+        ));
+    }
+    if g.ahead > 0 {
+        head = head.push(tag(t, fill(s.ahead, "n", g.ahead), t.accent_wash, t.accent));
+    }
+    head = head.push(Space::new().width(Length::Fill));
+    if app.git_busy {
+        head = head.push(text(s.git_busy).size(12).color(t.fg_3));
+    }
+    head = head.push(
+        button(text(s.git_refresh).size(12).color(t.fg_2))
+            .padding([3, 8])
+            .style(t.ghost(t.fg_2, false))
+            .on_press(Msg::GitRefresh),
+    );
+    let mut col = column![head].spacing(10);
+
+    let busy = app.git_busy;
+    let commit = column![
+        iced::widget::text_input(s.commit_ph, &app.commit_msg)
+            .on_input(Msg::CommitText)
+            .on_submit(Msg::GitDo(Op::Commit(app.commit_msg.clone())))
+            .size(12.5)
+            .padding([6, 8])
+            .style(t.input()),
+        row![
+            button(text(s.commit).size(12.5))
+                .padding([5, 12])
+                .style(t.primary())
+                .on_press_maybe(
+                    (!busy && !g.files.is_empty() && !app.commit_msg.trim().is_empty())
+                        .then(|| Msg::GitDo(Op::Commit(app.commit_msg.clone())))
+                ),
+            button(text(s.push).size(12.5))
+                .padding([5, 12])
+                .style(t.outline(t.fg))
+                .on_press_maybe((!busy && g.branch.is_some()).then_some(Msg::GitDo(Op::Push))),
+            button(text(s.pr).size(12.5))
+                .padding([5, 12])
+                .style(t.outline(t.fg))
+                .on_press_maybe((!busy && g.branch.is_some()).then_some(Msg::GitDo(Op::Pr))),
+        ]
+        .spacing(6)
+        .wrap(),
+        text(s.commit_hint).size(11).color(t.fg_3),
+    ]
+    .spacing(6);
+    col = col.push(commit);
+
+    if g.files.is_empty() {
+        return col.push(empty(app, Icon::Check, s.git_clean, "")).into();
+    }
+    col = col.push(text(s.quote_hint).size(11.5).color(t.fg_3));
+    for f in &g.files {
+        let letters = format!("{}{}", f.index, f.tree).replace(' ', "·");
+        let path = clip_start(&f.path, cells(app, 130.0));
+        let mut head = row![
+            text(letters)
+                .size(11.5)
+                .font(MONO)
+                .color(if f.staged() { t.accent } else { t.fg_3 }),
+            name(text(path).size(12.5).font(MONO).color(t.fg)),
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center);
+        if f.untracked() {
+            head = head.push(tag(t, s.new_file, t.accent_wash, t.accent));
+        }
+        head = head.push(plus_minus(t, f.diff.added, f.diff.removed));
+        let file = g.top.join(&f.path);
+        let body = column![file_actions(app, file, Some(f)), quotable_diff(app, f)].spacing(6);
+        col = col.push(card(app, &f.path, head.into(), Some(body.into())));
+    }
+    col.into()
+}
+
+/// A file's diff whose lines put where they are into the input when clicked.
+fn quotable_diff<'a>(app: &'a App, f: &'a crate::git::File) -> El<'a> {
+    use crate::diff::Sign;
+    let t = app.t;
+    let numbers = crate::git::numbers(&f.diff);
+    let mut lines = column![];
+    for (line, n) in f.diff.lines.iter().zip(numbers).take(300) {
+        let (mark, color, wash) = match line.sign {
+            Sign::Add => ("+", t.add, Some(t.add_wash)),
+            Sign::Del => ("−", t.del, Some(t.del_wash)),
+            Sign::Context => (" ", t.fg_2, None),
+            Sign::Hunk => ("", t.fg_3, None),
+        };
+        let shown = container(
+            row![
+                text(n.map(|n| n.to_string()).unwrap_or_default())
+                    .size(11)
+                    .font(MONO)
+                    .color(t.fg_3)
+                    .width(34),
+                text(mark).size(12).font(MONO).color(color).width(12),
+                text(line.text.as_str())
+                    .size(12)
+                    .font(MONO)
+                    .color(if line.sign == Sign::Hunk { t.fg_3 } else { t.fg })
+                    .wrapping(text::Wrapping::WordOrGlyph),
+            ]
+            .spacing(2),
+        )
+        .width(Length::Fill)
+        .padding([1, 6])
+        .style(move |_| container::Style {
+            background: wash.map(Into::into),
+            ..container::Style::default()
+        });
+        lines = lines.push(match n {
+            Some(n) => iced::widget::mouse_area(shown)
+                .interaction(iced::mouse::Interaction::Pointer)
+                .on_press(Msg::Quote(app.git.top.join(&f.path), n))
+                .into(),
+            None => El::from(shown),
+        });
+    }
+    container(lines)
+        .width(Length::Fill)
+        .padding([4, 0])
+        .clip(true)
+        .style(t.boxed(t.raised, t.line, RADIUS))
+        .into()
 }
 
 fn plan_tab(app: &App) -> El<'_> {

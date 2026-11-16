@@ -122,7 +122,8 @@ test("headless jsonl emits the whole run and exits 0", async () => {
     process.stdout.write = orig;
   }
   const events = lines.join("").trim().split("\n").map((l) => JSON.parse(l));
-  expect(events[0]).toEqual({ type: "session", id: null, path: null }); // --no-session
+  expect(events[0]).toMatchObject({ type: "session", id: null, path: null }); // --no-session
+  expect(Object.keys(events[0])).toEqual(["type", "id", "path", "contextWindow"]);
   expect(events[1].type).toBe("message_end"); // the user message
   expect(events.map((e) => e.type)).toContain("message_update");
   expect(events.at(-1)).toEqual({ type: "agent_end", cause: "done" });

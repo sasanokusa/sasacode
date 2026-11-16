@@ -28,8 +28,17 @@ pub fn timeline(app: &App) -> El<'_> {
     if app.chat.loaded {
         col = col.push(text(s.loaded_note).size(12).color(t.fg_3));
     }
+    // While the search inside the conversation has something typed, only what has it is shown.
+    let needle = app
+        .find_in
+        .as_deref()
+        .map(str::trim)
+        .filter(|n| !n.is_empty())
+        .map(str::to_lowercase);
     for (i, ex) in app.chat.transcript.exchanges.iter().enumerate() {
-        col = col.push(exchange(app, i, ex));
+        if needle.as_deref().is_none_or(|n| has(ex, n)) {
+            col = col.push(exchange(app, i, ex));
+        }
     }
     for queued in &app.chat.transcript.queued {
         col = col.push(
@@ -41,7 +50,20 @@ pub fn timeline(app: &App) -> El<'_> {
         );
     }
     if let Some(next) = &app.chat.next {
-        col = col.push(bubble(t, next));
+        // Not sent yet: it can be taken back.
+        col = col.push(
+            column![
+                bubble(t, next),
+                container(
+                    button(text(s.retract).size(11.5).color(t.fg_3))
+                        .padding([2, 8])
+                        .style(t.ghost(t.fg_2, false))
+                        .on_press(Msg::Retract)
+                )
+                .align_right(Length::Fill),
+            ]
+            .spacing(4),
+        );
     }
     let mut list = scrollable(
         container(container(col).max_width(COL_W))
@@ -91,6 +113,19 @@ pub fn timeline(app: &App) -> El<'_> {
     .into()
 }
 
+/// Whether an exchange says `needle` (lower case) anywhere: in its message, what was answered, or
+/// what its calls were.
+pub(crate) fn has(ex: &Exchange, needle: &str) -> bool {
+    let says = |text: &str| text.to_lowercase().contains(needle);
+    says(&ex.prompt)
+        || ex.steps.iter().any(|step| match step {
+            Step::Text(md) => says(&md.raw),
+            Step::Tool(tool) => says(&tool.summary) || says(&tool.name),
+            Step::Note(Note::Error(body) | Note::Harness(body)) => says(body),
+            _ => false,
+        })
+}
+
 /// A conversation that has not started.
 fn blank(app: &App) -> El<'_> {
     let (t, s) = (app.t, app.s);
@@ -126,7 +161,50 @@ fn exchange<'a>(app: &'a App, i: usize, ex: &'a Exchange) -> El<'a> {
     let live = last && app.running();
     let mut col = column![].spacing(10);
     if !ex.prompt.is_empty() {
-        col = col.push(bubble(t, &ex.prompt));
+        let mut said = column![bubble(t, &ex.prompt)].spacing(3);
+        // When it was sent, as the list says how long ago a conversation was used.
+        if let Some(at) = ex.at {
+            let ago = std::time::SystemTime::now().duration_since(at).unwrap_or_default();
+            said = said.push(
+                container(text(app.s.ago(ago)).size(11).color(t.fg_3))
+                    .align_right(Length::Fill)
+                    .padding([0, 4]),
+            );
+        }
+        // Under the pointer, once the conversation is in its log and nothing runs: what can be
+        // done with the message.
+        let can = !app.busy() && app.chat.session.is_some() && !live;
+        if can && app.ex_hover == Some(i) {
+            let small = |label: &'a str, msg: Msg| {
+                button(text(label).size(11.5).color(t.fg_3).wrapping(text::Wrapping::None))
+                    .padding([2, 8])
+                    .style(t.ghost(t.fg_2, false))
+                    .on_press(msg)
+            };
+            let mut acts = row![Space::new().width(Length::Fill)]
+                .spacing(2)
+                .align_y(Alignment::Center);
+            acts = acts.push(super::tip(
+                t,
+                small(app.s.edit_resend, Msg::Fork(i)),
+                app.s.fork_hint.to_owned(),
+                iced::widget::tooltip::Position::Bottom,
+            ));
+            if last {
+                acts = acts.push(super::tip(
+                    t,
+                    small(app.s.retry, Msg::Retry),
+                    app.s.fork_hint.to_owned(),
+                    iced::widget::tooltip::Position::Bottom,
+                ));
+            }
+            said = said.push(acts);
+        }
+        col = col.push(
+            iced::widget::mouse_area(said)
+                .on_enter(Msg::ExHover(Some(i)))
+                .on_exit(Msg::ExHover(None)),
+        );
     }
     if live {
         // While it runs, everything is in the order it happened, the text being written included.
@@ -137,7 +215,8 @@ fn exchange<'a>(app: &'a App, i: usize, ex: &'a Exchange) -> El<'a> {
     }
     let answer = ex.answer();
     let work = &ex.steps[..answer.unwrap_or(ex.steps.len())];
-    if !work.is_empty() {
+    // The steps hidden by the settings: only what was said, and how it ended.
+    if !work.is_empty() && app.prefs.steps {
         let open = app.steps_open(i);
         col = col.push(fold_row(app, i, ex, work, open));
         if open {
@@ -697,7 +776,7 @@ fn note_row<'a>(app: &'a App, i: usize, j: usize, note: &'a Note) -> El<'a> {
 }
 
 /// A reply, as the Markdown it is written in. With `copy` its code blocks can be copied.
-fn reply<'a>(app: &'a App, md: &'a Markdown, copy: bool) -> El<'a> {
+pub(crate) fn reply<'a>(app: &'a App, md: &'a Markdown, copy: bool) -> El<'a> {
     let t = app.t;
     let mut style = markdown::Style::from_palette(t.palette());
     style.inline_code_color = t.fg;

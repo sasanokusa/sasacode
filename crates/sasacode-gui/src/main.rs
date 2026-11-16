@@ -3,15 +3,22 @@
 //! permissions and its sessions are exactly those of the CLI and the TUI.
 
 mod app;
+mod composer;
 mod diff;
 #[cfg(test)]
 mod drive;
+mod export;
+mod fork;
+mod git;
 mod i18n;
 mod icons;
+mod input;
 mod layout;
+mod overlay;
 mod runner;
 #[cfg(test)]
 mod snapshots;
+mod system;
 mod theme;
 mod transcript;
 mod view;
@@ -61,11 +68,14 @@ fn main() -> iced::Result {
     }
     let layout_file = sasacode_protocol::sasacode_home().map(|home| home.join(layout::FILE));
     let layout = layout_file.as_deref().map(layout::Layout::read).unwrap_or_default();
+    let prefs = layout_file.as_deref().map(layout::Prefs::read).unwrap_or_default();
+    let zoom = prefs.zoom;
     let options = app::Options {
         program: program.unwrap_or_else(|| PathBuf::from("sasacode")),
         cwd,
         session,
         layout,
+        prefs,
         layout_file,
     };
 
@@ -73,9 +83,11 @@ fn main() -> iced::Result {
         .title(app::App::title)
         .theme(app::App::theme)
         .subscription(app::App::subscription)
+        .scale_factor(app::App::scale)
         .default_font(view::UI)
         .window(iced::window::Settings {
-            size: layout.size,
+            // What the system measures, as iced takes it: before the zoom it draws at.
+            size: iced::Size::new(layout.size.width / zoom, layout.size.height / zoom),
             min_size: Some(layout::MIN_SIZE),
             ..iced::window::Settings::default()
         })

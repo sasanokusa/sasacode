@@ -7,6 +7,7 @@
 mod chords;
 mod dock;
 mod inspector;
+mod overlay;
 mod sidebar;
 mod timeline;
 
@@ -71,8 +72,14 @@ pub fn window(app: &App) -> El<'_> {
     if app.shows_side() {
         body = body.push(sidebar::sidebar(app)).push(vline(t));
     }
+    let mut middle = column![header(app), hline(t)];
+    if app.find_in.is_some() {
+        middle = middle.push(find_bar(app)).push(hline(t));
+    }
     body = body.push(
-        column![header(app), hline(t), timeline::timeline(app), dock::dock(app)]
+        middle
+            .push(timeline::timeline(app))
+            .push(dock::dock(app))
             .width(Length::Fill)
             .height(Length::Fill),
     );
@@ -91,7 +98,8 @@ pub fn window(app: &App) -> El<'_> {
                 .interaction(mouse::Interaction::ResizingHorizontally),
         );
     }
-    chords::chords(container(column![panes, hline(t), status_bar(app)]).style(t.fill(t.bg)))
+    let window = container(column![panes, hline(t), status_bar(app)]).style(t.fill(t.bg));
+    overlay::over(app, chords::chords(window))
 }
 
 /// Where the side panels' inner edges are taken to be dragged: a strip over each one's line, with
@@ -192,6 +200,24 @@ fn header(app: &App) -> El<'_> {
             Space::new().width(Length::Fill),
             tip(
                 t,
+                button(icon(Icon::List, 16.0, t.fg_2))
+                    .padding(6)
+                    .style(t.ghost(t.fg_2, false))
+                    .on_press(Msg::Show(Some(crate::app::Overlay::palette()))),
+                format!("{}  {MOD}⇧P", s.c_palette),
+                tooltip::Position::Bottom,
+            ),
+            tip(
+                t,
+                button(icon(Icon::Gear, 16.0, t.fg_2))
+                    .padding(6)
+                    .style(t.ghost(t.fg_2, false))
+                    .on_press(Msg::Show(Some(crate::app::Overlay::Settings))),
+                format!("{}  {MOD},", s.settings),
+                tooltip::Position::Bottom,
+            ),
+            tip(
+                t,
                 button(inspector)
                     .padding(6)
                     .style(t.ghost(t.fg_2, false))
@@ -208,6 +234,52 @@ fn header(app: &App) -> El<'_> {
     .align_y(Alignment::Center)
     .style(t.fill(t.surface))
     .into()
+}
+
+/// The search inside the conversation: what it looks for, how many exchanges have it, and the way
+/// to put it away.
+fn find_bar(app: &App) -> El<'_> {
+    let (t, s) = (app.t, app.s);
+    let typed = app.find_in.as_deref().unwrap_or_default();
+    let needle = typed.trim().to_lowercase();
+    let found = if needle.is_empty() {
+        None
+    } else {
+        Some(
+            app.chat
+                .transcript
+                .exchanges
+                .iter()
+                .filter(|ex| timeline::has(ex, &needle))
+                .count(),
+        )
+    };
+    let mut line = row![
+        icon(Icon::Search, 14.0, t.fg_3),
+        iced::widget::text_input(s.find_in_ph, typed)
+            .id(crate::app::FIND_IN)
+            .on_input(Msg::FindInText)
+            .on_submit(Msg::FocusInput)
+            .size(13)
+            .padding(0)
+            .style(t.input_bare()),
+    ]
+    .spacing(8)
+    .align_y(Alignment::Center);
+    if let Some(n) = found {
+        line = line.push(
+            text(fill(s.found_n, "n", n))
+                .size(12)
+                .color(if n == 0 { t.err } else { t.fg_3 }),
+        );
+    }
+    line = line.push(
+        button(icon(Icon::Close, 13.0, t.fg_3))
+            .padding(4)
+            .style(t.ghost(t.fg_3, false))
+            .on_press(Msg::FindInClose),
+    );
+    container(line).padding([6, 14]).style(t.fill(t.surface)).into()
 }
 
 /// The state of the conversation, next to its title.
@@ -252,6 +324,27 @@ fn status_bar(app: &App) -> El<'_> {
     let mut left = row![icon(Icon::Folder, 12.0, t.fg_3), folder]
         .spacing(6)
         .align_y(Alignment::Center);
+    // The branch checked out; a click copies its name.
+    if let Some(branch) = &app.git.branch {
+        let label = if app.copied == Some(Clip::Text(branch.clone())) {
+            item(s.copied.to_owned()).color(t.accent)
+        } else {
+            item(clip(branch, 28)).font(MONO)
+        };
+        left = left.push(dot()).push(tip(
+            t,
+            button(
+                row![icon(Icon::Branch, 11.0, t.fg_3), label]
+                    .spacing(4)
+                    .align_y(Alignment::Center),
+            )
+            .padding([1, 4])
+            .style(t.ghost(t.fg_3, false))
+            .on_press(Msg::Copy(Clip::Text(branch.clone()))),
+            format!("{branch}\n{}", s.copy_branch),
+            tooltip::Position::Top,
+        ));
+    }
     if let Some(id) = &app.chat.session {
         // The start of the id, as `sasacode -r` takes it; a click copies all of it.
         let label = if app.copied == Some(Clip::Session) {
@@ -285,6 +378,24 @@ fn status_bar(app: &App) -> El<'_> {
     if let Some(effort) = app.effort {
         left = left.push(dot()).push(item(effort.to_owned()));
     }
+    // How full the conversation is, as the model last read it, of what it can take.
+    let tr = &app.chat.transcript;
+    if let Some(window) = tr.context_window.filter(|w| *w > 0 && tr.last_input > 0) {
+        let share = tr.last_input as f64 / window as f64;
+        let color = if share >= 0.9 {
+            t.err
+        } else if share >= 0.75 {
+            t.warn
+        } else {
+            t.fg_3
+        };
+        left = left.push(dot()).push(tip(
+            t,
+            item(format!("{} {:.0}%", s.context, share * 100.0)).color(color),
+            format!("{} / {}", compact(tr.last_input), compact(window)),
+            tooltip::Position::Top,
+        ));
+    }
     let u = &app.chat.transcript.usage;
     let usage = format!(
         "in {} · out {} · cache {} · ${:.4}",
@@ -293,10 +404,15 @@ fn status_bar(app: &App) -> El<'_> {
         compact(u.cache_read),
         u.cost
     );
+    let mut right = row![].spacing(8).align_y(Alignment::Center);
+    if let Some(toast) = &app.toast {
+        right = right.push(item(clip(toast, 80)).color(t.fg_2));
+    }
     container(
         row![
             left,
             Space::new().width(Length::Fill),
+            right,
             button(item(usage).font(MONO))
                 .padding([1, 6])
                 .style(t.ghost(t.fg_3, false))

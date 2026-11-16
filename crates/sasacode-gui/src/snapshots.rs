@@ -32,6 +32,7 @@ pub(crate) fn window(lang: &str) -> App {
             cwd: "/Users/me/src/orders-api".into(),
             session: None,
             layout: Layout::default(),
+            prefs: crate::layout::Prefs::default(),
             layout_file: None,
         },
         Strings::get(lang),
@@ -53,6 +54,7 @@ pub(crate) fn window(lang: &str) -> App {
             modified: SystemTime::now() - Duration::from_secs(*ago),
             first_prompt: (*prompt).to_owned(),
             message_count: *count,
+            model: None,
         })
         .collect();
     app

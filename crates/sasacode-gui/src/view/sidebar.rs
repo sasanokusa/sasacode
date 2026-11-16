@@ -2,7 +2,7 @@
 
 use std::time::SystemTime;
 
-use iced::widget::{Space, button, column, container, row, scrollable, text, text_input};
+use iced::widget::{Space, button, column, container, mouse_area, row, scrollable, text, text_input};
 use iced::{Alignment, Length};
 
 use super::{BOLD, El, MOD, clip, tip};
@@ -72,22 +72,45 @@ pub fn sidebar(app: &App) -> El<'_> {
     let now = SystemTime::now();
     let mut list = column![].spacing(2);
     let mut shown = 0;
+    let section = |label: &'static str| {
+        container(text(label).size(11.5).color(t.fg_3)).padding(iced::Padding {
+            top: 6.0,
+            left: 10.0,
+            bottom: 2.0,
+            ..iced::Padding::ZERO
+        })
+    };
+    let mut pins_done = app.show_archived;
     for session in app.found() {
         shown += 1;
+        let pinned = app.prefs.pinned.contains(&session.id);
+        if !pins_done && !pinned {
+            pins_done = true;
+            if shown > 1 {
+                list = list.push(section(s.sessions));
+            }
+        }
         let current = app.chat.session.as_deref() == Some(session.id.as_str());
-        let prompt = session.first_prompt.trim();
+        // The name it was given, else its first message, else the start of its id.
+        let named = app.prefs.names.get(&session.id).map(String::as_str);
+        let prompt = named.unwrap_or(session.first_prompt.trim());
+        let hovered = app.row_hover.as_deref() == Some(session.id.as_str());
+        // Room for what can be done to it, while the pointer is on it.
+        let room = if hovered { cells.saturating_sub(10) } else { cells };
         let title = if prompt.is_empty() {
             clip(&session.id, 8)
         } else {
-            clip(prompt, cells)
+            clip(prompt, room)
         };
         // A title that had to be cut says all of itself under the pointer.
         let whole = (!prompt.is_empty() && title != prompt).then(|| clip(prompt, 600));
         let ago = now.duration_since(session.modified).unwrap_or_default();
         let meta = format!("{} · {}", s.ago(ago), fill(s.msgs, "n", session.message_count));
-        let mut title_row = row![text(title).size(13).color(t.fg).wrapping(text::Wrapping::None)]
-            .spacing(6)
-            .align_y(Alignment::Center);
+        let mut title_row = row![].spacing(6).align_y(Alignment::Center);
+        if pinned {
+            title_row = title_row.push(icon(Icon::Pin, 11.0, t.fg_3));
+        }
+        title_row = title_row.push(text(title).size(13).color(t.fg).wrapping(text::Wrapping::None));
         // What it is doing, shown or not: it runs, it waits for an answer, or it has news.
         let mark = app.chat_of(&session.id).and_then(|chat| {
             if chat.running() && chat.transcript.pending_approval().is_some() {
@@ -110,6 +133,35 @@ pub fn sidebar(app: &App) -> El<'_> {
             .padding([6, 10])
             .style(t.ghost(t.fg, current))
             .on_press_maybe((!current).then(|| Msg::OpenSession(session.path.clone())));
+        // Pinned, named or archived from the row the pointer is on.
+        let act = |mark: Icon, hint: &'static str, msg: Msg| {
+            tip(
+                t,
+                button(icon(mark, 13.0, t.fg_3))
+                    .padding(4)
+                    .style(t.ghost(t.fg_3, false))
+                    .on_press(msg),
+                hint.to_owned(),
+                iced::widget::tooltip::Position::Bottom,
+            )
+        };
+        let actions: El<'_> = if hovered {
+            let id = session.id.clone();
+            row![
+                act(Icon::Pin, if pinned { s.unpin } else { s.pin }, Msg::Pin(id.clone())),
+                act(Icon::Pencil, s.rename, Msg::Rename(id.clone())),
+                act(
+                    Icon::Archive,
+                    if app.show_archived { s.unarchive } else { s.archive },
+                    Msg::Archive(id)
+                ),
+            ]
+            .spacing(0)
+            .align_y(Alignment::Center)
+            .into()
+        } else {
+            Space::new().into()
+        };
         // And what the mark means.
         let hint = match (whole, mark) {
             (Some(whole), Some((_, what))) => Some(format!("{whole}\n\n{what}")),
@@ -117,10 +169,38 @@ pub fn sidebar(app: &App) -> El<'_> {
             (None, Some((_, what))) => Some(what.to_owned()),
             (None, None) => None,
         };
-        list = list.push(match hint {
+        let item: El<'_> = match hint {
             Some(hint) => tip(t, item, hint, iced::widget::tooltip::Position::Right),
             None => item.into(),
-        });
+        };
+        list = list.push(
+            mouse_area(row![item, actions].spacing(2).align_y(Alignment::Center))
+                .on_enter(Msg::RowHover(Some(session.id.clone())))
+                .on_exit(Msg::RowHover(None)),
+        );
+    }
+    // The archived conversations, or the way back from them.
+    let archived = app
+        .sessions
+        .iter()
+        .filter(|x| app.prefs.archived.contains(&x.id))
+        .count();
+    if app.show_archived || archived > 0 {
+        let label = if app.show_archived {
+            s.back_to_list.to_owned()
+        } else {
+            fill(s.archived_n, "n", archived)
+        };
+        list = list.push(
+            button(
+                row![icon(Icon::Archive, 12.0, t.fg_3), text(label).size(12).color(t.fg_3)]
+                    .spacing(6)
+                    .align_y(Alignment::Center),
+            )
+            .padding([6, 10])
+            .style(t.ghost(t.fg_3, false))
+            .on_press(Msg::Command(crate::input::Command::Archived)),
+        );
     }
     if shown == 0 {
         let none = if app.sessions.is_empty() {
@@ -136,7 +216,18 @@ pub fn sidebar(app: &App) -> El<'_> {
             container(head).padding([0, 4]).height(30).align_y(Alignment::Center),
             new,
             search,
-            container(text(s.sessions).size(11.5).color(t.fg_3)).padding(iced::Padding {
+            container(
+                text(if app.show_archived {
+                    s.archived
+                } else if app.found().next().is_some_and(|x| app.prefs.pinned.contains(&x.id)) {
+                    s.pinned
+                } else {
+                    s.sessions
+                })
+                .size(11.5)
+                .color(t.fg_3)
+            )
+            .padding(iced::Padding {
                 top: 8.0,
                 left: 10.0,
                 ..iced::Padding::ZERO

@@ -25,6 +25,8 @@ pub struct RunSpec {
     pub permission: Option<String>,
     /// `--thinking`.
     pub thinking: Option<String>,
+    /// `--no-session`: the conversation is read, and nothing is written to it.
+    pub no_session: bool,
 }
 
 impl RunSpec {
@@ -47,6 +49,9 @@ impl RunSpec {
         opt("-m", &self.model);
         opt("--permission", &self.permission);
         opt("--thinking", &self.thinking);
+        if self.no_session {
+            args.push("--no-session".into());
+        }
         args
     }
 }

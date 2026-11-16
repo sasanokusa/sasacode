@@ -41,6 +41,27 @@ fn ts_types(source: &str, pattern: &str, after: &str, until: &str) -> BTreeSet<S
 }
 
 #[test]
+fn the_session_line_says_the_context_window_when_the_cli_knows_it() {
+    let line = r#"{"type":"session","id":"a","path":"/p","contextWindow":200000}"#;
+    assert!(matches!(
+        sasacode_protocol::parse_event(line).unwrap(),
+        Event::Session {
+            context_window: Some(200_000),
+            ..
+        }
+    ));
+    // An older CLI's line has none.
+    let line = r#"{"type":"session","id":null,"path":null}"#;
+    assert!(matches!(
+        sasacode_protocol::parse_event(line).unwrap(),
+        Event::Session {
+            context_window: None,
+            ..
+        }
+    ));
+}
+
+#[test]
 fn every_line_of_a_real_run_parses_as_a_known_event() {
     let events = run_events();
     assert!(events.iter().all(|e| !matches!(e, Event::Unknown(_))), "{events:#?}");
@@ -48,7 +69,8 @@ fn every_line_of_a_real_run_parses_as_a_known_event() {
         &events[0],
         Event::Session {
             id: Some(_),
-            path: Some(_)
+            path: Some(_),
+            ..
         }
     ));
     assert!(matches!(

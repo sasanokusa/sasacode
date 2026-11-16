@@ -1,0 +1,325 @@
+//! What the window asks of the system: showing a folder, a terminal or an editor there, saying
+//! that something happened while the window is behind others, keeping the computer awake while a
+//! run goes on, and opening another window. Each is a program the system has; where it has none,
+//! nothing happens.
+
+use std::path::{Path, PathBuf};
+use std::process::{Child, Command, Stdio};
+
+/// Starts `program` and leaves it be: what it prints is not read, and the window does not wait.
+fn spawn(mut command: Command) -> bool {
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .is_ok()
+}
+
+fn command(program: &str) -> Command {
+    #[allow(unused_mut)]
+    let mut command = Command::new(program);
+    // On Windows, a console program started from a window would open a console of its own.
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
+    command
+}
+
+/// The file manager, at `path`: a folder opened, a file shown in its folder.
+pub fn reveal(path: &Path) -> bool {
+    if cfg!(target_os = "macos") {
+        let mut c = command("open");
+        if path.is_file() {
+            c.arg("-R");
+        }
+        spawn_with(c, path)
+    } else if cfg!(windows) {
+        let mut c = command("explorer");
+        if path.is_file() {
+            c.arg(format!("/select,{}", path.display()));
+            return spawn(c);
+        }
+        spawn_with(c, path)
+    } else {
+        spawn_with(
+            command("xdg-open"),
+            if path.is_file() {
+                path.parent().unwrap_or(path)
+            } else {
+                path
+            },
+        )
+    }
+}
+
+fn spawn_with(mut c: Command, path: &Path) -> bool {
+    c.arg(path);
+    spawn(c)
+}
+
+/// A terminal in `dir`.
+pub fn terminal(dir: &Path) -> bool {
+    if cfg!(target_os = "macos") {
+        let mut c = command("open");
+        c.args(["-a", "Terminal"]).arg(dir);
+        spawn(c)
+    } else if cfg!(windows) {
+        let mut c = command("cmd");
+        c.args(["/C", "start", "cmd"]).current_dir(dir);
+        spawn(c)
+    } else {
+        // Debian's alternatives name the user's terminal; else the usual ones, in turn.
+        ["x-terminal-emulator", "gnome-terminal", "konsole", "xterm"]
+            .iter()
+            .any(|program| {
+                let mut c = command(program);
+                c.current_dir(dir);
+                spawn(c)
+            })
+    }
+}
+
+/// `path` in an editor: VS Code when it is on the PATH, else what the system opens text with.
+pub fn editor(path: &Path) -> bool {
+    let mut code = command(if cfg!(windows) { "code.cmd" } else { "code" });
+    code.arg(path);
+    if spawn(code) {
+        return true;
+    }
+    if cfg!(target_os = "macos") {
+        let mut c = command("open");
+        // A folder in Finder; a file in the text editor rather than whatever its kind opens with.
+        if path.is_file() {
+            c.arg("-t");
+        }
+        spawn_with(c, path)
+    } else if cfg!(windows) {
+        let mut c = command("cmd");
+        c.args(["/C", "start", ""]).arg(path);
+        spawn(c)
+    } else {
+        spawn_with(command("xdg-open"), path)
+    }
+}
+
+/// A notification from the system, for when the window is behind others. None on Windows, where
+/// the taskbar button is flashed instead.
+pub fn notify(title: &str, body: &str) {
+    if cfg!(target_os = "macos") {
+        // AppleScript's strings take `\` and `"` escaped.
+        let quote = |s: &str| s.replace('\\', "\\\\").replace('"', "\\\"");
+        let script = format!(
+            "display notification \"{}\" with title \"{}\"",
+            quote(body),
+            quote(title)
+        );
+        let mut c = command("osascript");
+        c.args(["-e", &script]);
+        spawn(c);
+    } else if !cfg!(windows) {
+        let mut c = command("notify-send");
+        c.args(["--app-name=sasacode", title, body]);
+        spawn(c);
+    }
+}
+
+/// Keeps the computer from sleeping while it is held: macOS's `caffeinate`, else systemd's
+/// inhibitor. Let go when dropped, and when the window's process ends however it ends.
+pub struct Awake(Child);
+
+impl Awake {
+    pub fn hold() -> Option<Awake> {
+        let pid = std::process::id().to_string();
+        let mut c = if cfg!(target_os = "macos") {
+            let mut c = command("caffeinate");
+            // Idle sleep only: the display may still sleep. Ends with this process.
+            c.args(["-i", "-w", &pid]);
+            c
+        } else if cfg!(windows) {
+            return None;
+        } else {
+            let mut c = command("systemd-inhibit");
+            c.args([
+                "--what=idle:sleep",
+                "--who=sasacode",
+                "--why=a run is going on",
+                "tail",
+                "--pid",
+                &pid,
+                "-f",
+                "/dev/null",
+            ]);
+            c
+        };
+        c.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+        c.spawn().ok().map(Awake)
+    }
+}
+
+impl Drop for Awake {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+/// Another window of this program, on `cwd`, open on `session` if given.
+pub fn new_window(program: &Path, cwd: &Path, session: Option<&str>) -> bool {
+    let Ok(me) = std::env::current_exe() else {
+        return false;
+    };
+    let mut c = Command::new(me);
+    c.arg("--sasacode").arg(program);
+    if let Some(id) = session {
+        c.args(["--session", id]);
+    }
+    c.arg(cwd);
+    spawn(c)
+}
+
+/// A git worktree of the repository `cwd` is in, on a new branch from what is checked out, under
+/// sasacode's home: where the same folder of it is, to be opened in a window of its own.
+pub fn make_worktree(cwd: &Path, home: &Path) -> Result<PathBuf, String> {
+    let git = |args: &[&std::ffi::OsStr]| -> Result<String, String> {
+        let out = Command::new("git")
+            .args(args)
+            .current_dir(cwd)
+            .output()
+            .map_err(|e| e.to_string())?;
+        if out.status.success() {
+            Ok(String::from_utf8_lossy(&out.stdout).trim().to_owned())
+        } else {
+            Err(String::from_utf8_lossy(&out.stderr).trim().to_owned())
+        }
+    };
+    let top = PathBuf::from(git(&["rev-parse".as_ref(), "--show-toplevel".as_ref()])?);
+    let name = top
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let stamp = stamp(std::time::SystemTime::now());
+    let dir = home.join("worktrees").join(format!("{name}-{stamp}"));
+    let branch = format!("sasacode/{stamp}");
+    git(&[
+        "worktree".as_ref(),
+        "add".as_ref(),
+        "-b".as_ref(),
+        branch.as_ref(),
+        dir.as_os_str(),
+    ])?;
+    // The same folder inside it, where the window was opened on a folder inside the repository.
+    let inside = cwd.canonicalize().ok().and_then(|c| {
+        let top = top.canonicalize().ok()?;
+        c.strip_prefix(top).ok().map(Path::to_path_buf)
+    });
+    Ok(inside.map(|rel| dir.join(rel)).filter(|d| d.is_dir()).unwrap_or(dir))
+}
+
+/// `20261117-093012`, in UTC: a name that sorts by when it was made.
+fn stamp(at: std::time::SystemTime) -> String {
+    let (date, time, _) = civil(at);
+    format!("{}-{}", date.replace('-', ""), time.replace(':', ""))
+}
+
+/// `2026-11-17T09:30:12.345Z`, as JavaScript's `toISOString` writes it.
+pub fn iso(at: std::time::SystemTime) -> String {
+    let (date, time, millis) = civil(at);
+    format!("{date}T{time}.{millis:03}Z")
+}
+
+/// The date (`2026-11-17`), the time (`09:30:12`) and the milliseconds of `at`, in UTC.
+fn civil(at: std::time::SystemTime) -> (String, String, u32) {
+    let since = at.duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
+    let (secs, millis) = (since.as_secs(), since.subsec_millis());
+    let (days, rest) = (secs / 86_400, secs % 86_400);
+    // Howard Hinnant's days-to-civil.
+    let z = days as i64 + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = yoe + era * 400 + i64::from(m <= 2);
+    (
+        format!("{y:04}-{m:02}-{d:02}"),
+        format!("{:02}:{:02}:{:02}", rest / 3600, rest % 3600 / 60, rest % 60),
+        millis,
+    )
+}
+
+/// The folders sasacode has kept conversations for, the most recently used first: the first
+/// entry of the newest log in each of the home's session folders says where it ran.
+pub fn projects(home: &Path) -> Vec<PathBuf> {
+    let Ok(dirs) = std::fs::read_dir(home.join("sessions")) else {
+        return Vec::new();
+    };
+    let mut found: Vec<(std::time::SystemTime, PathBuf)> = dirs
+        .filter_map(Result::ok)
+        .filter_map(|dir| {
+            let newest = std::fs::read_dir(dir.path())
+                .ok()?
+                .filter_map(Result::ok)
+                .filter(|f| f.path().extension().is_some_and(|x| x == "jsonl"))
+                .filter_map(|f| Some((f.metadata().ok()?.modified().ok()?, f.path())))
+                .max_by_key(|(when, _)| *when)?;
+            let first = std::fs::read_to_string(&newest.1).ok()?;
+            let head: serde_json::Value = serde_json::from_str(first.lines().next()?).ok()?;
+            let cwd = PathBuf::from(head["cwd"].as_str()?);
+            cwd.is_dir().then_some((newest.0, cwd))
+        })
+        .collect();
+    found.sort_by_key(|a| std::cmp::Reverse(a.0));
+    found.dedup_by(|a, b| a.1 == b.1);
+    found.into_iter().map(|(_, cwd)| cwd).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_stamp_is_the_date_and_time_in_utc() {
+        let at = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_794_907_812);
+        assert_eq!(stamp(at), "20261117-093012");
+        assert_eq!(stamp(std::time::UNIX_EPOCH), "19700101-000000");
+        let at = at + std::time::Duration::from_millis(7);
+        assert_eq!(iso(at), "2026-11-17T09:30:12.007Z");
+    }
+
+    #[test]
+    fn the_folders_with_conversations_are_listed_newest_first() {
+        let home = std::env::temp_dir().join(format!("sasacode-gui-projects-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        let (old, new) = (home.join("old"), home.join("new"));
+        for (n, cwd) in [(0, &old), (1, &new)] {
+            std::fs::create_dir_all(cwd).unwrap();
+            let dir = home.join("sessions").join(format!("d{n}"));
+            std::fs::create_dir_all(&dir).unwrap();
+            let log = dir.join("x.jsonl");
+            let head = serde_json::json!({ "type": "session", "id": "x", "cwd": cwd });
+            std::fs::write(&log, format!("{head}\n")).unwrap();
+            let then = std::time::SystemTime::now() - std::time::Duration::from_secs(600 * (1 - n));
+            std::fs::File::options()
+                .write(true)
+                .open(&log)
+                .unwrap()
+                .set_modified(then)
+                .unwrap();
+        }
+        // One whose folder is gone is left out.
+        let gone = home.join("sessions").join("d2");
+        std::fs::create_dir_all(&gone).unwrap();
+        std::fs::write(
+            gone.join("y.jsonl"),
+            "{\"type\":\"session\",\"cwd\":\"/no/such/folder\"}\n",
+        )
+        .unwrap();
+        assert_eq!(projects(&home), vec![new, old]);
+        std::fs::remove_dir_all(home).unwrap();
+    }
+}

@@ -8,9 +8,10 @@ use iced::{Alignment, Length};
 use sasacode_protocol::Decision;
 
 use super::{BOLD, COL_W, El, MOD, MONO, clip_start, diff_view, plus_minus, room, short_path, tag, tip};
-use crate::app::{App, EFFORTS, INPUT, Msg, PERMISSIONS, shortcut};
+use crate::app::{App, EFFORTS, INPUT, MODEL, Msg, PERMISSIONS, shortcut};
 use crate::i18n::fill;
 use crate::icons::{Icon, icon};
+use crate::input::{Offer, OfferKind};
 use crate::theme::RADIUS_L;
 use crate::transcript::{Approval, Kind};
 
@@ -18,6 +19,24 @@ pub fn dock(app: &App) -> El<'_> {
     let mut col = column![].spacing(8);
     if let Some(approval) = app.chat.transcript.pending_approval() {
         col = col.push(approval_card(app, approval));
+    }
+    if let Some(offer) = app.offer() {
+        col = col.push(offered(app, offer));
+    }
+    if app.dropping {
+        col = col.push(
+            container(
+                row![
+                    icon(Icon::File, 14.0, t_accent(app)),
+                    text(app.s.drop_hint).size(12.5).color(t_accent(app))
+                ]
+                .spacing(8)
+                .align_y(Alignment::Center),
+            )
+            .width(Length::Fill)
+            .padding([8, 12])
+            .style(app.t.boxed(app.t.accent_wash, app.t.accent, crate::theme::RADIUS)),
+        );
     }
     col = col.push(composer(app)).push(hints(app));
     container(container(col).max_width(COL_W))
@@ -28,6 +47,80 @@ pub fn dock(app: &App) -> El<'_> {
             bottom: 10.0,
             left: 24.0,
         })
+        .into()
+}
+
+fn t_accent(app: &App) -> iced::Color {
+    app.t.accent
+}
+
+/// What the input offers where its cursor is: files after `@`, commands after `/`. ↑ and ↓ choose,
+/// Tab or Enter takes, Esc puts it away; a click takes one too.
+fn offered(app: &App, offer: Offer) -> El<'_> {
+    let (t, s) = (app.t, app.s);
+    let mut list = column![].spacing(1);
+    let pick = app.pick.min(offer.len().saturating_sub(1));
+    match offer.kind {
+        OfferKind::Files(files) => {
+            if files.is_empty() {
+                // Nothing to say before the list has come.
+                if app.files.is_empty() {
+                    return Space::new().into();
+                }
+                list = list.push(container(text(s.no_files).size(12.5).color(t.fg_3)).padding([5, 10]));
+            }
+            for (i, file) in files.into_iter().enumerate() {
+                let folder = file.ends_with('/');
+                list = list.push(
+                    button(
+                        row![
+                            icon(if folder { Icon::Folder } else { Icon::File }, 13.0, t.fg_3),
+                            text(file)
+                                .size(12.5)
+                                .font(MONO)
+                                .color(t.fg)
+                                .wrapping(text::Wrapping::None),
+                        ]
+                        .spacing(8)
+                        .align_y(Alignment::Center),
+                    )
+                    .width(Length::Fill)
+                    .padding([4, 10])
+                    .style(t.ghost(t.fg, i == pick))
+                    .on_press(Msg::Complete(Some(i))),
+                );
+            }
+        }
+        OfferKind::Commands(commands) => {
+            for (i, (name, command)) in commands.into_iter().enumerate() {
+                list = list.push(
+                    button(
+                        row![
+                            text(format!("/{name}")).size(12.5).font(MONO).color(t.fg).width(110),
+                            text(command.what(&s)).size(12.5).color(t.fg_2),
+                        ]
+                        .spacing(10)
+                        .align_y(Alignment::Center),
+                    )
+                    .width(Length::Fill)
+                    .padding([4, 10])
+                    .style(t.ghost(t.fg, i == pick))
+                    .on_press(Msg::Complete(Some(i))),
+                );
+            }
+        }
+    }
+    let keys = text(if s.ja {
+        "↑↓で選ぶ · Tabか↵で入れる · Escで閉じる"
+    } else {
+        "↑↓ choose · Tab or ↵ take · Esc close"
+    })
+    .size(11)
+    .color(t.fg_3);
+    container(column![list, container(keys).padding([2, 10])].spacing(4))
+        .width(Length::Fill)
+        .padding(6)
+        .style(t.floating(t.raised, t.line_2))
         .into()
 }
 
@@ -167,6 +260,16 @@ fn composer(app: &App) -> El<'_> {
         s.ph_idle
     };
 
+    // What the keys do in the input depends on what it offers, on what was sent before, and on
+    // what Enter was set to do.
+    let offer = app.offer();
+    let has_offer = offer.is_some();
+    let offering = offer.is_some_and(|o| o.len() > 0);
+    let cursor = app.chat.editor.cursor().position;
+    let last_line = app.chat.editor.line_count().saturating_sub(1);
+    let recall_up = (app.recall.is_some() || app.chat.editor.text().is_empty()) && cursor.line == 0;
+    let recall_down = app.recall.is_some() && cursor.line >= last_line;
+    let enter_sends = app.prefs.enter_sends;
     let editor = text_editor(&app.chat.editor)
         .id(INPUT)
         .placeholder(placeholder)
@@ -176,14 +279,29 @@ fn composer(app: &App) -> El<'_> {
         .min_height(24)
         .max_height(220)
         .style(t.editor())
-        .key_binding(|press| {
+        .key_binding(move |press| {
+            use text_editor::Binding;
             if !matches!(press.status, text_editor::Status::Focused { .. }) {
                 return None;
             }
-            // Enter sends and Shift+Enter breaks the line; the chords work from in here too.
+            let (m, plain) = (press.modifiers, press.modifiers.is_empty());
             match press.key.as_ref() {
-                Key::Named(Named::Enter) if press.modifiers.shift() => Some(text_editor::Binding::Enter),
-                Key::Named(Named::Enter) if !press.modifiers.command() => Some(text_editor::Binding::Custom(Msg::Send)),
+                // What is offered is chosen and taken with the keys, before anything else they do.
+                Key::Named(Named::ArrowUp) if offering && plain => Some(Binding::Custom(Msg::Pick(-1))),
+                Key::Named(Named::ArrowDown) if offering && plain => Some(Binding::Custom(Msg::Pick(1))),
+                Key::Named(Named::Tab) if offering && plain => Some(Binding::Custom(Msg::Complete(None))),
+                Key::Named(Named::Enter) if offering && plain => Some(Binding::Custom(Msg::Complete(None))),
+                Key::Named(Named::Escape) if has_offer => Some(Binding::Custom(Msg::Dismiss)),
+                // What was sent before, from the first line of an empty input, and back.
+                Key::Named(Named::ArrowUp) if recall_up && plain => Some(Binding::Custom(Msg::Recall(-1))),
+                Key::Named(Named::ArrowDown) if recall_down && plain => Some(Binding::Custom(Msg::Recall(1))),
+                // Enter sends and Shift+Enter breaks the line; or, as set, Enter breaks it and the
+                // chord sends, the chord's own work moving to the chord with Shift. The chords work
+                // from in here too.
+                Key::Named(Named::Enter) if enter_sends && m.shift() && !m.command() => Some(Binding::Enter),
+                Key::Named(Named::Enter) if enter_sends && !m.command() => Some(Binding::Custom(Msg::Send)),
+                Key::Named(Named::Enter) if !enter_sends && !m.command() => Some(Binding::Enter),
+                Key::Named(Named::Enter) if !enter_sends && !m.shift() => Some(Binding::Custom(Msg::Send)),
                 _ => match shortcut(&press.key, press.modifiers) {
                     Some(msg) => Some(text_editor::Binding::Custom(msg)),
                     None => text_editor::Binding::from_key_press(press),
@@ -202,6 +320,7 @@ fn composer(app: &App) -> El<'_> {
         row![
             icon(Icon::Bot, 13.0, t.fg_3),
             text_input(s.model_ph, &app.model)
+                .id(MODEL)
                 .on_input(Msg::Model)
                 .size(12)
                 .padding([4, 8])
@@ -335,17 +454,23 @@ fn hints(app: &App) -> El<'_> {
         .into()
     };
     let (waiting, running) = (app.chat.transcript.pending_approval().is_some(), app.running());
+    // As Enter was set: it sends, or it breaks the line and the chord sends.
+    let (send, chord, newline) = if app.prefs.enter_sends {
+        ("↵".to_owned(), format!("{MOD}↵"), "⇧↵".to_owned())
+    } else {
+        (format!("{MOD}↵"), format!("{MOD}⇧↵"), "↵".to_owned())
+    };
     let mut keys = Vec::new();
     if waiting {
-        keys.push(key(format!("{MOD}↵"), s.h_allow));
-        keys.push(key("↵".into(), s.deny_send));
+        keys.push(key(chord, s.h_allow));
+        keys.push(key(send, s.deny_send));
     } else {
-        keys.push(key("↵".into(), if running { s.send_more } else { s.h_send }));
+        keys.push(key(send, if running { s.send_more } else { s.h_send }));
         if running {
-            keys.push(key(format!("{MOD}↵"), s.h_now));
+            keys.push(key(chord, s.h_now));
         }
     }
-    keys.push(key("⇧↵".into(), s.h_nl));
+    keys.push(key(newline, s.h_nl));
     if running {
         keys.push(key("Esc".into(), s.stop));
     }

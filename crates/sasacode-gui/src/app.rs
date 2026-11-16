@@ -12,8 +12,12 @@ use sasacode_protocol::{ControlMessage, Decision, SessionSummary, StopCause, lis
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::i18n::{Strings, fill};
-use crate::layout::{self, Layout};
+use crate::input::Command;
+use crate::layout::{self, Layout, Prefs};
+pub(crate) use crate::overlay::Overlay;
+pub(crate) use crate::overlay::SIDE;
 use crate::runner::{self, RunSpec, RunUpdate};
+use crate::system::Awake;
 use crate::theme::{DARK, LIGHT, Tokens};
 use crate::transcript::{Answer, Note, Step, Transcript};
 
@@ -24,6 +28,13 @@ pub const INPUT: &str = "input";
 pub const SEARCH: &str = "search";
 /// The conversation, scrolled back to its newest.
 pub const TIMELINE: &str = "timeline";
+/// The field of the command palette, and of a conversation's new name.
+pub const PALETTE: &str = "palette";
+pub const RENAME: &str = "rename";
+/// The search inside the conversation shown.
+pub const FIND_IN: &str = "find-in";
+/// The model's field.
+pub const MODEL: &str = "model";
 
 /// How far from its newest the conversation still counts as at it, in pixels: a nudge of the
 /// trackpad is not reading back.
@@ -68,8 +79,10 @@ pub struct Options {
     pub cwd: PathBuf,
     /// The conversation to open with, named as `sasacode -r` takes it.
     pub session: Option<String>,
-    /// How the window opens laid out, and the file it keeps how it is laid out in, if any.
+    /// How the window opens laid out and what was chosen in its settings, and the file it keeps
+    /// them in, if any.
     pub layout: Layout,
+    pub prefs: Prefs,
     pub layout_file: Option<PathBuf>,
 }
 
@@ -79,6 +92,7 @@ pub enum Tab {
     Plan,
     Commands,
     Usage,
+    Git,
 }
 
 /// What a copy button copies. Text the window holds is named rather than carried, so a button
@@ -95,6 +109,8 @@ pub enum Clip {
     Output(String),
     /// The conversation's id, which `sasacode -r` takes.
     Session,
+    /// The whole conversation, as Markdown.
+    Conversation,
     /// Text drawn whole where it is copied from: a code block.
     Text(String),
 }
@@ -117,9 +133,9 @@ pub struct App {
     pub(crate) s: Strings,
     pub(crate) t: Tokens,
     theme: Theme,
-    program: PathBuf,
+    pub(crate) program: PathBuf,
     pub(crate) cwd: PathBuf,
-    home: Option<PathBuf>,
+    pub(crate) home: Option<PathBuf>,
     pub(crate) sessions: Vec<SessionSummary>,
     /// The conversation shown.
     pub(crate) chat: Chat,
@@ -151,6 +167,54 @@ pub struct App {
     /// Where how the window is laid out is kept, and what was last read from it or written to it.
     layout_file: Option<PathBuf>,
     kept: Layout,
+    /// What was chosen in the settings, and what was last kept of it.
+    pub(crate) prefs: Prefs,
+    kept_prefs: Prefs,
+    /// The system's light or dark, which the window follows unless told otherwise.
+    system_dark: bool,
+    /// The window is in front: nothing needs the system to say what happened.
+    pub(crate) focused: bool,
+    /// What is drawn over the window: the palette, the keys, the settings, a name being given.
+    pub(crate) overlay: Option<Overlay>,
+    /// What was sent before, oldest first, and the file it is shared with the TUI in.
+    pub(crate) history: Vec<String>,
+    pub(crate) history_file: Option<PathBuf>,
+    /// Which of it the input shows, while ↑ and ↓ go through it, and what was typed before.
+    pub(crate) recall: Option<usize>,
+    pub(crate) recall_draft: String,
+    /// The project's files, for `@`, once asked for.
+    pub(crate) files: Vec<String>,
+    pub(crate) files_asked: bool,
+    /// Which of what the input offers is chosen, and whether the offer was put away.
+    pub(crate) pick: usize,
+    pub(crate) dismissed: bool,
+    /// Files are held over the window, to be dropped into the input.
+    pub(crate) dropping: bool,
+    /// Holds the computer awake while something runs.
+    pub(crate) awake: Option<Awake>,
+    /// The side question and its answer, while they are shown.
+    pub(crate) aside: Option<Chat>,
+    /// A word from the window that is not about a conversation, until the next one.
+    pub(crate) toast: Option<String>,
+    /// The search inside the conversation shown, while it is open.
+    pub(crate) find_in: Option<String>,
+    /// The list shows the conversations taken out of it, instead of the others.
+    pub(crate) show_archived: bool,
+    /// The conversation of the list under the pointer, which shows what can be done to it.
+    pub(crate) row_hover: Option<String>,
+    /// The folder's repository, as last looked at, and whether git is at work on it.
+    pub(crate) git: crate::git::Status,
+    pub(crate) git_busy: bool,
+    /// The message of the next commit.
+    pub(crate) commit_msg: String,
+    /// The file whose changes a second click discards.
+    pub(crate) confirm_discard: Option<String>,
+    /// The message of the conversation under the pointer, which shows what can be done with it.
+    pub(crate) ex_hover: Option<usize>,
+    /// What is said in each conversation, lower case, for the search, as of when its log changed;
+    /// and whether it is being read.
+    pub(crate) bodies: HashMap<PathBuf, (std::time::SystemTime, String)>,
+    indexing: bool,
     /// Sizes the window was given, so that only the last one's rest keeps it.
     resizes: u64,
     /// What was copied last, while its button says so.
@@ -279,6 +343,73 @@ pub enum Msg {
     },
     /// The scroll the window asked for was made.
     Settled,
+    /// Something to draw over the window, or none.
+    Show(Option<Overlay>),
+    /// What is typed in the palette, or in the new name.
+    OverlayText(String),
+    /// ↑ (-1) or ↓ (1) where no field took it.
+    Arrow(i8),
+    /// The palette's entry at this place in what it shows now.
+    PaletteRun(usize),
+    SetEnter(bool),
+    SetDark(Option<bool>),
+    /// Larger (1), smaller (-1), or as it was (0).
+    Zoom(i8),
+    SetNotify(bool),
+    SetAwake(bool),
+    SetSteps(bool),
+    /// The window came to the front, or went behind.
+    Focus(bool),
+    /// Files were held over the window, or taken away.
+    Hover(bool),
+    Dropped(PathBuf),
+    /// What was sent before: further back (-1) or forward (1).
+    Recall(i8),
+    /// The project's files, for `@`.
+    Files(Vec<String>),
+    /// Another of what the input offers: up (-1) or down (1).
+    Pick(i8),
+    /// What the input offers taken: the chosen one, or this one.
+    Complete(Option<usize>),
+    /// What the input offers put away until it is typed in again.
+    Dismiss,
+    /// A command of the window, from `/`, the palette or a key.
+    Command(Command),
+    /// A path in the file manager or an editor.
+    Reveal(PathBuf),
+    Editor(PathBuf),
+    /// A conversation kept at the top of the list, or let go; taken out of it, or put back.
+    Pin(String),
+    Archive(String),
+    /// A name for a conversation: asked for, and given.
+    Rename(String),
+    RenameSave,
+    /// The pointer over a row of the list, or off it.
+    RowHover(Option<String>),
+    /// What the search inside the conversation looks for, and the search put away.
+    FindInText(String),
+    FindInClose,
+    /// Another folder sasacode was used in, in a window of its own.
+    OpenProject(PathBuf),
+    /// What is said in conversations, read for the search: by log, as of when it was changed.
+    Indexed(Vec<(PathBuf, std::time::SystemTime, String)>),
+    /// The repository looked at again, and as it was found.
+    GitRefresh,
+    GitStatus(Box<crate::git::Status>),
+    /// Something done from the git tab, and what came of it.
+    GitDo(crate::git::Op),
+    GitDone(Result<String, String>),
+    CommitText(String),
+    /// A line of a diff: where it is goes into the input, to be talked about.
+    Quote(PathBuf, usize),
+    /// A new conversation branched off before message `i`, the message in its input to be changed
+    /// and sent; or before the last message, sent again as it was.
+    Fork(usize),
+    Retry,
+    /// The pointer over a message of the conversation, or off it.
+    ExHover(Option<usize>),
+    /// What waits to be sent when the run ends, back into the input.
+    Retract,
     /// Back to the newest of the conversation.
     Latest,
     /// The keyboard to the search of the conversation list.
@@ -312,6 +443,13 @@ impl App {
     pub fn new(options: Options) -> (Self, Task<Msg>) {
         let wanted = options.session.clone();
         let mut app = App::blank(options, Strings::detect());
+        // Shared with the TUI. A window made in a test has none, so tests never write to it.
+        app.history_file = app.home.as_ref().map(|home| home.join("history.jsonl"));
+        app.history = app
+            .history_file
+            .as_deref()
+            .map(crate::composer::read_history)
+            .unwrap_or_default();
         app.reload_sessions();
         // One that is not there is not an error: a conversation nobody has said anything in has an
         // id and no log yet. The window opens on a new one.
@@ -324,9 +462,10 @@ impl App {
             );
         }
         let screen = window::oldest().and_then(|id| window::monitor_size(id).map(move |size| Msg::Screen(id, size)));
+        let git = app.refresh_git();
         (
             app,
-            Task::batch([iced::system::theme().map(Msg::ThemeMode), focus_input(), screen]),
+            Task::batch([iced::system::theme().map(Msg::ThemeMode), focus_input(), screen, git]),
         )
     }
 
@@ -357,10 +496,38 @@ impl App {
             edge_hover: None,
             tab: Tab::Changes,
             now: Instant::now(),
-            width: layout.size.width,
-            height: layout.size.height,
+            // The window's size as it is drawn: what the system measures, less the zoom.
+            width: layout.size.width / options.prefs.zoom,
+            height: layout.size.height / options.prefs.zoom,
             layout_file: options.layout_file,
             kept: layout,
+            prefs: options.prefs.clone(),
+            kept_prefs: options.prefs,
+            system_dark: false,
+            focused: true,
+            overlay: None,
+            history: Vec::new(),
+            history_file: None,
+            recall: None,
+            recall_draft: String::new(),
+            files: Vec::new(),
+            files_asked: false,
+            pick: 0,
+            dismissed: false,
+            dropping: false,
+            awake: None,
+            find_in: None,
+            show_archived: false,
+            row_hover: None,
+            bodies: HashMap::new(),
+            indexing: false,
+            git: crate::git::Status::default(),
+            git_busy: false,
+            commit_msg: String::new(),
+            confirm_discard: None,
+            ex_hover: None,
+            aside: None,
+            toast: None,
             resizes: 0,
             copied: None,
             copies: 0,
@@ -387,11 +554,22 @@ impl App {
         self.theme = self.t.theme();
     }
 
+    /// Light or dark as the settings say, else as the system is.
+    pub(crate) fn apply_theme(&mut self) {
+        self.set_dark(self.prefs.dark.unwrap_or(self.system_dark));
+    }
+
+    /// How large the window's contents are drawn.
+    pub fn scale(&self) -> f32 {
+        self.prefs.zoom
+    }
+
     pub fn subscription(&self) -> Subscription<Msg> {
         let mut all = vec![
             iced::system::theme_changes().map(Msg::ThemeMode),
             window::resize_events().map(|(_, size)| Msg::Resized(size)),
             event::listen_with(global_key),
+            event::listen_with(window_event),
         ];
         // The clock only moves what is shown while something runs.
         if self.running() {
@@ -531,8 +709,17 @@ impl App {
     }
 
     pub fn update(&mut self, msg: Msg) -> Task<Msg> {
+        // Over the window, Esc puts away what is drawn there; it never stops a run.
+        if self.overlay.is_some() && matches!(msg, Msg::Stop | Msg::FocusInput) {
+            self.overlay = None;
+            return focus_input();
+        }
+        let msg = match self.update_more(msg) {
+            Ok(task) => return task,
+            Err(msg) => msg,
+        };
         match msg {
-            Msg::Edit(action) => self.chat.editor.perform(action),
+            Msg::Edit(action) => return self.edit(action),
             Msg::Send => return self.send(),
             Msg::Chord => {
                 let empty = self.chat.editor.text().trim().is_empty();
@@ -582,6 +769,27 @@ impl App {
                     return Task::batch([focus_input(), self.back_to_newest()]);
                 }
             }
+            Msg::Fork(i) => return self.fork(i, false),
+            Msg::Retry => {
+                let last = self.chat.transcript.exchanges.len().saturating_sub(1);
+                return self.fork(last, true);
+            }
+            Msg::ExHover(i) => self.ex_hover = i,
+            Msg::Retract => {
+                if let Some(next) = self.chat.next.take() {
+                    let typed = self.chat.editor.text();
+                    let text = if typed.trim().is_empty() {
+                        next
+                    } else {
+                        format!("{next}\n\n{typed}")
+                    };
+                    self.chat.editor = text_editor::Content::with_text(&text);
+                    self.chat
+                        .editor
+                        .perform(text_editor::Action::Move(text_editor::Motion::DocumentEnd));
+                    return focus_input();
+                }
+            }
             Msg::Neighbour(step) => {
                 let paths: Vec<PathBuf> = self.found().map(|s| s.path.clone()).collect();
                 let here = self.chat.session.as_deref();
@@ -599,7 +807,19 @@ impl App {
                     return Task::batch([focus_input(), self.back_to_newest()]);
                 }
             }
-            Msg::Filter(text) => self.filter = text,
+            Msg::Filter(text) => {
+                self.filter = text;
+                // Two letters at least: one finds nearly everything.
+                if self.filter.trim().chars().count() >= 2 {
+                    return self.index_bodies();
+                }
+            }
+            Msg::Indexed(read) => {
+                self.indexing = false;
+                for (path, when, body) in read {
+                    self.bodies.insert(path, (when, body));
+                }
+            }
             Msg::Model(model) => self.model = model,
             Msg::Permission(p) => self.permission = PERMISSIONS.contains(&p).then_some(p),
             Msg::Effort(e) => self.effort = EFFORTS.contains(&e).then_some(e),
@@ -614,6 +834,9 @@ impl App {
             Msg::Tab(tab) => {
                 self.tab = tab;
                 self.insp = true;
+                if tab == Tab::Git {
+                    return self.refresh_git();
+                }
             }
             Msg::Fold(i) => {
                 let open = self.steps_open(i);
@@ -697,7 +920,10 @@ impl App {
                 self.keep_layout();
             }
             Msg::HoverEdge(edge) => self.edge_hover = edge,
-            Msg::ThemeMode(mode) => self.set_dark(mode == theme::Mode::Dark),
+            Msg::ThemeMode(mode) => {
+                self.system_dark = mode == theme::Mode::Dark;
+                self.apply_theme();
+            }
             Msg::Tick(now) => self.now = now,
             Msg::Resized(size) => {
                 self.width = size.width;
@@ -714,19 +940,23 @@ impl App {
                 }
             }
             Msg::Screen(id, Some(screen)) => {
-                if let Some(size) = layout::fit(Size::new(self.width, self.height), screen) {
-                    return window::resize(id, size);
+                let zoom = self.prefs.zoom;
+                if let Some(size) = layout::fit(self.layout().size, screen) {
+                    return window::resize(id, Size::new(size.width / zoom, size.height / zoom));
                 }
             }
             Msg::Screen(_, None) => {}
+            // Handled by `update_more`.
+            _ => {}
         }
         Task::none()
     }
 
     /// How the window is laid out now: the widths the panels were given, folded or not.
     pub(crate) fn layout(&self) -> Layout {
+        let zoom = self.prefs.zoom;
         Layout {
-            size: Size::new(self.width, self.height),
+            size: Size::new(self.width * zoom, self.height * zoom),
             side: self.side_w,
             inspector: self.insp_w,
         }
@@ -734,16 +964,19 @@ impl App {
 
     /// Keeps how the window is laid out for the next launch, when it changed since it was read or
     /// last written.
-    fn keep_layout(&mut self) {
+    pub(crate) fn keep_layout(&mut self) {
         let Some(file) = &self.layout_file else {
             return;
         };
         let now = self.layout();
-        if now == self.kept {
+        if now == self.kept && self.prefs == self.kept_prefs {
             return;
         }
-        match now.write(file) {
-            Ok(()) => self.kept = now,
+        match layout::write(file, &now, &self.prefs) {
+            Ok(()) => {
+                self.kept = now;
+                self.kept_prefs = self.prefs.clone();
+            }
             Err(e) => eprintln!(
                 "sasacode-gui: could not keep the window's layout in {}: {e}",
                 file.display()
@@ -775,6 +1008,52 @@ impl App {
         true
     }
 
+    /// A new conversation branched off before exchange `i` of the one shown: the old one is kept
+    /// as it was. Its message goes into the new one's input, or, with `again`, is sent as it was.
+    fn fork(&mut self, i: usize, again: bool) -> Task<Msg> {
+        let Some(prompt) = self.chat.transcript.exchanges.get(i).map(|ex| ex.prompt.clone()) else {
+            return Task::none();
+        };
+        if self.busy() {
+            return Task::none();
+        }
+        if i == 0 {
+            // Before the first message there is nothing to keep: a new conversation.
+            let chat = self.new_chat();
+            self.bring(chat);
+        } else {
+            let log = self
+                .chat
+                .session
+                .as_ref()
+                .and_then(|id| self.sessions.iter().find(|s| s.id == *id))
+                .map(|s| s.path.clone());
+            let made = log
+                .ok_or_else(|| "no log".to_owned())
+                .and_then(|log| crate::fork::fork(&log, i, &prompt));
+            match made {
+                Ok((_, path)) => {
+                    self.reload_sessions();
+                    if !self.open_session(&path) {
+                        return Task::none();
+                    }
+                }
+                Err(error) => {
+                    self.toast = Some(fill(self.s.fork_failed, "error", error));
+                    return Task::none();
+                }
+            }
+        }
+        if again {
+            return self.start(self.chat.key, prompt);
+        }
+        self.chat.editor = text_editor::Content::with_text(&prompt);
+        self.chat
+            .editor
+            .perform(text_editor::Action::Move(text_editor::Motion::DocumentEnd));
+        Task::batch([focus_input(), self.back_to_newest()])
+    }
+
     fn new_chat(&mut self) -> Chat {
         self.chats += 1;
         Chat::new(self.chats)
@@ -791,10 +1070,13 @@ impl App {
         self.reading = false;
     }
 
-    /// The conversation with `key`, shown or kept.
+    /// The conversation with `key`, shown or kept, or the side question.
     fn chat_mut(&mut self, key: u64) -> Option<&mut Chat> {
         if self.chat.key == key {
             return Some(&mut self.chat);
+        }
+        if key == SIDE {
+            return self.aside.as_mut();
         }
         self.parked.iter_mut().find(|c| c.key == key)
     }
@@ -818,11 +1100,56 @@ impl App {
     }
 
     /// The conversations the search finds, newest first: all of them when it is empty.
+    /// The list's conversations in its order, those the search finds: the pinned ones first, in
+    /// the order they were pinned, then the rest, newest first. The archived ones instead, while
+    /// they are shown. The search looks in the names given, the first messages, and, once read,
+    /// everything said in them.
     pub(crate) fn found(&self) -> impl Iterator<Item = &SessionSummary> {
         let needle = self.filter.trim().to_lowercase();
-        self.sessions
+        let (pinned, archived, names, bodies) = (
+            &self.prefs.pinned,
+            &self.prefs.archived,
+            &self.prefs.names,
+            &self.bodies,
+        );
+        let show_archived = self.show_archived;
+        let pins = pinned
             .iter()
-            .filter(move |s| needle.is_empty() || s.first_prompt.to_lowercase().contains(&needle))
+            .filter_map(|id| self.sessions.iter().find(|s| s.id == *id));
+        let rest = self.sessions.iter().filter(move |s| !pinned.contains(&s.id));
+        pins.chain(rest).filter(move |s| {
+            archived.contains(&s.id) == show_archived
+                && (needle.is_empty()
+                    || s.first_prompt.to_lowercase().contains(&needle)
+                    || names.get(&s.id).is_some_and(|n| n.to_lowercase().contains(&needle))
+                    || bodies.get(&s.path).is_some_and(|(_, body)| body.contains(&needle)))
+        })
+    }
+
+    /// What is said in the conversations that have not been read for the search, or changed since,
+    /// read away from the window.
+    fn index_bodies(&mut self) -> Task<Msg> {
+        if self.indexing {
+            return Task::none();
+        }
+        let stale: Vec<(PathBuf, std::time::SystemTime)> = self
+            .sessions
+            .iter()
+            .filter(|s| self.bodies.get(&s.path).is_none_or(|(when, _)| *when != s.modified))
+            .map(|s| (s.path.clone(), s.modified))
+            .collect();
+        if stale.is_empty() {
+            return Task::none();
+        }
+        self.indexing = true;
+        Task::perform(
+            async move {
+                tokio::task::spawn_blocking(move || crate::export::bodies(stale))
+                    .await
+                    .unwrap_or_default()
+            },
+            Msg::Indexed,
+        )
     }
 
     /// The text a copy button copies, as the window holds it now.
@@ -841,6 +1168,7 @@ impl App {
             Clip::Command(id) => self.chat.transcript.tool(id)?.arg("command").map(str::to_owned),
             Clip::Output(id) => Some(self.chat.transcript.tool(id)?.shown_output().to_owned()),
             Clip::Session => self.chat.session.clone(),
+            Clip::Conversation => Some(crate::export::markdown(&self.chat.transcript, self.s)),
             Clip::Text(text) => Some(text.clone()),
         }?;
         (!text.trim().is_empty()).then_some(text)
@@ -887,12 +1215,21 @@ impl App {
         (last && self.running()) || (short && ex.answer().is_none())
     }
 
+    /// What was typed, taken out of the input and remembered with what was sent before.
     fn take_input(&mut self) -> Option<String> {
         let text = self.chat.editor.text().trim().to_owned();
         if text.is_empty() {
             return None;
         }
         self.chat.editor = text_editor::Content::new();
+        self.recall = None;
+        self.dismissed = false;
+        if self.history.last() != Some(&text) {
+            self.history.push(text.clone());
+            if let Some(file) = &self.history_file {
+                crate::composer::append_history(file, &text);
+            }
+        }
         Some(text)
     }
 
@@ -907,6 +1244,10 @@ impl App {
     }
 
     fn send(&mut self) -> Task<Msg> {
+        // A command of the window runs here; it is never sent.
+        if let Some(task) = self.as_command() {
+            return task;
+        }
         // An approval waits: a reply denies it and tells the model why.
         if let Some(approval) = self.chat.transcript.pending_approval() {
             let id = approval.id.clone();
@@ -959,7 +1300,7 @@ impl App {
     }
 
     /// Starts a run of conversation `key` on `prompt`.
-    fn start(&mut self, key: u64, prompt: String) -> Task<Msg> {
+    pub(crate) fn start(&mut self, key: u64, prompt: String) -> Task<Msg> {
         let now = Instant::now();
         let model = self.model.trim();
         let mut spec = RunSpec {
@@ -970,7 +1311,12 @@ impl App {
             model: (!model.is_empty()).then(|| model.to_owned()),
             permission: self.permission.map(str::to_owned),
             thinking: self.effort.map(str::to_owned),
+            no_session: key == SIDE,
         };
+        if key == SIDE {
+            // A side question reads; what would change something is asked, and denied.
+            spec.permission = Some("ask".into());
+        }
         let shown = key == self.chat.key;
         let Some(chat) = self.chat_mut(key) else {
             return Task::none();
@@ -987,6 +1333,7 @@ impl App {
             ended: false,
         });
         self.now = now;
+        self.hold_awake();
         if !shown {
             return task;
         }
@@ -997,7 +1344,7 @@ impl App {
     /// What the run of conversation `key` said. A conversation not shown is marked for what the
     /// user should come back to: its run ended, or it waits for an answer.
     fn on_run(&mut self, key: u64, update: RunUpdate) -> Task<Msg> {
-        let shown = key == self.chat.key;
+        let shown = key == self.chat.key || key == SIDE;
         let now = Instant::now();
         let s = self.s;
         let Some(chat) = self.chat_mut(key) else {
@@ -1009,6 +1356,9 @@ impl App {
         let mut attention = false;
         let mut relist = false;
         let mut next = None;
+        // What the system is told when the window is behind others.
+        let mut news: Option<&'static str> = None;
+        let mut git = false;
         match update {
             RunUpdate::Started(control) => run.control = Some(control),
             RunUpdate::Event(event) => {
@@ -1016,13 +1366,31 @@ impl App {
                 if let Some(id) = effect.session_id {
                     chat.session = Some(id);
                 }
-                if effect.ended.is_some() {
+                if let Some(cause) = effect.ended {
                     run.ended = true;
                     chat.unread |= !shown;
+                    news = Some(if cause == StopCause::Done {
+                        s.n_done
+                    } else {
+                        s.n_stopped
+                    });
                 }
-                if effect.approval.is_some() {
-                    chat.unread |= !shown;
-                    attention = true;
+                if let Some(id) = effect.approval {
+                    if key == SIDE {
+                        // Nothing a side question does is let change anything.
+                        let feedback = Some(s.side_denied.to_owned());
+                        chat.control(ControlMessage::Approval {
+                            id: id.clone(),
+                            decision: Decision::Deny,
+                            feedback: feedback.clone(),
+                        });
+                        chat.transcript
+                            .answer_approval(&id, Answer::Denied(s.side_denied.to_owned()));
+                    } else {
+                        chat.unread |= !shown;
+                        attention = true;
+                        news = Some(s.n_waiting);
+                    }
                 }
                 // A new conversation's log is there once its first message is: the list shows it.
                 relist = matches!(*event, sasacode_protocol::Event::MessageEnd { .. }) && chat.session.is_some();
@@ -1038,6 +1406,7 @@ impl App {
                 chat.unread |= !shown;
                 chat.transcript.close(now);
                 chat.transcript.note(Note::Error(format!("{}\n{error}", s.not_found)));
+                news = Some(s.n_stopped);
             }
             RunUpdate::Exited(code) => {
                 // A run that never got to its end says why only on stderr.
@@ -1061,6 +1430,10 @@ impl App {
                     next = Some(waiting.join("\n\n"));
                 }
                 self.reload_sessions();
+                // What the run made or removed is offered after `@` from now on, and shown in the
+                // git tab.
+                self.files_asked = false;
+                git = true;
             }
         }
         if relist
@@ -1070,8 +1443,21 @@ impl App {
             self.reload_sessions();
         }
         self.now = now;
+        if let Some(body) = news
+            && !self.focused
+        {
+            self.tell(key, body);
+            attention = true;
+        }
+        self.hold_awake();
+        let git = if git { self.refresh_git() } else { Task::none() };
         if let Some(prompt) = next {
-            return self.start(key, prompt);
+            return Task::batch([git, self.start(key, prompt)]);
+        }
+        if !matches!(self.tab, Tab::Git) || !self.insp {
+            // Not in view: looked at again when it is.
+        } else {
+            return git;
         }
         if attention {
             // The run waits for the user: say so even when the window is behind others.
@@ -1097,7 +1483,26 @@ fn global_key(event: iced::Event, status: event::Status, _window: window::Id) ->
         // the input: the next Esc is the input's again.
         return matches!(key, Key::Named(Named::Escape)).then_some(Msg::FocusInput);
     }
+    if modifiers.is_empty() {
+        match key {
+            Key::Named(Named::ArrowUp) => return Some(Msg::Arrow(-1)),
+            Key::Named(Named::ArrowDown) => return Some(Msg::Arrow(1)),
+            _ => {}
+        }
+    }
     shortcut(&key, modifiers)
+}
+
+/// What the window hears of itself: whether it is in front, and files held over it or dropped.
+fn window_event(event: iced::Event, _status: event::Status, _window: window::Id) -> Option<Msg> {
+    match event {
+        iced::Event::Window(window::Event::Focused) => Some(Msg::Focus(true)),
+        iced::Event::Window(window::Event::Unfocused) => Some(Msg::Focus(false)),
+        iced::Event::Window(window::Event::FileHovered(_)) => Some(Msg::Hover(true)),
+        iced::Event::Window(window::Event::FilesHoveredLeft) => Some(Msg::Hover(false)),
+        iced::Event::Window(window::Event::FileDropped(path)) => Some(Msg::Dropped(path)),
+        _ => None,
+    }
 }
 
 /// While an edge is dragged: where the pointer goes, and the left button let go, wherever the
@@ -1124,16 +1529,27 @@ pub(crate) fn shortcut(key: &Key, modifiers: keyboard::Modifiers) -> Option<Msg>
         Key::Named(Named::Enter) => Some(Msg::Chord),
         Key::Character("b") => Some(Msg::ToggleSide),
         Key::Character("i") => Some(Msg::ToggleInspector),
+        Key::Character("n") if modifiers.shift() => Some(Msg::Command(Command::Window)),
         Key::Character("n") => Some(Msg::NewSession),
         // ⌘⇧[ and ⌘⇧]: the conversation above or below in the list.
         Key::Character("[") if modifiers.shift() => Some(Msg::Neighbour(-1)),
         Key::Character("]") if modifiers.shift() => Some(Msg::Neighbour(1)),
+        Key::Character("a") if modifiers.shift() => Some(Msg::Command(Command::Attention)),
+        Key::Character("p") if modifiers.shift() => Some(Msg::Show(Some(Overlay::palette()))),
+        Key::Character("p") => Some(Msg::Command(Command::Mention)),
+        Key::Character("f") => Some(Msg::Command(Command::Find)),
+        Key::Character(",") => Some(Msg::Show(Some(Overlay::Settings))),
+        Key::Character("/") => Some(Msg::Show(Some(Overlay::Keys))),
+        Key::Character("=" | "+") => Some(Msg::Zoom(1)),
+        Key::Character("-") => Some(Msg::Zoom(-1)),
+        Key::Character("0") => Some(Msg::Zoom(0)),
         Key::Character("k") => Some(Msg::Find),
         Key::Character("l") => Some(Msg::FocusInput),
         Key::Character("1") => Some(Msg::Tab(Tab::Changes)),
         Key::Character("2") => Some(Msg::Tab(Tab::Plan)),
         Key::Character("3") => Some(Msg::Tab(Tab::Commands)),
         Key::Character("4") => Some(Msg::Tab(Tab::Usage)),
+        Key::Character("5") => Some(Msg::Tab(Tab::Git)),
         _ => None,
     }
 }
@@ -1186,6 +1602,7 @@ mod tests {
             cwd,
             session: None,
             layout: Layout::default(),
+            prefs: crate::layout::Prefs::default(),
             layout_file: None,
         };
         let mut app = App::blank(options, Strings::get("ja"));
@@ -1321,6 +1738,31 @@ mod tests {
         let key = app.chat.key;
         let _ = app.update(Msg::NewSession);
         assert_eq!(app.chat.key, key);
+        std::fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn a_conversation_branched_off_before_a_message_keeps_what_came_before() {
+        let (mut app, home) = window_with("fork", &["aaaa0000"]);
+        assert!(app.open_named("aaaa0000"));
+        let count = app.chat.transcript.exchanges.len();
+        assert!(count >= 2, "the fixture has {count} exchanges");
+        let last = app.chat.transcript.exchanges[count - 1].prompt.clone();
+
+        // Edit and resend: a new conversation, the message in its input, the old one listed still.
+        let _ = app.update(Msg::Fork(count - 1));
+        let id = app.chat.session.clone().unwrap();
+        assert_ne!(id, "aaaa0000");
+        assert_eq!(app.chat.transcript.exchanges.len(), count - 1);
+        assert_eq!(app.chat.editor.text().trim(), last.trim());
+        assert_eq!(app.sessions.len(), 2);
+
+        // A message waiting for the run to end is taken back into the input.
+        app.chat.editor = text_editor::Content::new();
+        app.chat.next = Some("あとで".into());
+        let _ = app.update(Msg::Retract);
+        assert!(app.chat.next.is_none());
+        assert_eq!(app.chat.editor.text().trim(), "あとで");
         std::fs::remove_dir_all(home).unwrap();
     }
 
