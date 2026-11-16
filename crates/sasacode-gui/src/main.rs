@@ -14,6 +14,7 @@ mod i18n;
 mod icons;
 mod input;
 mod layout;
+mod list;
 mod overlay;
 mod review;
 mod runner;

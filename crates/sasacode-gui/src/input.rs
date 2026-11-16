@@ -36,6 +36,8 @@ pub enum Command {
     Attention,
     Mention,
     Branch,
+    Delete,
+    Group,
 }
 
 impl Command {
@@ -58,6 +60,8 @@ impl Command {
         ("settings", Command::Settings),
         ("keys", Command::Keys),
         ("branch", Command::Branch),
+        ("delete", Command::Delete),
+        ("group", Command::Group),
     ];
 
     pub fn what(self, s: &Strings) -> &'static str {
@@ -82,6 +86,8 @@ impl Command {
             Command::Attention => s.c_attention,
             Command::Mention => s.c_mention,
             Command::Branch => s.w().branch_switch,
+            Command::Delete => s.w().c_delete,
+            Command::Group => s.w().c_group,
         }
     }
 
@@ -339,13 +345,15 @@ impl App {
             Command::Export => return self.update(Msg::Copy(crate::app::Clip::Conversation)),
             Command::Steps => return self.update(Msg::SetSteps(!self.prefs.steps)),
             Command::Model => return operation::focus(MODEL),
-            Command::Rename | Command::Pin | Command::Archive => {
+            Command::Rename | Command::Pin | Command::Archive | Command::Delete | Command::Group => {
                 let Some(id) = session else {
                     return Task::none();
                 };
                 return self.update(match command {
                     Command::Rename => Msg::Rename(id),
                     Command::Pin => Msg::Pin(id),
+                    Command::Delete => Msg::Delete(id),
+                    Command::Group => Msg::Group(id),
                     _ => Msg::Archive(id),
                 });
             }

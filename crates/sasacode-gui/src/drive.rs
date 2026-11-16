@@ -1085,3 +1085,72 @@ fn conversations_whose_pull_request_closed_are_archived_when_the_settings_say_so
     assert!(app.prefs.archived.contains("a") && app.prefs.archived.contains("b"));
     assert!(app.toast.as_deref().is_some_and(|t| t.contains('2')));
 }
+
+#[test]
+fn a_conversation_is_deleted_only_on_the_second_press_and_never_while_it_runs() {
+    let mut app = window("ja");
+    let dir = std::env::temp_dir().join(format!("sasacode-gui-delete-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let (gone, kept) = (dir.join("gone.jsonl"), dir.join("kept.jsonl"));
+    std::fs::write(&gone, "{}\n").unwrap();
+    std::fs::write(&kept, "{}\n").unwrap();
+    app.sessions[1].path = gone.clone();
+    app.sessions[0].path = kept.clone();
+    let (id, running) = (app.sessions[1].id.clone(), app.sessions[0].id.clone());
+    let _ = app.set(|p| {
+        p.names.insert(id.clone(), "消す会話".into());
+        p.pinned.push(id.clone());
+        p.groups.insert(id.clone(), "古い".into());
+    });
+
+    // Pointed at, its row offers it; the first press only asks.
+    app.row_hover = Some(id.clone());
+    let _ = app.update(Msg::Delete(id.clone()));
+    assert!(gone.exists() && app.sessions.iter().any(|s| s.id == id));
+    assert!(says(&app, crate::words::JA.delete_sure));
+    let _ = app.update(Msg::Delete(id.clone()));
+    assert!(!gone.exists());
+    assert!(!app.sessions.iter().any(|s| s.id == id));
+    assert!(!app.prefs.names.contains_key(&id) && !app.prefs.pinned.contains(&id));
+    assert!(!app.prefs.groups.contains_key(&id));
+
+    // The one that runs is kept, from `/delete` too.
+    app.chat.session = Some(running.clone());
+    let _written = app.pretend_running();
+    let _ = app.command(Command::Delete);
+    let _ = app.command(Command::Delete);
+    assert!(kept.exists() && app.sessions.iter().any(|s| s.id == running));
+    assert_eq!(app.toast.as_deref(), Some(crate::words::JA.delete_running));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_conversation_put_in_a_group_is_listed_under_it_and_the_group_folds() {
+    let mut app = window("ja");
+    let id = app.sessions[0].id.clone();
+    let _ = app.update(Msg::Group(id.clone()));
+    let _ = app.update(Msg::OverlayText("  タイムゾーン ".into()));
+    let _ = app.update(Msg::GroupSave);
+    assert_eq!(app.prefs.groups.get(&id).map(String::as_str), Some("タイムゾーン"));
+    // Under its group, after those in none.
+    assert_eq!(app.found().last().map(|s| s.id.clone()), Some(id.clone()));
+    assert!(says(&app, "タイムゾーン"));
+    // Folded, it is not listed, unless searched for.
+    act(&mut app, |ui| {
+        let _ = ui.click("タイムゾーン");
+    });
+    assert!(!app.found().any(|s| s.id == id));
+    assert!(says(&app, "(1)"));
+    app.filter = "指数".into();
+    assert!(app.found().any(|s| s.id == id));
+    app.filter.clear();
+    // Another conversation joins it by picking it, and an empty name takes one out.
+    let other = app.sessions[2].id.clone();
+    let _ = app.update(Msg::Group(other.clone()));
+    let _ = app.update(Msg::GroupPick("タイムゾーン".into()));
+    assert_eq!(app.prefs.groups.get(&other).map(String::as_str), Some("タイムゾーン"));
+    let _ = app.update(Msg::Group(id.clone()));
+    let _ = app.update(Msg::OverlayText(String::new()));
+    let _ = app.update(Msg::GroupSave);
+    assert!(!app.prefs.groups.contains_key(&id) && app.overlay.is_none());
+}

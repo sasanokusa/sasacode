@@ -65,6 +65,16 @@ words! {
     open_browser: "ブラウザで開く", "Open in the browser";
     set_auto_archive: "ブランチのプルリクエストがマージかクローズされた会話をアーカイブする", "Archive a conversation when its branch's pull request is merged or closed";
     swept: "プルリクエストが閉じた会話を{n}件アーカイブしました", "Archived {n} conversations whose pull request closed";
+    // The list of conversations: deleting one, and groups.
+    c_delete: "会話を削除", "Delete conversation";
+    delete_sure: "もう一度押すと会話のログを削除します（元に戻せません）", "Click again to delete the conversation's log (this can't be undone)";
+    delete_running: "実行中の会話は削除できません。止めてからもう一度", "A running conversation can't be deleted. Stop it first";
+    deleted: "会話を削除しました", "Conversation deleted";
+    c_group: "会話をグループに入れる", "Put conversation in a group";
+    group_title: "グループ", "Group";
+    group_ph: "グループの名前", "The group's name";
+    group_hint: "空にするとグループから外します", "Leave it empty to take it out of its group";
+    ungrouped: "その他", "Other";
 }
 
 #[cfg(test)]

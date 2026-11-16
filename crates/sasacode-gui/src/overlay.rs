@@ -31,6 +31,11 @@ pub enum Overlay {
     },
     /// The side question and its answer, `App::aside`.
     Side,
+    /// The group of the conversation with this id, as it is typed.
+    Group {
+        id: String,
+        name: String,
+    },
 }
 
 /// What a palette picks from.
@@ -90,6 +95,8 @@ impl App {
             all.push(entry(s.c_rename, None, Msg::Command(Command::Rename)));
             all.push(entry(s.c_pin, None, Msg::Command(Command::Pin)));
             all.push(entry(s.c_archive, None, Msg::Command(Command::Archive)));
+            all.push(entry(s.w().c_group, None, Msg::Command(Command::Group)));
+            all.push(entry(s.w().c_delete, None, Msg::Command(Command::Delete)));
         }
         all.extend([
             entry(s.c_archived, None, Msg::Command(Command::Archived)),
@@ -229,7 +236,7 @@ impl App {
                         *query = text;
                         *at = 0;
                     }
-                    Some(Overlay::Rename { name, .. }) => *name = text,
+                    Some(Overlay::Rename { name, .. }) | Some(Overlay::Group { name, .. }) => *name = text,
                     _ => {}
                 }
                 Task::none()
@@ -612,7 +619,10 @@ impl App {
                 self.dismissed = true;
                 operation::focus(crate::app::INPUT)
             }
-            other => return self.update_review(other),
+            other => match self.update_review(other) {
+                Ok(task) => task,
+                Err(other) => return self.update_list(other),
+            },
         };
         Ok(task)
     }

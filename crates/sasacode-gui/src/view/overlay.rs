@@ -6,7 +6,7 @@ use iced::{Alignment, Color, Length};
 
 use super::timeline::reply;
 use super::{BOLD, El, MOD, MONO};
-use crate::app::{App, Msg, Overlay, PALETTE, RENAME};
+use crate::app::{App, GROUP, Msg, Overlay, PALETTE, RENAME};
 use crate::i18n::fill;
 use crate::icons::{Icon, icon};
 use crate::layout::{ZOOM_MAX, ZOOM_MIN};
@@ -29,6 +29,7 @@ pub fn over<'a>(app: &'a App, base: El<'a>) -> El<'a> {
         Overlay::Settings => (settings(app), 560.0, 60.0),
         Overlay::Rename { name, .. } => (rename(app, name), 460.0, 120.0),
         Overlay::Side => (side(app), 680.0, 50.0),
+        Overlay::Group { name, .. } => (group(app, name), 460.0, 120.0),
     };
     let shade = Color {
         a: if t.dark { 0.45 } else { 0.25 },
@@ -288,6 +289,50 @@ fn rename<'a>(app: &'a App, name: &'a str) -> El<'a> {
                 .padding([6, 14])
                 .style(t.primary())
                 .on_press(Msg::RenameSave),
+        ]
+        .spacing(8),
+    ]
+    .spacing(12)
+    .into()
+}
+
+/// The group of a conversation: typed, or one of those there are taken.
+fn group<'a>(app: &'a App, name: &'a str) -> El<'a> {
+    let (t, s) = (app.t, app.s);
+    let w = s.w();
+    let mut there = row![].spacing(6);
+    for g in app.group_names() {
+        let on = g == name.trim();
+        let b = button(text(g.clone()).size(12.5).wrapping(text::Wrapping::None))
+            .padding([4, 10])
+            .on_press(Msg::GroupPick(g));
+        there = there.push(if on {
+            b.style(t.primary())
+        } else {
+            b.style(t.outline(t.fg))
+        });
+    }
+    column![
+        title(app, w.group_title),
+        text_input(w.group_ph, name)
+            .id(GROUP)
+            .on_input(Msg::OverlayText)
+            .on_submit(Msg::GroupSave)
+            .size(14)
+            .padding([8, 10])
+            .style(t.input()),
+        there.wrap(),
+        text(w.group_hint).size(11.5).color(t.fg_3),
+        row![
+            Space::new().width(Length::Fill),
+            button(text(s.close).size(13))
+                .padding([6, 12])
+                .style(t.outline(t.fg))
+                .on_press(Msg::Show(None)),
+            button(text(s.save).size(13))
+                .padding([6, 14])
+                .style(t.primary())
+                .on_press(Msg::GroupSave),
         ]
         .spacing(8),
     ]

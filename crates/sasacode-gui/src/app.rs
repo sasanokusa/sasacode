@@ -31,6 +31,8 @@ pub const TIMELINE: &str = "timeline";
 /// The field of the command palette, and of a conversation's new name.
 pub const PALETTE: &str = "palette";
 pub const RENAME: &str = "rename";
+/// The field of a conversation's group.
+pub const GROUP: &str = "group";
 /// The search inside the conversation shown.
 pub const FIND_IN: &str = "find-in";
 /// The model's field.
@@ -217,6 +219,10 @@ pub struct App {
     pub(crate) confirm_discard: Option<String>,
     /// The pull request a second click merges.
     pub(crate) confirm_merge: bool,
+    /// The conversation a second click deletes.
+    pub(crate) confirm_delete: Option<String>,
+    /// The groups of the list folded shut, by name.
+    pub(crate) collapsed: HashSet<String>,
     /// The branches there are to switch to, once listed.
     pub(crate) branch_list: Option<Vec<String>>,
     /// The branch's pull request, as last read, and whether it is being read.
@@ -412,6 +418,15 @@ pub enum Msg {
     /// A name for a conversation: asked for, and given.
     Rename(String),
     RenameSave,
+    /// A conversation's log deleted for good, on the second press.
+    Delete(String),
+    /// A group for a conversation: asked for, one of those there are taken, and the one typed
+    /// given (none takes it out of its group).
+    Group(String),
+    GroupPick(String),
+    GroupSave,
+    /// A group of the list folded shut, or opened.
+    FoldGroup(String),
     /// The pointer over a row of the list, or off it.
     RowHover(Option<String>),
     /// What the search inside the conversation looks for, and the search put away.
@@ -593,6 +608,8 @@ impl App {
             commit_msg: String::new(),
             confirm_discard: None,
             confirm_merge: false,
+            confirm_delete: None,
+            collapsed: HashSet::new(),
             branch_list: None,
             pr: None,
             pr_loading: false,
@@ -1181,7 +1198,7 @@ impl App {
         Task::batch([focus_input(), self.back_to_newest()])
     }
 
-    fn new_chat(&mut self) -> Chat {
+    pub(crate) fn new_chat(&mut self) -> Chat {
         self.chats += 1;
         Chat::new(self.chats)
     }
@@ -1226,31 +1243,24 @@ impl App {
         found.is_some_and(|path| self.open_session(&path))
     }
 
-    /// The conversations the search finds, newest first: all of them when it is empty.
-    /// The list's conversations in its order, those the search finds: the pinned ones first, in
-    /// the order they were pinned, then the rest, newest first. The archived ones instead, while
-    /// they are shown. The search looks in the names given, the first messages, and, once read,
-    /// everything said in them.
+    /// The list's conversations in its order, those the search finds: see [`App::listed`].
     pub(crate) fn found(&self) -> impl Iterator<Item = &SessionSummary> {
+        self.listed().into_iter().flat_map(|l| l.rows)
+    }
+
+    /// The search finds `s`: it looks in the names given, the first messages, and, once read,
+    /// everything said in them. Archived ones only while those are shown.
+    pub(crate) fn finds(&self, s: &SessionSummary) -> bool {
         let needle = self.filter.trim().to_lowercase();
-        let (pinned, archived, names, bodies) = (
-            &self.prefs.pinned,
-            &self.prefs.archived,
-            &self.prefs.names,
-            &self.bodies,
-        );
-        let show_archived = self.show_archived;
-        let pins = pinned
-            .iter()
-            .filter_map(|id| self.sessions.iter().find(|s| s.id == *id));
-        let rest = self.sessions.iter().filter(move |s| !pinned.contains(&s.id));
-        pins.chain(rest).filter(move |s| {
-            archived.contains(&s.id) == show_archived
-                && (needle.is_empty()
-                    || s.first_prompt.to_lowercase().contains(&needle)
-                    || names.get(&s.id).is_some_and(|n| n.to_lowercase().contains(&needle))
-                    || bodies.get(&s.path).is_some_and(|(_, body)| body.contains(&needle)))
-        })
+        self.prefs.archived.contains(&s.id) == self.show_archived
+            && (needle.is_empty()
+                || s.first_prompt.to_lowercase().contains(&needle)
+                || self
+                    .prefs
+                    .names
+                    .get(&s.id)
+                    .is_some_and(|n| n.to_lowercase().contains(&needle))
+                || self.bodies.get(&s.path).is_some_and(|(_, body)| body.contains(&needle)))
     }
 
     /// What is said in the conversations that have not been read for the search, or changed since,
