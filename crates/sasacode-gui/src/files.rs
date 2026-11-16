@@ -208,7 +208,7 @@ impl App {
                 self.file_query = query;
                 Task::none()
             }
-            other => return Err(other),
+            other => return self.update_scripts(other),
         };
         Ok(task)
     }

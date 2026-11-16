@@ -85,6 +85,23 @@ words! {
     files_unreadable: "表示できません: {why}", "Can't show it: {why}";
     files_hint: "行をクリックするとコメントを書けます", "Click a line to comment on it";
     view: "表示", "View";
+    // The folder's scripts.
+    c_scripts: "スクリプトを実行", "Run a script";
+    script_ph: "実行するスクリプトを探す", "Find a script to run";
+    script_edit: "スクリプトを編集…", "Edit scripts…";
+    set_scripts: "このフォルダのスクリプト", "This folder's scripts";
+    set_scripts_hint: "ログインシェルでこのフォルダから実行し、出力はインスペクタのコマンドタブに出ます（⌘⇧R）", "Run by your login shell in this folder; the output shows in the inspector's Commands tab (⌘⇧R)";
+    script_name_ph: "名前", "Name";
+    script_command_ph: "コマンド（例: npm test）", "Command (e.g. npm test)";
+    script_add: "スクリプトを追加", "Add script";
+    script_stopped: "（止めました）", "(stopped)";
+    script_prompt: "`{command}`を実行した出力です。見て、問題があれば直してください。\n\n```\n{output}\n```", "This is the output of `{command}`. Look at it and fix what is wrong.\n\n```\n{output}\n```";
+    script_runs: "スクリプトの実行", "Script runs";
+    script_running: "実行中", "Running";
+    script_exit: "終了コード {code}", "Exit code {code}";
+    script_again: "もう一度", "Run again";
+    script_to_agent: "エージェントに見せる", "Show the agent";
+    stop: "止める", "Stop";
 }
 
 #[cfg(test)]

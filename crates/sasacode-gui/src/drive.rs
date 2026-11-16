@@ -1201,3 +1201,38 @@ fn a_file_found_in_the_files_tab_is_read_with_its_lines_and_one_is_commented_on(
     assert_eq!(app.tab, Tab::Files);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn a_folders_script_is_listed_in_the_settings_run_from_the_list_and_its_output_shown_to_the_agent() {
+    let mut app = window("ja");
+    // None yet: the key opens the settings, where one is added.
+    let _ = app.update(shortcut(&Key::Character("r".into()), Modifiers::COMMAND | Modifiers::SHIFT).unwrap());
+    assert_eq!(app.overlay, Some(crate::app::Overlay::Settings));
+    act(&mut app, |ui| {
+        let _ = ui.click(crate::words::JA.script_add);
+    });
+    let _ = app.update(Msg::ScriptName(0, "テスト".into()));
+    let _ = app.update(Msg::ScriptCommand(0, "echo ok".into()));
+    assert_eq!(app.scripts().len(), 1);
+    // Now the key lists it, and Enter runs it.
+    let _ = app.update(Msg::Show(None));
+    let _ = app.update(Msg::Command(Command::Scripts));
+    assert!(says(&app, "テスト"));
+    let _ = app.update(Msg::PaletteRun(0));
+    assert_eq!(app.script_runs.len(), 1);
+    assert_eq!(app.tab, Tab::Commands);
+    let id = app.script_runs[0].id;
+    let _ = app.update(Msg::ScriptUpdate(
+        id,
+        crate::scripts::ScriptUpdate::Line("1 failed".into()),
+    ));
+    let _ = app.update(Msg::ScriptUpdate(id, crate::scripts::ScriptUpdate::Exited(Some(1))));
+    assert!(says(&app, "終了コード 1"));
+    act(&mut app, |ui| {
+        let _ = ui.click(crate::words::JA.script_to_agent);
+    });
+    assert!(typed(&app).contains("echo ok") && typed(&app).contains("1 failed"));
+    // Taken out of the list.
+    let _ = app.update(Msg::ScriptRemove(0));
+    assert!(app.scripts().is_empty() && app.prefs.scripts.is_empty());
+}

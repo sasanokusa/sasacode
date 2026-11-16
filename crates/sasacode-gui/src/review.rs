@@ -226,7 +226,7 @@ impl App {
     }
 
     /// `text` in the input after what is typed there, the keyboard given to it.
-    fn put_in_input(&mut self, text: &str) -> Task<Msg> {
+    pub(crate) fn put_in_input(&mut self, text: &str) -> Task<Msg> {
         let typed = self.chat.editor.text();
         let all = if typed.trim().is_empty() {
             text.to_owned()

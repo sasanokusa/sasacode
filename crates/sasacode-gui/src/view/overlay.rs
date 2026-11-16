@@ -79,6 +79,7 @@ fn palette<'a>(app: &'a App, query: &'a str, at: usize, pick: Pick) -> El<'a> {
     let placeholder = match pick {
         Pick::Commands => s.palette_ph,
         Pick::Branches => s.w().branch_ph,
+        Pick::Scripts => s.w().script_ph,
     };
     let field = text_input(placeholder, query)
         .id(PALETTE)
@@ -252,7 +253,7 @@ fn settings(app: &App) -> El<'_> {
             .spacing(10)
             .on_toggle(msg)
     };
-    column![
+    let body = column![
         title(app, s.settings),
         enter,
         theme,
@@ -261,10 +262,13 @@ fn settings(app: &App) -> El<'_> {
         switch(s.set_awake, p.awake, Msg::SetAwake),
         switch(s.set_steps, p.steps, Msg::SetSteps),
         switch(s.w().set_auto_archive, p.auto_archive, Msg::SetAutoArchive),
+        scripts(app),
         text(s.set_kept).size(11.5).color(t.fg_3),
     ]
-    .spacing(16)
-    .into()
+    .spacing(16);
+    container(scrollable(body.padding(iced::Padding::ZERO.right(12))).style(t.scroll()))
+        .max_height(640)
+        .into()
 }
 
 fn rename<'a>(app: &'a App, name: &'a str) -> El<'a> {
@@ -293,6 +297,56 @@ fn rename<'a>(app: &'a App, name: &'a str) -> El<'a> {
         .spacing(8),
     ]
     .spacing(12)
+    .into()
+}
+
+/// The folder's scripts: each one's name and command, and the way to add one or take it out.
+fn scripts(app: &App) -> El<'_> {
+    let (t, s) = (app.t, app.s);
+    let w = s.w();
+    let mut col = column![
+        text(w.set_scripts).size(12).color(t.fg_3),
+        text(w.set_scripts_hint).size(11.5).color(t.fg_3),
+    ]
+    .spacing(6);
+    for (i, sc) in app.scripts().iter().enumerate() {
+        col = col.push(
+            row![
+                text_input(w.script_name_ph, &sc.name)
+                    .on_input(move |v| Msg::ScriptName(i, v))
+                    .size(12.5)
+                    .padding([5, 8])
+                    .width(130)
+                    .style(t.input()),
+                text_input(w.script_command_ph, &sc.command)
+                    .on_input(move |v| Msg::ScriptCommand(i, v))
+                    .font(MONO)
+                    .size(12.5)
+                    .padding([5, 8])
+                    .style(t.input()),
+                button(icon(Icon::Play, 12.0, t.fg_2))
+                    .padding(5)
+                    .style(t.ghost(t.fg_2, false))
+                    .on_press_maybe((!sc.command.trim().is_empty()).then_some(Msg::RunScript(i))),
+                button(icon(Icon::Close, 12.0, t.fg_3))
+                    .padding(5)
+                    .style(t.ghost(t.fg_3, false))
+                    .on_press(Msg::ScriptRemove(i)),
+            ]
+            .spacing(6)
+            .align_y(Alignment::Center),
+        );
+    }
+    col.push(
+        button(
+            row![icon(Icon::Plus, 12.0, t.fg_2), text(w.script_add).size(12.5)]
+                .spacing(6)
+                .align_y(Alignment::Center),
+        )
+        .padding([4, 10])
+        .style(t.outline(t.fg))
+        .on_press(Msg::ScriptAdd),
+    )
     .into()
 }
 

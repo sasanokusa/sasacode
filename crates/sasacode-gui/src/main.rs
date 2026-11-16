@@ -20,6 +20,7 @@ mod list;
 mod overlay;
 mod review;
 mod runner;
+mod scripts;
 #[cfg(test)]
 mod snapshots;
 mod system;

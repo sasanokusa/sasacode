@@ -188,6 +188,23 @@ fn header(app: &App) -> El<'_> {
             }),
             tip(
                 t,
+                button(icon(
+                    Icon::Play,
+                    15.0,
+                    if app.script_runs.iter().any(|r| r.running()) {
+                        t.accent
+                    } else {
+                        t.fg_2
+                    }
+                ))
+                .padding(6)
+                .style(t.ghost(t.fg_2, false))
+                .on_press(Msg::Command(crate::input::Command::Scripts)),
+                format!("{}  {MOD}⇧R", s.w().c_scripts),
+                tooltip::Position::Bottom,
+            ),
+            tip(
+                t,
                 button(icon(Icon::List, 16.0, t.fg_2))
                     .padding(6)
                     .style(t.ghost(t.fg_2, false))

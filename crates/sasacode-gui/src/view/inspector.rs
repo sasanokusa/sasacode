@@ -642,6 +642,64 @@ fn hunks<'a>(app: &'a App, f: &'a crate::git::File, staged: bool) -> El<'a> {
         .into()
 }
 
+/// The folder's scripts run from the window: each one's state, its output as it comes, and the
+/// way to stop it, run it again, or show it to the agent.
+fn script_runs(app: &App) -> El<'_> {
+    let (t, s) = (app.t, app.s);
+    let w = s.w();
+    let mut col = column![text(w.script_runs).size(12).color(t.fg_3)].spacing(8);
+    for run in &app.script_runs {
+        let state = match run.ended {
+            None => tag(t, w.script_running, t.accent_wash, t.accent),
+            Some(Some(0)) => tag(t, fill(w.script_exit, "code", 0), t.inset, t.fg_2),
+            Some(Some(code)) => tag(t, fill(w.script_exit, "code", code), t.err_wash, t.err),
+            Some(None) => tag(t, s.killed_abort, t.inset, t.fg_2),
+        };
+        let small = |label: &'static str, color: iced::Color, msg: Msg| {
+            button(text(label).size(11.5).color(color).wrapping(text::Wrapping::None))
+                .padding([3, 8])
+                .style(t.ghost(color, false))
+                .on_press(msg)
+        };
+        let label = if run.name.trim().is_empty() {
+            run.command.as_str()
+        } else {
+            run.name.as_str()
+        };
+        let mut head = row![
+            icon(Icon::Play, 12.0, t.fg_3),
+            name(text(clip(label, cells(app, 200.0))).size(12.5).font(MONO).color(t.fg)),
+            state,
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center);
+        if let Some(d) = run.took.filter(|d| d.as_millis() >= 1000) {
+            head = head.push(
+                text(s.duration(d))
+                    .size(11.5)
+                    .color(t.fg_3)
+                    .wrapping(text::Wrapping::None),
+            );
+        }
+        let mut actions = row![].spacing(2);
+        if run.running() {
+            actions = actions.push(small(w.stop, t.err, Msg::StopScript(run.id)));
+        } else if let Some(i) = app.scripts().iter().position(|sc| sc.command == run.command) {
+            actions = actions.push(small(w.script_again, t.fg_2, Msg::RunScript(i)));
+        }
+        if !run.output.trim().is_empty() {
+            actions = actions.push(small(w.script_to_agent, t.fg_2, Msg::ScriptToAgent(run.id)));
+        }
+        col = col.push(
+            container(column![head, output_block(t, s, &run.output, 40), actions.wrap()].spacing(6))
+                .width(Length::Fill)
+                .padding([8, 10])
+                .style(t.boxed(t.bg, t.line, RADIUS_L)),
+        );
+    }
+    col.into()
+}
+
 /// The comment being written under a line.
 fn draft_box<'a>(app: &'a App, draft: &'a crate::review::Draft) -> El<'a> {
     let t = app.t;
@@ -893,8 +951,11 @@ fn commands_tab(app: &App) -> El<'_> {
     // How much of a command its card's head has room for, next to how it ended and how long it took.
     let head_cells = cells(app, 200.0);
     let mut col = column![].spacing(10);
+    if !app.script_runs.is_empty() {
+        col = col.push(script_runs(app));
+    }
     if app.chat.transcript.commands().next().is_none() {
-        return empty(app, Icon::Terminal, s.cm_empty, s.cm_empty_p);
+        return col.push(empty(app, Icon::Terminal, s.cm_empty, s.cm_empty_p)).into();
     }
     for tool in app.chat.transcript.commands() {
         let command = tool.arg("command").unwrap_or(&tool.summary);

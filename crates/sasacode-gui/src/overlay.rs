@@ -45,6 +45,8 @@ pub enum Pick {
     Commands,
     /// The branches to check out, or a new one to make.
     Branches,
+    /// The folder's scripts, to run one.
+    Scripts,
 }
 
 impl Overlay {
@@ -87,6 +89,7 @@ impl App {
             entry(s.c_next, key("⇧]"), Msg::Neighbour(1)),
             entry(s.c_attention, key("⇧A"), Msg::Command(Command::Attention)),
             entry(s.c_btw, Some("/btw".into()), Msg::Command(Command::Btw)),
+            entry(s.w().c_scripts, key("⇧R"), Msg::Command(Command::Scripts)),
             entry(s.c_export, None, Msg::Copy(Clip::Conversation)),
             entry(s.c_steps, None, Msg::Command(Command::Steps)),
             entry(s.c_model, None, Msg::Command(Command::Model)),
@@ -198,6 +201,34 @@ impl App {
         };
         if *pick == Pick::Branches {
             return self.branch_entries(query);
+        }
+        if *pick == Pick::Scripts {
+            let words: Vec<String> = query.split_whitespace().map(str::to_lowercase).collect();
+            let w = self.s.w();
+            let mut all: Vec<Entry> = self
+                .scripts()
+                .iter()
+                .enumerate()
+                .filter(|(_, sc)| {
+                    let label = format!("{} {}", sc.name, sc.command).to_lowercase();
+                    words.iter().all(|w| label.contains(w))
+                })
+                .map(|(i, sc)| Entry {
+                    label: if sc.name.trim().is_empty() {
+                        sc.command.clone()
+                    } else {
+                        sc.name.clone()
+                    },
+                    keys: (!sc.name.trim().is_empty()).then(|| crate::view::clip(&sc.command, 28)),
+                    msg: Msg::RunScript(i),
+                })
+                .collect();
+            all.push(Entry {
+                label: w.script_edit.to_owned(),
+                keys: None,
+                msg: Msg::Show(Some(Overlay::Settings)),
+            });
+            return all;
         }
         let words: Vec<String> = query.split_whitespace().map(str::to_lowercase).collect();
         self.entries()

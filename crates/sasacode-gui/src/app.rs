@@ -220,6 +220,9 @@ pub struct App {
     pub(crate) confirm_discard: Option<String>,
     /// The pull request a second click merges.
     pub(crate) confirm_merge: bool,
+    /// The folder's scripts run from the window, the newest first, and how many were run.
+    pub(crate) script_runs: Vec<crate::scripts::ScriptRun>,
+    pub(crate) script_runs_made: u64,
     /// The file the files tab shows, and what is typed to find one.
     pub(crate) viewing: Option<crate::files::Viewing>,
     pub(crate) file_query: String,
@@ -437,6 +440,18 @@ pub enum Msg {
     FileRead(Box<crate::files::Viewing>),
     CloseFile,
     FileQuery(String),
+    /// A script of the folder run, by its place in the list; what its run said; stopped; and its
+    /// output put in the input for the agent to look at.
+    RunScript(usize),
+    ScriptUpdate(u64, crate::scripts::ScriptUpdate),
+    StopScript(u64),
+    ScriptToAgent(u64),
+    /// The folder's list of scripts changed in the settings: one added, named, its command
+    /// typed, or taken out.
+    ScriptAdd,
+    ScriptName(usize, String),
+    ScriptCommand(usize, String),
+    ScriptRemove(usize),
     /// The pointer over a row of the list, or off it.
     RowHover(Option<String>),
     /// What the search inside the conversation looks for, and the search put away.
@@ -621,6 +636,8 @@ impl App {
             confirm_delete: None,
             viewing: None,
             file_query: String::new(),
+            script_runs: Vec::new(),
+            script_runs_made: 0,
             collapsed: HashSet::new(),
             branch_list: None,
             pr: None,
@@ -1732,6 +1749,7 @@ pub(crate) fn shortcut(key: &Key, modifiers: keyboard::Modifiers) -> Option<Msg>
         Key::Character("[") if modifiers.shift() => Some(Msg::Neighbour(-1)),
         Key::Character("]") if modifiers.shift() => Some(Msg::Neighbour(1)),
         Key::Character("a") if modifiers.shift() => Some(Msg::Command(Command::Attention)),
+        Key::Character("r") if modifiers.shift() => Some(Msg::Command(Command::Scripts)),
         Key::Character("p") if modifiers.shift() => Some(Msg::Show(Some(Overlay::palette()))),
         Key::Character("p") => Some(Msg::Command(Command::Mention)),
         Key::Character("f") => Some(Msg::Command(Command::Find)),

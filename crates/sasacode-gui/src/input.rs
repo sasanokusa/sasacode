@@ -38,6 +38,7 @@ pub enum Command {
     Branch,
     Delete,
     Group,
+    Scripts,
 }
 
 impl Command {
@@ -62,6 +63,7 @@ impl Command {
         ("branch", Command::Branch),
         ("delete", Command::Delete),
         ("group", Command::Group),
+        ("run", Command::Scripts),
     ];
 
     pub fn what(self, s: &Strings) -> &'static str {
@@ -88,6 +90,7 @@ impl Command {
             Command::Branch => s.w().branch_switch,
             Command::Delete => s.w().c_delete,
             Command::Group => s.w().c_group,
+            Command::Scripts => s.w().c_scripts,
         }
     }
 
@@ -375,6 +378,14 @@ impl App {
             Command::Settings => self.overlay = Some(Overlay::Settings),
             Command::Keys => self.overlay = Some(Overlay::Keys),
             Command::Attention => return self.attention(),
+            Command::Scripts => {
+                // None yet: the settings, where they are listed.
+                if self.scripts().is_empty() {
+                    self.overlay = Some(Overlay::Settings);
+                    return Task::none();
+                }
+                return self.update(Msg::Show(Some(Overlay::picker(crate::overlay::Pick::Scripts))));
+            }
             Command::Branch => {
                 return self.update(Msg::Show(Some(Overlay::picker(crate::overlay::Pick::Branches))));
             }
