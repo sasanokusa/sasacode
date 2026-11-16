@@ -16,7 +16,7 @@ use crate::transcript::{Approval, Kind};
 
 pub fn dock(app: &App) -> El<'_> {
     let mut col = column![].spacing(8);
-    if let Some(approval) = app.transcript.pending_approval() {
+    if let Some(approval) = app.chat.transcript.pending_approval() {
         col = col.push(approval_card(app, approval));
     }
     col = col.push(composer(app)).push(hints(app));
@@ -34,9 +34,9 @@ pub fn dock(app: &App) -> El<'_> {
 /// The call that waits, shown whole, and the three answers.
 fn approval_card<'a>(app: &'a App, approval: &'a Approval) -> El<'a> {
     let (t, s) = (app.t, app.s);
-    let tool = app.transcript.tool(&approval.call_id);
+    let tool = app.chat.transcript.tool(&approval.call_id);
     let kind = tool.map(|tool| tool.kind()).unwrap_or(Kind::Other);
-    let waiting = app.transcript.pending_approvals();
+    let waiting = app.chat.transcript.pending_approvals();
 
     let chord = if s.ja {
         format!("{MOD}↵で{}", s.h_allow)
@@ -154,20 +154,20 @@ fn approval_card<'a>(app: &'a App, approval: &'a Approval) -> El<'a> {
 
 fn composer(app: &App) -> El<'_> {
     let (t, s) = (app.t, app.s);
-    let waiting = app.transcript.pending_approval().is_some();
+    let waiting = app.chat.transcript.pending_approval().is_some();
     let running = app.running();
-    let empty = app.editor.text().trim().is_empty();
+    let empty = app.chat.editor.text().trim().is_empty();
     let placeholder = if waiting {
         s.ph_waiting
     } else if running {
         s.ph_running
-    } else if app.transcript.is_empty() {
+    } else if app.chat.transcript.is_empty() {
         s.ph_new
     } else {
         s.ph_idle
     };
 
-    let editor = text_editor(&app.editor)
+    let editor = text_editor(&app.chat.editor)
         .id(INPUT)
         .placeholder(placeholder)
         .on_action(Msg::Edit)
@@ -334,7 +334,7 @@ fn hints(app: &App) -> El<'_> {
         .align_y(Alignment::Center)
         .into()
     };
-    let (waiting, running) = (app.transcript.pending_approval().is_some(), app.running());
+    let (waiting, running) = (app.chat.transcript.pending_approval().is_some(), app.running());
     let mut keys = Vec::new();
     if waiting {
         keys.push(key(format!("{MOD}↵"), s.h_allow));

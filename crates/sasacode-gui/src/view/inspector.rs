@@ -17,9 +17,9 @@ use crate::transcript::{TodoStatus, ToolState};
 
 pub fn inspector(app: &App) -> El<'_> {
     let (t, s) = (app.t, app.s);
-    let changes = app.transcript.changes().count();
-    let commands = app.transcript.commands().count();
-    let plan = app.transcript.plan().map(|p| {
+    let changes = app.chat.transcript.changes().count();
+    let commands = app.chat.transcript.commands().count();
+    let plan = app.chat.transcript.plan().map(|p| {
         format!(
             "{}/{}",
             p.iter().filter(|todo| todo.status == TodoStatus::Completed).count(),
@@ -133,7 +133,7 @@ fn name<'a>(label: iced::widget::Text<'a>) -> El<'a> {
 /// A card with a head that folds its body away.
 fn card<'a>(app: &'a App, id: &'a str, head: El<'a>, body: Option<El<'a>>) -> El<'a> {
     let t = app.t;
-    let open = !app.closed.contains(id);
+    let open = !app.chat.closed.contains(id);
     let mut col = column![
         button(
             row![
@@ -165,13 +165,13 @@ fn card<'a>(app: &'a App, id: &'a str, head: El<'a>, body: Option<El<'a>>) -> El
 fn changes_tab(app: &App) -> El<'_> {
     let (t, s) = (app.t, app.s);
     let mut col = column![].spacing(10);
-    if app.transcript.changes().next().is_none() {
+    if app.chat.transcript.changes().next().is_none() {
         return empty(app, Icon::Diff, s.ch_empty, s.ch_empty_p);
     }
-    if app.loaded {
+    if app.chat.loaded {
         col = col.push(text(s.ch_from_args).size(12).color(t.fg_3));
     }
-    for (tool, change) in app.transcript.changes() {
+    for (tool, change) in app.chat.transcript.changes() {
         let path = clip_start(&short_path(&change.path, &app.cwd), cells(app, 110.0));
         let mut head = row![
             icon(
@@ -203,7 +203,7 @@ fn changes_tab(app: &App) -> El<'_> {
 
 fn plan_tab(app: &App) -> El<'_> {
     let (t, s) = (app.t, app.s);
-    let Some(todos) = app.transcript.plan().filter(|p| !p.is_empty()) else {
+    let Some(todos) = app.chat.transcript.plan().filter(|p| !p.is_empty()) else {
         return empty(app, Icon::List, s.pl_empty, s.pl_empty_p);
     };
     let done = todos.iter().filter(|todo| todo.status == TodoStatus::Completed).count();
@@ -241,10 +241,10 @@ fn commands_tab(app: &App) -> El<'_> {
     // How much of a command its card's head has room for, next to how it ended and how long it took.
     let head_cells = cells(app, 200.0);
     let mut col = column![].spacing(10);
-    if app.transcript.commands().next().is_none() {
+    if app.chat.transcript.commands().next().is_none() {
         return empty(app, Icon::Terminal, s.cm_empty, s.cm_empty_p);
     }
-    for tool in app.transcript.commands() {
+    for tool in app.chat.transcript.commands() {
         let command = tool.arg("command").unwrap_or(&tool.summary);
         let state = match (tool.state, tool.killed.as_deref(), tool.exit_code) {
             (ToolState::Running, _, _) => tag(t, s.running, t.accent_wash, t.accent),
@@ -307,7 +307,7 @@ fn commands_tab(app: &App) -> El<'_> {
 
 fn usage_tab(app: &App) -> El<'_> {
     let (t, s) = (app.t, app.s);
-    let u = &app.transcript.usage;
+    let u = &app.chat.transcript.usage;
     let item = |label: &'static str, value: String| {
         row![
             text(label).size(13).color(t.fg_2),
@@ -336,9 +336,9 @@ fn usage_tab(app: &App) -> El<'_> {
                 hline(t),
                 item(s.us_cw, tokens(u.cache_write)),
                 hline(t),
-                item(s.us_req, app.transcript.requests.to_string()),
+                item(s.us_req, app.chat.transcript.requests.to_string()),
                 hline(t),
-                item(s.us_last, tokens(app.transcript.last_input)),
+                item(s.us_last, tokens(app.chat.transcript.last_input)),
                 hline(t),
                 item(s.us_cost, format!("${:.4}", u.cost)),
             ]

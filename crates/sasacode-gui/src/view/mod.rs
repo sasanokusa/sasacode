@@ -149,7 +149,7 @@ fn header(app: &App) -> El<'_> {
             .wrapping(text::Wrapping::None)
     };
     // A title that had to be cut says all of itself under the pointer.
-    let title: El<'_> = match app.transcript.title() {
+    let title: El<'_> = match app.chat.transcript.title() {
         Some(prompt) => {
             let shown = clip(first_line(prompt), 56);
             if shown == prompt.trim() {
@@ -165,7 +165,7 @@ fn header(app: &App) -> El<'_> {
         }
         None => title_text(s.new_session.to_owned()).into(),
     };
-    let changed = app.transcript.changes().count();
+    let changed = app.chat.transcript.changes().count();
     let mut inspector = row![icon(Icon::Panel, 16.0, if app.insp { t.accent } else { t.fg_2 })]
         .spacing(6)
         .align_y(Alignment::Center);
@@ -252,7 +252,7 @@ fn status_bar(app: &App) -> El<'_> {
     let mut left = row![icon(Icon::Folder, 12.0, t.fg_3), folder]
         .spacing(6)
         .align_y(Alignment::Center);
-    if let Some(id) = &app.session {
+    if let Some(id) = &app.chat.session {
         // The start of the id, as `sasacode -r` takes it; a click copies all of it.
         let label = if app.copied == Some(Clip::Session) {
             item(s.copied.to_owned()).color(t.accent)
@@ -271,7 +271,7 @@ fn status_bar(app: &App) -> El<'_> {
     }
     // The model that answered, else the one asked for; what the config decides is not known here,
     // and is not guessed at.
-    let model = match (app.model.trim(), &app.transcript.model) {
+    let model = match (app.model.trim(), &app.chat.transcript.model) {
         ("", used) => used.clone(),
         (typed, _) => Some(typed.to_owned()),
     };
@@ -285,7 +285,7 @@ fn status_bar(app: &App) -> El<'_> {
     if let Some(effort) = app.effort {
         left = left.push(dot()).push(item(effort.to_owned()));
     }
-    let u = &app.transcript.usage;
+    let u = &app.chat.transcript.usage;
     let usage = format!(
         "in {} · out {} · cache {} · ${:.4}",
         compact(u.input),

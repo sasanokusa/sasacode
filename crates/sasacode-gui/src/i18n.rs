@@ -19,7 +19,7 @@ pub struct Strings {
     pub days_ago: &'static str,
     pub no_sessions: &'static str,
     pub no_match: &'static str,
-    pub busy: &'static str,
+    pub unread: &'static str,
 
     // The state of the conversation.
     pub st_running: &'static str,
@@ -244,7 +244,7 @@ const JA: Strings = Strings {
     days_ago: "{n}日前",
     no_sessions: "まだ会話はありません",
     no_match: "該当する会話がありません",
-    busy: "実行中は会話を切り替えられません",
+    unread: "見ていないあいだに動きがありました",
 
     st_running: "実行中",
     st_waiting: "承認待ち",
@@ -408,7 +408,7 @@ const EN: Strings = Strings {
     days_ago: "{n}d ago",
     no_sessions: "No conversations yet",
     no_match: "No matching conversation",
-    busy: "Cannot switch conversations while running",
+    unread: "Something happened while you were away",
 
     st_running: "Running",
     st_waiting: "Needs your approval",

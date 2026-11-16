@@ -121,18 +121,15 @@ pub struct App {
     pub(crate) cwd: PathBuf,
     home: Option<PathBuf>,
     pub(crate) sessions: Vec<SessionSummary>,
-    /// The session the next prompt continues; `None` starts a new one.
-    pub(crate) session: Option<String>,
-    /// The conversation shown was read from its log, and nothing ran here since.
-    pub(crate) loaded: bool,
-    pub(crate) transcript: Transcript,
-    pub(crate) editor: text_editor::Content,
+    /// The conversation shown.
+    pub(crate) chat: Chat,
+    /// Conversations not shown that are still wanted: one that runs, or has something typed.
+    pub(crate) parked: Vec<Chat>,
+    /// Conversations made, so that each one's runs can be told apart.
+    chats: u64,
     pub(crate) model: String,
     pub(crate) permission: Option<&'static str>,
     pub(crate) effort: Option<&'static str>,
-    run: Option<Run>,
-    /// Sent as soon as the run that is ending is gone.
-    pub(crate) next: Option<String>,
     pub(crate) filter: String,
     pub(crate) side: bool,
     pub(crate) insp: bool,
@@ -148,12 +145,6 @@ pub struct App {
     /// The edge under the pointer.
     pub(crate) edge_hover: Option<Edge>,
     pub(crate) tab: Tab,
-    /// Exchanges whose steps were opened or closed by hand.
-    pub(crate) folds: HashMap<usize, bool>,
-    /// Rows opened by hand: (exchange, step).
-    pub(crate) open: HashSet<(usize, usize)>,
-    /// Cards of the inspector closed by hand, by call id.
-    pub(crate) closed: HashSet<String>,
     pub(crate) now: Instant,
     pub(crate) width: f32,
     pub(crate) height: f32,
@@ -172,6 +163,75 @@ pub struct App {
     /// A scroll the window asked for has not been made yet: what the conversation reports until
     /// then was measured from the end it was held by before.
     settling: bool,
+}
+
+/// One conversation: what it says, what is typed for it, and its run.
+pub(crate) struct Chat {
+    /// Which conversation a run's messages are for.
+    pub(crate) key: u64,
+    /// The session the next prompt continues; `None` starts a new one.
+    pub(crate) session: Option<String>,
+    /// The conversation shown was read from its log, and nothing ran here since.
+    pub(crate) loaded: bool,
+    pub(crate) transcript: Transcript,
+    pub(crate) editor: text_editor::Content,
+    run: Option<Run>,
+    /// Sent as soon as the run that is ending is gone.
+    pub(crate) next: Option<String>,
+    /// Exchanges whose steps were opened or closed by hand.
+    pub(crate) folds: HashMap<usize, bool>,
+    /// Rows opened by hand: (exchange, step).
+    pub(crate) open: HashSet<(usize, usize)>,
+    /// Cards of the inspector closed by hand, by call id.
+    pub(crate) closed: HashSet<String>,
+    /// Something happened while it was not shown: its run ended, or it waits for an answer.
+    pub(crate) unread: bool,
+}
+
+impl Chat {
+    pub(crate) fn new(key: u64) -> Self {
+        Chat {
+            key,
+            session: None,
+            loaded: false,
+            transcript: Transcript::default(),
+            editor: text_editor::Content::new(),
+            run: None,
+            next: None,
+            folds: HashMap::new(),
+            open: HashSet::new(),
+            closed: HashSet::new(),
+            unread: false,
+        }
+    }
+
+    /// The agent works: its run has started and has not said it ended.
+    pub(crate) fn running(&self) -> bool {
+        self.run.as_ref().is_some_and(|r| !r.ended)
+    }
+
+    /// A run's process is still there, working or closing.
+    pub(crate) fn busy(&self) -> bool {
+        self.run.is_some()
+    }
+
+    /// Worth keeping when another conversation is shown: it runs, has something typed or waiting
+    /// to be sent, or has news not seen yet. Anything else is read back from its log when it is
+    /// opened again.
+    fn wanted(&self) -> bool {
+        self.busy() || self.unread || self.next.is_some() || !self.editor.text().trim().is_empty()
+    }
+
+    /// A new conversation nothing was sent in yet.
+    fn untouched(&self) -> bool {
+        self.session.is_none() && !self.busy() && self.transcript.is_empty()
+    }
+
+    fn control(&self, message: ControlMessage) {
+        if let Some(tx) = self.run.as_ref().and_then(|r| r.control.as_ref()) {
+            let _ = tx.send(message);
+        }
+    }
 }
 
 struct Run {
@@ -193,7 +253,8 @@ pub enum Msg {
     Chord,
     Stop,
     Continue,
-    Run(RunUpdate),
+    /// What a conversation's run said, by the conversation's key.
+    Run(u64, RunUpdate),
     Answer(Decision),
     NewSession,
     OpenSession(PathBuf),
@@ -224,6 +285,8 @@ pub enum Msg {
     Find,
     /// Enter in the search: the first conversation it finds.
     FindOpen,
+    /// The conversation above the one shown in the list (-1), or below it (1).
+    Neighbour(i8),
     /// The keyboard back to the input.
     FocusInput,
     /// A panel's edge was pressed, to be dragged.
@@ -278,15 +341,12 @@ impl App {
             cwd: options.cwd,
             home: sasacode_protocol::sasacode_home(),
             sessions: Vec::new(),
-            session: None,
-            loaded: false,
-            transcript: Transcript::default(),
-            editor: text_editor::Content::new(),
+            chat: Chat::new(0),
+            parked: Vec::new(),
+            chats: 0,
             model: String::new(),
             permission: None,
             effort: None,
-            run: None,
-            next: None,
             filter: String::new(),
             side: true,
             insp: true,
@@ -296,9 +356,6 @@ impl App {
             held: layout.side,
             edge_hover: None,
             tab: Tab::Changes,
-            folds: HashMap::new(),
-            open: HashSet::new(),
-            closed: HashSet::new(),
             now: Instant::now(),
             width: layout.size.width,
             height: layout.size.height,
@@ -356,7 +413,7 @@ impl App {
     #[cfg(test)]
     pub(crate) fn pretend_running(&mut self) -> tokio::sync::mpsc::UnboundedReceiver<ControlMessage> {
         let (control, written) = tokio::sync::mpsc::unbounded_channel();
-        self.run = Some(Run {
+        self.chat.run = Some(Run {
             control: Some(control),
             _handle: None,
             stderr: Vec::new(),
@@ -372,28 +429,29 @@ impl App {
         };
     }
 
-    /// The agent works: its run has started and has not said it ended.
+    /// The conversation shown is worked on: its run has started and has not said it ended.
     pub(crate) fn running(&self) -> bool {
-        self.run.as_ref().is_some_and(|r| !r.ended)
+        self.chat.running()
     }
 
-    /// A run's process is still there, working or closing. Conversations cannot be switched.
+    /// The conversation shown has a run's process, working or closing.
     pub(crate) fn busy(&self) -> bool {
-        self.run.is_some()
+        self.chat.busy()
     }
 
     pub(crate) fn status(&self) -> Status {
         if self.running() {
-            return if self.transcript.pending_approval().is_some() {
+            return if self.chat.transcript.pending_approval().is_some() {
                 Status::Waiting
             } else {
                 Status::Running
             };
         }
-        if self.loaded {
+        if self.chat.loaded {
             return Status::Loaded;
         }
         match self
+            .chat
             .transcript
             .exchanges
             .last()
@@ -469,18 +527,16 @@ impl App {
     }
 
     fn control(&self, message: ControlMessage) {
-        if let Some(tx) = self.run.as_ref().and_then(|r| r.control.as_ref()) {
-            let _ = tx.send(message);
-        }
+        self.chat.control(message);
     }
 
     pub fn update(&mut self, msg: Msg) -> Task<Msg> {
         match msg {
-            Msg::Edit(action) => self.editor.perform(action),
+            Msg::Edit(action) => self.chat.editor.perform(action),
             Msg::Send => return self.send(),
             Msg::Chord => {
-                let empty = self.editor.text().trim().is_empty();
-                if self.transcript.pending_approval().is_some() {
+                let empty = self.chat.editor.text().trim().is_empty();
+                if self.chat.transcript.pending_approval().is_some() {
                     // A reply denies; only the empty chord allows.
                     return if empty {
                         self.answer(Decision::Allow)
@@ -505,20 +561,41 @@ impl App {
             }
             Msg::Continue => {
                 if !self.busy() {
-                    return self.start(self.s.continue_text.to_owned());
+                    return self.start(self.chat.key, self.s.continue_text.to_owned());
                 }
             }
-            Msg::Run(update) => return self.on_run(update),
+            Msg::Run(key, update) => return self.on_run(key, update),
             Msg::Answer(decision) => return self.answer(decision),
             Msg::NewSession => {
-                if !self.busy() {
-                    self.session = None;
-                    self.show(Transcript::default(), false);
+                if !self.chat.untouched() {
+                    // What was typed for a new conversation before is still there.
+                    let chat = match self.parked.iter().position(Chat::untouched) {
+                        Some(i) => self.parked.remove(i),
+                        None => self.new_chat(),
+                    };
+                    self.bring(chat);
+                }
+                return Task::batch([focus_input(), self.back_to_newest()]);
+            }
+            Msg::OpenSession(path) => {
+                if self.open_session(&path) {
                     return Task::batch([focus_input(), self.back_to_newest()]);
                 }
             }
-            Msg::OpenSession(path) => {
-                if !self.busy() && self.open_session(&path) {
+            Msg::Neighbour(step) => {
+                let paths: Vec<PathBuf> = self.found().map(|s| s.path.clone()).collect();
+                let here = self.chat.session.as_deref();
+                let at = self.found().position(|s| Some(s.id.as_str()) == here);
+                let to = match (at, step < 0) {
+                    (Some(i), true) => i.checked_sub(1),
+                    (Some(i), false) => Some(i + 1),
+                    // A new conversation is above the list.
+                    (None, true) => None,
+                    (None, false) => Some(0),
+                };
+                if let Some(path) = to.and_then(|i| paths.get(i))
+                    && self.open_session(&path.clone())
+                {
                     return Task::batch([focus_input(), self.back_to_newest()]);
                 }
             }
@@ -540,16 +617,16 @@ impl App {
             }
             Msg::Fold(i) => {
                 let open = self.steps_open(i);
-                self.folds.insert(i, !open);
+                self.chat.folds.insert(i, !open);
             }
             Msg::Open(i, j) => {
-                if !self.open.remove(&(i, j)) {
-                    self.open.insert((i, j));
+                if !self.chat.open.remove(&(i, j)) {
+                    self.chat.open.insert((i, j));
                 }
             }
             Msg::Card(id) => {
-                if !self.closed.remove(&id) {
-                    self.closed.insert(id);
+                if !self.chat.closed.remove(&id) {
+                    self.chat.closed.insert(id);
                 }
             }
             Msg::Link(uri) => open_link(&uri),
@@ -587,10 +664,9 @@ impl App {
                 return Task::batch([operation::focus(SEARCH), operation::select_all(SEARCH)]);
             }
             Msg::FindOpen => {
-                let current = self.session.as_deref();
+                let current = self.chat.session.as_deref();
                 let first = self.found().next().filter(|s| Some(s.id.as_str()) != current);
                 if let Some(path) = first.map(|s| s.path.clone())
-                    && !self.busy()
                     && self.open_session(&path)
                 {
                     return Task::batch([focus_input(), self.back_to_newest()]);
@@ -675,15 +751,59 @@ impl App {
         }
     }
 
-    /// Shows the conversation a log holds, to be continued by the next message. False when the log
-    /// cannot be read.
+    /// Shows the conversation a log holds, to be continued by the next message: as it was left
+    /// when it was kept, running or typed in, else as its log has it. False when it is the one
+    /// shown, or its log cannot be read.
     fn open_session(&mut self, path: &Path) -> bool {
+        let id = self.sessions.iter().find(|s| s.path == path).map(|s| s.id.clone());
+        if id.is_some() && id == self.chat.session {
+            return false;
+        }
+        if let Some(i) = self.parked.iter().position(|c| id.is_some() && c.session == id) {
+            let chat = self.parked.remove(i);
+            self.bring(chat);
+            return true;
+        }
         let Ok(entries) = read_entries(path) else {
             return false;
         };
-        self.session = self.sessions.iter().find(|s| s.path == path).map(|s| s.id.clone());
-        self.show(Transcript::from_entries(&entries), true);
+        let mut chat = self.new_chat();
+        chat.session = id;
+        chat.transcript = Transcript::from_entries(&entries);
+        chat.loaded = true;
+        self.bring(chat);
         true
+    }
+
+    fn new_chat(&mut self) -> Chat {
+        self.chats += 1;
+        Chat::new(self.chats)
+    }
+
+    /// Shows `chat` in place of the conversation shown, which is kept while it is still wanted.
+    fn bring(&mut self, mut chat: Chat) {
+        chat.unread = false;
+        let left = std::mem::replace(&mut self.chat, chat);
+        if left.wanted() {
+            self.parked.push(left);
+        }
+        self.copied = None;
+        self.reading = false;
+    }
+
+    /// The conversation with `key`, shown or kept.
+    fn chat_mut(&mut self, key: u64) -> Option<&mut Chat> {
+        if self.chat.key == key {
+            return Some(&mut self.chat);
+        }
+        self.parked.iter_mut().find(|c| c.key == key)
+    }
+
+    /// The conversation continuing session `id`, shown or kept.
+    pub(crate) fn chat_of(&self, id: &str) -> Option<&Chat> {
+        std::iter::once(&self.chat)
+            .chain(&self.parked)
+            .find(|c| c.session.as_deref() == Some(id))
     }
 
     /// Opens the conversation of this folder that `sasacode -r` would resume for `named`: its id,
@@ -714,13 +834,13 @@ impl App {
         };
         let text = match clip {
             Clip::Reply(i) => {
-                let ex = self.transcript.exchanges.get(*i)?;
+                let ex = self.chat.transcript.exchanges.get(*i)?;
                 markdown(ex.steps.get(ex.answer()?)?)
             }
-            Clip::Step(i, j) => markdown(self.transcript.exchanges.get(*i)?.steps.get(*j)?),
-            Clip::Command(id) => self.transcript.tool(id)?.arg("command").map(str::to_owned),
-            Clip::Output(id) => Some(self.transcript.tool(id)?.shown_output().to_owned()),
-            Clip::Session => self.session.clone(),
+            Clip::Step(i, j) => markdown(self.chat.transcript.exchanges.get(*i)?.steps.get(*j)?),
+            Clip::Command(id) => self.chat.transcript.tool(id)?.arg("command").map(str::to_owned),
+            Clip::Output(id) => Some(self.chat.transcript.tool(id)?.shown_output().to_owned()),
+            Clip::Session => self.chat.session.clone(),
             Clip::Text(text) => Some(text.clone()),
         }?;
         (!text.trim().is_empty()).then_some(text)
@@ -753,43 +873,33 @@ impl App {
         operation::scroll_to(TIMELINE, AbsoluteOffset { x: 0.0, y }).chain(Task::done(Msg::Settled))
     }
 
-    fn show(&mut self, transcript: Transcript, loaded: bool) {
-        self.transcript = transcript;
-        self.loaded = loaded;
-        self.folds.clear();
-        self.open.clear();
-        self.closed.clear();
-        self.copied = None;
-        self.reading = false;
-    }
-
     /// Whether the steps of an exchange are shown. While it runs, and when it stopped short with no
     /// reply to read instead, they are; a finished one folds them away.
     pub(crate) fn steps_open(&self, i: usize) -> bool {
-        if let Some(open) = self.folds.get(&i) {
+        if let Some(open) = self.chat.folds.get(&i) {
             return *open;
         }
-        let Some(ex) = self.transcript.exchanges.get(i) else {
+        let Some(ex) = self.chat.transcript.exchanges.get(i) else {
             return false;
         };
-        let last = i + 1 == self.transcript.exchanges.len();
+        let last = i + 1 == self.chat.transcript.exchanges.len();
         let short = ex.end.as_ref().is_some_and(|end| end.cause != StopCause::Done);
         (last && self.running()) || (short && ex.answer().is_none())
     }
 
     fn take_input(&mut self) -> Option<String> {
-        let text = self.editor.text().trim().to_owned();
+        let text = self.chat.editor.text().trim().to_owned();
         if text.is_empty() {
             return None;
         }
-        self.editor = text_editor::Content::new();
+        self.chat.editor = text_editor::Content::new();
         Some(text)
     }
 
     /// Keeps the input for when the run that is ending is gone.
     fn queue_next(&mut self) {
         if let Some(text) = self.take_input() {
-            self.next = Some(match self.next.take() {
+            self.chat.next = Some(match self.chat.next.take() {
                 Some(before) => format!("{before}\n\n{text}"),
                 None => text,
             });
@@ -798,7 +908,7 @@ impl App {
 
     fn send(&mut self) -> Task<Msg> {
         // An approval waits: a reply denies it and tells the model why.
-        if let Some(approval) = self.transcript.pending_approval() {
+        if let Some(approval) = self.chat.transcript.pending_approval() {
             let id = approval.id.clone();
             let Some(text) = self.take_input() else {
                 return Task::none();
@@ -808,13 +918,13 @@ impl App {
                 decision: Decision::Deny,
                 feedback: Some(text.clone()),
             });
-            self.transcript.answer_approval(&id, Answer::Denied(text));
+            self.chat.transcript.answer_approval(&id, Answer::Denied(text));
             return Task::none();
         }
         if self.running() {
             // Like typing while the TUI is busy: it reaches the model at its next turn.
             if let Some(text) = self.take_input() {
-                self.transcript.queue(&text);
+                self.chat.transcript.queue(&text);
                 self.control(ControlMessage::Message { text });
                 return self.back_to_newest();
             }
@@ -825,13 +935,13 @@ impl App {
             return Task::none();
         }
         match self.take_input() {
-            Some(text) => self.start(text),
+            Some(text) => self.start(self.chat.key, text),
             None => Task::none(),
         }
     }
 
     fn answer(&mut self, decision: Decision) -> Task<Msg> {
-        if let Some(approval) = self.transcript.pending_approval() {
+        if let Some(approval) = self.chat.transcript.pending_approval() {
             let id = approval.id.clone();
             self.control(ControlMessage::Approval {
                 id: id.clone(),
@@ -843,56 +953,79 @@ impl App {
                 Decision::Always => Answer::Always,
                 Decision::Deny => Answer::Denied(String::new()),
             };
-            self.transcript.answer_approval(&id, answer);
+            self.chat.transcript.answer_approval(&id, answer);
         }
         Task::none()
     }
 
-    fn start(&mut self, prompt: String) -> Task<Msg> {
-        self.now = Instant::now();
-        self.transcript.send(&prompt, self.now);
-        self.loaded = false;
+    /// Starts a run of conversation `key` on `prompt`.
+    fn start(&mut self, key: u64, prompt: String) -> Task<Msg> {
+        let now = Instant::now();
         let model = self.model.trim();
-        let spec = RunSpec {
+        let mut spec = RunSpec {
             program: self.program.clone(),
             cwd: self.cwd.clone(),
-            prompt,
-            resume: self.session.clone(),
+            prompt: String::new(),
+            resume: None,
             model: (!model.is_empty()).then(|| model.to_owned()),
             permission: self.permission.map(str::to_owned),
             thinking: self.effort.map(str::to_owned),
         };
-        let (task, handle) = Task::run(runner::run(spec), Msg::Run).abortable();
-        self.run = Some(Run {
+        let shown = key == self.chat.key;
+        let Some(chat) = self.chat_mut(key) else {
+            return Task::none();
+        };
+        chat.transcript.send(&prompt, now);
+        chat.loaded = false;
+        spec.prompt = prompt;
+        spec.resume = chat.session.clone();
+        let (task, handle) = Task::run(runner::run(spec), move |update| Msg::Run(key, update)).abortable();
+        chat.run = Some(Run {
             control: None,
             _handle: Some(handle.abort_on_drop()),
             stderr: Vec::new(),
             ended: false,
         });
+        self.now = now;
+        if !shown {
+            return task;
+        }
         // What was just sent is in view, however far back the reader was.
         Task::batch([task, self.back_to_newest()])
     }
 
-    fn on_run(&mut self, update: RunUpdate) -> Task<Msg> {
-        let Some(run) = self.run.as_mut() else {
+    /// What the run of conversation `key` said. A conversation not shown is marked for what the
+    /// user should come back to: its run ended, or it waits for an answer.
+    fn on_run(&mut self, key: u64, update: RunUpdate) -> Task<Msg> {
+        let shown = key == self.chat.key;
+        let now = Instant::now();
+        let s = self.s;
+        let Some(chat) = self.chat_mut(key) else {
             return Task::none();
         };
-        self.now = Instant::now();
+        let Some(run) = chat.run.as_mut() else {
+            return Task::none();
+        };
+        let mut attention = false;
+        let mut relist = false;
+        let mut next = None;
         match update {
             RunUpdate::Started(control) => run.control = Some(control),
             RunUpdate::Event(event) => {
-                let effect = self.transcript.apply(&event, self.now);
+                let effect = chat.transcript.apply(&event, now);
                 if let Some(id) = effect.session_id {
-                    self.session = Some(id);
+                    chat.session = Some(id);
                 }
                 if effect.ended.is_some() {
                     run.ended = true;
+                    chat.unread |= !shown;
                 }
                 if effect.approval.is_some() {
-                    // The run waits for the user: say so even when the window is behind others.
-                    return window::latest()
-                        .and_then(|id| window::request_user_attention(id, Some(window::UserAttention::Informational)));
+                    chat.unread |= !shown;
+                    attention = true;
                 }
+                // A new conversation's log is there once its first message is: the list shows it.
+                relist = matches!(*event, sasacode_protocol::Event::MessageEnd { .. }) && chat.session.is_some();
             }
             RunUpdate::Stderr(line) => {
                 run.stderr.push(line);
@@ -901,33 +1034,49 @@ impl App {
                 }
             }
             RunUpdate::Failed(error) => {
-                self.run = None;
-                self.transcript.close(self.now);
-                self.transcript
-                    .note(Note::Error(format!("{}\n{error}", self.s.not_found)));
+                chat.run = None;
+                chat.unread |= !shown;
+                chat.transcript.close(now);
+                chat.transcript.note(Note::Error(format!("{}\n{error}", s.not_found)));
             }
             RunUpdate::Exited(code) => {
                 // A run that never got to its end says why only on stderr.
                 if !run.ended {
                     let code = code.map(|c| c.to_string()).unwrap_or_else(|| "?".into());
-                    let mut text = fill(self.s.exited, "code", code);
+                    let mut text = fill(s.exited, "code", code);
                     let tail = run.stderr.join("\n");
                     if !tail.trim().is_empty() {
                         text = format!("{text}\n{tail}");
                     }
-                    self.transcript.note(Note::Error(text));
+                    chat.transcript.note(Note::Error(text));
                 }
-                self.run = None;
-                self.transcript.close(self.now);
-                self.reload_sessions();
+                chat.run = None;
+                chat.unread |= !shown;
+                chat.transcript.close(now);
                 // What was sent while it ran and never reached the model, and what waited for it
                 // to end, start the next run.
-                let mut waiting = std::mem::take(&mut self.transcript.queued);
-                waiting.extend(self.next.take());
+                let mut waiting = std::mem::take(&mut chat.transcript.queued);
+                waiting.extend(chat.next.take());
                 if !waiting.is_empty() {
-                    return self.start(waiting.join("\n\n"));
+                    next = Some(waiting.join("\n\n"));
                 }
+                self.reload_sessions();
             }
+        }
+        if relist
+            && let Some(id) = self.chat_mut(key).and_then(|c| c.session.clone())
+            && !self.sessions.iter().any(|s| s.id == id)
+        {
+            self.reload_sessions();
+        }
+        self.now = now;
+        if let Some(prompt) = next {
+            return self.start(key, prompt);
+        }
+        if attention {
+            // The run waits for the user: say so even when the window is behind others.
+            return window::latest()
+                .and_then(|id| window::request_user_attention(id, Some(window::UserAttention::Informational)));
         }
         Task::none()
     }
@@ -976,6 +1125,9 @@ pub(crate) fn shortcut(key: &Key, modifiers: keyboard::Modifiers) -> Option<Msg>
         Key::Character("b") => Some(Msg::ToggleSide),
         Key::Character("i") => Some(Msg::ToggleInspector),
         Key::Character("n") => Some(Msg::NewSession),
+        // ⌘⇧[ and ⌘⇧]: the conversation above or below in the list.
+        Key::Character("[") if modifiers.shift() => Some(Msg::Neighbour(-1)),
+        Key::Character("]") if modifiers.shift() => Some(Msg::Neighbour(1)),
         Key::Character("k") => Some(Msg::Find),
         Key::Character("l") => Some(Msg::FocusInput),
         Key::Character("1") => Some(Msg::Tab(Tab::Changes)),
@@ -1049,16 +1201,16 @@ mod tests {
 
         // Its id.
         assert!(app.open_named("9d000000"));
-        assert_eq!(app.session.as_deref(), Some("9d000000"));
-        assert!(app.loaded && !app.transcript.is_empty());
+        assert_eq!(app.chat.session.as_deref(), Some("9d000000"));
+        assert!(app.chat.loaded && !app.chat.transcript.is_empty());
         // The start of an id: the newest of those it starts. The next message continues it by
         // its whole id.
         assert!(app.open_named("17ca"));
-        assert_eq!(app.session.as_deref(), Some("17cab000"));
+        assert_eq!(app.chat.session.as_deref(), Some("17cab000"));
         // Its log.
         let log = app.sessions.iter().find(|s| s.id == "17cae3ae").unwrap().path.clone();
         assert!(app.open_named(&log.to_string_lossy()));
-        assert_eq!(app.session.as_deref(), Some("17cae3ae"));
+        assert_eq!(app.chat.session.as_deref(), Some("17cae3ae"));
 
         std::fs::remove_dir_all(home).unwrap();
     }
@@ -1068,11 +1220,107 @@ mod tests {
         let (mut app, home) = window_with("find", &["17cab000", "9d000000"]);
         app.filter = "見当たらない".into();
         let _ = app.update(Msg::FindOpen);
-        assert!(app.session.is_none() && app.transcript.is_empty());
+        assert!(app.chat.session.is_none() && app.chat.transcript.is_empty());
         app.filter = "指数バックオフ".into();
         let _ = app.update(Msg::FindOpen);
-        assert_eq!(app.session.as_deref(), Some("17cab000"));
-        assert!(app.loaded && !app.transcript.is_empty());
+        assert_eq!(app.chat.session.as_deref(), Some("17cab000"));
+        assert!(app.chat.loaded && !app.chat.transcript.is_empty());
+        std::fs::remove_dir_all(home).unwrap();
+    }
+
+    fn event(line: &str) -> RunUpdate {
+        RunUpdate::Event(Box::new(sasacode_protocol::parse_event(line).unwrap()))
+    }
+
+    fn type_in(app: &mut App, text: &str) {
+        app.chat.editor = text_editor::Content::with_text(text);
+    }
+
+    #[test]
+    fn a_conversation_keeps_running_while_another_is_shown() {
+        let (mut app, home) = window_with("parallel", &["aaaa0000", "bbbb0000", "cccc0000"]);
+        let path = |app: &App, id: &str| app.sessions.iter().find(|s| s.id == id).unwrap().path.clone();
+
+        // One runs; another is opened, and what runs is kept.
+        let _ = app.update(Msg::OpenSession(path(&app, "aaaa0000")));
+        let mut written = app.pretend_running();
+        let a = app.chat.key;
+        let _ = app.update(Msg::OpenSession(path(&app, "bbbb0000")));
+        assert_eq!(app.chat.session.as_deref(), Some("bbbb0000"));
+        assert!(!app.running());
+        assert!(app.chat_of("aaaa0000").is_some_and(Chat::running));
+
+        // What it says reaches it, not the conversation shown: it waits for an answer, and then
+        // it ends. Each time it is marked for the user to come back to.
+        let shown = app.chat.transcript.exchanges.len();
+        let _ = app.update(Msg::Run(a, event(r#"{"type":"agent_start"}"#)));
+        let _ = app.update(Msg::Run(
+            a,
+            event(r#"{"type":"approval_request","id":"ap-1","callId":"c1","tool":"bash","args":{"command":"ls"},"reason":"ask","cwd":"/tmp"}"#),
+        ));
+        let waiting = app.chat_of("aaaa0000").unwrap();
+        assert!(waiting.unread && waiting.transcript.pending_approval().is_some());
+        assert_eq!(app.chat.transcript.exchanges.len(), shown);
+        assert!(app.chat.transcript.pending_approval().is_none());
+
+        // Opened again, it is as it was left, its mark cleared; the answer reaches its run.
+        let _ = app.update(Msg::OpenSession(path(&app, "aaaa0000")));
+        assert_eq!(app.chat.key, a);
+        assert!(!app.chat.unread && app.running());
+        let _ = app.update(Msg::Answer(Decision::Allow));
+        assert!(matches!(
+            written.try_recv(),
+            Ok(ControlMessage::Approval {
+                decision: Decision::Allow,
+                ..
+            })
+        ));
+
+        // Back on the other, it ends: the list marks it until it is seen.
+        let _ = app.update(Msg::Neighbour(1));
+        assert_eq!(app.chat.session.as_deref(), Some("bbbb0000"));
+        let _ = app.update(Msg::Run(a, event(r#"{"type":"agent_end","cause":"done"}"#)));
+        let _ = app.update(Msg::Run(a, RunUpdate::Exited(Some(0))));
+        let ended = app.chat_of("aaaa0000").unwrap();
+        assert!(ended.unread && !ended.busy());
+        // A conversation with nothing going on is not kept: it is read from its log again.
+        let _ = app.update(Msg::Neighbour(1));
+        assert_eq!(app.chat.session.as_deref(), Some("cccc0000"));
+        assert!(app.chat_of("bbbb0000").is_none());
+        let _ = app.update(Msg::Neighbour(-1));
+        let _ = app.update(Msg::Neighbour(-1));
+        assert_eq!(app.chat.session.as_deref(), Some("aaaa0000"));
+        assert!(!app.chat.unread && app.parked.is_empty());
+        // The top of the list goes no further up.
+        let _ = app.update(Msg::Neighbour(-1));
+        assert_eq!(app.chat.session.as_deref(), Some("aaaa0000"));
+        std::fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn what_is_typed_stays_with_its_conversation() {
+        let (mut app, home) = window_with("drafts", &["aaaa0000", "bbbb0000"]);
+        let path = |app: &App, id: &str| app.sessions.iter().find(|s| s.id == id).unwrap().path.clone();
+
+        // Typed in a new conversation, then another opened and typed in.
+        type_in(&mut app, "新しい会話の下書き");
+        let _ = app.update(Msg::OpenSession(path(&app, "aaaa0000")));
+        assert_eq!(app.chat.editor.text().trim(), "");
+        type_in(&mut app, "続きの下書き");
+        let _ = app.update(Msg::OpenSession(path(&app, "bbbb0000")));
+
+        // Each comes back with what was typed for it.
+        let _ = app.update(Msg::NewSession);
+        assert!(app.chat.session.is_none());
+        assert_eq!(app.chat.editor.text().trim(), "新しい会話の下書き");
+        let _ = app.update(Msg::FindOpen);
+        let _ = app.update(Msg::OpenSession(path(&app, "aaaa0000")));
+        assert_eq!(app.chat.editor.text().trim(), "続きの下書き");
+        // ⌘N on a conversation that is already new stays on it.
+        let _ = app.update(Msg::NewSession);
+        let key = app.chat.key;
+        let _ = app.update(Msg::NewSession);
+        assert_eq!(app.chat.key, key);
         std::fs::remove_dir_all(home).unwrap();
     }
 
@@ -1080,7 +1328,7 @@ mod tests {
     fn a_conversation_that_is_not_there_leaves_a_new_one() {
         let (mut app, home) = window_with("missing", &["17cae3ae"]);
         assert!(!app.open_named("0000"));
-        assert!(app.session.is_none() && !app.loaded && app.transcript.is_empty());
+        assert!(app.chat.session.is_none() && !app.chat.loaded && app.chat.transcript.is_empty());
         std::fs::remove_dir_all(home).unwrap();
     }
 }

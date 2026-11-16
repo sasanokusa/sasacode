@@ -62,8 +62,8 @@ pub(crate) fn window(lang: &str) -> App {
 /// between the events, so durations have something to show.
 pub(crate) fn play(app: &mut App, name: &str, prompt: &str, stop: impl Fn(&Event) -> bool) {
     let mut now = Instant::now();
-    app.session = Some("0a1b2c3d-0".into());
-    app.transcript.send(prompt, now);
+    app.chat.session = Some("0a1b2c3d-0".into());
+    app.chat.transcript.send(prompt, now);
     for line in fixture(name).lines() {
         let event = parse_event(line).unwrap();
         if stop(&event) {
@@ -74,7 +74,7 @@ pub(crate) fn play(app: &mut App, name: &str, prompt: &str, stop: impl Fn(&Event
             Event::ToolEnd { .. } => Duration::from_millis(2600),
             _ => Duration::from_millis(450),
         };
-        app.transcript.apply(&event, now);
+        app.chat.transcript.apply(&event, now);
     }
     app.now = now;
 }
@@ -87,14 +87,14 @@ pub(crate) const REPLY_CODE: &str =
 /// code block and a link.
 pub(crate) fn markdown_reply(app: &mut App) {
     let mut now = Instant::now();
-    app.session = Some("0a1b2c3d-0".into());
-    app.transcript.send("何を変えた？", now);
+    app.chat.session = Some("0a1b2c3d-0".into());
+    app.chat.transcript.send("何を変えた？", now);
     for line in [
         r###"{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"## 変更点\n\n待ち時間を**指数バックオフ**に変えました。`src/client.ts`の1行だけです。\n\n1. 再試行は2回までのまま\n2. 待ち時間は200ミリ秒から倍々\n\n```ts\nawait new Promise((r) => setTimeout(r, 200 * 2 ** attempt)); // 待ち時間\nif (attempt > 2) throw err;\n```\n\n詳しくは[MDNの解説](https://developer.mozilla.org/)を見てください。"}],"provider":"fake","model":"m","usage":{"input":1200,"output":60},"stopReason":"stop"}}"###,
         r#"{"type":"agent_end","cause":"done"}"#,
     ] {
         now += Duration::from_secs(2);
-        app.transcript.apply(&parse_event(line).unwrap(), now);
+        app.chat.transcript.apply(&parse_event(line).unwrap(), now);
     }
     app.now = now;
 }
@@ -112,9 +112,9 @@ pub(crate) fn long_log(app: &mut App) {
         .filter(|l| !l.trim().is_empty())
         .map(|l| serde_json::from_str(l).unwrap())
         .collect();
-    app.transcript = Transcript::from_entries(&entries);
-    app.loaded = true;
-    app.session = Some("0a1b2c3d-0".into());
+    app.chat.transcript = Transcript::from_entries(&entries);
+    app.chat.loaded = true;
+    app.chat.session = Some("0a1b2c3d-0".into());
 }
 
 fn shoot(app: &App, name: &str, size: (f32, f32)) {
@@ -165,7 +165,7 @@ fn snapshots() {
 
     // With the steps of the second exchange shown, the commands in the inspector, in the dark.
     app.set_dark(true);
-    app.folds.insert(1, true);
+    app.chat.folds.insert(1, true);
     app.tab = Tab::Commands;
     shoot(&app, "04-steps-dark", (1280.0, 1100.0));
     app.tab = Tab::Usage;
@@ -178,7 +178,7 @@ fn snapshots() {
         matches!(e, Event::ToolEnd { .. })
     });
     let _written = app.pretend_running();
-    app.transcript.queue("やっぱり10秒でいい");
+    app.chat.transcript.queue("やっぱり10秒でいい");
     app.now += Duration::from_secs(12);
     shoot(&app, "06-running", WIDE);
 
@@ -198,13 +198,13 @@ fn snapshots() {
     // An approval of an edit: the card shows the change the call asks for.
     let mut app = window("ja");
     let mut now = Instant::now();
-    app.transcript.send("タイムアウトを30秒にして", now);
+    app.chat.transcript.send("タイムアウトを30秒にして", now);
     for line in [
         r#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"設定ファイルのタイムアウトを変更します。"},{"type":"tool_call","id":"call_e","name":"edit","input":{"path":"/Users/me/src/orders-api/config/http.json","old_string":"{\n  \"retries\": 2,\n  \"timeoutMs\": 10000\n}","new_string":"{\n  \"retries\": 2,\n  \"timeoutMs\": 30000\n}"}}],"provider":"fake","model":"m","usage":{"input":1200,"output":60},"stopReason":"tool_use"}}"#,
         r#"{"type":"approval_request","id":"approval-1","callId":"call_e","tool":"edit","args":{"path":"/Users/me/src/orders-api/config/http.json","old_string":"{\n  \"retries\": 2,\n  \"timeoutMs\": 10000\n}","new_string":"{\n  \"retries\": 2,\n  \"timeoutMs\": 30000\n}"},"reason":"rule ask: edit(config/**)","cwd":"/Users/me/src/orders-api"}"#,
     ] {
         now += Duration::from_secs(2);
-        app.transcript.apply(&parse_event(line).unwrap(), now);
+        app.chat.transcript.apply(&parse_event(line).unwrap(), now);
     }
     app.now = now;
     let _written = app.pretend_running();
@@ -247,10 +247,10 @@ fn snapshots() {
         .lines()
         .map(|l| serde_json::from_str(l).unwrap())
         .collect();
-    app.transcript = Transcript::from_entries(&entries);
-    app.loaded = true;
-    app.session = Some("0a1b2c3d-0".into());
-    app.folds.insert(1, true);
+    app.chat.transcript = Transcript::from_entries(&entries);
+    app.chat.loaded = true;
+    app.chat.session = Some("0a1b2c3d-0".into());
+    app.chat.folds.insert(1, true);
     app.width = 1000.0;
     shoot(&app, "11-loaded-en-narrow", (1000.0, 900.0));
     app.insp = false;

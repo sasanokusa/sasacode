@@ -12,7 +12,6 @@ use crate::icons::{Icon, icon};
 
 pub fn sidebar(app: &App) -> El<'_> {
     let (t, s) = (app.t, app.s);
-    let busy = app.busy();
     // What the names have room for, in half-width cells, as wide as the list is drawn: 26 for a
     // conversation and 18 for the folder at the width it opens at.
     let width = app.side_width();
@@ -38,7 +37,7 @@ pub fn sidebar(app: &App) -> El<'_> {
 
     let new = button(
         row![
-            icon(Icon::Plus, 14.0, if busy { t.fg_3 } else { t.fg }),
+            icon(Icon::Plus, 14.0, t.fg),
             text(s.new_session).size(13),
             Space::new().width(Length::Fill),
             text(format!("{MOD}N")).size(11).color(t.fg_3),
@@ -49,7 +48,7 @@ pub fn sidebar(app: &App) -> El<'_> {
     .width(Length::Fill)
     .padding([7, 10])
     .style(t.outline(t.fg))
-    .on_press_maybe((!busy).then_some(Msg::NewSession));
+    .on_press(Msg::NewSession);
 
     let search = container(
         row![
@@ -75,7 +74,7 @@ pub fn sidebar(app: &App) -> El<'_> {
     let mut shown = 0;
     for session in app.found() {
         shown += 1;
-        let current = app.session.as_deref() == Some(session.id.as_str());
+        let current = app.chat.session.as_deref() == Some(session.id.as_str());
         let prompt = session.first_prompt.trim();
         let title = if prompt.is_empty() {
             clip(&session.id, 8)
@@ -89,22 +88,33 @@ pub fn sidebar(app: &App) -> El<'_> {
         let mut title_row = row![text(title).size(13).color(t.fg).wrapping(text::Wrapping::None)]
             .spacing(6)
             .align_y(Alignment::Center);
-        if current && app.running() {
+        // What it is doing, shown or not: it runs, it waits for an answer, or it has news.
+        let mark = app.chat_of(&session.id).and_then(|chat| {
+            if chat.running() && chat.transcript.pending_approval().is_some() {
+                Some((t.warn, s.st_waiting))
+            } else if chat.running() {
+                Some((t.accent, s.st_running))
+            } else if chat.unread {
+                Some((t.fg, s.unread))
+            } else {
+                None
+            }
+        });
+        if let Some((color, _)) = mark {
             title_row = title_row
                 .push(Space::new().width(Length::Fill))
-                .push(icon(Icon::Dot, 9.0, t.accent));
+                .push(icon(Icon::Dot, 9.0, color));
         }
         let item = button(column![title_row, text(meta).size(11.5).color(t.fg_3)].spacing(2))
             .width(Length::Fill)
             .padding([6, 10])
             .style(t.ghost(t.fg, current))
-            .on_press_maybe((!busy && !current).then(|| Msg::OpenSession(session.path.clone())));
-        // And why a click does nothing while something runs.
-        let why = (busy && !current).then_some(s.busy);
-        let hint = match (whole, why) {
-            (Some(whole), Some(why)) => Some(format!("{whole}\n\n{why}")),
+            .on_press_maybe((!current).then(|| Msg::OpenSession(session.path.clone())));
+        // And what the mark means.
+        let hint = match (whole, mark) {
+            (Some(whole), Some((_, what))) => Some(format!("{whole}\n\n{what}")),
             (Some(whole), None) => Some(whole),
-            (None, Some(why)) => Some(why.to_owned()),
+            (None, Some((_, what))) => Some(what.to_owned()),
             (None, None) => None,
         };
         list = list.push(match hint {

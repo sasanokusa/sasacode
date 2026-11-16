@@ -39,12 +39,19 @@ fn waiting() -> (App, UnboundedReceiver<ControlMessage>, String) {
         |e| matches!(e, Event::ToolStart { call, .. } if call.input["command"] == "echo one"),
     );
     let written = app.pretend_running();
-    let id = app.transcript.pending_approval().expect("an approval waits").id.clone();
+    let id = app
+        .chat
+        .transcript
+        .pending_approval()
+        .expect("an approval waits")
+        .id
+        .clone();
     (app, written, id)
 }
 
 fn answer_of(app: &App, id: &str) -> Option<Answer> {
-    app.transcript
+    app.chat
+        .transcript
         .exchanges
         .iter()
         .flat_map(|e| &e.steps)
@@ -81,7 +88,7 @@ fn the_buttons_of_the_card_answer_the_approval_that_waits() {
         );
         assert_eq!(answer_of(&app, &id), Some(answer));
         // Answered once: nothing waits, and no other key or click can answer it again.
-        assert!(app.transcript.pending_approval().is_none());
+        assert!(app.chat.transcript.pending_approval().is_none());
         let _ = app.update(Msg::Chord);
         assert!(written.try_recv().is_err());
     }
@@ -104,7 +111,7 @@ fn a_reply_typed_while_an_approval_waits_denies_it_and_says_why() {
         })
     );
     assert_eq!(answer_of(&app, &id), Some(Answer::Denied("それは不要".into())));
-    assert!(app.editor.text().trim().is_empty());
+    assert!(app.chat.editor.text().trim().is_empty());
 }
 
 #[test]
@@ -122,7 +129,7 @@ fn the_chord_allows_only_when_nothing_is_typed() {
 
     // With a reply typed it is the reply that counts: a denial with its reason.
     let (mut app, mut written, id) = waiting();
-    app.editor = text_editor::Content::with_text("先にテストを書いて");
+    app.chat.editor = text_editor::Content::with_text("先にテストを書いて");
     let _ = app.update(Msg::Chord);
     assert_eq!(
         written.try_recv().ok(),
@@ -210,6 +217,7 @@ fn what_is_copied_is_the_source_not_what_is_shown() {
     let mut app = window("ja");
     play(&mut app, "work.jsonl", "再試行を指数バックオフにして", |_| false);
     let bash = app
+        .chat
         .transcript
         .exchanges
         .iter()
@@ -234,9 +242,11 @@ fn what_is_copied_is_the_source_not_what_is_shown() {
     // An error, whole.
     let mut app = window("ja");
     play(&mut app, "error.jsonl", "こんにちは", |_| false);
-    app.transcript
+    app.chat
+        .transcript
         .note(Note::Error("sasacodeが途中で終了しました\nline two".into()));
     let (i, j) = app
+        .chat
         .transcript
         .exchanges
         .iter()
@@ -398,9 +408,9 @@ fn what_is_sent_while_the_agent_works_goes_to_the_run_and_waits_in_view() {
             text: "やっぱり10秒でいい".into()
         })
     );
-    assert_eq!(app.transcript.queued, ["やっぱり10秒でいい"]);
+    assert_eq!(app.chat.transcript.queued, ["やっぱり10秒でいい"]);
     // Still the same exchange: it becomes one of its own when the model is given it.
-    assert_eq!(app.transcript.exchanges.len(), 1);
+    assert_eq!(app.chat.transcript.exchanges.len(), 1);
 
     let _ = app.update(Msg::Stop);
     assert_eq!(written.try_recv().ok(), Some(ControlMessage::Abort));

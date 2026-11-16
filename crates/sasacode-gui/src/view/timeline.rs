@@ -21,17 +21,17 @@ const INDENT: f32 = 28.0;
 
 pub fn timeline(app: &App) -> El<'_> {
     let (t, s) = (app.t, app.s);
-    if app.transcript.is_empty() && app.next.is_none() {
+    if app.chat.transcript.is_empty() && app.chat.next.is_none() {
         return blank(app);
     }
     let mut col = column![].spacing(22).width(Length::Fill);
-    if app.loaded {
+    if app.chat.loaded {
         col = col.push(text(s.loaded_note).size(12).color(t.fg_3));
     }
-    for (i, ex) in app.transcript.exchanges.iter().enumerate() {
+    for (i, ex) in app.chat.transcript.exchanges.iter().enumerate() {
         col = col.push(exchange(app, i, ex));
     }
-    for queued in &app.transcript.queued {
+    for queued in &app.chat.transcript.queued {
         col = col.push(
             column![
                 bubble(t, queued),
@@ -40,7 +40,7 @@ pub fn timeline(app: &App) -> El<'_> {
             .spacing(4),
         );
     }
-    if let Some(next) = &app.next {
+    if let Some(next) = &app.chat.next {
         col = col.push(bubble(t, next));
     }
     let mut list = scrollable(
@@ -122,7 +122,7 @@ fn bubble<'a>(t: Tokens, prompt: &'a str) -> El<'a> {
 
 fn exchange<'a>(app: &'a App, i: usize, ex: &'a Exchange) -> El<'a> {
     let t = app.t;
-    let last = i + 1 == app.transcript.exchanges.len();
+    let last = i + 1 == app.chat.transcript.exchanges.len();
     let live = last && app.running();
     let mut col = column![].spacing(10);
     if !ex.prompt.is_empty() {
@@ -211,7 +211,7 @@ fn fold_row<'a>(app: &'a App, i: usize, ex: &'a Exchange, work: &'a [Step], open
 /// The line under a run that is going on.
 fn live_row<'a>(app: &'a App, ex: &'a Exchange) -> El<'a> {
     let (t, s) = (app.t, app.s);
-    let waiting = app.transcript.pending_approval().is_some();
+    let waiting = app.chat.transcript.pending_approval().is_some();
     let (label, color) = if waiting {
         (s.st_waiting, t.warn)
     } else {
@@ -240,7 +240,7 @@ fn live_row<'a>(app: &'a App, ex: &'a Exchange) -> El<'a> {
 
 fn steps<'a>(app: &'a App, i: usize, work: &'a [Step]) -> Column<'a, Msg> {
     // What is still being written is not offered to copy.
-    let live = i + 1 == app.transcript.exchanges.len() && app.running();
+    let live = i + 1 == app.chat.transcript.exchanges.len() && app.running();
     let mut col = column![].spacing(2);
     for (j, step) in work.iter().enumerate() {
         col = col.push(match step {
@@ -312,7 +312,7 @@ fn under<'a>(content: impl Into<El<'a>>) -> El<'a> {
 
 fn thinking<'a>(app: &'a App, i: usize, j: usize, thought: &'a str) -> El<'a> {
     let (t, s) = (app.t, app.s);
-    let open = app.open.contains(&(i, j));
+    let open = app.chat.open.contains(&(i, j));
     let mut parts = vec![say(s.thinking, t.fg_2)];
     if !open {
         parts.push(say(clip(first_line(thought.trim()), 64), t.fg_3));
@@ -432,7 +432,11 @@ fn tool_row<'a>(app: &'a App, i: usize, j: usize, tool: &'a Tool) -> El<'a> {
     }
     match tool.state {
         ToolState::Waiting => {
-            let asked = app.transcript.approval_of(&tool.id).is_some_and(|a| a.answer.is_none());
+            let asked = app
+                .chat
+                .transcript
+                .approval_of(&tool.id)
+                .is_some_and(|a| a.answer.is_none());
             parts.push(if asked {
                 tag(t, s.st_waiting, t.warn_wash, t.warn)
             } else {
@@ -443,7 +447,10 @@ fn tool_row<'a>(app: &'a App, i: usize, j: usize, tool: &'a Tool) -> El<'a> {
         ToolState::Skipped => {
             let denied = tool.denied()
                 || matches!(
-                    app.transcript.approval_of(&tool.id).and_then(|a| a.answer.as_ref()),
+                    app.chat
+                        .transcript
+                        .approval_of(&tool.id)
+                        .and_then(|a| a.answer.as_ref()),
                     Some(Answer::Denied(_))
                 );
             parts.push(tag(
@@ -469,7 +476,7 @@ fn tool_row<'a>(app: &'a App, i: usize, j: usize, tool: &'a Tool) -> El<'a> {
     // What runs shows what it writes, and a command that failed shows why, without being asked.
     let by_itself =
         (running && matches!(kind, Kind::Bash | Kind::Task)) || (tool.state == ToolState::Failed && kind == Kind::Bash);
-    let open = app.open.contains(&(i, j)) != by_itself;
+    let open = app.chat.open.contains(&(i, j)) != by_itself;
     let details = tool_details(app, tool);
     let press = details.is_some().then_some((Msg::Open(i, j), open));
     let head = line(t, (symbol, color), parts, meta, press);
@@ -647,7 +654,7 @@ pub(crate) fn subject(app: &App, approval: &Approval) -> String {
 
 fn note_row<'a>(app: &'a App, i: usize, j: usize, note: &'a Note) -> El<'a> {
     let (t, s) = (app.t, app.s);
-    let open = app.open.contains(&(i, j));
+    let open = app.chat.open.contains(&(i, j));
     let quiet = |mark: Icon, label: &'static str| line(t, (mark, t.fg_3), vec![say(label, t.fg_3)], None, None);
     let folded = |mark: Icon, label: String, body: &'a str| -> El<'a> {
         let head = line(
@@ -853,7 +860,7 @@ fn ending<'a>(app: &'a App, ex: &'a Exchange, end: &'a End, last: bool, copy: Op
         body = body.push(text(aside).size(12.5).color(t.fg_2));
     }
     // Only where the conversation stands: once something was sent after it, it has moved on.
-    if last && !app.busy() && app.next.is_none() && end.cause != StopCause::Refusal {
+    if last && !app.busy() && app.chat.next.is_none() && end.cause != StopCause::Refusal {
         body = body.push(
             container(
                 button(text(s.continue_btn).size(12.5))
