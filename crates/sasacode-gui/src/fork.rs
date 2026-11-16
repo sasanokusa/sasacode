@@ -25,11 +25,13 @@ pub fn fork(log: &Path, at: usize, prompt: &str) -> Result<(String, PathBuf), St
         .collect();
     let entries: Vec<SessionEntry> = parsed.iter().map(|(_, e)| e.clone()).collect();
     let transcript = Transcript::from_entries(&entries);
+    // Shown, a message is as it was typed; the log has the image plugin's labels in it.
+    let same = |ex: &&crate::transcript::Exchange| crate::transcript::sent_as(prompt, &ex.prompt);
     let exchange = transcript
         .exchanges
         .get(at)
-        .filter(|ex| ex.prompt == prompt)
-        .or_else(|| transcript.exchanges.iter().rev().find(|ex| ex.prompt == prompt))
+        .filter(same)
+        .or_else(|| transcript.exchanges.iter().rev().find(same))
         .ok_or("the message is not in the log")?;
     let entry = exchange.entry.ok_or("the message was compacted away")?;
     let cut = parsed[entry].0;
@@ -99,6 +101,8 @@ mod tests {
             reply("はい"),
             user("二つ目", 2),
             reply("どうぞ"),
+            user("[Image 1: /w/shot.png] これを見て", 3),
+            reply("見ました"),
         ];
         let text: String = lines.iter().map(|l| format!("{l}\n")).collect();
         std::fs::write(&log, &text).unwrap();
@@ -116,6 +120,10 @@ mod tests {
         // The old log is as it was; a message that is not there branches nothing.
         assert_eq!(std::fs::read_to_string(&log).unwrap(), text);
         assert!(fork(&log, 0, "ない").is_err());
+        // A message with an image is shown as it was typed; the log has the image plugin's label.
+        let (_, path) = fork(&log, 2, "@shot.png これを見て").unwrap();
+        let t = Transcript::from_entries(&sasacode_protocol::read_entries(&path).unwrap());
+        assert_eq!(t.exchanges.len(), 2);
         // Before the first message: a conversation with nothing in it yet.
         let (_, empty) = fork(&log, 0, "一つ目").unwrap();
         assert!(

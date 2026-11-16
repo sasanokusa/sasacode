@@ -9,9 +9,10 @@ use sasacode_protocol::{Message, read_entries, restore, text_of};
 use crate::i18n::Strings;
 use crate::transcript::{Note, Step, Transcript};
 
-pub fn markdown(transcript: &Transcript, s: Strings) -> String {
+/// `name` is what the conversation was named in the list, if it was; else its first message heads it.
+pub fn markdown(name: Option<&str>, transcript: &Transcript, s: Strings) -> String {
     let mut out = String::new();
-    if let Some(title) = transcript.title() {
+    if let Some(title) = name.or(transcript.title()) {
         out.push_str(&format!("# {}\n\n", crate::view::first_line(title).trim()));
     }
     for ex in &transcript.exchanges {
@@ -69,10 +70,13 @@ mod tests {
         t.send("こんにちは", Instant::now());
         let line = r#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"はい、**どうぞ**。"}],"provider":"fake","model":"m","usage":{"input":1,"output":1},"stopReason":"stop"}}"#;
         t.apply(&sasacode_protocol::parse_event(line).unwrap(), Instant::now());
-        let md = markdown(&t, Strings::get("ja"));
+        let md = markdown(None, &t, Strings::get("ja"));
         assert_eq!(
             md,
             "# こんにちは\n\n## あなた\n\nこんにちは\n\n## sasacode\n\nはい、**どうぞ**。\n"
         );
+        // Named in the list, it is headed by its name.
+        let md = markdown(Some("挨拶"), &t, Strings::get("ja"));
+        assert!(md.starts_with("# 挨拶\n\n## あなた\n\nこんにちは\n"), "{md}");
     }
 }

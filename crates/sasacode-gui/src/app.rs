@@ -198,6 +198,8 @@ pub struct App {
     pub(crate) toast: Option<String>,
     /// The search inside the conversation shown, while it is open.
     pub(crate) find_in: Option<String>,
+    /// That search's field was the last to take the keyboard: an Esc there puts it away.
+    pub(crate) find_held: bool,
     /// The list shows the conversations taken out of it, instead of the others.
     pub(crate) show_archived: bool,
     /// The conversation of the list under the pointer, which shows what can be done to it.
@@ -426,6 +428,8 @@ pub enum Msg {
     Neighbour(i8),
     /// The keyboard back to the input.
     FocusInput,
+    /// Esc that a field took for itself, letting go of the keyboard.
+    Escaped,
     /// A panel's edge was pressed, to be dragged.
     Grab(Edge),
     /// Where the pointer is while an edge is dragged: how far from the window's left.
@@ -531,6 +535,7 @@ impl App {
             dropping: false,
             awake: None,
             find_in: None,
+            find_held: false,
             show_archived: false,
             row_hover: None,
             bodies: HashMap::new(),
@@ -619,6 +624,9 @@ impl App {
             Some(home) => list_sessions(home, &self.cwd),
             None => Vec::new(),
         };
+        for session in &mut self.sessions {
+            session.first_prompt = crate::transcript::as_typed(&session.first_prompt, &self.cwd);
+        }
     }
 
     /// The conversation shown is worked on: its run has started and has not said it ended.
@@ -724,9 +732,17 @@ impl App {
 
     pub fn update(&mut self, msg: Msg) -> Task<Msg> {
         // Over the window, Esc puts away what is drawn there; it never stops a run.
-        if self.overlay.is_some() && matches!(msg, Msg::Stop | Msg::FocusInput) {
+        if self.overlay.is_some() && matches!(msg, Msg::Stop | Msg::FocusInput | Msg::Escaped) {
             self.overlay = None;
             return focus_input();
+        }
+        // Which field has the keyboard is not asked of iced; what was last typed in tells.
+        match &msg {
+            Msg::FindInText(_) => self.find_held = true,
+            Msg::Edit(_) | Msg::Model(_) | Msg::Filter(_) | Msg::CommitText(_) | Msg::FocusInput => {
+                self.find_held = false;
+            }
+            _ => {}
         }
         let msg = match self.update_more(msg) {
             Ok(task) => return task,
@@ -758,6 +774,9 @@ impl App {
             Msg::Stop => {
                 if self.running() {
                     self.control(ControlMessage::Abort);
+                } else {
+                    // Nothing to stop: Esc puts the search in the conversation away.
+                    self.find_in = None;
                 }
             }
             Msg::Continue => {
@@ -911,6 +930,14 @@ impl App {
                 return focus_input();
             }
             Msg::FocusInput => return focus_input(),
+            Msg::Escaped => {
+                // In the search of the conversation, the first Esc puts it away, as Esc does in
+                // other windows' find bars; in another field it only gives the keys back.
+                if std::mem::take(&mut self.find_held) {
+                    self.find_in = None;
+                }
+                return focus_input();
+            }
             Msg::Grab(edge) => {
                 self.drag = Some(edge);
                 self.held = match edge {
@@ -1045,6 +1072,10 @@ impl App {
         let mut chat = self.new_chat();
         chat.session = id;
         chat.transcript = Transcript::from_entries(&entries);
+        // As typed: an image sent from a file shows as its `@path` again, and goes with a retry.
+        for ex in &mut chat.transcript.exchanges {
+            ex.prompt = crate::transcript::as_typed(&ex.prompt, &self.cwd);
+        }
         chat.loaded = true;
         self.bring(chat);
         true
@@ -1210,7 +1241,7 @@ impl App {
             Clip::Command(id) => self.chat.transcript.tool(id)?.arg("command").map(str::to_owned),
             Clip::Output(id) => Some(self.chat.transcript.tool(id)?.shown_output().to_owned()),
             Clip::Session => self.chat.session.clone(),
-            Clip::Conversation => Some(crate::export::markdown(&self.chat.transcript, self.s)),
+            Clip::Conversation => Some(crate::export::markdown(self.name(), &self.chat.transcript, self.s)),
             Clip::Text(text) => Some(text.clone()),
         }?;
         (!text.trim().is_empty()).then_some(text)
@@ -1517,14 +1548,14 @@ fn focus_input() -> Task<Msg> {
 }
 
 /// Keys no part of the window took for itself.
-fn global_key(event: iced::Event, status: event::Status, _window: window::Id) -> Option<Msg> {
+pub(crate) fn global_key(event: iced::Event, status: event::Status, _window: window::Id) -> Option<Msg> {
     let iced::Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. }) = event else {
         return None;
     };
     if status == event::Status::Captured {
         // A field that let go of the keyboard on Esc, the search or the model, gives it back to
         // the input: the next Esc is the input's again.
-        return matches!(key, Key::Named(Named::Escape)).then_some(Msg::FocusInput);
+        return matches!(key, Key::Named(Named::Escape)).then_some(Msg::Escaped);
     }
     if modifiers.is_empty() {
         match key {

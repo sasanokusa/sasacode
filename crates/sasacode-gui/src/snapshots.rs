@@ -384,6 +384,21 @@ fn snapshots() {
     app.aside = Some(side);
     app.overlay = Some(Overlay::Side);
     shoot(&app, "29-side-question", WIDE);
+
+    // A long folder in a narrow window: the bottom bar cuts the path's start, not the branch, the
+    // model or how full the conversation is.
+    let mut app = window("ja");
+    app.cwd = "/Users/me/src/work/clients/acme/orders-api-with-a-long-name".into();
+    app.chat.transcript.apply(
+        &parse_event(r#"{"type":"session","id":"0a1b2c3d-0","path":"/s.jsonl","contextWindow":64000}"#).unwrap(),
+        app.now,
+    );
+    play(&mut app, "work.jsonl", "再試行を指数バックオフにして", never);
+    app.git.branch = Some("retry-backoff".into());
+    app.insp = false;
+    app.side = false;
+    app.width = 860.0;
+    shoot(&app, "30-narrow-bar", (860.0, 560.0));
 }
 
 /// `text` in the input, the cursor at its end, as if typed.

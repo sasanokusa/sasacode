@@ -370,6 +370,15 @@ impl App {
         system::notify(&title, what);
     }
 
+    /// The name the conversation shown was given in the list, if it was.
+    pub(crate) fn name(&self) -> Option<&str> {
+        self.chat
+            .session
+            .as_ref()
+            .and_then(|id| self.prefs.names.get(id))
+            .map(String::as_str)
+    }
+
     /// What a conversation is called: the name it was given, else its first message.
     pub(crate) fn chat_title(&self, chat: &Chat) -> String {
         chat.session
@@ -412,8 +421,14 @@ impl App {
     pub(crate) fn worktree(&mut self) -> Task<Msg> {
         let s = self.s;
         let (note, task) = match self.home.as_deref().map(|home| system::make_worktree(&self.cwd, home)) {
+            // Its folder's name: the bar has no room for the path, which the new window shows.
             Some(Ok(path)) => (
-                crate::i18n::fill(s.worktree_made, "path", path.display()),
+                crate::i18n::fill(
+                    s.worktree_made,
+                    "path",
+                    path.file_name()
+                        .map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned()),
+                ),
                 self.new_window(path, None),
             ),
             Some(Err(error)) => (crate::i18n::fill(s.worktree_failed, "error", error), Task::none()),

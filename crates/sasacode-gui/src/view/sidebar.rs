@@ -169,12 +169,14 @@ pub fn sidebar(app: &App) -> El<'_> {
             (None, Some((_, what))) => Some(what.to_owned()),
             (None, None) => None,
         };
-        let item: El<'_> = match hint {
-            Some(hint) => tip(t, item, hint, iced::widget::tooltip::Position::Right),
-            None => item.into(),
+        // Beside the whole row, past its buttons: beside the title alone it covered them.
+        let line = row![item, actions].spacing(2).align_y(Alignment::Center);
+        let line: El<'_> = match hint {
+            Some(hint) => tip(t, line, hint, iced::widget::tooltip::Position::Right),
+            None => line.into(),
         };
         list = list.push(
-            mouse_area(row![item, actions].spacing(2).align_y(Alignment::Center))
+            mouse_area(line)
                 .on_enter(Msg::RowHover(Some(session.id.clone())))
                 .on_exit(Msg::RowHover(None)),
         );

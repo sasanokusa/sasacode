@@ -330,6 +330,7 @@ impl App {
             Command::Btw => self.set_input("/btw "),
             Command::Find => {
                 self.find_in.get_or_insert_with(String::new);
+                self.find_held = true;
                 return Task::batch([operation::focus(FIND_IN), operation::select_all(FIND_IN)]);
             }
             Command::Export => return self.update(Msg::Copy(crate::app::Clip::Conversation)),

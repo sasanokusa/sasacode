@@ -68,21 +68,24 @@ pub(crate) const MOD: &str = if cfg!(target_os = "macos") { "⌘" } else { "Ctrl
 
 pub fn window(app: &App) -> El<'_> {
     let t = app.t;
-    let mut body = row![];
-    if app.shows_side() {
-        body = body.push(sidebar::sidebar(app)).push(vline(t));
-    }
-    let mut middle = column![header(app), hline(t)];
-    if app.find_in.is_some() {
-        middle = middle.push(find_bar(app)).push(hline(t));
-    }
-    body = body.push(
-        middle
-            .push(timeline::timeline(app))
-            .push(dock::dock(app))
-            .width(Length::Fill)
-            .height(Length::Fill),
-    );
+    // What comes and goes in front of the conversation keeps its place, empty while it is not
+    // shown: a part that came in front would make iced take the conversation and the input for new
+    // widgets, and the place read up to and the keys would be lost.
+    let (side, finding) = (app.shows_side(), app.find_in.is_some());
+    let nothing = || -> El<'_> { Space::new().into() };
+    let mut body = row![
+        if side { sidebar::sidebar(app) } else { nothing() },
+        if side { vline(t) } else { nothing() },
+    ];
+    let middle = column![
+        header(app),
+        hline(t),
+        if finding { find_bar(app) } else { nothing() },
+        if finding { hline(t) } else { nothing() },
+        timeline::timeline(app),
+        dock::dock(app),
+    ];
+    body = body.push(middle.width(Length::Fill).height(Length::Fill));
     if app.insp {
         body = body.push(vline(t)).push(inspector::inspector(app));
     }
@@ -279,7 +282,8 @@ fn title(app: &App) -> El<'_> {
             .color(t.fg)
             .wrapping(text::Wrapping::None)
     };
-    match app.chat.transcript.title() {
+    // The name it was given in the list, as the list shows it; else its first message.
+    match app.name().or(app.chat.transcript.title()) {
         Some(prompt) => {
             let shown = clip(first_line(prompt), 56);
             if shown == prompt.trim() && shown.chars().count() <= 24 {
@@ -346,24 +350,23 @@ fn status_bar(app: &App) -> El<'_> {
     // On one line: what does not fit on the left is cut at the bar's middle, not wrapped.
     let item = |label: String| text(label).size(11.5).color(t.fg_3).wrapping(text::Wrapping::None);
     let dot = || text("·").size(11.5).color(t.line_2);
-    let cwd = app.cwd.to_string_lossy();
-    let shown = clip_start(&cwd, 46);
-    let folder: El<'_> = if shown == cwd {
-        item(shown).font(MONO).into()
-    } else {
-        tip(t, item(shown).font(MONO), cwd.into_owned(), tooltip::Position::Top)
-    };
-    let mut left = row![icon(Icon::Folder, 12.0, t.fg_3), folder]
-        .spacing(6)
-        .align_y(Alignment::Center);
+    // What the items after the folder take, in pixels, so that the folder gives way first: a
+    // narrow window keeps the branch, the model and how full the conversation is, and loses the
+    // start of a long path, which its tooltip still shows.
+    let mut rest = BAR_EDGES;
+    let mut tail = row![].spacing(6).align_y(Alignment::Center);
     // The branch checked out; a click copies its name.
     if let Some(branch) = &app.git.branch {
         let label = if app.copied == Some(Clip::Text(branch.clone())) {
+            rest += prose_width(s.copied);
             item(s.copied.to_owned()).color(t.accent)
         } else {
-            item(clip(branch, 28)).font(MONO)
+            let shown = clip(branch, 28);
+            rest += mono_width(&shown);
+            item(shown).font(MONO)
         };
-        left = left.push(dot()).push(tip(
+        rest += BAR_GAP + 8.0 + 11.0 + 4.0;
+        tail = tail.push(dot()).push(tip(
             t,
             button(
                 row![icon(Icon::Branch, 11.0, t.fg_3), label]
@@ -380,11 +383,15 @@ fn status_bar(app: &App) -> El<'_> {
     if let Some(id) = &app.chat.session {
         // The start of the id, as `sasacode -r` takes it; a click copies all of it.
         let label = if app.copied == Some(Clip::Session) {
+            rest += prose_width(s.copied);
             item(s.copied.to_owned()).color(t.accent)
         } else {
-            item(clip(id, 8).trim_end_matches('…').to_owned()).font(MONO)
+            let shown = clip(id, 8).trim_end_matches('…').to_owned();
+            rest += mono_width(&shown);
+            item(shown).font(MONO)
         };
-        left = left.push(dot()).push(tip(
+        rest += BAR_GAP + 8.0;
+        tail = tail.push(dot()).push(tip(
             t,
             button(label)
                 .padding([1, 4])
@@ -401,14 +408,17 @@ fn status_bar(app: &App) -> El<'_> {
         (typed, _) => Some(typed.to_owned()),
     };
     if let Some(model) = model {
-        left = left.push(dot()).push(item(model).font(MONO));
+        rest += BAR_GAP + mono_width(&model);
+        tail = tail.push(dot()).push(item(model).font(MONO));
     }
     if let Some(mode) = app.permission {
         let color = if mode == "auto" { t.err } else { t.fg_3 };
-        left = left.push(dot()).push(item(mode.to_owned()).color(color));
+        rest += BAR_GAP + prose_width(mode);
+        tail = tail.push(dot()).push(item(mode.to_owned()).color(color));
     }
     if let Some(effort) = app.effort {
-        left = left.push(dot()).push(item(effort.to_owned()));
+        rest += BAR_GAP + prose_width(effort);
+        tail = tail.push(dot()).push(item(effort.to_owned()));
     }
     // How full the conversation is, as the model last read it, of what it can take.
     let tr = &app.chat.transcript;
@@ -421,18 +431,19 @@ fn status_bar(app: &App) -> El<'_> {
         } else {
             t.fg_3
         };
-        left = left.push(dot()).push(tip(
+        // Under one percent is not nothing.
+        let label = s.context.replace(
+            "{n}",
+            &if share < 0.01 {
+                "<1".to_owned()
+            } else {
+                format!("{:.0}", share * 100.0)
+            },
+        );
+        rest += BAR_GAP + prose_width(&label);
+        tail = tail.push(dot()).push(tip(
             t,
-            // Under one percent is not nothing.
-            item(s.context.replace(
-                "{n}",
-                &if share < 0.01 {
-                    "<1".to_owned()
-                } else {
-                    format!("{:.0}", share * 100.0)
-                },
-            ))
-            .color(color),
+            item(label).color(color),
             format!("{} / {}", compact(tr.last_input), compact(window)),
             tooltip::Position::Top,
         ));
@@ -445,10 +456,37 @@ fn status_bar(app: &App) -> El<'_> {
         compact(u.cache_read),
         u.cost
     );
+    rest += 12.0 + mono_width(&usage);
     let mut right = row![].spacing(8).align_y(Alignment::Center);
-    if let Some(toast) = &app.toast {
-        right = right.push(item(clip(toast, 80)).color(t.fg_2));
+    // Copied from the palette or `/export`, where there is no button to say so.
+    if app.copied == Some(Clip::Conversation) {
+        rest += 8.0 + prose_width(s.copied);
+        right = right.push(item(s.copied.to_owned()).color(t.accent));
     }
+    if let Some(toast) = &app.toast {
+        let shown = clip(toast, 80);
+        rest += 8.0 + prose_width(&shown);
+        right = if shown == *toast {
+            right.push(item(shown).color(t.fg_2))
+        } else {
+            right.push(tip(
+                t,
+                item(shown).color(t.fg_2),
+                clip(toast, 600),
+                tooltip::Position::Top,
+            ))
+        };
+    }
+    let cwd = app.cwd.to_string_lossy();
+    let shown = clip_start(&cwd, folder_cells(app.width, rest));
+    let folder: El<'_> = if shown == cwd {
+        item(shown).font(MONO).into()
+    } else {
+        tip(t, item(shown).font(MONO), cwd.into_owned(), tooltip::Position::Top)
+    };
+    let left = row![icon(Icon::Folder, 12.0, t.fg_3), folder, tail]
+        .spacing(6)
+        .align_y(Alignment::Center);
     container(
         row![
             container(left).width(Length::Fill).clip(true),
@@ -464,6 +502,29 @@ fn status_bar(app: &App) -> El<'_> {
     .padding([3, 12])
     .style(t.fill(t.surface))
     .into()
+}
+
+/// What the bottom bar takes besides its items: its padding, the folder's icon and the gaps
+/// between its parts.
+const BAR_EDGES: f32 = 24.0 + 12.0 + 6.0 + 6.0 + 16.0;
+/// What an item after the folder takes besides its text: the dot before it and the gaps around it.
+const BAR_GAP: f32 = 6.0 + 5.0 + 6.0;
+
+/// About how wide a line of the bar's monospaced text is: a half-width cell is about 7 pixels at
+/// its size. Only for sharing out the bar; what is drawn is measured by iced.
+fn mono_width(s: &str) -> f32 {
+    s.chars().map(cells).sum::<usize>() as f32 * 7.0
+}
+
+/// [`mono_width`] for the bar's proportional text, a little narrower.
+fn prose_width(s: &str) -> f32 {
+    s.chars().map(cells).sum::<usize>() as f32 * 6.0
+}
+
+/// How many cells of the folder's path the bottom bar shows, when `rest` of a bar `width` wide
+/// goes to everything else on it: all that is left, between a short tail of the path and 46.
+fn folder_cells(width: f32, rest: f32) -> usize {
+    ((width - rest) / 7.0).clamp(14.0, 46.0) as usize
 }
 
 pub(crate) fn vline<'a>(t: Tokens) -> El<'a> {
@@ -658,5 +719,14 @@ mod tests {
         );
         assert_eq!(short_path("src/a.ts", Path::new("/work/project")), "src/a.ts");
         assert_eq!(short_path("/etc/hosts", Path::new("/work/project")), "/etc/hosts");
+    }
+
+    #[test]
+    fn the_folder_gives_way_first_in_the_bottom_bar() {
+        // A wide window shows as much of the path as before; a narrow one what the rest leaves;
+        // the narrowest still the path's end.
+        assert_eq!(folder_cells(1440.0, 500.0), 46);
+        assert_eq!(folder_cells(760.0, 600.0), 22);
+        assert_eq!(folder_cells(500.0, 600.0), 14);
     }
 }

@@ -8,7 +8,8 @@ use iced_test::Simulator;
 use sasacode_protocol::{ControlMessage, Decision, Event};
 use tokio::sync::mpsc::UnboundedReceiver;
 
-use crate::app::{App, Clip, Edge, INPUT, INSP_W, Msg, SEARCH, SIDE_W, Tab, dragging, shortcut};
+use crate::app::{App, Clip, Edge, FIND_IN, INPUT, INSP_W, Msg, SEARCH, SIDE_W, Tab, dragging, global_key, shortcut};
+use crate::input::Command;
 use crate::snapshots::{LONG_LOG_LAST, REPLY_CODE, long_log, markdown_reply, play, window};
 use crate::transcript::{Answer, Kind, Note, Step};
 
@@ -319,6 +320,81 @@ fn reading_back_holds_the_conversation_by_its_start_until_the_newest_is_reached(
     let _ = app.update(Msg::Settled);
     let _ = app.update(Msg::NewSession);
     assert!(!app.reading);
+}
+
+#[test]
+fn a_conversation_copied_by_a_command_says_so_in_the_bar() {
+    let mut app = window("ja");
+    play(&mut app, "work.jsonl", "再試行を指数バックオフにして", |_| false);
+    let s = app.s;
+    let _ = app.update(Msg::Command(Command::Export));
+    assert_eq!(app.copied, Some(Clip::Conversation));
+    act(&mut app, |ui| {
+        ui.find(s.copied).expect("the bar says it was copied");
+    });
+}
+
+#[test]
+fn a_named_conversation_is_called_by_its_name_above_it_too() {
+    let mut app = window("ja");
+    play(&mut app, "work.jsonl", "再試行を指数バックオフにして", |_| false);
+    let _ = app.update(Msg::Rename("0a1b2c3d-0".into()));
+    let _ = app.update(Msg::OverlayText("バックオフの件".into()));
+    let _ = app.update(Msg::RenameSave);
+    // Not only the list: the list is put away, and the head of the conversation says it.
+    app.side = false;
+    act(&mut app, |ui| {
+        ui.find("バックオフの件").expect("the head says the name it was given");
+    });
+}
+
+/// Esc pressed and let go, and what the window's own keys make of it after the widgets have had
+/// it: taken by a field, or not.
+fn escape(ui: &mut Simulator<'_, Msg>) -> Option<Msg> {
+    use iced::keyboard::{Event as K, Location, key::NativeCode, key::Physical};
+    let status = ui.tap_key(Named::Escape);
+    let key = Key::Named(Named::Escape);
+    let pressed = iced::Event::Keyboard(K::KeyPressed {
+        key: key.clone(),
+        modified_key: key,
+        physical_key: Physical::Unidentified(NativeCode::Unidentified),
+        location: Location::Standard,
+        modifiers: Modifiers::empty(),
+        text: None,
+        repeat: false,
+    });
+    global_key(pressed, status, iced::window::Id::unique())
+}
+
+#[test]
+fn one_esc_in_the_search_of_the_conversation_puts_it_away() {
+    let mut app = window("ja");
+    play(&mut app, "work.jsonl", "再試行を指数バックオフにして", |_| false);
+    let _ = app.update(Msg::Command(Command::Find));
+    let mut heard = None;
+    act(&mut app, |ui| {
+        ui.click(iced::widget::Id::from(FIND_IN)).expect("the search is open");
+        ui.typewrite("テスト");
+        heard = escape(ui);
+    });
+    assert_eq!(app.find_in.as_deref(), Some("テスト"));
+    // The field took the Esc for itself; the window hears that it did, and puts the search away.
+    assert!(matches!(heard, Some(Msg::Escaped)), "{heard:?}");
+    let _ = app.update(heard.unwrap());
+    assert_eq!(app.find_in, None);
+
+    // Typed in the input since, an Esc that another field took leaves the search open; the next,
+    // the window's own, puts it away.
+    let _ = app.update(Msg::Command(Command::Find));
+    let _ = app.update(Msg::FindInText("テスト".into()));
+    act(&mut app, |ui| {
+        ui.click(iced::widget::Id::from(INPUT)).expect("the input is there");
+        ui.typewrite("a");
+    });
+    let _ = app.update(Msg::Escaped);
+    assert!(app.find_in.is_some());
+    let _ = app.update(Msg::Stop);
+    assert_eq!(app.find_in, None);
 }
 
 /// ⌘ and `key`, pressed and let go, as macOS sends them: the key comes with its letter as text.

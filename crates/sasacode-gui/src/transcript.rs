@@ -8,6 +8,7 @@
 //! and no diffs, so a change read back from one is rebuilt from the call's arguments.
 
 use std::collections::HashMap;
+use std::path::Path;
 use std::time::{Duration, Instant, SystemTime};
 
 use iced::widget::markdown;
@@ -870,7 +871,7 @@ impl Transcript {
 /// plugin puts a label like `[Image 1: /work/shot.png]` where the message named an image it
 /// attached (`@shot.png`, or a path dropped in), so what is around the labels has to be the same and
 /// in the same order, and what stood in their place is not compared.
-fn sent_as(sent: &str, arrived: &str) -> bool {
+pub(crate) fn sent_as(sent: &str, arrived: &str) -> bool {
     if sent == arrived {
         return true;
     }
@@ -903,6 +904,39 @@ fn sent_as(sent: &str, arrived: &str) -> bool {
         }
     }
     left.ends_with(last)
+}
+
+/// `text`, a message of the user's as its log holds it, as it was typed: each label the image plugin
+/// put where it attached an image from a file goes back to `@path`, relative to `cwd` inside it. So
+/// it reads as it did when it was sent, and sent again, the plugin attaches the image again. A label
+/// that names no file (an image pasted into the terminal) is left as it is.
+pub(crate) fn as_typed(text: &str, cwd: &Path) -> String {
+    let mut out = String::new();
+    let mut rest = text;
+    while let Some(found) = rest.find("[Image ") {
+        out.push_str(&rest[..found]);
+        let at = &rest[found..];
+        let file = label_len(at).and_then(|len| {
+            let name = &at[at.find(": ")? + 2..len - 1];
+            Path::new(name).is_absolute().then_some((name, len))
+        });
+        match file {
+            Some((name, len)) => {
+                out.push_str(&crate::composer::path_ref(Path::new(name), cwd));
+                rest = &at[len..];
+                // A word of its own, or the plugin reads what follows as part of the path.
+                if rest.starts_with(|c: char| !c.is_whitespace()) {
+                    out.push(' ');
+                }
+            }
+            None => {
+                out.push_str("[Image ");
+                rest = &at["[Image ".len()..];
+            }
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 /// The length of the image plugin's label at the start of `text`, as in `[Image 1: /work/shot.png]`.
@@ -1281,6 +1315,24 @@ mod tests {
         assert!(t.queued.is_empty());
         assert_eq!(t.exchanges.len(), 2);
         assert_eq!(t.exchanges[1].prompt, "@a.png と @b.png を比べて");
+    }
+
+    #[test]
+    fn a_message_read_from_its_log_names_its_images_as_they_were_typed() {
+        let cwd = Path::new("/work/p");
+        assert_eq!(
+            as_typed("[Image 1: /work/p/shot.png] これを見て", cwd),
+            "@shot.png これを見て"
+        );
+        assert_eq!(
+            as_typed("[Image 1: /work/p/a.png][Image 2: /else/b.png]と比べて", cwd),
+            "@a.png @/else/b.png と比べて"
+        );
+        assert_eq!(as_typed("[Image 1: /work/p/my shot.png]", cwd), "@\"my shot.png\"");
+        // Not a file's label, or not a label: left as it is.
+        assert_eq!(as_typed("[Image 1: image] 貼った", cwd), "[Image 1: image] 貼った");
+        assert_eq!(as_typed("[Image のこと", cwd), "[Image のこと");
+        assert_eq!(as_typed("ふつうの文", cwd), "ふつうの文");
     }
 
     #[test]
