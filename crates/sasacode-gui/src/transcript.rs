@@ -61,7 +61,8 @@ pub struct Exchange {
 #[derive(Debug)]
 pub enum Step {
     Thinking(String),
-    Text(Markdown),
+    /// Boxed: parsed Markdown is several times the size of the other steps.
+    Text(Box<Markdown>),
     /// Boxed: a call is several times the size of the other steps.
     Tool(Box<Tool>),
     Approval(Approval),
@@ -703,7 +704,7 @@ impl Transcript {
                 steps.push(if thinking {
                     Step::Thinking(delta.clone())
                 } else {
-                    Step::Text(Markdown::new(delta))
+                    Step::Text(Box::new(Markdown::new(delta)))
                 });
                 let at = steps.len() - 1;
                 self.streaming.insert(index, at);
@@ -734,7 +735,7 @@ impl Transcript {
                     }
                     match c {
                         Content::Text { text } if !text.trim().is_empty() => {
-                            self.current().steps.push(Step::Text(Markdown::new(text)))
+                            self.current().steps.push(Step::Text(Box::new(Markdown::new(text))))
                         }
                         Content::Thinking { thinking, .. } if !thinking.trim().is_empty() => {
                             self.current().steps.push(Step::Thinking(thinking.clone()))
