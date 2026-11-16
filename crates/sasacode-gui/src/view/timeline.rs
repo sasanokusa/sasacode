@@ -1,0 +1,787 @@
+//! The conversation. Each exchange is the user's message, the steps taken about it (folded away
+//! once it is answered) and the reply.
+
+use iced::widget::{Column, Row, Space, button, column, container, markdown, row, rule, scrollable, text};
+use iced::{Alignment, Color, Length, Padding, border};
+use sasacode_protocol::StopCause;
+
+use super::{BOLD, COL_W, El, MONO, UI, clip, diff_view, first_line, output_block, plus_minus, short_path, tag};
+use crate::app::{App, Msg, Tab};
+use crate::i18n::fill;
+use crate::icons::{Icon, icon};
+use crate::theme::{RADIUS, RADIUS_L, Tokens};
+use crate::transcript::{
+    Answer, Approval, End, Exchange, Kind, Markdown, Note, Step, Todo, TodoStatus, Tool, ToolState,
+};
+
+/// How far what belongs to a row is set in under it: past the row's icon.
+const INDENT: f32 = 28.0;
+
+pub fn timeline(app: &App) -> El<'_> {
+    let (t, s) = (app.t, app.s);
+    if app.transcript.is_empty() && app.next.is_none() {
+        return blank(app);
+    }
+    let mut col = column![].spacing(22).width(Length::Fill);
+    if app.loaded {
+        col = col.push(text(s.loaded_note).size(12).color(t.fg_3));
+    }
+    for (i, ex) in app.transcript.exchanges.iter().enumerate() {
+        col = col.push(exchange(app, i, ex));
+    }
+    for queued in &app.transcript.queued {
+        col = col.push(
+            column![
+                bubble(t, queued),
+                container(text(s.next_turn).size(11.5).color(t.fg_3)).align_right(Length::Fill),
+            ]
+            .spacing(4),
+        );
+    }
+    if let Some(next) = &app.next {
+        col = col.push(bubble(t, next));
+    }
+    scrollable(
+        container(container(col).max_width(COL_W))
+            .center_x(Length::Fill)
+            .padding([20, 24]),
+    )
+    .direction(scrollable::Direction::Vertical(
+        scrollable::Scrollbar::new().width(8).scroller_width(8).margin(2),
+    ))
+    // After the direction, which it is a part of: the newest is what is in view.
+    .anchor_bottom()
+    .style(t.scroll())
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .into()
+}
+
+/// A conversation that has not started.
+fn blank(app: &App) -> El<'_> {
+    let (t, s) = (app.t, app.s);
+    container(
+        column![
+            icon(Icon::Leaf, 28.0, t.accent),
+            text(s.blank_h).size(20).font(BOLD).color(t.fg),
+            text(s.blank_p).size(13).color(t.fg_3),
+        ]
+        .spacing(10)
+        .align_x(Alignment::Center),
+    )
+    .center(Length::Fill)
+    .padding(24)
+    .into()
+}
+
+/// What the user said, on the right.
+fn bubble<'a>(t: Tokens, prompt: &'a str) -> El<'a> {
+    container(
+        container(text(prompt).size(14).color(t.fg))
+            .padding([8, 12])
+            .max_width(560)
+            .style(t.boxed(t.inset, t.inset, RADIUS_L)),
+    )
+    .align_right(Length::Fill)
+    .into()
+}
+
+fn exchange<'a>(app: &'a App, i: usize, ex: &'a Exchange) -> El<'a> {
+    let t = app.t;
+    let last = i + 1 == app.transcript.exchanges.len();
+    let live = last && app.running();
+    let mut col = column![].spacing(10);
+    if !ex.prompt.is_empty() {
+        col = col.push(bubble(t, &ex.prompt));
+    }
+    if live {
+        // While it runs, everything is in the order it happened, the text being written included.
+        if !ex.steps.is_empty() {
+            col = col.push(steps(app, i, &ex.steps));
+        }
+        return col.push(live_row(app, ex)).into();
+    }
+    let answer = ex.answer();
+    let work = &ex.steps[..answer.unwrap_or(ex.steps.len())];
+    if !work.is_empty() {
+        let open = app.steps_open(i);
+        col = col.push(fold_row(app, i, ex, work, open));
+        if open {
+            col = col.push(
+                row![
+                    rule::vertical(2).style(t.rule(t.line)),
+                    steps(app, i, work).width(Length::Fill)
+                ]
+                .spacing(10),
+            );
+        }
+    }
+    if let Some(Step::Text(md)) = answer.map(|a| &ex.steps[a]) {
+        col = col.push(reply(app, md));
+    }
+    if let Some(end) = &ex.end {
+        col = col.push(ending(app, ex, end, last));
+    }
+    col.into()
+}
+
+/// The line that stands for the steps of a finished exchange.
+fn fold_row<'a>(app: &'a App, i: usize, ex: &'a Exchange, work: &'a [Step], open: bool) -> El<'a> {
+    let (t, s) = (app.t, app.s);
+    let calls = work.iter().filter(|s| matches!(s, Step::Tool(_))).count();
+    let mut parts = Vec::new();
+    if let Some(d) = ex.elapsed {
+        parts.push(fill(s.worked, "d", s.duration(d)));
+    }
+    if calls > 0 {
+        let mut said = fill(s.calls, "n", calls);
+        if ex.failed() > 0 {
+            let failed = fill(s.failed, "n", ex.failed());
+            said = if s.ja {
+                format!("{said}（{failed}）")
+            } else {
+                format!("{said} ({failed})")
+            };
+        }
+        parts.push(said);
+    }
+    let toggle = if open { s.hide_steps } else { s.show_steps };
+    let label = if parts.is_empty() {
+        toggle.to_owned()
+    } else {
+        parts.join(" · ")
+    };
+    let mut content = row![
+        icon(if open { Icon::ChevronDown } else { Icon::ChevronRight }, 12.0, t.fg_3),
+        text(label).size(12.5).color(t.fg_2),
+    ]
+    .spacing(8)
+    .align_y(Alignment::Center);
+    if !parts.is_empty() {
+        content = content
+            .push(Space::new().width(Length::Fill))
+            .push(text(toggle).size(12).color(t.fg_3));
+    }
+    button(content)
+        .width(Length::Fill)
+        .padding([5, 8])
+        .style(t.ghost(t.fg_2, false))
+        .on_press(Msg::Fold(i))
+        .into()
+}
+
+/// The line under a run that is going on.
+fn live_row<'a>(app: &'a App, ex: &'a Exchange) -> El<'a> {
+    let (t, s) = (app.t, app.s);
+    let waiting = app.transcript.pending_approval().is_some();
+    let (label, color) = if waiting {
+        (s.st_waiting, t.warn)
+    } else {
+        (s.live_work, t.accent)
+    };
+    let mut line = row![icon(Icon::Dot, 10.0, color), text(label).size(12.5).color(color)]
+        .spacing(8)
+        .align_y(Alignment::Center);
+    if let Some(started) = ex.started {
+        line = line.push(
+            text(s.duration(app.now.saturating_duration_since(started)))
+                .size(12)
+                .color(t.fg_3),
+        );
+    }
+    let stop = if s.ja {
+        format!("Esc{}", s.to_stop)
+    } else {
+        format!("Esc {}", s.to_stop)
+    };
+    line.push(text("·").size(12).color(t.line_2))
+        .push(text(stop).size(12).color(t.fg_3))
+        .padding([2, 8])
+        .into()
+}
+
+fn steps<'a>(app: &'a App, i: usize, work: &'a [Step]) -> Column<'a, Msg> {
+    let mut col = column![].spacing(2);
+    for (j, step) in work.iter().enumerate() {
+        col = col.push(match step {
+            Step::Thinking(thought) => thinking(app, i, j, thought),
+            Step::Text(md) => container(reply(app, md)).padding([6, 8]).into(),
+            Step::Tool(tool) => tool_row(app, i, j, tool),
+            Step::Approval(approval) => approval_row(app, approval),
+            Step::Note(note) => note_row(app, i, j, note),
+        });
+    }
+    col
+}
+
+/// One line of the steps: an icon and what happened; on the right how long it took. With `press`
+/// the line is a button that opens what belongs to it.
+fn line<'a>(
+    t: Tokens,
+    mark: (Icon, Color),
+    parts: Vec<El<'a>>,
+    meta: Option<String>,
+    press: Option<(Msg, bool)>,
+) -> El<'a> {
+    // What happened takes the room the rest leaves and is cut there, so how long it took and the
+    // mark that it opens are always in view.
+    let said = container(Row::with_children(parts).spacing(8).align_y(Alignment::Center))
+        .width(Length::Fill)
+        .clip(true);
+    let mut content = row![icon(mark.0, 14.0, mark.1), said]
+        .spacing(8)
+        .align_y(Alignment::Center);
+    if let Some(meta) = meta {
+        content = content.push(text(meta).size(11.5).color(t.fg_3).wrapping(text::Wrapping::None));
+    }
+    match press {
+        Some((msg, open)) => button(content.push(icon(
+            if open { Icon::ChevronDown } else { Icon::ChevronRight },
+            11.0,
+            t.fg_3,
+        )))
+        .width(Length::Fill)
+        .padding([4, 8])
+        .style(t.ghost(t.fg, false))
+        .on_press(msg)
+        .into(),
+        None => container(content).width(Length::Fill).padding([4, 8]).into(),
+    }
+}
+
+fn say<'a>(label: impl text::IntoFragment<'a>, color: Color) -> El<'a> {
+    text(label).size(13).color(color).wrapping(text::Wrapping::None).into()
+}
+
+fn code<'a>(label: impl text::IntoFragment<'a>, color: Color) -> El<'a> {
+    text(label).size(12.5).font(MONO).color(color).into()
+}
+
+/// What belongs to a row, under it.
+fn under<'a>(content: impl Into<El<'a>>) -> El<'a> {
+    container(content)
+        .width(Length::Fill)
+        .padding(Padding {
+            top: 2.0,
+            right: 8.0,
+            bottom: 6.0,
+            left: INDENT,
+        })
+        .into()
+}
+
+fn thinking<'a>(app: &'a App, i: usize, j: usize, thought: &'a str) -> El<'a> {
+    let (t, s) = (app.t, app.s);
+    let open = app.open.contains(&(i, j));
+    let mut parts = vec![say(s.thinking, t.fg_2)];
+    if !open {
+        parts.push(say(clip(first_line(thought.trim()), 64), t.fg_3));
+    }
+    let head = line(t, (Icon::Bulb, t.fg_3), parts, None, Some((Msg::Open(i, j), open)));
+    if !open {
+        return head;
+    }
+    column![head, under(text(thought.trim()).size(13).color(t.fg_2))].into()
+}
+
+fn tool_row<'a>(app: &'a App, i: usize, j: usize, tool: &'a Tool) -> El<'a> {
+    let (t, s) = (app.t, app.s);
+    let kind = tool.kind();
+    let (running, done) = (tool.state == ToolState::Running, tool.state == ToolState::Done);
+    let faint = matches!(tool.state, ToolState::Waiting | ToolState::Skipped);
+    let strong = if faint { t.fg_3 } else { t.fg };
+    let soft = if faint { t.fg_3 } else { t.fg_2 };
+    let path = || short_path(tool.arg("path").unwrap_or(&tool.summary), &app.cwd);
+
+    let mut parts: Vec<El<'a>> = Vec::new();
+    let symbol = match kind {
+        Kind::Read => {
+            parts.push(say(if running { s.v_read_live } else { s.v_read }, soft));
+            parts.push(code(clip(&short_path(&tool.summary, &app.cwd), 60), strong));
+            if done {
+                parts.push(say(fill(s.lines, "n", tool.lines), t.fg_3));
+            }
+            Icon::File
+        }
+        Kind::Write | Kind::Edit => {
+            let created = tool.change.as_ref().and_then(|c| c.created);
+            let verb = match (kind, running, created) {
+                (Kind::Edit, true, _) => s.v_edit_live,
+                (Kind::Edit, false, _) if faint => s.v_edit_any,
+                (Kind::Edit, false, _) => s.v_edit,
+                (_, true, _) => s.v_write_live,
+                (_, false, Some(true)) => s.v_write,
+                (_, false, Some(false)) if done => s.v_overwrite,
+                // A log does not say whether the file was there.
+                (_, false, None) if done => s.v_wrote,
+                (_, false, _) => s.v_write_any,
+            };
+            parts.push(say(verb, soft));
+            parts.push(code(clip(&path(), 60), strong));
+            if let Some(change) = tool.change.as_ref().filter(|_| done) {
+                parts.push(plus_minus(t, change.diff.added, change.diff.removed));
+                if change.created == Some(true) {
+                    parts.push(tag(t, s.new_file, t.accent_wash, t.accent));
+                }
+            }
+            if kind == Kind::Edit { Icon::Pencil } else { Icon::File }
+        }
+        Kind::Bash => {
+            let verb = match (running, faint) {
+                (true, _) => s.v_bash_live,
+                (false, true) => s.v_bash_any,
+                (false, false) => s.v_bash,
+            };
+            parts.push(say(verb, soft));
+            parts.push(code(clip(first_line(&tool.summary), 58), strong));
+            if tool.finished() && tool.state != ToolState::Skipped {
+                let (said, bad) = match (tool.killed.as_deref(), tool.exit_code) {
+                    (Some("timeout"), _) => (s.killed_timeout.to_owned(), true),
+                    (Some(_), _) => (s.killed_abort.to_owned(), true),
+                    (None, Some(0)) | (None, None) => match tool.lines.saturating_sub(1) {
+                        0 => (s.no_output.to_owned(), false),
+                        n => (fill(s.out_lines, "n", n), false),
+                    },
+                    (None, Some(code)) => (fill(s.exit, "n", code), true),
+                };
+                parts.push(say(said, if bad { t.err } else { t.fg_3 }));
+            }
+            Icon::Terminal
+        }
+        Kind::Task => {
+            parts.push(say(s.v_task, soft));
+            parts.push(say(clip(&tool.summary, 56), strong));
+            let calls = tool.stream.lines().count();
+            if calls > 0 {
+                parts.push(say(fill(s.calls, "n", calls), t.fg_3));
+            }
+            Icon::Bot
+        }
+        Kind::Plan => {
+            match &tool.plan {
+                Some(plan) if plan.first => {
+                    parts.push(say(s.plan_made, soft));
+                    parts.push(say(fill(s.plan_steps, "n", plan.todos.len()), t.fg_3));
+                }
+                Some(plan) => {
+                    if plan.newly_done.is_empty() {
+                        parts.push(say(s.plan_updated, soft));
+                    } else {
+                        let done = plan.newly_done.join(if s.ja { "、" } else { ", " });
+                        parts.push(say(format!("{}{}", s.step_done, clip(&done, 60)), soft));
+                    }
+                    parts.push(say(format!("{}/{}", plan.done(), plan.todos.len()), t.fg_3));
+                }
+                None => parts.push(code(tool.name.as_str(), strong)),
+            }
+            Icon::List
+        }
+        Kind::Other => {
+            parts.push(code(tool.name.as_str(), strong));
+            let said = if tool.summary.is_empty() {
+                first_line(&tool.output)
+            } else {
+                &tool.summary
+            };
+            parts.push(say(clip(said, 56), t.fg_3));
+            Icon::Spark
+        }
+    };
+    if tool.repaired.is_some() {
+        parts.push(tag(t, s.repaired, t.warn_wash, t.warn));
+    }
+    match tool.state {
+        ToolState::Waiting => {
+            let asked = app.transcript.approval_of(&tool.id).is_some_and(|a| a.answer.is_none());
+            parts.push(if asked {
+                tag(t, s.st_waiting, t.warn_wash, t.warn)
+            } else {
+                tag(t, s.tag_waiting, t.inset, t.fg_3)
+            });
+        }
+        ToolState::Failed if kind != Kind::Bash => parts.push(tag(t, s.tag_failed, t.err_wash, t.err)),
+        ToolState::Skipped => {
+            let denied = tool.denied()
+                || matches!(
+                    app.transcript.approval_of(&tool.id).and_then(|a| a.answer.as_ref()),
+                    Some(Answer::Denied(_))
+                );
+            parts.push(tag(
+                t,
+                if denied { s.tag_denied } else { s.tag_not_run },
+                t.inset,
+                t.fg_2,
+            ));
+        }
+        _ => {}
+    }
+
+    let color = match tool.state {
+        ToolState::Running => t.accent,
+        ToolState::Failed => t.err,
+        _ => t.fg_3,
+    };
+    let meta = match (tool.elapsed, tool.started) {
+        (Some(d), _) if d.as_millis() >= 1000 => Some(s.duration(d)),
+        (None, Some(started)) if running => Some(s.duration(app.now.saturating_duration_since(started))),
+        _ => None,
+    };
+    // What runs shows what it writes, and a command that failed shows why, without being asked.
+    let by_itself =
+        (running && matches!(kind, Kind::Bash | Kind::Task)) || (tool.state == ToolState::Failed && kind == Kind::Bash);
+    let open = app.open.contains(&(i, j)) != by_itself;
+    let details = tool_details(app, tool);
+    let press = details.is_some().then_some((Msg::Open(i, j), open));
+    let head = line(t, (symbol, color), parts, meta, press);
+    let row: El<'a> = match details {
+        Some(details) if open => column![head, under(details)].into(),
+        _ => head,
+    };
+    // A call another call made sits under it.
+    if tool.parent.is_some() {
+        container(row).padding(Padding::ZERO.left(INDENT - 8.0)).into()
+    } else {
+        row
+    }
+}
+
+/// What a call's row opens to. `None` when there is nothing more to show than the row says.
+fn tool_details<'a>(app: &'a App, tool: &'a Tool) -> Option<El<'a>> {
+    let (t, s) = (app.t, app.s);
+    let mut parts: Vec<El<'a>> = Vec::new();
+    let mut push = |el: El<'a>| parts.push(el);
+    if let Some(note) = &tool.repaired {
+        push(
+            text(format!("{}{}{note}", s.repaired, if s.ja { "：" } else { ": " }))
+                .size(12)
+                .color(t.warn)
+                .into(),
+        );
+    }
+    let said = tool.shown_output();
+    match tool.kind() {
+        Kind::Write | Kind::Edit => {
+            // A change that was not made says why; one that was made shows itself.
+            if tool.state != ToolState::Done && !tool.output.is_empty() {
+                push(output_block(t, s, &tool.output, 12));
+            }
+            if let Some(change) = &tool.change
+                && !change.diff.is_empty()
+            {
+                push(diff_view(t, s, &change.diff, 60));
+            }
+        }
+        Kind::Bash => {
+            if let Some(command) = tool.arg("command") {
+                push(
+                    container(
+                        text(format!("$ {command}"))
+                            .size(12)
+                            .font(MONO)
+                            .color(t.fg)
+                            .wrapping(text::Wrapping::WordOrGlyph),
+                    )
+                    .width(Length::Fill)
+                    .padding([6, 10])
+                    .style(t.boxed(t.raised, t.line, RADIUS))
+                    .into(),
+                );
+            }
+            // Nothing written yet is not "no output" while the command still runs.
+            let silent = tool.state == ToolState::Running && said.is_empty();
+            if tool.state != ToolState::Waiting && !silent {
+                push(output_block(t, s, said, 30));
+            }
+        }
+        Kind::Task => {
+            if let Some(prompt) = tool.arg("prompt") {
+                push(text(prompt).size(12.5).color(t.fg_2).into());
+            }
+            // The subagent's own calls: all the run says of them is one line each.
+            let mut calls = column![].spacing(2);
+            for call in tool.stream.lines().filter(|l| !l.trim().is_empty()) {
+                calls = calls.push(
+                    row![icon(Icon::ChevronRight, 10.0, t.fg_3), code(clip(call, 80), t.fg_2)]
+                        .spacing(6)
+                        .align_y(Alignment::Center),
+                );
+            }
+            if !tool.stream.trim().is_empty() {
+                push(calls.into());
+            }
+            if !tool.output.is_empty() {
+                push(output_block(t, s, &tool.output, 30));
+            }
+        }
+        Kind::Plan => {
+            if let Some(plan) = &tool.plan {
+                push(todo_list(t, &plan.todos));
+            }
+        }
+        Kind::Read => {
+            if !said.is_empty() {
+                push(output_block(t, s, said, 20));
+            }
+        }
+        Kind::Other => {
+            if tool.input.as_object().is_some_and(|o| !o.is_empty()) {
+                let args = serde_json::to_string_pretty(&tool.input).unwrap_or_default();
+                push(output_block(t, s, &args, 20));
+            }
+            if !said.is_empty() {
+                push(output_block(t, s, said, 20));
+            }
+        }
+    }
+    (!parts.is_empty()).then(|| Column::with_children(parts).spacing(6).into())
+}
+
+/// A plan's steps with their state.
+pub(crate) fn todo_list<'a>(t: Tokens, todos: &'a [Todo]) -> El<'a> {
+    let mut col = column![].spacing(5);
+    for todo in todos {
+        let (mark, color, ink) = match todo.status {
+            TodoStatus::Completed => (Icon::Check, t.accent, t.fg_3),
+            TodoStatus::InProgress => (Icon::Half, t.warn, t.fg),
+            TodoStatus::Pending => (Icon::Circle, t.fg_3, t.fg_2),
+        };
+        col = col.push(
+            row![
+                container(icon(mark, 13.0, color)).padding(Padding::ZERO.top(2.0)),
+                text(todo.content.as_str()).size(13).color(ink)
+            ]
+            .spacing(8),
+        );
+    }
+    col.into()
+}
+
+fn approval_row<'a>(app: &'a App, approval: &'a Approval) -> El<'a> {
+    let (t, s) = (app.t, app.s);
+    let (label, color) = match &approval.answer {
+        None => (s.waiting_appr, t.warn),
+        Some(Answer::Allowed) => (s.you_allowed, t.fg_3),
+        Some(Answer::Always) => (s.you_always, t.fg_3),
+        Some(Answer::Denied(_)) => (s.you_denied, t.fg_3),
+        Some(Answer::Cancelled) => (s.appr_cancelled, t.fg_3),
+    };
+    let subject = subject(app, approval);
+    let mut parts = vec![say(label, color), code(clip(&subject, 56), t.fg_3)];
+    if let Some(Answer::Denied(why)) = &approval.answer
+        && !why.is_empty()
+    {
+        parts.push(say(
+            if s.ja {
+                format!("「{}」", clip(why, 40))
+            } else {
+                format!("\"{}\"", clip(why, 40))
+            },
+            t.fg_2,
+        ));
+    }
+    line(t, (Icon::Shield, color), parts, None, None)
+}
+
+/// What an approval is about, in a few words: the command, the file, else the tool.
+pub(crate) fn subject(app: &App, approval: &Approval) -> String {
+    let arg = |key: &str| approval.args.get(key).and_then(|v| v.as_str());
+    match (arg("command"), arg("path")) {
+        (Some(command), _) => first_line(command).to_owned(),
+        (None, Some(path)) => format!("{} {}", approval.tool, short_path(path, &app.cwd)),
+        _ => approval.tool.clone(),
+    }
+}
+
+fn note_row<'a>(app: &'a App, i: usize, j: usize, note: &'a Note) -> El<'a> {
+    let (t, s) = (app.t, app.s);
+    let open = app.open.contains(&(i, j));
+    let quiet = |mark: Icon, label: &'static str| line(t, (mark, t.fg_3), vec![say(label, t.fg_3)], None, None);
+    let folded = |mark: Icon, label: String, body: &'a str| -> El<'a> {
+        let head = line(
+            t,
+            (mark, t.fg_3),
+            vec![say(label, t.fg_3)],
+            None,
+            Some((Msg::Open(i, j), open)),
+        );
+        if open {
+            column![head, under(text(body).size(12.5).color(t.fg_2))].into()
+        } else {
+            head
+        }
+    };
+    match note {
+        Note::Harness(body) => folded(Icon::Leaf, s.note_harness.to_owned(), body),
+        Note::Task { head, report } => folded(Icon::Bot, format!("{} · {}", s.note_task, clip(head, 60)), report),
+        Note::Error(body) => container(
+            row![
+                container(icon(Icon::Alert, 14.0, t.err)).padding(Padding::ZERO.top(1.0)),
+                text(body.as_str())
+                    .size(13)
+                    .color(t.err)
+                    .wrapping(text::Wrapping::WordOrGlyph)
+            ]
+            .spacing(8),
+        )
+        .width(Length::Fill)
+        .padding([8, 10])
+        .style(t.boxed(t.err_wash, t.err_line, RADIUS))
+        .into(),
+        Note::ContextFull => line(t, (Icon::Alert, t.warn), vec![say(s.context_full, t.warn)], None, None),
+        Note::Compacted => quiet(Icon::Spark, s.compacted),
+        Note::Retrying => quiet(Icon::Spark, s.discarded),
+    }
+}
+
+/// A reply, as the Markdown it is written in.
+fn reply<'a>(app: &'a App, md: &'a Markdown) -> El<'a> {
+    let t = app.t;
+    let mut style = markdown::Style::from_palette(t.palette());
+    style.inline_code_color = t.fg;
+    style.inline_code_highlight = iced::advanced::text::Highlight {
+        background: t.inset.into(),
+        border: border::rounded(4.0),
+    };
+    style.link_color = t.accent;
+    // Named, like the rest of the window: the style's own default is the sans-serif family, which
+    // is not the window's font and takes kanji and kana of one bold word from different fonts.
+    style.font = UI;
+    style.inline_code_font = MONO;
+    style.code_block_font = MONO;
+    let mut settings = markdown::Settings::with_text_size(14, style);
+    settings.code_size = 12.5.into();
+    markdown::view_with(md.content.items(), settings, &Reply(t))
+}
+
+/// Draws a reply as iced does, except its code blocks.
+struct Reply(Tokens);
+
+impl<'a> markdown::Viewer<'a, Msg> for Reply {
+    fn on_link_click(url: markdown::Uri) -> Msg {
+        Msg::Link(url)
+    }
+
+    /// The code as it was written, in the monospaced font. iced's own code block draws each line
+    /// in the font of the text around it unless it highlights the code, which this window does not.
+    fn code_block(
+        &self,
+        settings: markdown::Settings,
+        _language: Option<&'a str>,
+        code: &'a str,
+        _lines: &'a [markdown::Text],
+    ) -> El<'a> {
+        let t = self.0;
+        container(
+            scrollable(
+                container(
+                    text(code.trim_end())
+                        .size(settings.code_size)
+                        .font(MONO)
+                        .color(t.fg)
+                        .wrapping(text::Wrapping::None),
+                )
+                .padding([8, 10]),
+            )
+            .direction(scrollable::Direction::Horizontal(
+                scrollable::Scrollbar::new().width(6).scroller_width(6).margin(1),
+            ))
+            .style(t.scroll()),
+        )
+        .width(Length::Fill)
+        .style(t.boxed(t.inset, t.inset, RADIUS))
+        .into()
+    }
+}
+
+/// How a run ended: the quiet line of one that finished, or a card that says why it did not.
+fn ending<'a>(app: &'a App, ex: &'a Exchange, end: &'a End, last: bool) -> El<'a> {
+    let (t, s) = (app.t, app.s);
+    let files: Vec<&str> = {
+        let mut seen: Vec<&str> = ex.changes().map(|(_, c)| c.path.as_str()).collect();
+        seen.sort_unstable();
+        seen.dedup();
+        seen
+    };
+    let (added, removed) = ex
+        .changes()
+        .fold((0, 0), |(a, r), (_, c)| (a + c.diff.added, r + c.diff.removed));
+
+    if end.cause == StopCause::Done {
+        let mut foot = row![icon(Icon::Check, 13.0, t.accent)]
+            .spacing(8)
+            .align_y(Alignment::Center);
+        if let Some(d) = ex.elapsed {
+            foot = foot.push(text(fill(s.done_in, "d", s.duration(d))).size(12).color(t.fg_3));
+        }
+        if !files.is_empty() {
+            foot = foot
+                .push(text("·").size(12).color(t.line_2))
+                .push(text(fill(s.files_changed, "n", files.len())).size(12).color(t.fg_2))
+                .push(plus_minus(t, added, removed))
+                .push(
+                    button(text(s.review).size(12).color(t.accent))
+                        .padding([2, 8])
+                        .style(t.ghost(t.accent, false))
+                        .on_press(Msg::Tab(Tab::Changes)),
+                );
+        }
+        return container(foot).padding([0, 8]).into();
+    }
+
+    let (mark, title, fill_color, line_color, ink) = match end.cause {
+        StopCause::Aborted => (Icon::Stop, s.end_aborted.to_owned(), t.inset, t.line_2, t.fg),
+        StopCause::Error => (Icon::Alert, s.end_error.to_owned(), t.err_wash, t.err_line, t.err),
+        StopCause::MaxTurns => (Icon::Alert, s.end_max.to_owned(), t.warn_wash, t.warn_line, t.warn),
+        StopCause::Stopped => (
+            Icon::Shield,
+            fill(s.end_plugin, "p", end.plugin.as_deref().unwrap_or("plugin")),
+            t.warn_wash,
+            t.warn_line,
+            t.warn,
+        ),
+        StopCause::Refusal => (Icon::Alert, s.end_refusal.to_owned(), t.warn_wash, t.warn_line, t.warn),
+        StopCause::ContextLimit => (Icon::Alert, s.end_context.to_owned(), t.warn_wash, t.warn_line, t.warn),
+        _ => (Icon::Alert, s.end_other.to_owned(), t.inset, t.line_2, t.fg),
+    };
+    let mut body = column![
+        row![icon(mark, 14.0, ink), text(title).size(13.5).font(BOLD).color(ink)]
+            .spacing(8)
+            .align_y(Alignment::Center)
+    ]
+    .spacing(6);
+    if let Some(reason) = &end.reason {
+        body = body.push(
+            text(reason.as_str())
+                .size(12.5)
+                .font(MONO)
+                .color(t.fg)
+                .wrapping(text::Wrapping::WordOrGlyph),
+        );
+    }
+    let aside = match end.cause {
+        StopCause::Aborted if files.is_empty() => Some(s.end_aborted_p0.to_owned()),
+        StopCause::Aborted => Some(fill(s.end_aborted_p, "n", files.len())),
+        StopCause::MaxTurns | StopCause::Stopped => Some(s.end_saved.to_owned()),
+        _ => None,
+    };
+    if let Some(aside) = aside {
+        body = body.push(text(aside).size(12.5).color(t.fg_2));
+    }
+    // Only where the conversation stands: once something was sent after it, it has moved on.
+    if last && !app.busy() && app.next.is_none() && end.cause != StopCause::Refusal {
+        body = body.push(
+            container(
+                button(text(s.continue_btn).size(12.5))
+                    .padding([5, 12])
+                    .style(t.outline(t.fg))
+                    .on_press(Msg::Continue),
+            )
+            .padding(Padding::ZERO.top(4.0)),
+        );
+    }
+    container(body)
+        .width(Length::Fill)
+        .padding([10, 12])
+        .style(t.boxed(fill_color, line_color, RADIUS_L))
+        .into()
+}

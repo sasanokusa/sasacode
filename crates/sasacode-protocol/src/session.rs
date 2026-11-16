@@ -8,7 +8,7 @@ use std::time::SystemTime;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::message::{Message, text_of};
+use crate::message::{Message, Usage, text_of};
 
 /// The log format version this crate reads (`SESSION_VERSION`).
 pub const SESSION_VERSION: u32 = 1;
@@ -38,8 +38,22 @@ pub enum SessionEntry {
     Replace {
         messages: Vec<Message>,
     },
-    /// Usage outside the conversation, a tool repair, a plugin's own entry: not part of the
-    /// conversation, so not read here.
+    /// A call that was mended before it ran (`tool-repair`). The message holds the mended call.
+    ToolRepair {
+        #[serde(rename = "callId")]
+        call_id: String,
+        #[serde(default)]
+        note: String,
+    },
+    /// What a response outside the conversation used (a subagent, a side request, a discarded
+    /// reply). The conversation's own usage is in its assistant messages.
+    Usage {
+        #[serde(default)]
+        usage: Usage,
+        #[serde(default)]
+        source: String,
+    },
+    /// A plugin's own entry: not part of the conversation, so not read here.
     #[serde(other)]
     Other,
 }

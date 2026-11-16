@@ -19,7 +19,8 @@ pi-tuiには、`patches/@earendil-works%2Fpi-tui@0.87.1.patch`を、ルートの
 | --- | --- | --- | --- |
 | serde / serde_json | sasacode-protocol、sasacode-gui | JSONLのイベントとセッションログを型に読み書きする。`type`で分けたTSの共用体を、そのまま`#[serde(tag = "type")]`で表せる | 手書きのパーサー：イベントの数が多く、TS側の変更に追いにくい |
 | sha2 | sasacode-protocol | セッションのフォルダ名に入る作業ディレクトリのSHA-256（TS側の`sessionDir`と同じ名前にする） | なし（ハッシュが一致しないとセッションを見つけられない） |
-| iced | sasacode-gui | ElectronやTauriのWebViewを使わず、GPU（なければCPU）で描くGUI。Elm型の更新で子プロセスのイベントを扱いやすく、Markdown表示、複数行の入力欄、IME対応（0.14〜）がそろっている。MIT | egui（毎フレーム描き直す方式で、長い会話ログに工夫が要る）、gpui（Zed本体向けで単体利用の文書が少ない）、Slint（GPLv3か独自ライセンス）、Dioxus（中身がTauriと同じWebView） |
+| iced | sasacode-gui | ElectronやTauriのWebViewを使わず、GPU（なければCPU）で描くGUI。Elm型の更新で子プロセスのイベントを扱いやすく、Markdown表示、複数行の入力欄、IME対応（0.14〜）がそろっている。MIT。機能は`markdown`（返答の表示）、`tokio`、`advanced`（インラインコードの背景の指定）、`svg`（アイコン。絵文字や記号の文字はOSごとに形と幅が変わるので、線画をSVGで埋め込んで描く。resvgなどが入る） | egui（毎フレーム描き直す方式で、長い会話ログに工夫が要る）、gpui（Zed本体向けで単体利用の文書が少ない）、Slint（GPLv3か独自ライセンス）、Dioxus（中身がTauriと同じWebView）。アイコンは、アイコンフォントの同梱（フォントファイルを抱えることになる）と比べてSVGにした |
+| iced_test | sasacode-gui（テストだけ） | 画面を表示せずに窓を描き、クリックとキー入力を送る。承認カードのボタンや入力欄の動きをテストし（`drive.rs`）、主な状態を画像に書き出して目で確かめる（`snapshots.rs`）。icedと同じ作者・同じ版。MIT | Xvfbで実際の窓を操作する：Linuxでしか動かず、座標頼みになる |
 | tokio | sasacode-gui | 子プロセスの起動とstdin / stdoutの非同期読み書き。icedの`tokio`機能と同じランタイムを使う | async-std / smol：icedがtokioに対応しているので、ランタイムを2つ持たない |
 
 ## pi-tui の Bun 上での検証（M1 冒頭）

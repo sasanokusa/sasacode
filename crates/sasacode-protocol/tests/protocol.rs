@@ -226,3 +226,35 @@ fn every_control_message_the_cli_reads_is_known() {
 fn the_session_format_version_matches() {
     assert!(repo("packages/agent/src/session.ts").contains(&format!("SESSION_VERSION = {}", session::SESSION_VERSION)));
 }
+
+#[test]
+fn every_line_of_every_recorded_run_parses_as_a_known_event() {
+    for name in ["work", "stop", "cancel", "error", "dropped", "turns", "loop"] {
+        let raw = std::fs::read_to_string(fixture(&format!("{name}.jsonl"))).unwrap();
+        for line in raw.lines() {
+            let event = parse_event(line).unwrap_or_else(|e| panic!("{name}: {line}: {e}"));
+            assert!(!matches!(event, Event::Unknown(_)), "{name}: {line}");
+        }
+    }
+}
+
+#[test]
+fn a_session_log_keeps_the_repairs_and_the_usage_outside_the_conversation() {
+    let entries = read_entries(&fixture("work-session.jsonl")).unwrap();
+    let repairs: Vec<&str> = entries
+        .iter()
+        .filter_map(|e| match e {
+            SessionEntry::ToolRepair { note, .. } => Some(note.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(repairs, [r#"tool "read_file" → "read"; argument "file" → "path""#]);
+    let outside: Vec<(&str, u64)> = entries
+        .iter()
+        .filter_map(|e| match e {
+            SessionEntry::Usage { usage, source } => Some((source.as_str(), usage.input)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(outside, [("subagent", 100), ("subagent", 100)]);
+}

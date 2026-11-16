@@ -3,22 +3,32 @@
 //! permissions and its sessions are exactly those of the CLI and the TUI.
 
 mod app;
+mod diff;
+#[cfg(test)]
+mod drive;
 mod i18n;
+mod icons;
 mod runner;
+#[cfg(test)]
+mod snapshots;
+mod theme;
 mod transcript;
+mod view;
 
 use std::path::PathBuf;
 
-const USAGE: &str = "usage: sasacode-gui [--sasacode <path>] [folder]
+const USAGE: &str = "usage: sasacode-gui [--sasacode <path>] [--session <id>] [folder]
 
   folder              the project to work in (default: the current directory)
   --sasacode <path>   the sasacode executable (default: $SASACODE_BIN, else sasacode on PATH)
+  --session <id>      open on this conversation of the folder (its id, or the start of it)
   -h, --help          show this
   -v, --version       show the version";
 
 fn main() -> iced::Result {
     let mut program = std::env::var_os("SASACODE_BIN").map(PathBuf::from);
     let mut folder = None;
+    let mut session = None;
     let mut args = std::env::args_os().skip(1);
     while let Some(arg) = args.next() {
         match arg.to_str() {
@@ -34,6 +44,10 @@ fn main() -> iced::Result {
                 Some(path) => program = Some(PathBuf::from(path)),
                 None => exit_with("--sasacode needs a path"),
             },
+            Some("--session") => match args.next().map(|id| id.to_string_lossy().into_owned()) {
+                Some(id) if !id.is_empty() => session = Some(id),
+                _ => exit_with("--session needs an id"),
+            },
             Some(flag) if flag.starts_with('-') => exit_with(&format!("unknown option {flag}")),
             _ => folder = Some(PathBuf::from(arg)),
         }
@@ -47,13 +61,19 @@ fn main() -> iced::Result {
     let options = app::Options {
         program: program.unwrap_or_else(|| PathBuf::from("sasacode")),
         cwd,
+        session,
     };
 
     iced::application(move || app::App::new(options.clone()), app::App::update, app::App::view)
         .title(app::App::title)
         .theme(app::App::theme)
         .subscription(app::App::subscription)
-        .window_size((1100.0, 760.0))
+        .default_font(view::UI)
+        .window(iced::window::Settings {
+            size: iced::Size::new(1280.0, 800.0),
+            min_size: Some(iced::Size::new(760.0, 520.0)),
+            ..iced::window::Settings::default()
+        })
         .run()
 }
 
