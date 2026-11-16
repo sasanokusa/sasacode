@@ -254,6 +254,16 @@ export const TO_EN: Record<string, string> = {
   "browsr-agent が見つかりません。インストール: {install}\n別の場所にある場合は plugins.settings.browsr.command を指定してください。": "browsr-agent not found. Install: {install}\nIf it is somewhere else, set plugins.settings.browsr.command.",
   "browsr: {command} が見つかりません": "browsr: {command} not found",
   "browsr: manifest を読めませんでした ({error})": "browsr: could not read the manifest ({error})",
+  // ── bundled: gui ──────────────────────────────────────────────────────
+  "デスクトップGUIでこの会話を開く": "open this conversation in the desktop GUI",
+  "GUIを開きました。": "Opened the GUI.",
+  "GUIでこの会話を開きました。この画面とGUIは互いの発言を読み込みません。続きはどちらか一方で進めてください。":
+    "Opened this conversation in the GUI. This screen and the GUI do not read what the other adds: go on in one of the two.",
+  "sasacode-guiが見つかりません。sasacodeのリポジトリで次を実行すると入ります。\n  {install}\n別の場所にある場合はplugins.settings.gui.commandを指定してください。":
+    "sasacode-gui not found. This, run in the sasacode repository, installs it:\n  {install}\nIf it is somewhere else, set plugins.settings.gui.command.",
+  "sasacode-guiを起動できませんでした（{command}）: {reason}": "could not start sasacode-gui ({command}): {reason}",
+  "sasacode-guiがすぐに終了しました（{command}、終了コード{status}）。このsasacodeより古い版かもしれません。入れ直すには次を実行してください。\n  {install}":
+    "sasacode-gui left at once ({command}, exit code {status}). It may be older than this sasacode. To install it again:\n  {install}",
   // ── bundled: subagent ─────────────────────────────────────────────────
   "task {id}「{description}」が終了しました（{status}）": "task {id} \"{description}\" ended ({status})",
   "サブエージェントの一覧・詳細・指示・停止": "list, show, message or stop subagents",
