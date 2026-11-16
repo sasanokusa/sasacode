@@ -9,6 +9,7 @@ mod diff;
 mod drive;
 mod export;
 mod figure;
+mod files;
 mod fork;
 mod git;
 mod i18n;

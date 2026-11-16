@@ -162,7 +162,7 @@ impl App {
                 }
                 Task::none()
             }
-            other => return Err(other),
+            other => return self.update_files(other),
         };
         Ok(task)
     }

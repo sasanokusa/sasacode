@@ -10,7 +10,7 @@ rust-version.workspace = true
 [dependencies]
 sasacode-protocol = { path = "../sasacode-protocol" }
 serde_json.workspace = true
-iced = { version = "0.14", features = ["markdown", "tokio", "advanced", "svg"] }
+iced = { version = "0.14", features = ["markdown", "tokio", "advanced", "svg", "highlighter", "image"] }
 tokio = { version = "1", features = ["process", "io-util", "sync", "rt", "macros", "time"] }
 # Math (KaTeX's layout, with its fonts in the program) and Mermaid diagrams in replies, drawn as SVG.
 ratex-parser = { version = "0.1.16", default-features = false }

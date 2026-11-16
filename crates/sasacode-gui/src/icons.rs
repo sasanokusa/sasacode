@@ -6,6 +6,7 @@ use iced::{Color, Length};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Icon {
     ChevronRight,
+    ChevronLeft,
     ChevronDown,
     Check,
     Plus,
@@ -45,6 +46,7 @@ impl Icon {
     fn body(self) -> &'static str {
         match self {
             Icon::ChevronRight => r#"<path d="M6 3.5 10.5 8 6 12.5"/>"#,
+            Icon::ChevronLeft => r#"<path d="M10 3.5 5.5 8 10 12.5"/>"#,
             Icon::ChevronDown => r#"<path d="M3.5 6 8 10.5 12.5 6"/>"#,
             Icon::Check => r#"<path d="M3 8.5 6.5 12 13 4.5"/>"#,
             Icon::Plus => r#"<path d="M8 3v10M3 8h10"/>"#,

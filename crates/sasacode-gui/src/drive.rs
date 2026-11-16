@@ -1154,3 +1154,50 @@ fn a_conversation_put_in_a_group_is_listed_under_it_and_the_group_folds() {
     let _ = app.update(Msg::GroupSave);
     assert!(!app.prefs.groups.contains_key(&id) && app.overlay.is_none());
 }
+
+#[test]
+fn a_file_found_in_the_files_tab_is_read_with_its_lines_and_one_is_commented_on() {
+    let mut app = window("ja");
+    let dir = std::env::temp_dir().join(format!("sasacode-gui-view-{}", std::process::id()));
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("src/retry.ts"),
+        "export function retry() {\n  return 2 ** attempt;\n}\n",
+    )
+    .unwrap();
+    app.cwd = dir.clone();
+    // ⌘6 opens the tab, which asks for the files once.
+    let _ = app.update(shortcut(&Key::Character("6".into()), Modifiers::COMMAND).unwrap());
+    assert_eq!(app.tab, Tab::Files);
+    assert!(app.files_asked);
+    let _ = app.update(Msg::Files(vec![
+        "README.md".into(),
+        "src/".into(),
+        "src/retry.ts".into(),
+    ]));
+    let _ = app.update(Msg::FileQuery("retry".into()));
+    assert_eq!(app.found_files().cloned().collect::<Vec<_>>(), ["src/retry.ts"]);
+    act(&mut app, |ui| {
+        let _ = ui.click("src/retry.ts");
+    });
+    let path = dir.join("src/retry.ts");
+    let _ = app.update(Msg::FileRead(Box::new(crate::files::read(path.clone(), None))));
+    assert!(says(&app, crate::words::JA.files_back), "back");
+    // Its lines are drawn colored, which the simulator does not read: they are what was read.
+    assert_eq!(
+        app.viewing.as_ref().map(|v| v.lines[1].as_str()),
+        Some("  return 2 ** attempt;")
+    );
+    // A click on its second line asks for a comment, which goes with the next message.
+    let _ = app.update(Msg::CommentAt(path.clone(), 2, false));
+    let _ = app.update(Msg::CommentText("指数の底を変えたい".into()));
+    let _ = app.update(Msg::CommentSave);
+    assert_eq!(app.chat.comments.len(), 1);
+    assert!(says(&app, "指数の底を変えたい"));
+    // A reply's link to a file of the project opens it there, at its line.
+    let _ = app.update(Msg::CloseFile);
+    app.tab = Tab::Changes;
+    let _ = app.update(Msg::Link("src/retry.ts:3".into()));
+    assert_eq!(app.tab, Tab::Files);
+    let _ = std::fs::remove_dir_all(&dir);
+}

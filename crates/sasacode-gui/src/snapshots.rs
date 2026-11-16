@@ -435,6 +435,12 @@ fn snapshots_of_figures() {
     );
     app.now = now + Duration::from_secs(2);
     shoot(&app, "30-figures", WIDE);
+    // And a file read in the files tab, a comment under one of its lines.
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/figure.rs");
+    let _ = app.update(Msg::FileRead(Box::new(crate::files::read(path.clone(), Some(12)))));
+    app.tab = Tab::Files;
+    let _ = app.update(Msg::CommentAt(path, 14, false));
+    shoot(&app, "32-files", WIDE);
     app.set_dark(true);
     shoot(&app, "31-figures-dark", WIDE);
 }

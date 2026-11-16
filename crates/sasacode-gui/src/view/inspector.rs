@@ -76,8 +76,13 @@ pub fn inspector(app: &App) -> El<'_> {
             s.tab_git,
             (!app.git.files.is_empty()).then(|| app.git.files.len().to_string())
         ),
+        tab(Tab::Files, 6, s.w().tab_files, None),
     ]
     .spacing(1);
+    // Where the panel is narrower than they are, they scroll sideways.
+    let tabs = scrollable(tabs).direction(scrollable::Direction::Horizontal(
+        scrollable::Scrollbar::new().width(0).scroller_width(0),
+    ));
 
     let body = match app.tab {
         Tab::Changes => changes_tab(app),
@@ -85,12 +90,14 @@ pub fn inspector(app: &App) -> El<'_> {
         Tab::Commands => commands_tab(app),
         Tab::Usage => usage_tab(app),
         Tab::Git => git_tab(app),
+        Tab::Files => files_tab(app),
     };
     container(
         column![
             container(tabs).padding([0, 8]).height(46).align_y(Alignment::Center),
             hline(t),
             scrollable(container(body).padding(12).width(Length::Fill))
+                .id(crate::files::INSPECTOR)
                 .direction(scrollable::Direction::Vertical(
                     scrollable::Scrollbar::new().width(8).scroller_width(8).margin(2)
                 ))
@@ -248,6 +255,9 @@ fn file_actions<'a>(app: &'a App, file: std::path::PathBuf, git: Option<&'a crat
             t.err,
             (!busy).then(|| Msg::GitDo(Op::Discard(f.path.clone()))),
         ));
+    }
+    if file.is_file() {
+        line = line.push(small(s.w().view, t.fg_2, Some(Msg::ViewFile(file.clone(), None))));
     }
     if file.exists() {
         line = line
@@ -518,7 +528,6 @@ fn hunks<'a>(app: &'a App, f: &'a crate::git::File, staged: bool) -> El<'a> {
     use crate::diff::Sign;
     use crate::git::{HunkAct, Op};
     let (t, s) = (app.t, app.s);
-    let w = s.w();
     let diff = if staged { &f.staged_diff } else { &f.unstaged_diff };
     let path = app.git.top.join(&f.path);
     let numbers = crate::git::numbers(diff);
@@ -622,33 +631,7 @@ fn hunks<'a>(app: &'a App, f: &'a crate::git::File, staged: bool) -> El<'a> {
             && draft.line == n
             && draft.staged == staged
         {
-            lines = lines.push(
-                container(
-                    column![
-                        iced::widget::text_input(w.comment_ph, &draft.text)
-                            .id(crate::review::COMMENT)
-                            .on_input(Msg::CommentText)
-                            .on_submit(Msg::CommentSave)
-                            .size(12.5)
-                            .padding([5, 8])
-                            .style(t.input()),
-                        row![
-                            button(text(w.comment_add).size(12))
-                                .padding([3, 10])
-                                .style(t.primary())
-                                .on_press_maybe((!draft.text.trim().is_empty()).then_some(Msg::CommentSave)),
-                            small(w.comment_quote, t.fg_2, Some(Msg::CommentQuote)),
-                            small(w.cancel, t.fg_2, Some(Msg::CommentCancel)),
-                        ]
-                        .spacing(4)
-                        .align_y(Alignment::Center)
-                        .wrap(),
-                    ]
-                    .spacing(4),
-                )
-                .padding([6, 8])
-                .style(t.fill(t.surface)),
-            );
+            lines = lines.push(draft_box(app, draft));
         }
     }
     container(lines)
@@ -657,6 +640,192 @@ fn hunks<'a>(app: &'a App, f: &'a crate::git::File, staged: bool) -> El<'a> {
         .clip(true)
         .style(t.boxed(t.raised, t.line, RADIUS))
         .into()
+}
+
+/// The comment being written under a line.
+fn draft_box<'a>(app: &'a App, draft: &'a crate::review::Draft) -> El<'a> {
+    let t = app.t;
+    let w = app.s.w();
+    let small = |label: &'a str, msg: Msg| {
+        button(text(label).size(11).color(t.fg_2).wrapping(text::Wrapping::None))
+            .padding([1, 6])
+            .style(t.ghost(t.fg_2, false))
+            .on_press(msg)
+    };
+    container(
+        column![
+            iced::widget::text_input(w.comment_ph, &draft.text)
+                .id(crate::review::COMMENT)
+                .on_input(Msg::CommentText)
+                .on_submit(Msg::CommentSave)
+                .size(12.5)
+                .padding([5, 8])
+                .style(t.input()),
+            row![
+                button(text(w.comment_add).size(12))
+                    .padding([3, 10])
+                    .style(t.primary())
+                    .on_press_maybe((!draft.text.trim().is_empty()).then_some(Msg::CommentSave)),
+                small(w.comment_quote, Msg::CommentQuote),
+                small(w.cancel, Msg::CommentCancel),
+            ]
+            .spacing(4)
+            .align_y(Alignment::Center)
+            .wrap(),
+        ]
+        .spacing(4),
+    )
+    .padding([6, 8])
+    .style(t.fill(t.surface))
+    .into()
+}
+
+/// The files tab: the project's files found by what is typed, or the one being read, its lines
+/// colored by its syntax and each one commented on by a click.
+fn files_tab(app: &App) -> El<'_> {
+    let (t, s) = (app.t, app.s);
+    let w = s.w();
+    let Some(v) = &app.viewing else {
+        let field = iced::widget::text_input(w.files_ph, &app.file_query)
+            .id(crate::files::FILES_FIELD)
+            .on_input(Msg::FileQuery)
+            .size(13)
+            .padding([6, 10])
+            .style(t.input());
+        let mut list = column![].spacing(1);
+        if app.files.is_empty() {
+            list = list.push(text(w.files_listing).size(12.5).color(t.fg_3));
+        }
+        let found: Vec<&String> = app.found_files().collect();
+        for f in found.iter().take(crate::files::LISTED) {
+            list = list.push(
+                button(
+                    text(clip_start(f, cells(app, 40.0)))
+                        .size(12)
+                        .font(MONO)
+                        .color(t.fg)
+                        .wrapping(text::Wrapping::None),
+                )
+                .width(Length::Fill)
+                .padding([3, 8])
+                .style(t.ghost(t.fg, false))
+                .on_press(Msg::ViewFile(app.cwd.join(f.as_str()), None)),
+            );
+        }
+        if found.len() > crate::files::LISTED {
+            list = list.push(
+                text(fill(w.files_more, "n", found.len() - crate::files::LISTED))
+                    .size(12)
+                    .color(t.fg_3),
+            );
+        }
+        return column![field, list].spacing(10).into();
+    };
+    let shown = short_path(&v.path.to_string_lossy(), &app.cwd);
+    let small = |label: &'static str, msg: Msg| {
+        button(text(label).size(11.5).color(t.fg_2).wrapping(text::Wrapping::None))
+            .padding([3, 8])
+            .style(t.ghost(t.fg_2, false))
+            .on_press(msg)
+    };
+    let head = column![
+        row![
+            button(
+                row![
+                    icon(Icon::ChevronLeft, 11.0, t.fg_3),
+                    text(w.files_back).size(12).color(t.fg_2)
+                ]
+                .spacing(4)
+                .align_y(Alignment::Center)
+            )
+            .padding([3, 6])
+            .style(t.ghost(t.fg_2, false))
+            .on_press(Msg::CloseFile),
+            Space::new().width(Length::Fill),
+            small(s.open_editor, Msg::Editor(v.path.clone())),
+            small(s.reveal, Msg::Reveal(v.path.clone())),
+        ]
+        .align_y(Alignment::Center),
+        name(
+            text(clip_start(&shown, cells(app, 30.0)))
+                .size(12.5)
+                .font(MONO)
+                .color(t.fg)
+        ),
+    ]
+    .spacing(4);
+    if let Some(why) = &v.error {
+        return column![head, text(fill(w.files_unreadable, "why", why)).size(12.5).color(t.err)]
+            .spacing(10)
+            .into();
+    }
+    let mut notes = column![text(w.files_hint).size(11.5).color(t.fg_3)].spacing(2);
+    if v.total > v.lines.len() {
+        notes = notes.push(
+            text(fill(&fill(w.files_cut, "shown", v.lines.len()), "n", v.total))
+                .size(11.5)
+                .color(t.warn),
+        );
+    }
+    let spans = if t.dark { &v.dark } else { &v.light };
+    let mut lines = column![];
+    for (i, line) in v.lines.iter().enumerate() {
+        let n = i + 1;
+        let colored: Vec<iced::widget::text::Span<'_, (), iced::Font>> = spans
+            .get(i)
+            .into_iter()
+            .flatten()
+            .map(|(range, color)| {
+                iced::widget::span(&line[range.clone()])
+                    .color_maybe(color.or(Some(t.fg)))
+                    .font(MONO)
+            })
+            .collect();
+        let marked = v.line == Some(n);
+        let shown = container(
+            row![
+                text(n.to_string()).size(11).font(MONO).color(t.fg_3).width(40),
+                iced::widget::rich_text(colored)
+                    .size(12)
+                    .font(MONO)
+                    .wrapping(text::Wrapping::WordOrGlyph),
+            ]
+            .spacing(4),
+        )
+        .width(Length::Fill)
+        .padding([0, 6])
+        .style(move |_| container::Style {
+            background: marked.then(|| t.accent_wash.into()),
+            ..container::Style::default()
+        });
+        lines = lines.push(
+            iced::widget::mouse_area(shown)
+                .interaction(iced::mouse::Interaction::Pointer)
+                .on_press(Msg::CommentAt(v.path.clone(), n, false)),
+        );
+        for (i, c) in app.chat.comments.iter().enumerate() {
+            if c.path == v.path && c.line == n {
+                lines = lines.push(comment_note(app, i, c));
+            }
+        }
+        if let Some(draft) = &app.commenting
+            && draft.path == v.path
+            && draft.line == n
+        {
+            lines = lines.push(draft_box(app, draft));
+        }
+    }
+    column![
+        head,
+        notes,
+        container(lines)
+            .width(Length::Fill)
+            .padding([4, 0])
+            .clip(true)
+            .style(t.boxed(t.raised, t.line, RADIUS)),
+    ]
+    .spacing(8)
+    .into()
 }
 
 /// A comment kept under the line it was made on, with the way to take it back.

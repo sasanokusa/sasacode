@@ -98,6 +98,7 @@ pub enum Tab {
     Commands,
     Usage,
     Git,
+    Files,
 }
 
 /// What a copy button copies. Text the window holds is named rather than carried, so a button
@@ -219,6 +220,9 @@ pub struct App {
     pub(crate) confirm_discard: Option<String>,
     /// The pull request a second click merges.
     pub(crate) confirm_merge: bool,
+    /// The file the files tab shows, and what is typed to find one.
+    pub(crate) viewing: Option<crate::files::Viewing>,
+    pub(crate) file_query: String,
     /// The conversation a second click deletes.
     pub(crate) confirm_delete: Option<String>,
     /// The groups of the list folded shut, by name.
@@ -427,6 +431,12 @@ pub enum Msg {
     GroupSave,
     /// A group of the list folded shut, or opened.
     FoldGroup(String),
+    /// A file shown in the files tab, at a line if given; as it was read; and put away for the
+    /// list of files, which is found by what is typed.
+    ViewFile(PathBuf, Option<usize>),
+    FileRead(Box<crate::files::Viewing>),
+    CloseFile,
+    FileQuery(String),
     /// The pointer over a row of the list, or off it.
     RowHover(Option<String>),
     /// What the search inside the conversation looks for, and the search put away.
@@ -609,6 +619,8 @@ impl App {
             confirm_discard: None,
             confirm_merge: false,
             confirm_delete: None,
+            viewing: None,
+            file_query: String::new(),
             collapsed: HashSet::new(),
             branch_list: None,
             pr: None,
@@ -938,6 +950,9 @@ impl App {
                 if tab == Tab::Git {
                     return Task::batch([self.refresh_git(), self.refresh_pr()]);
                 }
+                if tab == Tab::Files {
+                    return self.list_files();
+                }
             }
             Msg::Fold(i) => {
                 let open = self.steps_open(i);
@@ -953,7 +968,11 @@ impl App {
                     self.chat.closed.insert(id);
                 }
             }
-            Msg::Link(uri) => open_link(&uri),
+            Msg::Link(uri) => match crate::files::linked_file(uri.as_str(), &self.cwd) {
+                // A file of the project named in a reply opens in the files tab.
+                Some((path, line)) => return self.update(Msg::ViewFile(path, line)),
+                None => open_link(&uri),
+            },
             Msg::Copy(clip) => {
                 if let Some(text) = self.copy_text(&clip) {
                     self.copies += 1;
@@ -1728,6 +1747,7 @@ pub(crate) fn shortcut(key: &Key, modifiers: keyboard::Modifiers) -> Option<Msg>
         Key::Character("3") => Some(Msg::Tab(Tab::Commands)),
         Key::Character("4") => Some(Msg::Tab(Tab::Usage)),
         Key::Character("5") => Some(Msg::Tab(Tab::Git)),
+        Key::Character("6") => Some(Msg::Tab(Tab::Files)),
         _ => None,
     }
 }

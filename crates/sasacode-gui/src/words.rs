@@ -75,6 +75,16 @@ words! {
     group_ph: "グループの名前", "The group's name";
     group_hint: "空にするとグループから外します", "Leave it empty to take it out of its group";
     ungrouped: "その他", "Other";
+    // The files tab.
+    tab_files: "ファイル", "Files";
+    files_ph: "ファイルを探す", "Find a file";
+    files_listing: "ファイルを読み込み中…", "Reading the files…";
+    files_more: "ほか{n}件。名前で絞り込んでください", "{n} more. Type to narrow them down";
+    files_back: "ファイル一覧", "All files";
+    files_cut: "先頭{shown}行だけ表示しています（全{n}行）", "Showing the first {shown} of {n} lines";
+    files_unreadable: "表示できません: {why}", "Can't show it: {why}";
+    files_hint: "行をクリックするとコメントを書けます", "Click a line to comment on it";
+    view: "表示", "View";
 }
 
 #[cfg(test)]

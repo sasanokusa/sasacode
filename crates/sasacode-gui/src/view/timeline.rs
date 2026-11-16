@@ -835,20 +835,37 @@ impl<'a> markdown::Viewer<'a, Msg> for Reply<'a> {
         {
             return self.figure(language, code, math, figure);
         }
-        let body = scrollable(
-            container(
-                text(code)
+        // Colored by its language, when it names one the grammars know.
+        let shown: El<'a> = match language.filter(|l| !l.is_empty()) {
+            Some(language) => {
+                let colored = crate::files::colored(code, language, t.dark);
+                let mut spans: Vec<iced::widget::text::Span<'a, (), iced::Font>> = Vec::new();
+                for (i, line) in code.lines().enumerate() {
+                    if i > 0 {
+                        spans.push(iced::widget::span("\n"));
+                    }
+                    for (range, color) in colored.get(i).into_iter().flatten() {
+                        spans.push(iced::widget::span(&line[range.clone()]).color(color.unwrap_or(t.fg)));
+                    }
+                }
+                iced::widget::rich_text(spans)
                     .size(settings.code_size)
                     .font(MONO)
-                    .color(t.fg)
-                    .wrapping(text::Wrapping::None),
-            )
-            .padding([8, 10]),
-        )
-        .direction(scrollable::Direction::Horizontal(
-            scrollable::Scrollbar::new().width(6).scroller_width(6).margin(1),
-        ))
-        .style(t.scroll());
+                    .wrapping(text::Wrapping::None)
+                    .into()
+            }
+            None => text(code)
+                .size(settings.code_size)
+                .font(MONO)
+                .color(t.fg)
+                .wrapping(text::Wrapping::None)
+                .into(),
+        };
+        let body = scrollable(container(shown).padding([8, 10]))
+            .direction(scrollable::Direction::Horizontal(
+                scrollable::Scrollbar::new().width(6).scroller_width(6).margin(1),
+            ))
+            .style(t.scroll());
         let mut block = column![];
         if self.copy && !code.is_empty() {
             block = block.push(
