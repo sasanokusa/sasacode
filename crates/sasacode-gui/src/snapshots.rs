@@ -13,7 +13,7 @@ use iced::{Settings, Size};
 use iced_test::Simulator;
 use sasacode_protocol::{Event, SessionEntry, SessionSummary, parse_event};
 
-use crate::app::{App, Options, Tab};
+use crate::app::{App, Clip, Msg, Options, Tab};
 use crate::i18n::Strings;
 use crate::transcript::Transcript;
 
@@ -74,6 +74,44 @@ pub(crate) fn play(app: &mut App, name: &str, prompt: &str, stop: impl Fn(&Event
         app.transcript.apply(&event, now);
     }
     app.now = now;
+}
+
+/// The code block of [`markdown_reply`], as it is copied.
+pub(crate) const REPLY_CODE: &str =
+    "await new Promise((r) => setTimeout(r, 200 * 2 ** attempt)); // 待ち時間\nif (attempt > 2) throw err;";
+
+/// A finished exchange whose reply holds a bold word of kanji and kana, inline code, a list, a
+/// code block and a link.
+pub(crate) fn markdown_reply(app: &mut App) {
+    let mut now = Instant::now();
+    app.session = Some("0a1b2c3d-0".into());
+    app.transcript.send("何を変えた？", now);
+    for line in [
+        r###"{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"## 変更点\n\n待ち時間を**指数バックオフ**に変えました。`src/client.ts`の1行だけです。\n\n1. 再試行は2回までのまま\n2. 待ち時間は200ミリ秒から倍々\n\n```ts\nawait new Promise((r) => setTimeout(r, 200 * 2 ** attempt)); // 待ち時間\nif (attempt > 2) throw err;\n```\n\n詳しくは[MDNの解説](https://developer.mozilla.org/)を見てください。"}],"provider":"fake","model":"m","usage":{"input":1200,"output":60},"stopReason":"stop"}}"###,
+        r#"{"type":"agent_end","cause":"done"}"#,
+    ] {
+        now += Duration::from_secs(2);
+        app.transcript.apply(&parse_event(line).unwrap(), now);
+    }
+    app.now = now;
+}
+
+/// What the last message of [`long_log`] says.
+pub(crate) const LONG_LOG_LAST: &str = "最後にREADMEも直して";
+
+/// The recorded conversation read back from its log twice over: longer than a window is tall. Its
+/// last message is [`LONG_LOG_LAST`].
+pub(crate) fn long_log(app: &mut App) {
+    let log = fixture("work-session.jsonl");
+    let twice = format!("{log}\n{}", log.replace("テストも足して", LONG_LOG_LAST));
+    let entries: Vec<SessionEntry> = twice
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    app.transcript = Transcript::from_entries(&entries);
+    app.loaded = true;
+    app.session = Some("0a1b2c3d-0".into());
 }
 
 fn shoot(app: &App, name: &str, size: (f32, f32)) {
@@ -173,18 +211,22 @@ fn snapshots() {
     // A reply with what a reply can hold: a bold word of kanji and kana, inline code, a list, a
     // code block and a link.
     let mut app = window("ja");
-    let mut now = Instant::now();
-    app.transcript.send("何を変えた？", now);
-    for line in [
-        r###"{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"## 変更点\n\n待ち時間を**指数バックオフ**に変えました。`src/client.ts`の1行だけです。\n\n1. 再試行は2回までのまま\n2. 待ち時間は200ミリ秒から倍々\n\n```ts\nawait new Promise((r) => setTimeout(r, 200 * 2 ** attempt)); // 待ち時間\nif (attempt > 2) throw err;\n```\n\n詳しくは[MDNの解説](https://developer.mozilla.org/)を見てください。"}],"provider":"fake","model":"m","usage":{"input":1200,"output":60},"stopReason":"stop"}}"###,
-        r#"{"type":"agent_end","cause":"done"}"#,
-    ] {
-        now += Duration::from_secs(2);
-        app.transcript.apply(&parse_event(line).unwrap(), now);
-    }
-    app.now = now;
+    markdown_reply(&mut app);
     app.insp = false;
     shoot(&app, "16-reply-markdown", WIDE);
+    // Its code block copied: the button says so for a moment.
+    let _ = app.update(Msg::Copy(Clip::Text(REPLY_CODE.into())));
+    shoot(&app, "17-copied", (1280.0, 560.0));
+
+    // A long conversation read back from its log in a short window: the newest is in view without
+    // the window having scrolled it there.
+    let mut app = window("ja");
+    long_log(&mut app);
+    app.insp = false;
+    shoot(&app, "18-long-log", (1280.0, 520.0));
+    // Scrolled back to read: the way to the newest.
+    app.reading = true;
+    shoot(&app, "19-reading-back", (1280.0, 520.0));
 
     // A conversation read back from its log, in English, in a narrow window.
     let mut app = window("en");

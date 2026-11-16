@@ -30,6 +30,8 @@ pub enum Icon {
     Circle,
     Dot,
     Half,
+    Copy,
+    Down,
 }
 
 impl Icon {
@@ -66,6 +68,10 @@ impl Icon {
             Icon::Half => {
                 r##"<circle cx="8" cy="8" r="5"/><path d="M8 3a5 5 0 0 1 0 10z" fill="#000" stroke="none"/>"##
             }
+            Icon::Copy => {
+                r#"<rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M10.5 3.5V3A1 1 0 0 0 9.5 2h-6A1 1 0 0 0 2.5 3v6a1 1 0 0 0 1 1h.5"/>"#
+            }
+            Icon::Down => r#"<path d="M8 3v10M4 9l4 4 4-4"/>"#,
         }
     }
 

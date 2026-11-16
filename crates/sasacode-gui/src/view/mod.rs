@@ -4,6 +4,7 @@
 //! and the input under it, and the inspector (changes, plan, commands, usage). A status bar runs
 //! along the bottom.
 
+mod chords;
 mod dock;
 mod inspector;
 mod sidebar;
@@ -15,7 +16,7 @@ use iced::font::Weight;
 use iced::widget::{Space, button, column, container, row, rule, text, tooltip};
 use iced::{Alignment, Color, Element, Font, Length};
 
-use crate::app::{App, Msg, Status, Tab};
+use crate::app::{App, Clip, Msg, Status, Tab};
 use crate::diff::{Diff, Sign};
 use crate::i18n::{Strings, compact, fill};
 use crate::icons::{Icon, icon};
@@ -83,16 +84,34 @@ pub fn window(app: &App) -> El<'_> {
     if app.insp {
         body = body.push(vline(t)).push(inspector::inspector(app));
     }
-    container(column![body.height(Length::Fill), hline(t), status_bar(app)])
-        .style(t.fill(t.bg))
-        .into()
+    chords::chords(container(column![body.height(Length::Fill), hline(t), status_bar(app)]).style(t.fill(t.bg)))
 }
 
 fn header(app: &App) -> El<'_> {
     let (t, s) = (app.t, app.s);
-    let title = match app.transcript.title() {
-        Some(prompt) => clip(first_line(prompt), 56),
-        None => s.new_session.to_owned(),
+    let title_text = |label: String| {
+        text(label)
+            .size(14)
+            .font(BOLD)
+            .color(t.fg)
+            .wrapping(text::Wrapping::None)
+    };
+    // A title that had to be cut says all of itself under the pointer.
+    let title: El<'_> = match app.transcript.title() {
+        Some(prompt) => {
+            let shown = clip(first_line(prompt), 56);
+            if shown == prompt.trim() {
+                title_text(shown).into()
+            } else {
+                tip(
+                    t,
+                    title_text(shown),
+                    clip(prompt.trim(), 600),
+                    tooltip::Position::Bottom,
+                )
+            }
+        }
+        None => title_text(s.new_session.to_owned()).into(),
     };
     let changed = app.transcript.changes().count();
     let mut inspector = row![icon(Icon::Panel, 16.0, if app.insp { t.accent } else { t.fg_2 })]
@@ -116,11 +135,7 @@ fn header(app: &App) -> El<'_> {
                 format!("{}  {MOD}B", s.a_side),
                 tooltip::Position::Bottom,
             ),
-            text(title)
-                .size(14)
-                .font(BOLD)
-                .color(t.fg)
-                .wrapping(text::Wrapping::None),
+            title,
             pill(app),
             Space::new().width(Length::Fill),
             tip(
@@ -172,19 +187,35 @@ fn pill(app: &App) -> El<'_> {
 }
 
 fn status_bar(app: &App) -> El<'_> {
-    let t = app.t;
+    let (t, s) = (app.t, app.s);
     let item = |label: String| text(label).size(11.5).color(t.fg_3);
     let dot = || text("·").size(11.5).color(t.line_2);
-    let mut left = row![
-        icon(Icon::Folder, 12.0, t.fg_3),
-        item(clip_start(&app.cwd.to_string_lossy(), 46)).font(MONO),
-    ]
-    .spacing(6)
-    .align_y(Alignment::Center);
+    let cwd = app.cwd.to_string_lossy();
+    let shown = clip_start(&cwd, 46);
+    let folder: El<'_> = if shown == cwd {
+        item(shown).font(MONO).into()
+    } else {
+        tip(t, item(shown).font(MONO), cwd.into_owned(), tooltip::Position::Top)
+    };
+    let mut left = row![icon(Icon::Folder, 12.0, t.fg_3), folder]
+        .spacing(6)
+        .align_y(Alignment::Center);
     if let Some(id) = &app.session {
-        left = left
-            .push(dot())
-            .push(item(clip(id, 8).trim_end_matches('…').to_owned()).font(MONO));
+        // The start of the id, as `sasacode -r` takes it; a click copies all of it.
+        let label = if app.copied == Some(Clip::Session) {
+            item(s.copied.to_owned()).color(t.accent)
+        } else {
+            item(clip(id, 8).trim_end_matches('…').to_owned()).font(MONO)
+        };
+        left = left.push(dot()).push(tip(
+            t,
+            button(label)
+                .padding([1, 4])
+                .style(t.ghost(t.fg_3, false))
+                .on_press(Msg::Copy(Clip::Session)),
+            format!("{id}\n{}", s.copy_id),
+            tooltip::Position::Top,
+        ));
     }
     // The model that answered, else the one asked for; what the config decides is not known here,
     // and is not guessed at.
@@ -254,6 +285,29 @@ pub(crate) fn tip<'a>(t: Tokens, content: impl Into<El<'a>>, hint: String, posit
         position,
     )
     .gap(6)
+    .into()
+}
+
+/// A button that copies `clip`, and says for a moment that it did. Its word is always there: not
+/// an icon to guess at, nor a hint to hover for.
+pub(crate) fn copy_button<'a>(app: &App, clip: Clip, label: &'static str) -> El<'a> {
+    let (t, s) = (app.t, app.s);
+    let (mark, said, color) = if app.copied.as_ref() == Some(&clip) {
+        (Icon::Check, s.copied, t.accent)
+    } else {
+        (Icon::Copy, label, t.fg_3)
+    };
+    button(
+        row![
+            icon(mark, 12.0, color),
+            text(said).size(11.5).color(color).wrapping(text::Wrapping::None)
+        ]
+        .spacing(5)
+        .align_y(Alignment::Center),
+    )
+    .padding([3, 8])
+    .style(t.ghost(t.fg_2, false))
+    .on_press(Msg::Copy(clip))
     .into()
 }
 

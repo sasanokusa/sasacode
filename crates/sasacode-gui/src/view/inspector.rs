@@ -3,9 +3,12 @@
 use iced::widget::{Column, Space, button, column, container, row, scrollable, text};
 use iced::{Alignment, Length};
 
-use super::timeline::todo_list;
+use iced::widget::tooltip;
+
+use super::timeline::{command_copies, todo_list};
 use super::{
-    BOLD, El, MONO, clip, clip_start, diff_view, first_line, hline, insp_w, output_block, plus_minus, short_path, tag,
+    BOLD, El, MOD, MONO, clip, clip_start, diff_view, first_line, hline, insp_w, output_block, plus_minus, short_path,
+    tag, tip,
 };
 use crate::app::{App, Msg, Tab};
 use crate::i18n::{compact, fill};
@@ -25,7 +28,7 @@ pub fn inspector(app: &App) -> El<'_> {
         )
     });
     // Words only: with an icon each, the four do not fit the panel in English.
-    let tab = |tab: Tab, label: &'static str, count: Option<String>| {
+    let tab = |tab: Tab, key: u8, label: &'static str, count: Option<String>| -> El<'_> {
         let on = app.tab == tab;
         let mut content = row![
             text(label)
@@ -43,16 +46,31 @@ pub fn inspector(app: &App) -> El<'_> {
                     .color(if on { t.accent } else { t.fg_3 }),
             );
         }
-        button(content)
-            .padding([5, 10])
-            .style(t.ghost(t.fg_2, on))
-            .on_press(Msg::Tab(tab))
+        tip(
+            t,
+            button(content)
+                .padding([5, 10])
+                .style(t.ghost(t.fg_2, on))
+                .on_press(Msg::Tab(tab)),
+            format!("{MOD}{key}"),
+            tooltip::Position::Bottom,
+        )
     };
     let tabs = row![
-        tab(Tab::Changes, s.tab_changes, (changes > 0).then(|| changes.to_string())),
-        tab(Tab::Plan, s.tab_plan, plan),
-        tab(Tab::Commands, s.tab_cmd, (commands > 0).then(|| commands.to_string())),
-        tab(Tab::Usage, s.tab_usage, None),
+        tab(
+            Tab::Changes,
+            1,
+            s.tab_changes,
+            (changes > 0).then(|| changes.to_string())
+        ),
+        tab(Tab::Plan, 2, s.tab_plan, plan),
+        tab(
+            Tab::Commands,
+            3,
+            s.tab_cmd,
+            (commands > 0).then(|| commands.to_string())
+        ),
+        tab(Tab::Usage, 4, s.tab_usage, None),
     ]
     .spacing(2);
 
@@ -278,6 +296,9 @@ fn commands_tab(app: &App) -> El<'_> {
         // Nothing written yet is not "no output" while the command still runs.
         if tool.state != ToolState::Running || !tool.shown_output().is_empty() {
             body.push(output_block(t, s, tool.shown_output(), 60));
+        }
+        if tool.arg("command").is_some() {
+            body.push(command_copies(app, tool));
         }
         let body = (!body.is_empty()).then(|| Column::with_children(body).spacing(6).into());
         col = col.push(card(app, &tool.id, head.into(), body));

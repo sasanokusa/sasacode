@@ -1,12 +1,14 @@
 //! The conversation. Each exchange is the user's message, the steps taken about it (folded away
 //! once it is answered) and the reply.
 
-use iced::widget::{Column, Row, Space, button, column, container, markdown, row, rule, scrollable, text};
+use iced::widget::{Column, Row, Space, button, column, container, markdown, row, rule, scrollable, stack, text};
 use iced::{Alignment, Color, Length, Padding, border};
 use sasacode_protocol::StopCause;
 
-use super::{BOLD, COL_W, El, MONO, UI, clip, diff_view, first_line, output_block, plus_minus, short_path, tag};
-use crate::app::{App, Msg, Tab};
+use super::{
+    BOLD, COL_W, El, MONO, UI, clip, copy_button, diff_view, first_line, output_block, plus_minus, short_path, tag,
+};
+use crate::app::{App, Clip, Msg, TIMELINE, Tab};
 use crate::i18n::fill;
 use crate::icons::{Icon, icon};
 use crate::theme::{RADIUS, RADIUS_L, Tokens};
@@ -41,19 +43,51 @@ pub fn timeline(app: &App) -> El<'_> {
     if let Some(next) = &app.next {
         col = col.push(bubble(t, next));
     }
-    scrollable(
+    let mut list = scrollable(
         container(container(col).max_width(COL_W))
             .center_x(Length::Fill)
             .padding([20, 24]),
     )
     .direction(scrollable::Direction::Vertical(
         scrollable::Scrollbar::new().width(8).scroller_width(8).margin(2),
-    ))
-    // After the direction, which it is a part of: the newest is what is in view.
-    .anchor_bottom()
-    .style(t.scroll())
-    .width(Length::Fill)
-    .height(Length::Fill)
+    ));
+    // After the direction, which it is a part of. Held by its end, the newest is what is in view
+    // as the conversation grows; once the reader scrolls back it is held by its start, so what
+    // comes in does not move what they read.
+    if !app.reading {
+        list = list.anchor_bottom();
+    }
+    let list = list
+        .id(TIMELINE)
+        .on_scroll(|v| Msg::Scrolled {
+            offset: v.absolute_offset().y,
+            room: (v.content_bounds().height - v.bounds().height).max(0.0),
+        })
+        .style(t.scroll())
+        .width(Length::Fill)
+        .height(Length::Fill);
+    // Always a stack, so that the list keeps where it is scrolled to when the button comes and goes.
+    if !app.reading {
+        return stack![list, Space::new()].into();
+    }
+    let latest = button(
+        row![
+            icon(Icon::Down, 13.0, t.fg_2),
+            text(s.latest).size(12.5).color(t.fg).wrapping(text::Wrapping::None)
+        ]
+        .spacing(6)
+        .align_y(Alignment::Center),
+    )
+    .padding([6, 12])
+    .style(t.ghost(t.fg, false))
+    .on_press(Msg::Latest);
+    stack![
+        list,
+        container(container(latest).style(t.floating(t.raised, t.line_2)))
+            .align_bottom(Length::Fill)
+            .center_x(Length::Fill)
+            .padding(14)
+    ]
     .into()
 }
 
@@ -117,10 +151,14 @@ fn exchange<'a>(app: &'a App, i: usize, ex: &'a Exchange) -> El<'a> {
         }
     }
     if let Some(Step::Text(md)) = answer.map(|a| &ex.steps[a]) {
-        col = col.push(reply(app, md));
+        col = col.push(reply(app, md, true));
     }
-    if let Some(end) = &ex.end {
-        col = col.push(ending(app, ex, end, last));
+    // The reply as it was written, Markdown and all: its text cannot be selected here.
+    let copy = answer.map(|_| copy_button(app, Clip::Reply(i), app.s.copy));
+    match (&ex.end, copy) {
+        (Some(end), copy) => col = col.push(ending(app, ex, end, last, copy)),
+        (None, Some(copy)) => col = col.push(copy),
+        (None, None) => {}
     }
     col.into()
 }
@@ -201,11 +239,13 @@ fn live_row<'a>(app: &'a App, ex: &'a Exchange) -> El<'a> {
 }
 
 fn steps<'a>(app: &'a App, i: usize, work: &'a [Step]) -> Column<'a, Msg> {
+    // What is still being written is not offered to copy.
+    let live = i + 1 == app.transcript.exchanges.len() && app.running();
     let mut col = column![].spacing(2);
     for (j, step) in work.iter().enumerate() {
         col = col.push(match step {
             Step::Thinking(thought) => thinking(app, i, j, thought),
-            Step::Text(md) => container(reply(app, md)).padding([6, 8]).into(),
+            Step::Text(md) => container(reply(app, md, !live)).padding([6, 8]).into(),
             Step::Tool(tool) => tool_row(app, i, j, tool),
             Step::Approval(approval) => approval_row(app, approval),
             Step::Note(note) => note_row(app, i, j, note),
@@ -492,6 +532,9 @@ fn tool_details<'a>(app: &'a App, tool: &'a Tool) -> Option<El<'a>> {
             if tool.state != ToolState::Waiting && !silent {
                 push(output_block(t, s, said, 30));
             }
+            if tool.arg("command").is_some() {
+                push(command_copies(app, tool));
+            }
         }
         Kind::Task => {
             if let Some(prompt) = tool.arg("prompt") {
@@ -534,6 +577,16 @@ fn tool_details<'a>(app: &'a App, tool: &'a Tool) -> Option<El<'a>> {
         }
     }
     (!parts.is_empty()).then(|| Column::with_children(parts).spacing(6).into())
+}
+
+/// Copies a command, and once it finished all it wrote: more than the lines shown of it.
+pub(crate) fn command_copies<'a>(app: &App, tool: &Tool) -> El<'a> {
+    let s = app.s;
+    let mut buttons = row![copy_button(app, Clip::Command(tool.id.clone()), s.copy_cmd)].spacing(4);
+    if tool.finished() && !tool.shown_output().trim().is_empty() {
+        buttons = buttons.push(copy_button(app, Clip::Output(tool.id.clone()), s.copy_out));
+    }
+    buttons.into()
 }
 
 /// A plan's steps with their state.
@@ -613,13 +666,16 @@ fn note_row<'a>(app: &'a App, i: usize, j: usize, note: &'a Note) -> El<'a> {
     match note {
         Note::Harness(body) => folded(Icon::Leaf, s.note_harness.to_owned(), body),
         Note::Task { head, report } => folded(Icon::Bot, format!("{} · {}", s.note_task, clip(head, 60)), report),
+        // All of it can be copied: what went wrong is often pasted somewhere to be looked into.
         Note::Error(body) => container(
             row![
                 container(icon(Icon::Alert, 14.0, t.err)).padding(Padding::ZERO.top(1.0)),
                 text(body.as_str())
                     .size(13)
                     .color(t.err)
-                    .wrapping(text::Wrapping::WordOrGlyph)
+                    .width(Length::Fill)
+                    .wrapping(text::Wrapping::WordOrGlyph),
+                copy_button(app, Clip::Step(i, j), s.copy),
             ]
             .spacing(8),
         )
@@ -633,8 +689,8 @@ fn note_row<'a>(app: &'a App, i: usize, j: usize, note: &'a Note) -> El<'a> {
     }
 }
 
-/// A reply, as the Markdown it is written in.
-fn reply<'a>(app: &'a App, md: &'a Markdown) -> El<'a> {
+/// A reply, as the Markdown it is written in. With `copy` its code blocks can be copied.
+fn reply<'a>(app: &'a App, md: &'a Markdown, copy: bool) -> El<'a> {
     let t = app.t;
     let mut style = markdown::Style::from_palette(t.palette());
     style.inline_code_color = t.fg;
@@ -650,51 +706,77 @@ fn reply<'a>(app: &'a App, md: &'a Markdown) -> El<'a> {
     style.code_block_font = MONO;
     let mut settings = markdown::Settings::with_text_size(14, style);
     settings.code_size = 12.5.into();
-    markdown::view_with(md.content.items(), settings, &Reply(t))
+    markdown::view_with(md.content.items(), settings, &Reply { app, copy })
 }
 
 /// Draws a reply as iced does, except its code blocks.
-struct Reply(Tokens);
+struct Reply<'b> {
+    app: &'b App,
+    copy: bool,
+}
 
-impl<'a> markdown::Viewer<'a, Msg> for Reply {
+impl<'a> markdown::Viewer<'a, Msg> for Reply<'a> {
     fn on_link_click(url: markdown::Uri) -> Msg {
         Msg::Link(url)
     }
 
     /// The code as it was written, in the monospaced font. iced's own code block draws each line
     /// in the font of the text around it unless it highlights the code, which this window does not.
+    /// A head over it names its language and copies it.
     fn code_block(
         &self,
         settings: markdown::Settings,
-        _language: Option<&'a str>,
+        language: Option<&'a str>,
         code: &'a str,
         _lines: &'a [markdown::Text],
     ) -> El<'a> {
-        let t = self.0;
-        container(
-            scrollable(
-                container(
-                    text(code.trim_end())
-                        .size(settings.code_size)
-                        .font(MONO)
-                        .color(t.fg)
-                        .wrapping(text::Wrapping::None),
-                )
-                .padding([8, 10]),
+        let t = self.app.t;
+        let code = code.trim_end();
+        let body = scrollable(
+            container(
+                text(code)
+                    .size(settings.code_size)
+                    .font(MONO)
+                    .color(t.fg)
+                    .wrapping(text::Wrapping::None),
             )
-            .direction(scrollable::Direction::Horizontal(
-                scrollable::Scrollbar::new().width(6).scroller_width(6).margin(1),
-            ))
-            .style(t.scroll()),
+            .padding([8, 10]),
         )
-        .width(Length::Fill)
-        .style(t.boxed(t.inset, t.inset, RADIUS))
-        .into()
+        .direction(scrollable::Direction::Horizontal(
+            scrollable::Scrollbar::new().width(6).scroller_width(6).margin(1),
+        ))
+        .style(t.scroll());
+        let mut block = column![];
+        if self.copy && !code.is_empty() {
+            block = block.push(
+                row![
+                    text(language.unwrap_or_default())
+                        .size(11.5)
+                        .font(MONO)
+                        .color(t.fg_3)
+                        .wrapping(text::Wrapping::None),
+                    Space::new().width(Length::Fill),
+                    copy_button(self.app, Clip::Text(code.to_owned()), self.app.s.copy),
+                ]
+                .align_y(Alignment::Center)
+                .padding(Padding {
+                    top: 2.0,
+                    right: 2.0,
+                    bottom: 0.0,
+                    left: 10.0,
+                }),
+            );
+        }
+        container(block.push(body))
+            .width(Length::Fill)
+            .style(t.boxed(t.inset, t.inset, RADIUS))
+            .into()
     }
 }
 
-/// How a run ended: the quiet line of one that finished, or a card that says why it did not.
-fn ending<'a>(app: &'a App, ex: &'a Exchange, end: &'a End, last: bool) -> El<'a> {
+/// How a run ended: the quiet line of one that finished, or a card that says why it did not. The
+/// reply's copy button goes at the end of the line, or over the card.
+fn ending<'a>(app: &'a App, ex: &'a Exchange, end: &'a End, last: bool, copy: Option<El<'a>>) -> El<'a> {
     let (t, s) = (app.t, app.s);
     let files: Vec<&str> = {
         let mut seen: Vec<&str> = ex.changes().map(|(_, c)| c.path.as_str()).collect();
@@ -725,7 +807,10 @@ fn ending<'a>(app: &'a App, ex: &'a Exchange, end: &'a End, last: bool) -> El<'a
                         .on_press(Msg::Tab(Tab::Changes)),
                 );
         }
-        return container(foot).padding([0, 8]).into();
+        if let Some(copy) = copy {
+            foot = foot.push(Space::new().width(Length::Fill)).push(copy);
+        }
+        return container(foot).padding(Padding::ZERO.left(8.0)).into();
     }
 
     let (mark, title, fill_color, line_color, ink) = match end.cause {
@@ -779,9 +864,12 @@ fn ending<'a>(app: &'a App, ex: &'a Exchange, end: &'a End, last: bool) -> El<'a
             .padding(Padding::ZERO.top(4.0)),
         );
     }
-    container(body)
+    let card = container(body)
         .width(Length::Fill)
         .padding([10, 12])
-        .style(t.boxed(fill_color, line_color, RADIUS_L))
-        .into()
+        .style(t.boxed(fill_color, line_color, RADIUS_L));
+    match copy {
+        Some(copy) => column![copy, card].spacing(10).into(),
+        None => card.into(),
+    }
 }

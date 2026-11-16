@@ -5,8 +5,8 @@ use std::time::SystemTime;
 use iced::widget::{Space, button, column, container, row, scrollable, text, text_input};
 use iced::{Alignment, Length};
 
-use super::{BOLD, El, SIDE_W, clip, tip};
-use crate::app::{App, Msg};
+use super::{BOLD, El, MOD, SIDE_W, clip, tip};
+use crate::app::{App, Msg, SEARCH};
 use crate::i18n::fill;
 use crate::icons::{Icon, icon};
 
@@ -36,7 +36,7 @@ pub fn sidebar(app: &App) -> El<'_> {
             icon(Icon::Plus, 14.0, if busy { t.fg_3 } else { t.fg }),
             text(s.new_session).size(13),
             Space::new().width(Length::Fill),
-            text(format!("{}N", super::MOD)).size(11).color(t.fg_3),
+            text(format!("{MOD}N")).size(11).color(t.fg_3),
         ]
         .spacing(8)
         .align_y(Alignment::Center),
@@ -49,11 +49,15 @@ pub fn sidebar(app: &App) -> El<'_> {
     let search = container(
         row![
             icon(Icon::Search, 14.0, t.fg_3),
+            // Enter opens the first it finds; Esc gives the keyboard back to the input.
             text_input(s.find, &app.filter)
+                .id(SEARCH)
                 .on_input(Msg::Filter)
+                .on_submit(Msg::FindOpen)
                 .size(13)
                 .padding(0)
                 .style(t.input_bare()),
+            text(format!("{MOD}K")).size(11).color(t.fg_3),
         ]
         .spacing(8)
         .align_y(Alignment::Center),
@@ -61,21 +65,20 @@ pub fn sidebar(app: &App) -> El<'_> {
     .padding([6, 10])
     .style(t.boxed(t.raised, t.line, crate::theme::RADIUS));
 
-    let needle = app.filter.trim().to_lowercase();
     let now = SystemTime::now();
     let mut list = column![].spacing(2);
     let mut shown = 0;
-    for session in &app.sessions {
-        if !needle.is_empty() && !session.first_prompt.to_lowercase().contains(&needle) {
-            continue;
-        }
+    for session in app.found() {
         shown += 1;
         let current = app.session.as_deref() == Some(session.id.as_str());
-        let title = if session.first_prompt.is_empty() {
+        let prompt = session.first_prompt.trim();
+        let title = if prompt.is_empty() {
             clip(&session.id, 8)
         } else {
-            clip(&session.first_prompt, 26)
+            clip(prompt, 26)
         };
+        // A title that had to be cut says all of itself under the pointer.
+        let whole = (!prompt.is_empty() && title != prompt).then(|| clip(prompt, 600));
         let ago = now.duration_since(session.modified).unwrap_or_default();
         let meta = format!("{} · {}", s.ago(ago), fill(s.msgs, "n", session.message_count));
         let mut title_row = row![text(title).size(13).color(t.fg).wrapping(text::Wrapping::None)]
@@ -91,11 +94,17 @@ pub fn sidebar(app: &App) -> El<'_> {
             .padding([6, 10])
             .style(t.ghost(t.fg, current))
             .on_press_maybe((!busy && !current).then(|| Msg::OpenSession(session.path.clone())));
-        // Why a click does nothing while something runs.
-        list = list.push(if busy && !current {
-            tip(t, item, s.busy.to_owned(), iced::widget::tooltip::Position::Right)
-        } else {
-            item.into()
+        // And why a click does nothing while something runs.
+        let why = (busy && !current).then_some(s.busy);
+        let hint = match (whole, why) {
+            (Some(whole), Some(why)) => Some(format!("{whole}\n\n{why}")),
+            (Some(whole), None) => Some(whole),
+            (None, Some(why)) => Some(why.to_owned()),
+            (None, None) => None,
+        };
+        list = list.push(match hint {
+            Some(hint) => tip(t, item, hint, iced::widget::tooltip::Position::Right),
+            None => item.into(),
         });
     }
     if shown == 0 {

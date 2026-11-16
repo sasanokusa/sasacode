@@ -8,9 +8,9 @@ use iced_test::Simulator;
 use sasacode_protocol::{ControlMessage, Decision, Event};
 use tokio::sync::mpsc::UnboundedReceiver;
 
-use crate::app::{App, INPUT, Msg, Tab, shortcut};
-use crate::snapshots::{play, window};
-use crate::transcript::Answer;
+use crate::app::{App, Clip, INPUT, Msg, SEARCH, Tab, shortcut};
+use crate::snapshots::{LONG_LOG_LAST, REPLY_CODE, long_log, markdown_reply, play, window};
+use crate::transcript::{Answer, Kind, Note, Step};
 
 /// The window as it is drawn, for `act` to click and type in; then the window is told what that
 /// produced. Tall enough that nothing of the conversation is scrolled out of reach.
@@ -158,6 +158,226 @@ fn no_bare_key_is_a_shortcut() {
         shortcut(&Key::Character("n".into()), Modifiers::COMMAND),
         Some(Msg::NewSession)
     ));
+    // The search, the way back to the input, and the inspector's tabs.
+    for key in ["k", "l", "1", "2", "3", "4"] {
+        assert!(shortcut(&Key::Character(key.into()), none).is_none(), "{key}");
+    }
+    let chord = |key: &str| shortcut(&Key::Character(key.into()), Modifiers::COMMAND);
+    assert!(matches!(chord("k"), Some(Msg::Find)));
+    assert!(matches!(chord("l"), Some(Msg::FocusInput)));
+    assert!(matches!(chord("1"), Some(Msg::Tab(Tab::Changes))));
+    assert!(matches!(chord("2"), Some(Msg::Tab(Tab::Plan))));
+    assert!(matches!(chord("3"), Some(Msg::Tab(Tab::Commands))));
+    assert!(matches!(chord("4"), Some(Msg::Tab(Tab::Usage))));
+    // Esc stops whatever else is held with it.
+    assert!(matches!(
+        shortcut(&Key::Named(Named::Escape), Modifiers::COMMAND),
+        Some(Msg::Stop)
+    ));
+}
+
+#[test]
+fn a_code_block_is_copied_by_its_button_which_says_so_for_a_moment() {
+    let mut app = window("ja");
+    markdown_reply(&mut app);
+    let s = app.s;
+    // The first copy button is the code block's: it comes before the reply's, under it.
+    act(&mut app, |ui| {
+        ui.click(s.copy)
+            .expect("a finished reply's code block has a copy button");
+    });
+    assert_eq!(app.copied, Some(Clip::Text(REPLY_CODE.into())));
+    act(&mut app, |ui| {
+        ui.find(s.copied).expect("the button says it copied");
+    });
+    // Only the last copy's time running out clears what the button says.
+    let _ = app.update(Msg::Copy(Clip::Reply(0)));
+    let _ = app.update(Msg::Copied(1));
+    assert_eq!(app.copied, Some(Clip::Reply(0)));
+    let _ = app.update(Msg::Copied(2));
+    assert_eq!(app.copied, None);
+}
+
+#[test]
+fn what_is_copied_is_the_source_not_what_is_shown() {
+    let mut app = window("ja");
+    markdown_reply(&mut app);
+    let reply = app.copy_text(&Clip::Reply(0)).expect("the reply");
+    assert!(reply.starts_with("## 変更点") && reply.contains("```ts") && reply.contains("**指数バックオフ**"));
+    assert_eq!(app.copy_text(&Clip::Session).as_deref(), Some("0a1b2c3d-0"));
+
+    // A command without the `$ ` it is shown with, and all it wrote.
+    let mut app = window("ja");
+    play(&mut app, "work.jsonl", "再試行を指数バックオフにして", |_| false);
+    let bash = app
+        .transcript
+        .exchanges
+        .iter()
+        .flat_map(|e| &e.steps)
+        .find_map(|step| match step {
+            Step::Tool(tool) if tool.kind() == Kind::Bash => Some(tool),
+            _ => None,
+        })
+        .expect("the run ran a command");
+    assert_eq!(
+        app.copy_text(&Clip::Command(bash.id.clone())).as_deref(),
+        bash.arg("command")
+    );
+    assert_eq!(
+        app.copy_text(&Clip::Output(bash.id.clone())).as_deref(),
+        Some(bash.shown_output())
+    );
+    // Nothing to copy is no copy.
+    assert_eq!(app.copy_text(&Clip::Command("no-such-call".into())), None);
+    assert_eq!(app.copy_text(&Clip::Reply(99)), None);
+
+    // An error, whole.
+    let mut app = window("ja");
+    play(&mut app, "error.jsonl", "こんにちは", |_| false);
+    app.transcript
+        .note(Note::Error("sasacodeが途中で終了しました\nline two".into()));
+    let (i, j) = app
+        .transcript
+        .exchanges
+        .iter()
+        .enumerate()
+        .find_map(|(i, e)| {
+            e.steps
+                .iter()
+                .position(|step| matches!(step, Step::Note(Note::Error(_))))
+                .map(|j| (i, j))
+        })
+        .expect("an error note");
+    assert!(app.copy_text(&Clip::Step(i, j)).is_some_and(|text| text.contains('\n')));
+}
+
+#[test]
+fn a_long_conversation_opens_on_its_newest_without_being_scrolled_there() {
+    let mut app = window("ja");
+    long_log(&mut app);
+    app.insp = false;
+    let s = app.s;
+    let settings = Settings {
+        default_font: crate::view::UI,
+        ..Settings::default()
+    };
+    let mut ui = Simulator::with_size(settings, Size::new(1280.0, 700.0), app.view());
+    let first = ui.find(s.loaded_note).expect("the note over a loaded conversation");
+    assert!(first.visible_bounds().is_none(), "the oldest is out of view");
+    let last = ui.find(LONG_LOG_LAST).expect("the last message");
+    assert!(last.visible_bounds().is_some(), "the newest is in view");
+}
+
+#[test]
+fn reading_back_holds_the_conversation_by_its_start_until_the_newest_is_reached() {
+    let mut app = window("ja");
+    long_log(&mut app);
+    let s = app.s;
+    let scrolled = |app: &mut App, offset: f32| {
+        let _ = app.update(Msg::Scrolled { offset, room: 2000.0 });
+    };
+    // Held by its end: a nudge is not reading back.
+    scrolled(&mut app, 10.0);
+    assert!(!app.reading);
+    scrolled(&mut app, 300.0);
+    assert!(app.reading);
+    // Until the scroll that keeps the place is made, what is reported is measured from the end it
+    // was held by before, and is not listened to.
+    scrolled(&mut app, 1990.0);
+    assert!(app.reading);
+    let _ = app.update(Msg::Settled);
+    // Held by its start now: 300 from the end is still reading back; 10 from it is the newest.
+    scrolled(&mut app, 1700.0);
+    assert!(app.reading);
+    scrolled(&mut app, 1990.0);
+    assert!(!app.reading);
+    let _ = app.update(Msg::Settled);
+
+    // The button over it goes back to the newest.
+    scrolled(&mut app, 300.0);
+    let _ = app.update(Msg::Settled);
+    assert!(app.reading);
+    act(&mut app, |ui| {
+        ui.click(s.latest)
+            .expect("reading back, the way to the newest is shown");
+    });
+    assert!(!app.reading);
+    let _ = app.update(Msg::Settled);
+
+    // So does a new conversation.
+    scrolled(&mut app, 300.0);
+    let _ = app.update(Msg::Settled);
+    let _ = app.update(Msg::NewSession);
+    assert!(!app.reading);
+}
+
+/// ⌘ and `key`, pressed and let go, as macOS sends them: the key comes with its letter as text.
+fn command_chord(letter: &str) -> Vec<iced::Event> {
+    use iced::keyboard::{Event as K, Location, key::NativeCode, key::Physical};
+    let key = Key::Character(letter.into());
+    let physical = Physical::Unidentified(NativeCode::Unidentified);
+    vec![
+        iced::Event::Keyboard(K::ModifiersChanged(Modifiers::COMMAND)),
+        iced::Event::Keyboard(K::KeyPressed {
+            key: key.clone(),
+            modified_key: key.clone(),
+            physical_key: physical,
+            location: Location::Standard,
+            modifiers: Modifiers::COMMAND,
+            text: Some(letter.into()),
+            repeat: false,
+        }),
+        iced::Event::Keyboard(K::KeyReleased {
+            key: key.clone(),
+            modified_key: key,
+            physical_key: physical,
+            location: Location::Standard,
+            modifiers: Modifiers::COMMAND,
+        }),
+        iced::Event::Keyboard(K::ModifiersChanged(Modifiers::empty())),
+    ]
+}
+
+#[test]
+fn a_chord_pressed_in_the_search_is_the_windows_not_a_letter_typed() {
+    let mut app = window("ja");
+    act(&mut app, |ui| {
+        ui.click(iced::widget::Id::from(SEARCH)).expect("the search is there");
+        ui.typewrite("ab");
+    });
+    assert_eq!(app.filter, "ab");
+    // The search's own field would type the `l` of ⌘L, and the window would never see the chord.
+    let mut seen = Vec::new();
+    {
+        let settings = Settings {
+            default_font: crate::view::UI,
+            ..Settings::default()
+        };
+        let mut ui = Simulator::with_size(settings, Size::new(app.width, 1400.0), app.view());
+        ui.click(iced::widget::Id::from(SEARCH)).expect("the search is there");
+        ui.simulate(command_chord("l"));
+        seen.extend(ui.into_messages());
+    }
+    assert!(seen.iter().any(|m| matches!(m, Msg::FocusInput)), "{seen:?}");
+    assert!(!seen.iter().any(|m| matches!(m, Msg::Filter(_))), "{seen:?}");
+    for msg in seen {
+        let _ = app.update(msg);
+    }
+    assert_eq!(app.filter, "ab");
+}
+
+#[test]
+fn the_search_is_reached_by_its_chord_even_where_the_list_is_hidden() {
+    let mut app = window("ja");
+    app.width = 1000.0;
+    assert!(!app.shows_side());
+    let _ = app.update(Msg::Find);
+    assert!(app.shows_side() && !app.insp);
+    // Typed into it, the list is what it finds.
+    app.filter = "readme".into();
+    assert_eq!(app.found().count(), 1);
+    app.filter = "見当たらない".into();
+    assert_eq!(app.found().count(), 0);
 }
 
 #[test]

@@ -196,14 +196,20 @@ fn composer(app: &App) -> El<'_> {
     // What the next run starts with. A run that is going on keeps what it started with.
     // As wide as a long `provider/model`, less where the room is less: a width of its own inside a
     // box that takes the room the rest of the line leaves.
+    // Marked like the two pickers next to it, so that it says what it is once a name is typed.
     let model = container(tip(
         t,
-        text_input(s.model_ph, &app.model)
-            .on_input(Msg::Model)
-            .size(12)
-            .padding([4, 8])
-            .width(260)
-            .style(t.input()),
+        row![
+            icon(Icon::Bot, 13.0, t.fg_3),
+            text_input(s.model_ph, &app.model)
+                .on_input(Msg::Model)
+                .size(12)
+                .padding([4, 8])
+                .width(260)
+                .style(t.input()),
+        ]
+        .spacing(5)
+        .align_y(Alignment::Center),
         format!("{}\n{}", s.m_model, s.next_run),
         tooltip::Position::Top,
     ))

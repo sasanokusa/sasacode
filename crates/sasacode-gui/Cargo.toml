@@ -11,7 +11,7 @@ rust-version.workspace = true
 sasacode-protocol = { path = "../sasacode-protocol" }
 serde_json.workspace = true
 iced = { version = "0.14", features = ["markdown", "tokio", "advanced", "svg"] }
-tokio = { version = "1", features = ["process", "io-util", "sync", "rt", "macros"] }
+tokio = { version = "1", features = ["process", "io-util", "sync", "rt", "macros", "time"] }
 
 [dev-dependencies]
 # Draws and drives the window without a display: the tests in `drive.rs`, and the snapshot test

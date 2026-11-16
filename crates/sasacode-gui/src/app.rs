@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use iced::keyboard::{self, Key, key::Named};
+use iced::widget::operation::{self, AbsoluteOffset};
 use iced::widget::{markdown, text_editor};
 use iced::{Element, Size, Subscription, Task, Theme, event, task, theme, window};
 use sasacode_protocol::{ControlMessage, Decision, SessionSummary, StopCause, list_sessions, read_entries};
@@ -13,11 +14,21 @@ use tokio::sync::mpsc::UnboundedSender;
 use crate::i18n::{Strings, fill};
 use crate::runner::{self, RunSpec, RunUpdate};
 use crate::theme::{DARK, LIGHT, Tokens};
-use crate::transcript::{Answer, Note, Transcript};
+use crate::transcript::{Answer, Note, Step, Transcript};
 
 /// The input's name among the widgets: what the keyboard is given to when the window opens and
 /// when a conversation is opened.
 pub const INPUT: &str = "input";
+/// The search of the conversation list.
+pub const SEARCH: &str = "search";
+/// The conversation, scrolled back to its newest.
+pub const TIMELINE: &str = "timeline";
+
+/// How far from its newest the conversation still counts as at it, in pixels: a nudge of the
+/// trackpad is not reading back.
+const NEAR_END: f32 = 24.0;
+/// How long a copy button says it copied.
+const COPIED_FOR: Duration = Duration::from_millis(1600);
 
 /// `--permission`, as the pickers list them. The first entry of each list is "what the config says".
 pub const PERMISSIONS: [&str; 4] = ["edits", "ask", "agent", "auto"];
@@ -41,6 +52,24 @@ pub enum Tab {
     Plan,
     Commands,
     Usage,
+}
+
+/// What a copy button copies. Text the window holds is named rather than carried, so a button
+/// costs nothing to draw; what is copied is the source, not the part of it that is shown.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Clip {
+    /// The reply of an exchange, as the Markdown it was written in.
+    Reply(usize),
+    /// A step of an exchange: an error, or text written between calls.
+    Step(usize, usize),
+    /// A call's command, by call id.
+    Command(String),
+    /// All a call wrote, by call id.
+    Output(String),
+    /// The conversation's id, which `sasacode -r` takes.
+    Session,
+    /// Text drawn whole where it is copied from: a code block.
+    Text(String),
 }
 
 /// What the conversation is doing, for the pill next to its title.
@@ -89,6 +118,16 @@ pub struct App {
     pub(crate) closed: HashSet<String>,
     pub(crate) now: Instant,
     pub(crate) width: f32,
+    /// What was copied last, while its button says so.
+    pub(crate) copied: Option<Clip>,
+    /// Copies made, so that only the last one's time running out clears `copied`.
+    copies: u64,
+    /// The reader scrolled back from the newest: the conversation is held by its start, so what
+    /// comes in does not move what is read. Otherwise it is held by its end and follows.
+    pub(crate) reading: bool,
+    /// A scroll the window asked for has not been made yet: what the conversation reports until
+    /// then was measured from the end it was held by before.
+    settling: bool,
 }
 
 struct Run {
@@ -125,6 +164,24 @@ pub enum Msg {
     Open(usize, usize),
     Card(String),
     Link(markdown::Uri),
+    Copy(Clip),
+    /// A copy's time to say so ran out: the copy it is, by count.
+    Copied(u64),
+    /// The conversation was scrolled: how far from the end it is held by, and how far it can go.
+    Scrolled {
+        offset: f32,
+        room: f32,
+    },
+    /// The scroll the window asked for was made.
+    Settled,
+    /// Back to the newest of the conversation.
+    Latest,
+    /// The keyboard to the search of the conversation list.
+    Find,
+    /// Enter in the search: the first conversation it finds.
+    FindOpen,
+    /// The keyboard back to the input.
+    FocusInput,
     ThemeMode(theme::Mode),
     Tick(Instant),
     Resized(Size),
@@ -179,6 +236,10 @@ impl App {
             closed: HashSet::new(),
             now: Instant::now(),
             width: 1280.0,
+            copied: None,
+            copies: 0,
+            reading: false,
+            settling: false,
         }
     }
 
@@ -326,12 +387,12 @@ impl App {
                 if !self.busy() {
                     self.session = None;
                     self.show(Transcript::default(), false);
-                    return focus_input();
+                    return Task::batch([focus_input(), self.back_to_newest()]);
                 }
             }
             Msg::OpenSession(path) => {
                 if !self.busy() && self.open_session(&path) {
-                    return focus_input();
+                    return Task::batch([focus_input(), self.back_to_newest()]);
                 }
             }
             Msg::Filter(text) => self.filter = text,
@@ -365,6 +426,51 @@ impl App {
                 }
             }
             Msg::Link(uri) => open_link(&uri),
+            Msg::Copy(clip) => {
+                if let Some(text) = self.copy_text(&clip) {
+                    self.copies += 1;
+                    self.copied = Some(clip);
+                    let n = self.copies;
+                    return Task::batch([
+                        iced::clipboard::write(text),
+                        // The timer is made when the task runs, where its runtime is.
+                        Task::perform(async { tokio::time::sleep(COPIED_FOR).await }, move |()| Msg::Copied(n)),
+                    ]);
+                }
+            }
+            Msg::Copied(n) => {
+                if n == self.copies {
+                    self.copied = None;
+                }
+            }
+            Msg::Scrolled { offset, room } => {
+                if !self.settling {
+                    return self.follow(offset, room);
+                }
+            }
+            Msg::Settled => self.settling = false,
+            Msg::Latest => return self.back_to_newest(),
+            Msg::Find => {
+                if !self.shows_side() {
+                    self.side = true;
+                    if self.width < WIDE {
+                        self.insp = false;
+                    }
+                }
+                return Task::batch([operation::focus(SEARCH), operation::select_all(SEARCH)]);
+            }
+            Msg::FindOpen => {
+                let current = self.session.as_deref();
+                let first = self.found().next().filter(|s| Some(s.id.as_str()) != current);
+                if let Some(path) = first.map(|s| s.path.clone())
+                    && !self.busy()
+                    && self.open_session(&path)
+                {
+                    return Task::batch([focus_input(), self.back_to_newest()]);
+                }
+                return focus_input();
+            }
+            Msg::FocusInput => return focus_input(),
             Msg::ThemeMode(mode) => self.set_dark(mode == theme::Mode::Dark),
             Msg::Tick(now) => self.now = now,
             Msg::Resized(size) => self.width = size.width,
@@ -394,12 +500,70 @@ impl App {
         found.is_some_and(|path| self.open_session(&path))
     }
 
+    /// The conversations the search finds, newest first: all of them when it is empty.
+    pub(crate) fn found(&self) -> impl Iterator<Item = &SessionSummary> {
+        let needle = self.filter.trim().to_lowercase();
+        self.sessions
+            .iter()
+            .filter(move |s| needle.is_empty() || s.first_prompt.to_lowercase().contains(&needle))
+    }
+
+    /// The text a copy button copies, as the window holds it now.
+    pub(crate) fn copy_text(&self, clip: &Clip) -> Option<String> {
+        let markdown = |step: &Step| match step {
+            Step::Text(md) => Some(md.raw.trim().to_owned()),
+            Step::Note(Note::Error(body)) => Some(body.clone()),
+            _ => None,
+        };
+        let text = match clip {
+            Clip::Reply(i) => {
+                let ex = self.transcript.exchanges.get(*i)?;
+                markdown(ex.steps.get(ex.answer()?)?)
+            }
+            Clip::Step(i, j) => markdown(self.transcript.exchanges.get(*i)?.steps.get(*j)?),
+            Clip::Command(id) => self.transcript.tool(id)?.arg("command").map(str::to_owned),
+            Clip::Output(id) => Some(self.transcript.tool(id)?.shown_output().to_owned()),
+            Clip::Session => self.session.clone(),
+            Clip::Text(text) => Some(text.clone()),
+        }?;
+        (!text.trim().is_empty()).then_some(text)
+    }
+
+    /// Which end holds the conversation, after it was scrolled to `offset` from the end that holds
+    /// it now, of `room` it can go. Turns it, at the same place, when the reader crossed into
+    /// reading back or came back to the newest.
+    fn follow(&mut self, offset: f32, room: f32) -> Task<Msg> {
+        let from_end = if self.reading { room - offset } else { offset };
+        let reading = from_end > NEAR_END;
+        if reading == self.reading {
+            return Task::none();
+        }
+        self.reading = reading;
+        // Counted from the end that holds it now: the same place, or the very end.
+        self.scroll_timeline(if reading { room - offset } else { 0.0 })
+    }
+
+    /// Back to the newest, held by the end again.
+    fn back_to_newest(&mut self) -> Task<Msg> {
+        self.reading = false;
+        self.scroll_timeline(0.0)
+    }
+
+    /// Scrolls the conversation to `y` from the end that holds it. What it reports until that is
+    /// done is not listened to.
+    fn scroll_timeline(&mut self, y: f32) -> Task<Msg> {
+        self.settling = true;
+        operation::scroll_to(TIMELINE, AbsoluteOffset { x: 0.0, y }).chain(Task::done(Msg::Settled))
+    }
+
     fn show(&mut self, transcript: Transcript, loaded: bool) {
         self.transcript = transcript;
         self.loaded = loaded;
         self.folds.clear();
         self.open.clear();
         self.closed.clear();
+        self.copied = None;
+        self.reading = false;
     }
 
     /// Whether the steps of an exchange are shown. While it runs, and when it stopped short with no
@@ -455,6 +619,7 @@ impl App {
             if let Some(text) = self.take_input() {
                 self.transcript.queue(&text);
                 self.control(ControlMessage::Message { text });
+                return self.back_to_newest();
             }
             return Task::none();
         }
@@ -507,7 +672,8 @@ impl App {
             stderr: Vec::new(),
             ended: false,
         });
-        task
+        // What was just sent is in view, however far back the reader was.
+        Task::batch([task, self.back_to_newest()])
     }
 
     fn on_run(&mut self, update: RunUpdate) -> Task<Msg> {
@@ -581,7 +747,9 @@ fn global_key(event: iced::Event, status: event::Status, _window: window::Id) ->
         return None;
     };
     if status == event::Status::Captured {
-        return None;
+        // A field that let go of the keyboard on Esc, the search or the model, gives it back to
+        // the input: the next Esc is the input's again.
+        return matches!(key, Key::Named(Named::Escape)).then_some(Msg::FocusInput);
     }
     shortcut(&key, modifiers)
 }
@@ -589,12 +757,23 @@ fn global_key(event: iced::Event, status: event::Status, _window: window::Id) ->
 /// The window's shortcuts. None of them is a bare letter or a bare Enter: a key meant for the
 /// input must never answer an approval.
 pub(crate) fn shortcut(key: &Key, modifiers: keyboard::Modifiers) -> Option<Msg> {
+    if matches!(key, Key::Named(Named::Escape)) {
+        return Some(Msg::Stop);
+    }
+    if !modifiers.command() {
+        return None;
+    }
     match key.as_ref() {
-        Key::Named(Named::Escape) => Some(Msg::Stop),
-        Key::Named(Named::Enter) if modifiers.command() => Some(Msg::Chord),
-        Key::Character("b") if modifiers.command() => Some(Msg::ToggleSide),
-        Key::Character("i") if modifiers.command() => Some(Msg::ToggleInspector),
-        Key::Character("n") if modifiers.command() => Some(Msg::NewSession),
+        Key::Named(Named::Enter) => Some(Msg::Chord),
+        Key::Character("b") => Some(Msg::ToggleSide),
+        Key::Character("i") => Some(Msg::ToggleInspector),
+        Key::Character("n") => Some(Msg::NewSession),
+        Key::Character("k") => Some(Msg::Find),
+        Key::Character("l") => Some(Msg::FocusInput),
+        Key::Character("1") => Some(Msg::Tab(Tab::Changes)),
+        Key::Character("2") => Some(Msg::Tab(Tab::Plan)),
+        Key::Character("3") => Some(Msg::Tab(Tab::Commands)),
+        Key::Character("4") => Some(Msg::Tab(Tab::Usage)),
         _ => None,
     }
 }
@@ -671,6 +850,19 @@ mod tests {
         assert!(app.open_named(&log.to_string_lossy()));
         assert_eq!(app.session.as_deref(), Some("17cae3ae"));
 
+        std::fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn enter_in_the_search_opens_the_newest_it_finds() {
+        let (mut app, home) = window_with("find", &["17cab000", "9d000000"]);
+        app.filter = "見当たらない".into();
+        let _ = app.update(Msg::FindOpen);
+        assert!(app.session.is_none() && app.transcript.is_empty());
+        app.filter = "指数バックオフ".into();
+        let _ = app.update(Msg::FindOpen);
+        assert_eq!(app.session.as_deref(), Some("17cab000"));
+        assert!(app.loaded && !app.transcript.is_empty());
         std::fs::remove_dir_all(home).unwrap();
     }
 
