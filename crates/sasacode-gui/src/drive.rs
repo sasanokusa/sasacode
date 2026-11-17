@@ -3038,6 +3038,36 @@ fn a_scratch_conversation_is_not_listed_and_its_log_goes_once_it_is_left() {
 }
 
 #[test]
+fn a_scratch_conversation_with_no_folder_runs_in_an_empty_one_and_its_log_goes_from_there() {
+    let mut app = window("ja");
+    let home = std::env::temp_dir().join(format!("sasacode-gui-bare-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&home);
+    app.home = Some(home.clone());
+    let _ = app.update(Msg::NewBareScratch);
+    assert!(app.chat.scratch && app.chat.bare && app.is_bare(app.chat.key));
+    assert!(says(&app, crate::words::JA.bare_tag));
+    // Its folder: empty, under the home, not this window's.
+    let bare = app.bare_folder();
+    assert!(bare.is_dir() && bare.starts_with(&home) && bare != app.cwd);
+    // Its log is under that folder's; left, it goes to the trash.
+    let logs = sasacode_protocol::session_dir(&home, &bare);
+    std::fs::create_dir_all(&logs).unwrap();
+    let log = logs.join("bare0001.jsonl");
+    let lines = [
+        serde_json::json!({"type":"session","version":3,"id":"bare0001","cwd":bare.to_string_lossy(),"createdAt":"2026-01-01T00:00:00.000Z"}),
+        serde_json::json!({"type":"message","message":{"role":"user","content":[{"type":"text","text":"ちょっと"}],"timestamp":1}}),
+    ];
+    std::fs::write(&log, lines.iter().map(|l| format!("{l}\n")).collect::<String>()).unwrap();
+    app.chat.session = Some("bare0001".into());
+    let _ = app.update(Msg::NewSession);
+    assert!(!log.exists(), "left, its log is in the trash");
+    // The one with a folder is not run in that one.
+    let _ = app.update(Msg::NewScratch);
+    assert!(app.chat.scratch && !app.is_bare(app.chat.key));
+    let _ = std::fs::remove_dir_all(&home);
+}
+
+#[test]
 fn a_file_is_edited_and_saved_in_the_files_tab_a_markdown_one_previewed_and_a_picture_shown() {
     use text_editor::{Action, Edit, Motion};
     let mut app = window("ja");

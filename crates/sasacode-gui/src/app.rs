@@ -416,6 +416,9 @@ pub(crate) struct Chat {
     pub(crate) newer: bool,
     /// A scratch conversation: its log goes into the trash once it is left and its run is over.
     pub(crate) scratch: bool,
+    /// A scratch conversation run in an empty folder of its own, not this window's: about nothing
+    /// here.
+    pub(crate) bare: bool,
     /// How its log was when last looked at, while no run here wrote it.
     pub(crate) log_seen: Option<crate::watch::Seen>,
     /// The model its runs use, over the window's: one of several a message was sent to.
@@ -452,6 +455,7 @@ impl Chat {
             follow: Vec::new(),
             newer: false,
             scratch: false,
+            bare: false,
             log_seen: None,
             model: None,
             planned: false,
@@ -803,6 +807,8 @@ pub enum Msg {
     AskReview,
     /// A new conversation whose log goes once it is left.
     NewScratch,
+    /// A scratch conversation with no folder: run in an empty one of its own.
+    NewBareScratch,
     /// The log of the conversation shown is looked at, in case another wrote it.
     WatchLog,
     /// What the conversations used, of every folder or (true) this one: asked, and read.
@@ -1460,7 +1466,8 @@ impl App {
             }
             Msg::Run(key, update) => return self.on_run(key, update),
             Msg::Answer(decision) => return self.answer(decision),
-            Msg::NewScratch => return self.new_scratch(),
+            Msg::NewScratch => return self.new_scratch(false),
+            Msg::NewBareScratch => return self.new_scratch(true),
             Msg::NewSession => {
                 if !self.chat.untouched() {
                     // What was typed for a new conversation before is still there.
@@ -2340,7 +2347,12 @@ impl App {
         if self.suggestion.as_ref().is_some_and(|(k, _)| *k == key) {
             self.suggestion = None;
         }
-        let (repo, cwd) = (self.git.repo, self.cwd.clone());
+        // One with no folder runs in an empty one of its own, with nothing of this one's git.
+        let bare = self.is_bare(key);
+        if bare {
+            spec.cwd = self.bare_folder();
+        }
+        let (repo, cwd) = (self.git.repo && !bare, self.cwd.clone());
         let Some(chat) = self.chat_mut(key) else {
             return Task::none();
         };
@@ -2616,7 +2628,7 @@ impl App {
         // tree taken as the turn ended, for the git tab's last turn.
         if git {
             tasks.push(self.refresh_git());
-            if key != SIDE && self.git.repo {
+            if key != SIDE && self.git.repo && !self.is_bare(key) {
                 let cwd = self.cwd.clone();
                 tasks.push(Task::perform(
                     async move {

@@ -385,8 +385,13 @@ fn title(app: &App) -> El<'_> {
     };
     // A scratch conversation says it goes once it is left.
     if app.chat.scratch {
+        let said = if app.chat.bare {
+            s.w().bare_tag
+        } else {
+            s.w().scratch_tag
+        };
         return row![
-            tag(t, s.w().scratch_tag.to_owned(), t.warn_wash, t.warn),
+            tag(t, said.to_owned(), t.warn_wash, t.warn),
             title_text(
                 app.chat
                     .transcript

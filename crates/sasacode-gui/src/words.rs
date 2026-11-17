@@ -472,6 +472,8 @@ words! {
     compare_empty: "先に入力欄にメッセージを書いてください", "Write the message in the input first";
     c_scratch: "一時的な会話を始める（離れると消えます）", "New scratch conversation (gone once left)";
     scratch_tag: "一時的", "Scratch";
+    c_scratch_bare: "フォルダなしの一時的な会話を始める（このフォルダのファイルは見ません）", "New scratch conversation with no folder (sees none of this folder's files)";
+    bare_tag: "フォルダなし", "No folder";
     c_about: "このアプリについて・ログ", "About and log";
     c_review: "変更のレビューを頼む", "Ask for a review of the changes";
     c_instructions: "このフォルダのAGENTS.mdを開く", "Open this folder's AGENTS.md";

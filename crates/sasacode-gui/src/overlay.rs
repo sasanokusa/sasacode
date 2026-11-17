@@ -140,6 +140,7 @@ impl App {
             entry(s.w().c_extensions, None, Msg::Show(Some(Overlay::Extensions))),
             entry(s.w().c_about, None, Msg::Show(Some(Overlay::About))),
             entry(s.w().c_scratch, None, Msg::NewScratch),
+            entry(s.w().c_scratch_bare, None, Msg::NewBareScratch),
             entry(s.w().c_usage, Some("/usage".into()), Msg::Command(Command::Usage)),
             entry(s.w().c_compare, None, Msg::Show(Some(Overlay::Compare))),
             entry(s.w().c_review, None, Msg::AskReview),
