@@ -821,6 +821,27 @@ fn tool_details<'a>(app: &'a App, tool: &'a Tool) -> Option<El<'a>> {
             }
         }
     }
+    // The pictures its result holds, small, each larger on a click.
+    if !tool.images.is_empty() {
+        let mut line = row![].spacing(6);
+        for path in &tool.images {
+            line = line.push(
+                button(
+                    container(
+                        iced::widget::image(iced::widget::image::Handle::from_path(path))
+                            .height(120)
+                            .content_fit(iced::ContentFit::Contain),
+                    )
+                    .max_width(260)
+                    .style(t.boxed(t.raised, t.line, RADIUS)),
+                )
+                .padding(0)
+                .style(t.ghost(t.fg, false))
+                .on_press(Msg::ViewImage(path.clone())),
+            );
+        }
+        push(line.wrap().into());
+    }
     (!parts.is_empty()).then(|| Column::with_children(parts).spacing(6).into())
 }
 

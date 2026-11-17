@@ -180,6 +180,9 @@ pub struct Tool {
     pub parent: Option<String>,
     pub started: Option<Instant>,
     pub elapsed: Option<Duration>,
+    /// The pictures its result holds (`read` of an image, an MCP tool's), each kept as a file to
+    /// be drawn from.
+    pub images: Vec<std::path::PathBuf>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -313,6 +316,17 @@ pub struct Effect {
     pub compacted: bool,
 }
 
+/// The pictures some content holds, each kept as a file to draw.
+fn pictures(content: &[Content]) -> Vec<std::path::PathBuf> {
+    content
+        .iter()
+        .filter_map(|c| match c {
+            Content::Image { media_type, data } => crate::picture::kept(media_type, data),
+            _ => None,
+        })
+        .collect()
+}
+
 impl Tool {
     fn new(call: &ToolCall) -> Self {
         let mut t = Tool {
@@ -333,6 +347,7 @@ impl Tool {
             parent: None,
             started: None,
             elapsed: None,
+            images: Vec::new(),
         };
         t.change = match t.kind() {
             Kind::Edit => t.arg("path").map(|path| Change {
@@ -392,6 +407,7 @@ impl Tool {
 
     fn finish(&mut self, result: &ToolResult, now: Option<Instant>) {
         self.set_output(&text_of(&result.content));
+        self.images = pictures(&result.content);
         self.state = if result.is_error {
             ToolState::Failed
         } else {
@@ -931,6 +947,7 @@ impl Transcript {
                     // In a log this message is all there is of the call's run, or of why it had none.
                     Some(tool) if replay => {
                         tool.set_output(&output);
+                        tool.images = pictures(&r.content);
                         tool.state = match r.is_error {
                             true if NOT_RUN.iter().any(|said| output.starts_with(said)) => ToolState::Skipped,
                             true => ToolState::Failed,
@@ -1265,6 +1282,21 @@ mod tests {
 
     fn lines(e: &Exchange) -> Vec<String> {
         e.steps.iter().map(line).collect()
+    }
+
+    #[test]
+    fn a_picture_a_tool_read_is_kept_to_be_drawn() {
+        let log = [
+            r#"{"type":"message","message":{"role":"user","content":[{"type":"text","text":"画像を見て"}],"timestamp":1}}"#,
+            r#"{"type":"message","message":{"role":"assistant","content":[{"type":"tool_call","id":"c1","name":"read","input":{"path":"shot.png"}}],"api":"openai-chat","provider":"fake","model":"m","usage":{"input":1,"output":1,"cacheRead":0,"cacheWrite":0,"cost":0},"stopReason":"tool_use","timestamp":2}}"#,
+            r#"{"type":"message","message":{"role":"tool","toolCallId":"c1","toolName":"read","content":[{"type":"text","text":"Read image shot.png"},{"type":"image","mediaType":"image/png","data":"iVBORw0KGgo="}],"isError":false,"timestamp":3}}"#,
+        ];
+        let entries: Vec<SessionEntry> = log.iter().map(|l| serde_json::from_str(l).unwrap()).collect();
+        let t = Transcript::from_entries(&entries);
+        let tool = t.exchanges[0].tools().next().unwrap();
+        assert_eq!(tool.images.len(), 1);
+        assert_eq!(std::fs::read(&tool.images[0]).unwrap(), b"\x89PNG\r\n\x1a\n");
+        assert_eq!(tool.output, "Read image shot.png");
     }
 
     #[test]

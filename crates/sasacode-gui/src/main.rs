@@ -31,6 +31,7 @@ mod list;
 mod nav;
 mod outline;
 mod overlay;
+mod picture;
 mod plan;
 mod plugins;
 mod restore;
