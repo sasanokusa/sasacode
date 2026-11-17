@@ -144,7 +144,7 @@ fn blank(app: &App) -> El<'_> {
 }
 
 /// What the user said, on the right.
-fn bubble<'a>(t: Tokens, prompt: &'a str) -> El<'a> {
+pub(crate) fn bubble<'a>(t: Tokens, prompt: &'a str) -> El<'a> {
     container(
         container(text(prompt).size(14).color(t.fg))
             .padding([8, 12])

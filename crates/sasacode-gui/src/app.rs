@@ -223,6 +223,10 @@ pub struct App {
     /// The folder's scripts run from the window, the newest first, and how many were run.
     pub(crate) script_runs: Vec<crate::scripts::ScriptRun>,
     pub(crate) script_runs_made: u64,
+    /// The conversation beside the one shown, by id: one of `parked`.
+    pub(crate) split: Option<String>,
+    /// The modifier keys held, for ⌘ and a click in the list.
+    pub(crate) modifiers: keyboard::Modifiers,
     /// The shortcut whose new key is waited for in the list of keys, and what was said of the last
     /// key given.
     pub(crate) key_capture: Option<crate::keys::Act>,
@@ -317,7 +321,7 @@ impl Chat {
     /// Worth keeping when another conversation is shown: it runs, has something typed or waiting
     /// to be sent, or has news not seen yet. Anything else is read back from its log when it is
     /// opened again.
-    fn wanted(&self) -> bool {
+    pub(crate) fn wanted(&self) -> bool {
         self.busy()
             || self.unread
             || self.next.is_some()
@@ -466,6 +470,12 @@ pub enum Msg {
     KeyReset(Option<crate::keys::Act>),
     /// The conversation scrolled to message `i`, from its outline.
     JumpTo(usize),
+    /// A conversation put beside the one shown; the two swapped; the one beside put away.
+    Split(PathBuf),
+    SplitSwap,
+    SplitClose,
+    /// The modifier keys held changed.
+    Modifiers(keyboard::Modifiers),
     /// The pointer over a row of the list, or off it.
     RowHover(Option<String>),
     /// What the search inside the conversation looks for, and the search put away.
@@ -655,6 +665,8 @@ impl App {
             file_query: String::new(),
             key_capture: None,
             key_note: None,
+            split: None,
+            modifiers: keyboard::Modifiers::default(),
             script_runs: Vec::new(),
             script_runs_made: 0,
             collapsed: HashSet::new(),
@@ -919,6 +931,8 @@ impl App {
                 }
                 return Task::batch([focus_input(), self.back_to_newest()]);
             }
+            // With ⌘ held, beside the one shown.
+            Msg::OpenSession(path) if self.modifiers.command() => return self.update(Msg::Split(path)),
             Msg::OpenSession(path) => {
                 if self.open_session(&path) {
                     return Task::batch([focus_input(), self.back_to_newest()]);
@@ -1265,10 +1279,24 @@ impl App {
     }
 
     /// Shows `chat` in place of the conversation shown, which is kept while it is still wanted.
-    fn bring(&mut self, mut chat: Chat) {
+    fn bring(&mut self, chat: Chat) {
+        self.bring_as(chat, false);
+    }
+
+    /// Shows `chat` as [`App::bring`] does, the one shown kept anyway when it is a conversation:
+    /// it goes beside.
+    pub(crate) fn bring_keeping(&mut self, chat: Chat) {
+        self.bring_as(chat, true);
+    }
+
+    fn bring_as(&mut self, mut chat: Chat, keep: bool) {
         chat.unread = false;
+        // Shown here, it is no longer beside.
+        if chat.session.is_some() && chat.session == self.split {
+            self.split = None;
+        }
         let left = std::mem::replace(&mut self.chat, chat);
-        if left.wanted() {
+        if left.wanted() || (keep && left.session.is_some()) {
             self.parked.push(left);
         }
         self.copied = None;
@@ -1752,6 +1780,7 @@ fn window_event(event: iced::Event, _status: event::Status, _window: window::Id)
         iced::Event::Window(window::Event::FileHovered(_)) => Some(Msg::Hover(true)),
         iced::Event::Window(window::Event::FilesHoveredLeft) => Some(Msg::Hover(false)),
         iced::Event::Window(window::Event::FileDropped(path)) => Some(Msg::Dropped(path)),
+        iced::Event::Keyboard(keyboard::Event::ModifiersChanged(m)) => Some(Msg::Modifiers(m)),
         _ => None,
     }
 }

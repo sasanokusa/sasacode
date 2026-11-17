@@ -25,6 +25,7 @@ pub enum Act {
     Attention,
     Scripts,
     Outline,
+    Split,
     Palette,
     Mention,
     FindIn,
@@ -39,7 +40,7 @@ pub enum Act {
 }
 
 /// Every shortcut, in the order the list of keys shows them.
-pub const ACTS: [Act; 25] = [
+pub const ACTS: [Act; 26] = [
     Act::New,
     Act::Window,
     Act::Find,
@@ -51,6 +52,7 @@ pub const ACTS: [Act; 25] = [
     Act::Attention,
     Act::Scripts,
     Act::Outline,
+    Act::Split,
     Act::FocusInput,
     Act::Side,
     Act::Inspector,
@@ -162,6 +164,7 @@ impl Act {
             Act::Attention => "attention".into(),
             Act::Scripts => "scripts".into(),
             Act::Outline => "outline".into(),
+            Act::Split => "split".into(),
             Act::Palette => "palette".into(),
             Act::Mention => "mention".into(),
             Act::FindIn => "find-in-conversation".into(),
@@ -187,6 +190,7 @@ impl Act {
             Act::Attention => Chord::new(true, "a"),
             Act::Scripts => Chord::new(true, "r"),
             Act::Outline => Chord::new(true, "o"),
+            Act::Split => Chord::new(false, "d"),
             Act::Palette => Chord::new(true, "p"),
             Act::Mention => Chord::new(false, "p"),
             Act::FindIn => Chord::new(false, "f"),
@@ -212,6 +216,7 @@ impl Act {
             Act::Attention => Msg::Command(Command::Attention),
             Act::Scripts => Msg::Command(Command::Scripts),
             Act::Outline => Msg::Command(Command::Outline),
+            Act::Split => Msg::Command(Command::Split),
             Act::Palette => Msg::Show(Some(Overlay::palette())),
             Act::Mention => Msg::Command(Command::Mention),
             Act::FindIn => Msg::Command(Command::Find),
@@ -245,6 +250,7 @@ impl Act {
             Act::Attention => s.c_attention,
             Act::Scripts => s.w().c_scripts,
             Act::Outline => s.w().c_outline,
+            Act::Split => s.w().c_split,
             Act::Palette => s.c_palette,
             Act::Mention => s.c_mention,
             Act::FindIn => s.c_find,

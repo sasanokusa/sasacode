@@ -9,6 +9,7 @@ mod dock;
 mod inspector;
 mod overlay;
 mod sidebar;
+mod split;
 mod timeline;
 
 use std::path::Path;
@@ -94,6 +95,10 @@ pub fn window(app: &App) -> El<'_> {
         dock::dock(app),
     ];
     body = body.push(middle.width(Length::Fill).height(Length::Fill));
+    // Another conversation beside, as wide.
+    if let Some(chat) = app.split_chat() {
+        body = body.push(vline(t)).push(split::pane(app, chat));
+    }
     if app.insp {
         body = body.push(vline(t)).push(inspector::inspector(app));
     }

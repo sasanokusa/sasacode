@@ -1305,3 +1305,69 @@ fn the_outline_lists_each_message_and_the_headings_of_its_replies_and_takes_one_
     let _ = app.update(Msg::PaletteRun(0));
     assert!(app.overlay.is_none() && app.reading);
 }
+
+#[test]
+fn a_conversation_opened_beside_goes_on_there_and_is_taken_into_the_main_place_to_answer() {
+    let mut app = window("ja");
+    let dir = std::env::temp_dir().join(format!("sasacode-gui-split-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let log = |name: &str, said: &str, answer: &str| {
+        let path = dir.join(name);
+        let lines = [
+            serde_json::json!({"type":"session","version":3,"id":name,"cwd":"/w","createdAt":"2026-01-01T00:00:00.000Z"}),
+            serde_json::json!({"type":"message","message":{"role":"user","content":[{"type":"text","text":said}],"timestamp":1}}),
+            serde_json::json!({"type":"message","message":{"role":"assistant","content":[{"type":"text","text":answer}],"provider":"p","model":"m","usage":{"input":1,"output":1},"stopReason":"stop","timestamp":0}}),
+        ];
+        std::fs::write(&path, lines.iter().map(|l| format!("{l}\n")).collect::<String>()).unwrap();
+        path
+    };
+    app.sessions[1].path = log("one.jsonl", "横で見る会話", "横の返事");
+    app.sessions[2].path = log("two.jsonl", "二つ目の横", "二つ目の返事");
+    let (main, one, two) = (
+        app.sessions[0].id.clone(),
+        app.sessions[1].id.clone(),
+        app.sessions[2].id.clone(),
+    );
+    app.chat.session = Some(main.clone());
+    app.chat.transcript.send("メインの会話", std::time::Instant::now());
+
+    // From the palette's list: it is drawn beside, the one shown stays.
+    let _ = app.command(Command::Split);
+    assert!(app.overlay.is_some());
+    assert!(
+        app.found_entries()
+            .iter()
+            .all(|e| !matches!(&e.msg, Msg::Split(p) if p == &app.sessions[0].path))
+    );
+    let _ = app.update(Msg::OverlayText("ページング".into()));
+    assert_eq!(app.found_entries().len(), 1);
+    let _ = app.update(Msg::PaletteRun(0));
+    assert!(app.overlay.is_none());
+    assert_eq!(app.split.as_deref(), Some(one.as_str()));
+    assert!(says(&app, "横で見る会話") && says(&app, "メインの会話"));
+    assert!(says(&app, crate::words::JA.split_swap));
+
+    // ⌘ held, a click in the list puts another there instead of opening it.
+    let _ = app.update(Msg::Modifiers(Modifiers::COMMAND));
+    let _ = app.update(Msg::OpenSession(app.sessions[2].path.clone()));
+    let _ = app.update(Msg::Modifiers(Modifiers::default()));
+    assert_eq!(app.chat.session.as_deref(), Some(main.as_str()));
+    assert_eq!(app.split.as_deref(), Some(two.as_str()));
+    assert!(says(&app, "二つ目の横") && !says(&app, "横で見る会話"));
+
+    // Taken into the main place, the one that was there goes beside.
+    act(&mut app, |ui| {
+        let _ = ui.click(crate::words::JA.split_swap);
+    });
+    assert_eq!(app.chat.session.as_deref(), Some(two.as_str()));
+    assert_eq!(app.split.as_deref(), Some(main.as_str()));
+    assert!(says(&app, "メインの会話") && says(&app, "二つ目の横"));
+
+    // Opened in the main place, the one beside is no longer beside; closed, it is let go.
+    let _ = app.update(Msg::SplitSwap);
+    assert_eq!(app.chat.session.as_deref(), Some(main.as_str()));
+    let _ = app.update(Msg::SplitClose);
+    assert!(app.split.is_none() && app.split_chat().is_none());
+    assert!(!app.parked.iter().any(|c| c.session.as_deref() == Some(two.as_str())));
+    let _ = std::fs::remove_dir_all(&dir);
+}

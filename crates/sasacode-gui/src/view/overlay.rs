@@ -82,6 +82,7 @@ fn palette<'a>(app: &'a App, query: &'a str, at: usize, pick: Pick) -> El<'a> {
         Pick::Branches => s.w().branch_ph,
         Pick::Scripts => s.w().script_ph,
         Pick::Outline => s.w().outline_ph,
+        Pick::Split => s.w().split_ph,
     };
     let field = text_input(placeholder, query)
         .id(PALETTE)

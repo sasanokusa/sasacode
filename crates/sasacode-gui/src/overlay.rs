@@ -49,6 +49,8 @@ pub enum Pick {
     Scripts,
     /// The conversation's messages and headings, to scroll to one.
     Outline,
+    /// The list's conversations, to put one beside the one shown.
+    Split,
 }
 
 impl Overlay {
@@ -94,6 +96,15 @@ impl App {
             entry(s.c_btw, Some("/btw".into()), Msg::Command(Command::Btw)),
             entry(s.w().c_scripts, key(Act::Scripts), Msg::Command(Command::Scripts)),
             entry(s.w().c_outline, key(Act::Outline), Msg::Command(Command::Outline)),
+            entry(
+                if self.split.is_some() {
+                    s.w().split_close
+                } else {
+                    s.w().c_split
+                },
+                key(Act::Split),
+                Msg::Command(Command::Split),
+            ),
             entry(s.c_export, None, Msg::Copy(Clip::Conversation)),
             entry(s.c_steps, None, Msg::Command(Command::Steps)),
             entry(s.c_model, None, Msg::Command(Command::Model)),
@@ -205,6 +216,9 @@ impl App {
         };
         if *pick == Pick::Branches {
             return self.branch_entries(query);
+        }
+        if *pick == Pick::Split {
+            return self.split_entries(query);
         }
         if *pick == Pick::Outline {
             return self.outline_entries(query);
@@ -331,6 +345,8 @@ impl App {
             Msg::SetSteps(on) => self.set(|p| p.steps = on),
             Msg::Focus(on) => {
                 self.focused = on;
+                // Keys let go in another window are not heard here: none is taken as held.
+                self.modifiers = iced::keyboard::Modifiers::default();
                 // Back in front: what another window said about conversations meanwhile is shown.
                 if on {
                     self.read_others();

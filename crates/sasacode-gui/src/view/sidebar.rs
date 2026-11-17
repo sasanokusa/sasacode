@@ -182,6 +182,8 @@ fn row_of<'a>(app: &'a App, session: &'a SessionSummary, now: SystemTime, cells:
     let (t, s) = (app.t, app.s);
     let pinned = app.prefs.pinned.contains(&session.id);
     let current = app.chat.session.as_deref() == Some(session.id.as_str());
+    // Shown beside: marked as the one shown is, and taken into the main place by a click.
+    let beside = app.split.as_deref() == Some(session.id.as_str());
     // The name it was given, else its first message, else the start of its id.
     let named = app.prefs.names.get(&session.id).map(String::as_str);
     let prompt = named.unwrap_or(session.first_prompt.trim());
@@ -222,7 +224,7 @@ fn row_of<'a>(app: &'a App, session: &'a SessionSummary, now: SystemTime, cells:
     let item = button(column![title_row, text(meta).size(11.5).color(t.fg_3)].spacing(2))
         .width(Length::Fill)
         .padding([6, 10])
-        .style(t.ghost(t.fg, current))
+        .style(t.ghost(t.fg, current || beside))
         .on_press_maybe((!current).then(|| Msg::OpenSession(session.path.clone())));
     // Pinned, named, grouped, archived or deleted from the row the pointer is on.
     let act = |mark: Icon, color, hint: &'static str, msg: Msg| {

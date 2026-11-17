@@ -40,6 +40,7 @@ pub enum Command {
     Group,
     Scripts,
     Outline,
+    Split,
 }
 
 impl Command {
@@ -66,6 +67,7 @@ impl Command {
         ("group", Command::Group),
         ("run", Command::Scripts),
         ("outline", Command::Outline),
+        ("split", Command::Split),
     ];
 
     pub fn what(self, s: &Strings) -> &'static str {
@@ -94,6 +96,7 @@ impl Command {
             Command::Group => s.w().c_group,
             Command::Scripts => s.w().c_scripts,
             Command::Outline => s.w().c_outline,
+            Command::Split => s.w().c_split,
         }
     }
 
@@ -381,6 +384,12 @@ impl App {
             Command::Settings => self.overlay = Some(Overlay::Settings),
             Command::Keys => self.overlay = Some(Overlay::Keys),
             Command::Attention => return self.attention(),
+            Command::Split => {
+                if self.split.is_some() {
+                    return self.update(Msg::SplitClose);
+                }
+                return self.update(Msg::Show(Some(Overlay::picker(crate::overlay::Pick::Split))));
+            }
             Command::Outline => {
                 return self.update(Msg::Show(Some(Overlay::picker(crate::overlay::Pick::Outline))));
             }

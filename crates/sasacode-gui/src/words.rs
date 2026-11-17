@@ -117,6 +117,13 @@ words! {
     // The outline.
     c_outline: "会話の目次", "Conversation outline";
     outline_ph: "メッセージや見出しを探して移動", "Find a message or a heading to go to";
+    // The conversation beside the one shown.
+    c_split: "会話を横に開く", "Open a conversation beside";
+    split_close: "横の会話を閉じる", "Close the conversation beside";
+    split_ph: "横に開く会話を探す（一覧で⌘クリックでも開けます）", "Find a conversation to open beside (or ⌘-click it in the list)";
+    split_swap: "こちらで続ける", "Continue here";
+    split_swap_hint: "メインに移して入力や承認ができるようにします。今の会話はこちらに来ます", "Moves it to the main place to type or answer; the current one comes here";
+    split_waiting: "承認を待っています。続けるにはメインに移してください", "Waiting for an approval. Move it to the main place to answer";
 }
 
 #[cfg(test)]

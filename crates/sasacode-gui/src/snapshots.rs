@@ -450,4 +450,20 @@ fn snapshots_of_figures() {
     shoot(&app, "33-images", WIDE);
     app.set_dark(true);
     shoot(&app, "31-figures-dark", WIDE);
+    // Another conversation beside it.
+    app.set_dark(false);
+    app.insp = false;
+    let log = std::env::temp_dir().join(format!("sasacode-gui-split-shot-{}.jsonl", std::process::id()));
+    let said = "注文一覧のページングが2ページ目で重複する";
+    let answer = "`ORDER BY created_at` だけでは同じ時刻の行の順が決まりません。`id` を二つ目のキーにします。\n\n```sql\nSELECT * FROM orders\nORDER BY created_at DESC, id DESC\nLIMIT 20 OFFSET 20;\n```";
+    let lines = [
+        serde_json::json!({"type":"session","version":3,"id":"0a1b2c3d-1","cwd":"/w","createdAt":"2026-01-01T00:00:00.000Z"}),
+        serde_json::json!({"type":"message","message":{"role":"user","content":[{"type":"text","text":said}],"timestamp":1}}),
+        serde_json::json!({"type":"message","message":{"role":"assistant","content":[{"type":"text","text":answer}],"provider":"p","model":"m","usage":{"input":1,"output":1},"stopReason":"stop","timestamp":0}}),
+    ];
+    std::fs::write(&log, lines.iter().map(|l| format!("{l}\n")).collect::<String>()).unwrap();
+    app.sessions[1].path = log.clone();
+    let _ = app.update(Msg::Split(log.clone()));
+    shoot(&app, "34-split", WIDE);
+    let _ = std::fs::remove_file(log);
 }

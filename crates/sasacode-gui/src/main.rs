@@ -25,6 +25,7 @@ mod runner;
 mod scripts;
 #[cfg(test)]
 mod snapshots;
+mod split;
 mod system;
 mod theme;
 mod transcript;

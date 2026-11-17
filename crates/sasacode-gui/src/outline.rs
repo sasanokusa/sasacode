@@ -127,7 +127,7 @@ impl App {
                 .then(|y| op::scroll_to(TIMELINE, AbsoluteOffset { x: 0.0, y }))
                 .chain(Task::done(Msg::Settled)))
             }
-            other => Err(other),
+            other => self.update_split(other),
         }
     }
 }
