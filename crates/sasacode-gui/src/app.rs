@@ -229,6 +229,11 @@ pub struct App {
     pub(crate) side_typed: String,
     /// Conversations whose title the model is writing.
     pub(crate) titling: std::collections::BTreeSet<String>,
+    /// The conversations left, the newest last, and those gone back from; while one of them is
+    /// being opened, nothing is added.
+    pub(crate) back: Vec<String>,
+    pub(crate) forward: Vec<String>,
+    pub(crate) navigating: bool,
     /// Conversations whose notice that the branch changed was put away.
     pub(crate) branch_seen: HashSet<String>,
     /// That search's field was the last to take the keyboard: an Esc there puts it away.
@@ -641,6 +646,15 @@ pub enum Msg {
     WriteTitle(String),
     Titled(String, bool, Result<String, String>),
     SetAutoTitle(bool),
+    /// To the conversation left, and forward again.
+    Back,
+    Forward,
+    /// The next run's effort and permission mode, one step on; the model field, to type in.
+    CycleEffort,
+    CyclePermission,
+    FocusModel,
+    /// The side question's panel, open to type one.
+    SideOpen,
     /// What the CLI listed (part of it), asked again, and the folder trusted: for good, as the
     /// CLI asks, or for this window's runs.
     Listed(Box<crate::cli::Listing>),
@@ -854,6 +868,9 @@ impl App {
             image_actual: false,
             side_typed: String::new(),
             titling: Default::default(),
+            back: Vec::new(),
+            forward: Vec::new(),
+            navigating: false,
             branch_seen: HashSet::new(),
             find_held: false,
             show_archived: false,
@@ -1529,6 +1546,9 @@ impl App {
     }
 
     fn bring_as(&mut self, mut chat: Chat, keep: bool) {
+        if chat.session != self.chat.session || chat.key != self.chat.key {
+            self.leaving();
+        }
         chat.unread = false;
         if let Some(id) = chat.session.clone()
             && self.prefs.more.unread.contains(&id)
@@ -2205,6 +2225,10 @@ pub(crate) fn dragging(event: iced::Event, _status: event::Status, _window: wind
 pub(crate) fn shortcut(key: &Key, modifiers: keyboard::Modifiers) -> Option<Msg> {
     if matches!(key, Key::Named(Named::Escape)) {
         return Some(Msg::Stop);
+    }
+    // ⌃Tab and ⌃⇧Tab: the next and the previous conversation, as tabs are gone through.
+    if modifiers.control() && matches!(key, Key::Named(Named::Tab)) {
+        return Some(Msg::Neighbour(if modifiers.shift() { -1 } else { 1 }));
     }
     if !modifiers.command() {
         return None;

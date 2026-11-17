@@ -37,12 +37,28 @@ pub enum Act {
     Find,
     FocusInput,
     Tab(u8),
+    Back,
+    Forward,
+    Rename,
+    Pin,
+    Ask,
+    Model,
+    Effort,
+    Permission,
 }
 
 /// Every shortcut, in the order the list of keys shows them.
-pub const ACTS: [Act; 26] = [
+pub const ACTS: [Act; 34] = [
     Act::New,
     Act::Window,
+    Act::Back,
+    Act::Forward,
+    Act::Rename,
+    Act::Pin,
+    Act::Ask,
+    Act::Model,
+    Act::Effort,
+    Act::Permission,
     Act::Find,
     Act::FindIn,
     Act::Mention,
@@ -176,6 +192,14 @@ impl Act {
             Act::Find => "find".into(),
             Act::FocusInput => "focus-input".into(),
             Act::Tab(n) => format!("tab-{n}"),
+            Act::Back => "back".into(),
+            Act::Forward => "forward".into(),
+            Act::Rename => "rename".into(),
+            Act::Pin => "pin".into(),
+            Act::Ask => "side-question".into(),
+            Act::Model => "model".into(),
+            Act::Effort => "effort".into(),
+            Act::Permission => "permission".into(),
         }
     }
 
@@ -202,6 +226,14 @@ impl Act {
             Act::Find => Chord::new(false, "k"),
             Act::FocusInput => Chord::new(false, "l"),
             Act::Tab(n) => Chord::new(false, &n.to_string()),
+            Act::Back => Chord::new(false, "["),
+            Act::Forward => Chord::new(false, "]"),
+            Act::Rename => Chord::new(true, "e"),
+            Act::Pin => Chord::new(true, "u"),
+            Act::Ask => Chord::new(true, "b"),
+            Act::Model => Chord::new(true, "m"),
+            Act::Effort => Chord::new(true, "t"),
+            Act::Permission => Chord::new(true, "l"),
         }
     }
 
@@ -235,6 +267,14 @@ impl Act {
                 5 => Tab::Git,
                 _ => Tab::Files,
             }),
+            Act::Back => Msg::Back,
+            Act::Forward => Msg::Forward,
+            Act::Rename => Msg::Command(Command::Rename),
+            Act::Pin => Msg::Command(Command::Pin),
+            Act::Ask => Msg::SideOpen,
+            Act::Model => Msg::FocusModel,
+            Act::Effort => Msg::CycleEffort,
+            Act::Permission => Msg::CyclePermission,
         }
     }
 
@@ -267,6 +307,14 @@ impl Act {
             Act::Tab(4) => s.tab_usage,
             Act::Tab(5) => s.tab_git,
             Act::Tab(_) => s.w().tab_files,
+            Act::Back => s.w().k_back,
+            Act::Forward => s.w().k_forward,
+            Act::Rename => s.rename,
+            Act::Pin => s.w().k_pin,
+            Act::Ask => s.w().k_ask,
+            Act::Model => s.w().k_model,
+            Act::Effort => s.w().k_effort,
+            Act::Permission => s.w().k_permission,
         }
     }
 }

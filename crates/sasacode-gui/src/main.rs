@@ -21,6 +21,7 @@ mod input;
 mod keys;
 mod layout;
 mod list;
+mod nav;
 mod outline;
 mod overlay;
 mod plugins;

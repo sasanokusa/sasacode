@@ -9,7 +9,7 @@ pub(crate) mod dock;
 mod inspector;
 mod menu;
 pub(crate) use timeline::has;
-mod overlay;
+pub(crate) mod overlay;
 mod sidebar;
 mod split;
 mod timeline;

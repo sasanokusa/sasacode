@@ -256,7 +256,7 @@ impl App {
                 self.trust_once = true;
                 Task::none()
             }
-            other => return Err(other),
+            other => return self.update_nav(other),
         };
         Ok(task)
     }

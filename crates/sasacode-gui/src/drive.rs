@@ -2236,3 +2236,62 @@ fn a_title_the_model_writes_names_a_conversation_the_user_did_not() {
     let _ = app.update(Msg::OpenMenu(crate::rows::MenuFor::Row(id)));
     assert!(says(&app, crate::words::JA.title_write));
 }
+
+#[test]
+fn back_and_forward_go_between_the_conversations_opened_and_keys_change_the_next_run() {
+    let mut app = window("ja");
+    let dir = std::env::temp_dir().join(format!("sasacode-gui-back-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    for (i, name) in ["a.jsonl", "b.jsonl"].into_iter().enumerate() {
+        let path = dir.join(name);
+        let lines = [
+            serde_json::json!({"type":"session","version":3,"id":name,"cwd":"/w","createdAt":"2026-01-01T00:00:00.000Z"}),
+            serde_json::json!({"type":"message","message":{"role":"user","content":[{"type":"text","text":name}],"timestamp":1}}),
+        ];
+        std::fs::write(&path, lines.iter().map(|l| format!("{l}\n")).collect::<String>()).unwrap();
+        app.sessions[i + 1].path = path;
+    }
+    let (a, b) = (app.sessions[1].clone(), app.sessions[2].clone());
+    assert!(app.open_session(&a.path));
+    assert!(app.open_session(&b.path));
+    let _ = app.update(Msg::Back);
+    assert_eq!(app.chat.session.as_deref(), Some(a.id.as_str()));
+    let _ = app.update(Msg::Forward);
+    assert_eq!(app.chat.session.as_deref(), Some(b.id.as_str()));
+    // Opening another clears what was ahead.
+    let _ = app.update(Msg::Back);
+    let _ = app.update(Msg::NewSession);
+    assert!(app.forward.is_empty());
+    let _ = app.update(Msg::Back);
+    assert_eq!(app.chat.session.as_deref(), Some(a.id.as_str()));
+
+    let tap = |app: &mut App, key: &str, shift: bool| {
+        let mut modifiers = Modifiers::COMMAND;
+        if shift {
+            modifiers |= Modifiers::SHIFT;
+        }
+        let msg = shortcut(&Key::Character(key.into()), modifiers).expect("bound");
+        let _ = app.update(msg);
+    };
+    app.effort = None;
+    tap(&mut app, "t", true);
+    assert_eq!(app.effort, Some("off"));
+    tap(&mut app, "t", true);
+    assert_eq!(app.effort, Some("low"));
+    app.permission = Some("agent");
+    tap(&mut app, "l", true);
+    assert_eq!(app.permission, None, "auto is never reached by the key");
+    assert!(matches!(
+        shortcut(&Key::Character("[".into()), Modifiers::COMMAND),
+        Some(Msg::Back)
+    ));
+    assert!(matches!(
+        shortcut(&Key::Character("]".into()), Modifiers::COMMAND),
+        Some(Msg::Forward)
+    ));
+    assert!(matches!(
+        shortcut(&Key::Named(Named::Tab), Modifiers::CTRL),
+        Some(Msg::Neighbour(1))
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+}

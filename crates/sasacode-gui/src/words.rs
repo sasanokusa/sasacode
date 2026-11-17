@@ -301,6 +301,13 @@ words! {
     side_bring: "このやり取りを入力欄に引用する", "Quote this in the input";
     title_write: "モデルに題名を付けさせる", "Have the model title it";
     set_auto_title: "名前のない会話に、モデルが題名を付ける（最初の実行のあと）", "The model titles unnamed conversations (after their first run)";
+    k_back: "前に見ていた会話へ戻る", "Back to the conversation left";
+    k_forward: "戻る前の会話へ進む", "Forward again";
+    k_pin: "ピン留めする・外す", "Pin or unpin";
+    k_ask: "脇の質問をする", "Ask a side question";
+    k_model: "モデルの欄へ", "To the model field";
+    k_effort: "推論の深さを次へ", "Next effort";
+    k_permission: "権限モードを次へ", "Next permission mode";
 }
 
 #[cfg(test)]
