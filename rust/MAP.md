@@ -16,19 +16,22 @@ State: `open`, `claimed by <who> <date>`, `done (<evidence>)`.
 | Wave | Unit (TS → Rust) | State |
 | --- | --- | --- |
 | 0 | contract: ai/types, plugin-api → `sasacode-ai` types/provider/json/http, `sasacode-plugin-api` | done (builds, clippy clean) |
-| 1 | ai adapters: sse, anthropic, openai-chat, openai-responses, effort, format, replay | claimed by subagent A 2026-11-18 |
-| 1 | plugin-api validate + settings; tools: read, write, edit, bash, shell, util | claimed by subagent B 2026-11-18 |
+| 1 | ai adapters: sse, anthropic, openai-chat, openai-responses, effort, format, replay | done (2bb1cc6) |
+| 1 | plugin-api validate + settings; tools: read, write, edit, bash, shell, util | done (c3da12a) |
 | 1 | mcp; skills | done (13+4 TS tests ported; 8722613) |
 | 1 | agent/session → `sasacode-agent::session`; host: i18n, messages, models, notes, sessions | done (8,932 real log lines round-trip; cbe65f5) |
 | 1 | testing: replay provider, fake model server; e2e harness `SASACODE_E2E_BIN` | done (11 unit + 17 e2e vs TS CLI; 5271490) |
-| 1 | agent: agent, events, tool-exec, permission, plugins host, tool-search, system-prompt | written by coordinator; permission tests 20/20 (16 TS + 4 new); agent/pipeline/plugin tests wait for tools |
-| 2 | headless vertical slice: cli main/config/headless/control + builtin tools, e2e green | claimed by coordinator 2026-11-18 |
+| 1 | agent: agent, events, tool-exec, permission, plugins host, tool-search, system-prompt | done; permission globs = Bun.Glob on 2,303 recorded pairs (79b82b6); remaining TS tests claimed by subagent G 2026-11-18 |
+| 2 | headless vertical slice: cli main/config/headless/control + builtin tools, e2e green | done: e2e 17/17 Rust, 17/18 TS (the 18th is ADR-002), app cases 34/34 (ae4d9bc) |
 | 3 | bundled table and ADR-011 switch (`sasacode-bundled/src/lib.rs`) | done by coordinator |
 | 3 | bundled: web-fetch, web-search, rustxng, browsr, openai-codex, usage, background-sessions, auto-reconnect, goal, gui, image-attach, image-slim, free-search | claimed by subagent N 2026-11-18 |
 | 3 | bundled: tool-repair, repair, text-tool-calls, guards, agents-md, compaction, diagnostics, subagent, todo, progress-notes, permission-presets, agent-judge, checkpoints, official plugins, jev-guard | claimed by subagent K 2026-11-18 |
 | 3 | tui | claimed by subagent T 2026-11-18 |
-| 3 | cli: setup, loader, catalog, endpoints, detect, env, keys, list-models, trust, update, stdin | open |
-| 4 | xtask (build, checks, improve, pack), CI and release workflows, docs, TS removal | open |
+| 3 | cli: setup, catalog, endpoints, detect, env, keys, list-models, trust, update, stdin (loader: ADR-002) | done (1ed76bb, ae4d9bc); TUI entry waits for T |
+| 4 | xtask (build, checks, improve), CI and release workflows, install scripts | claimed by subagent X 2026-11-18 |
+| 4 | docs (READMEs, docs/*.md) | claimed by subagent D 2026-11-18 |
+| 4 | app record/replay (`rust/app-cases`, rust-anything) | done: 34 cases from TS 0.15.2 (61cd088) |
+| 4 | TS removal; GUI and protocol tests read TS sources and move to the Rust ones | open (coordinator, last) |
 
 ## Tests
 
@@ -49,9 +52,8 @@ Still to port (owner: coordinator):
 
 ## Open checks (block the TS removal)
 
-- Glob equivalence: a pattern × path table from `Bun.Glob.match` against `permission::glob()` (classes,
-  `[!…]`, braces, `**` positions, `secrets/**` vs `secrets`, dotfiles, `!(`/`?(`, an unclosed `[`).
-  The permission tests pass, but they do not prove globset matches Bun.Glob, and this is a security boundary.
+- ~~Glob equivalence~~: done. `bun_glob_cases.json` holds Bun 1.4.4's answers for 2,303 pairs; all agree
+  except Bun's `**/*` on paths ending in `/`, which a rule never sees (79b82b6).
 - Windows paths: `paths.rs` tests are unix-only. `resolve(&["/work/x"])` on Windows must get a drive
   (Node does); `path_pattern` assumes it. Needs a Windows CI job before release.
 
