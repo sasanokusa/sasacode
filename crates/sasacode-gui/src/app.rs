@@ -373,6 +373,11 @@ pub struct App {
     /// A scroll the window asked for has not been made yet: what the conversation reports until
     /// then was measured from the end it was held by before.
     pub(crate) settling: bool,
+    /// Where the conversation shown was last reported scrolled to, from the end it is held by.
+    pub(crate) offset: f32,
+    /// Where each conversation left was read back to, from its start, by session id: shown again
+    /// there while the window is open. One left at the newest is not here.
+    pub(crate) read_to: HashMap<String, f32>,
 }
 
 /// One conversation: what it says, what is typed for it, and its run.
@@ -1162,6 +1167,8 @@ impl App {
             copies: 0,
             reading: false,
             settling: false,
+            offset: 0.0,
+            read_to: HashMap::new(),
         }
     }
 
@@ -1455,7 +1462,7 @@ impl App {
                     self.overlay = None;
                 }
                 if self.open_session(&path) {
-                    return Task::batch([focus_input(), self.back_to_newest()]);
+                    return Task::batch([focus_input(), self.where_left()]);
                 }
             }
             Msg::Fork(i) => return self.fork(i, false),
@@ -1493,7 +1500,7 @@ impl App {
                 if let Some(path) = to.and_then(|i| paths.get(i))
                     && self.open_session(&path.clone())
                 {
-                    return Task::batch([focus_input(), self.back_to_newest()]);
+                    return Task::batch([focus_input(), self.where_left()]);
                 }
             }
             Msg::Filter(text) => {
@@ -1586,6 +1593,7 @@ impl App {
                 }
             }
             Msg::Scrolled { offset, room } => {
+                self.offset = offset;
                 if !self.settling {
                     return self.follow(offset, room);
                 }
@@ -1607,7 +1615,7 @@ impl App {
                 if let Some(path) = first.map(|s| s.path.clone())
                     && self.open_session(&path)
                 {
-                    return Task::batch([focus_input(), self.back_to_newest()]);
+                    return Task::batch([focus_input(), self.where_left()]);
                 }
                 return focus_input();
             }
@@ -1870,6 +1878,14 @@ impl App {
             self.git_scope = crate::scope::Scope::Changes;
             self.scoped = None;
         }
+        // Where it was read back to, for when it is shown again.
+        if let Some(id) = self.chat.session.clone() {
+            if self.reading {
+                self.read_to.insert(id, self.offset);
+            } else {
+                self.read_to.remove(&id);
+            }
+        }
         let left = std::mem::replace(&mut self.chat, chat);
         self.keep_last(last);
         // A scratch conversation left is gone, once its run is over.
@@ -2011,6 +2027,18 @@ impl App {
         self.reading = reading;
         // Counted from the end that holds it now: the same place, or the very end.
         self.scroll_timeline(if reading { room - offset } else { 0.0 })
+    }
+
+    /// The conversation just shown, where it was read back to when it was left, else at the
+    /// newest.
+    pub(crate) fn where_left(&mut self) -> Task<Msg> {
+        match self.chat.session.as_ref().and_then(|id| self.read_to.get(id)).copied() {
+            Some(y) => {
+                self.reading = true;
+                self.scroll_timeline(y)
+            }
+            None => self.back_to_newest(),
+        }
     }
 
     /// Back to the newest, held by the end again.
@@ -2871,6 +2899,44 @@ mod tests {
         let file = home.join("context").join("bbbb0000.md");
         assert!(file.is_file() && typed.contains("bbbb0000.md"), "{typed}");
         assert!(std::fs::read_to_string(&file).unwrap().contains("## "));
+        std::fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn a_conversation_shown_again_is_where_it_was_read_back_to() {
+        let (mut app, home) = window_with("read-to", &["aaaa0000", "bbbb0000"]);
+        let path = |app: &App, id: &str| app.sessions.iter().find(|s| s.id == id).unwrap().path.clone();
+        let _ = app.update(Msg::OpenSession(path(&app, "aaaa0000")));
+        let _ = app.update(Msg::Settled);
+        // Scrolled back from the newest: held by its start, at 1500 from it.
+        let _ = app.update(Msg::Scrolled {
+            offset: 500.0,
+            room: 2000.0,
+        });
+        assert!(app.reading && app.settling);
+        let _ = app.update(Msg::Settled);
+        let _ = app.update(Msg::Scrolled {
+            offset: 1500.0,
+            room: 2000.0,
+        });
+
+        // Another is shown at its newest; the first, again, where it was read to.
+        let _ = app.update(Msg::OpenSession(path(&app, "bbbb0000")));
+        assert!(!app.reading);
+        assert_eq!(app.read_to.get("aaaa0000"), Some(&1500.0));
+        let _ = app.update(Msg::Settled);
+        let _ = app.update(Msg::OpenSession(path(&app, "aaaa0000")));
+        assert!(app.reading && app.settling);
+        // Left at the newest, it opens at the newest.
+        let _ = app.update(Msg::Settled);
+        let _ = app.update(Msg::Latest);
+        let _ = app.update(Msg::Settled);
+        let _ = app.update(Msg::Back);
+        assert_eq!(app.chat.session.as_deref(), Some("bbbb0000"));
+        assert!(!app.read_to.contains_key("aaaa0000"));
+        let _ = app.update(Msg::Back);
+        assert_eq!(app.chat.session.as_deref(), Some("aaaa0000"));
+        assert!(!app.reading);
         std::fs::remove_dir_all(home).unwrap();
     }
 

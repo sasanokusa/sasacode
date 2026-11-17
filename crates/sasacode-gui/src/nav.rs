@@ -41,6 +41,9 @@ impl App {
                 self.back.push(from);
             }
         }
+        if opened {
+            return Task::batch([operation::focus(crate::app::INPUT), self.where_left()]);
+        }
         operation::focus(crate::app::INPUT)
     }
 
