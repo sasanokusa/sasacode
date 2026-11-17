@@ -2038,6 +2038,58 @@ fn a_github_alert_is_drawn_under_its_name_and_a_reply_can_be_branched_from() {
 }
 
 #[test]
+fn what_can_be_done_with_a_reply_shows_under_the_last_and_under_the_one_pointed_at() {
+    let mut app = window("ja");
+    let mut now = std::time::Instant::now();
+    app.chat.session = Some("0a1b2c3d-0".into());
+    for (asked, answered) in [("一つ目", "最初の返事です"), ("二つ目", "次の返事です")] {
+        app.chat.transcript.send(asked, now);
+        for line in [
+            format!(
+                r#"{{"type":"message_end","message":{{"role":"assistant","content":[{{"type":"text","text":"{answered}"}}],"provider":"fake","model":"m","usage":{{"input":1,"output":1}},"stopReason":"stop"}}}}"#
+            ),
+            r#"{"type":"agent_end","cause":"done"}"#.to_owned(),
+        ] {
+            now += std::time::Duration::from_secs(1);
+            app.chat
+                .transcript
+                .apply(&sasacode_protocol::parse_event(&line).unwrap(), now);
+        }
+    }
+    let fork = crate::words::JA.fork_after;
+    // Which reply the first "branch off here" found belongs to.
+    let first_fork = |app: &App| -> Option<usize> {
+        let settings = Settings {
+            default_font: crate::view::ui(),
+            ..Settings::default()
+        };
+        let mut ui = Simulator::with_size(settings, Size::new(app.width, 1400.0), app.view());
+        let _ = ui.click(fork).ok()?;
+        ui.into_messages().find_map(|m| match m {
+            Msg::ForkAfter(i) => Some(i),
+            _ => None,
+        })
+    };
+    // The last reply's, always; the one before's, not until the pointer is over it.
+    assert_eq!(first_fork(&app), Some(1));
+    act(&mut app, |ui| {
+        // Just over the second message sent: the end of the first reply.
+        let two = ui.find("二つ目").expect("the second message").bounds();
+        let at = iced::Point::new(two.center_x(), two.y - 40.0);
+        ui.point_at(at);
+        let _ = ui.simulate([iced::Event::Mouse(iced::mouse::Event::CursorMoved { position: at })]);
+    });
+    assert_eq!(app.reply_hover, Some(0));
+    assert_eq!(first_fork(&app), Some(0));
+    // Off it again; the next reply's way in coming first does not lose it.
+    let _ = app.update(Msg::ReplyHover(1, true));
+    let _ = app.update(Msg::ReplyHover(0, false));
+    assert_eq!(app.reply_hover, Some(1));
+    let _ = app.update(Msg::ReplyHover(1, false));
+    assert_eq!((app.reply_hover, first_fork(&app)), (None, Some(1)));
+}
+
+#[test]
 fn part_of_a_reply_is_chosen_and_quoted_and_the_text_cannot_be_changed_there() {
     let mut app = window("ja");
     crate::snapshots::markdown_reply(&mut app);

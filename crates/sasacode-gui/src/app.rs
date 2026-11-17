@@ -373,6 +373,9 @@ pub struct App {
     pub(crate) commenting: Option<crate::review::Draft>,
     /// The message of the conversation under the pointer, which shows what can be done with it.
     pub(crate) ex_hover: Option<usize>,
+    /// The reply under the pointer, which shows what can be done with it; the last one shows it
+    /// always.
+    pub(crate) reply_hover: Option<usize>,
     /// What is said in each conversation, lower case, for the search, as of when its log changed;
     /// and whether it is being read.
     pub(crate) bodies: HashMap<PathBuf, (std::time::SystemTime, String)>,
@@ -985,6 +988,9 @@ pub enum Msg {
     Retry,
     /// The pointer over a message of the conversation, or off it.
     ExHover(Option<usize>),
+    /// The pointer onto a reply, or off it: off one only clears it while it is that one, as the
+    /// next reply's way in may come first.
+    ReplyHover(usize, bool),
     /// What waits to be sent when the run ends, back into the input.
     Retract,
     /// Back to the newest of the conversation.
@@ -1226,6 +1232,7 @@ impl App {
             pr_loading: false,
             commenting: None,
             ex_hover: None,
+            reply_hover: None,
             aside: None,
             toast: None,
             unreadable: Vec::new(),
@@ -1549,6 +1556,12 @@ impl App {
                 return self.fork(last, true);
             }
             Msg::ExHover(i) => self.ex_hover = i,
+            Msg::ReplyHover(i, true) => self.reply_hover = Some(i),
+            Msg::ReplyHover(i, false) => {
+                if self.reply_hover == Some(i) {
+                    self.reply_hover = None;
+                }
+            }
             Msg::Retract => {
                 if let Some(next) = self.chat.next.take() {
                     let typed = self.chat.editor.text();

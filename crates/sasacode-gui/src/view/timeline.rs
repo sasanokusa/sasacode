@@ -355,11 +355,17 @@ fn exchange<'a>(app: &'a App, i: usize, ex: &'a Exchange) -> El<'a> {
         }
         return col.push(live_row(app, ex)).into();
     }
+    // What came back, apart from what was sent: under the pointer it shows what can be done with
+    // the reply.
+    let mut said = col;
+    let mut col = column![].spacing(10).width(Length::Fill);
+    let mut any = false;
     let answer = ex.answer();
     let work = &ex.steps[..answer.unwrap_or(ex.steps.len())];
     // The steps hidden by the settings: only what was said, and how it ended.
     if !work.is_empty() && app.prefs.steps {
         let open = app.steps_open(i);
+        any = true;
         col = col.push(fold_row(app, i, ex, work, open));
         if open {
             col = col.push(
@@ -376,15 +382,22 @@ fn exchange<'a>(app: &'a App, i: usize, ex: &'a Exchange) -> El<'a> {
         // exchange has no end of its run to say it. One that was answered after all ended well.
         for (j, step) in work.iter().enumerate() {
             if let Step::Note(note @ Note::Error(_)) = step {
+                any = true;
                 col = col.push(note_row(app, i, j, note));
             }
         }
     }
     if let Some(Step::Text(md)) = answer.map(|a| &ex.steps[a]) {
+        any = true;
         col = col.push(reply(app, md, true));
     }
-    // The reply as it was written, Markdown and all: its text cannot be selected here.
+    // The reply as it was written, Markdown and all: its text cannot be selected here. Shown under
+    // the pointer and under the last reply, in a place kept for it, so nothing moves when it shows.
+    let shown = last || app.reply_hover == Some(i);
     let copy = answer.map(|_| {
+        if !shown {
+            return container(Space::new()).height(FOOT).into();
+        }
         let mut foot = row![].spacing(2).align_y(Alignment::Center);
         // Branched off here: a new conversation holding this one through this reply.
         if !app.busy() && app.chat.session.is_some() {
@@ -419,15 +432,28 @@ fn exchange<'a>(app: &'a App, i: usize, ex: &'a Exchange) -> El<'a> {
             app.s.w().quote_part_hint.to_owned(),
             iced::widget::tooltip::Position::Bottom,
         ));
-        foot.push(copy_button(app, Clip::Reply(i), app.s.copy)).into()
+        let foot = foot.push(copy_button(app, Clip::Reply(i), app.s.copy));
+        container(foot).height(FOOT).align_y(Alignment::Center).into()
     });
     match (&ex.end, copy) {
         (Some(end), copy) => col = col.push(ending(app, ex, end, last, copy)),
         (None, Some(copy)) => col = col.push(copy),
         (None, None) => {}
     }
-    col.into()
+    any |= ex.end.is_some() || answer.is_some();
+    if !any {
+        return said.into();
+    }
+    said = said.push(
+        iced::widget::mouse_area(col)
+            .on_enter(Msg::ReplyHover(i, true))
+            .on_exit(Msg::ReplyHover(i, false)),
+    );
+    said.into()
 }
+
+/// The height kept under a reply for what can be done with it, shown or not.
+const FOOT: f32 = 24.0;
 
 /// The line that stands for the steps of a finished exchange.
 fn fold_row<'a>(app: &'a App, i: usize, ex: &'a Exchange, work: &'a [Step], open: bool) -> El<'a> {
