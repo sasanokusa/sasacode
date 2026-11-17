@@ -130,6 +130,7 @@ impl App {
             Msg::SetQuietWait(quiet) => self.set(|p| p.more.quiet_wait = quiet),
             Msg::SetSound(on) => self.set(|p| p.more.sound = on),
             Msg::SetNotifyAlways(on) => self.set(|p| p.more.notify_always = on),
+            Msg::SetAutosave(on) => self.set(|p| p.more.autosave = on),
             Msg::SetProgram(path) => {
                 self.program = crate::app::program_of(&path);
                 let task = self.set(|p| p.more.program = path);

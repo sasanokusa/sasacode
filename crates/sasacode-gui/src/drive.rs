@@ -2816,6 +2816,61 @@ fn a_file_is_edited_and_saved_in_the_files_tab_a_markdown_one_previewed_and_a_pi
 }
 
 #[test]
+fn with_autosave_what_is_typed_is_written_a_moment_after_the_last_key_and_kept_open() {
+    use std::time::{Duration, Instant};
+    use text_editor::{Action, Edit, Motion};
+    let mut app = window("ja");
+    let dir = std::env::temp_dir().join(format!("sasacode-gui-autosave-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    app.cwd = dir.clone();
+    let file = dir.join("notes.txt");
+    std::fs::write(&file, "一行目\n").unwrap();
+    let w = crate::words::JA;
+    app.tab = Tab::Files;
+    app.insp = true;
+    let _ = app.update(Msg::SetAutosave(true));
+    let _ = app.update(Msg::FileRead(Box::new(crate::files::read(file.clone(), None))));
+    let _ = app.update(Msg::FileEditStart);
+    assert!(says(&app, w.edit_autosaving) && says(&app, w.edit_close));
+    let _ = app.update(Msg::FileEditAction(Action::Move(Motion::DocumentEnd)));
+    for c in "二行目".chars() {
+        let _ = app.update(Msg::FileEditAction(Action::Edit(Edit::Insert(c))));
+    }
+    // Just typed: not yet.
+    let _ = app.update(Msg::FileAutosave);
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), "一行目\n");
+    // A moment later: written, and the editor stays open with nothing left unsaved.
+    app.file_edit.as_mut().unwrap().typed_at = Some(Instant::now() - Duration::from_secs(2));
+    let _ = app.update(Msg::FileAutosave);
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), "一行目\n二行目\n");
+    let edit = app.file_edit.as_ref().unwrap();
+    assert!(!edit.changed() && edit.typed_at.is_none());
+    // Another file opens over it: what was typed last is saved first.
+    let _ = app.update(Msg::FileEditAction(Action::Edit(Edit::Insert('!'))));
+    let _ = app.update(Msg::ViewFile(dir.join("other.txt"), None));
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), "一行目\n二行目!\n");
+    assert_ne!(app.toast.as_deref(), Some(w.edit_unsaved));
+    // Written by another meanwhile: not written over, and told.
+    let _ = app.update(Msg::FileEditAction(Action::Edit(Edit::Insert('?'))));
+    std::fs::write(&file, "他の誰か\n").unwrap();
+    app.file_edit.as_mut().unwrap().typed_at = Some(Instant::now() - Duration::from_secs(2));
+    let _ = app.update(Msg::FileAutosave);
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), "他の誰か\n");
+    assert_eq!(app.toast.as_deref(), Some(w.edit_changed));
+    // Closed after saving by itself, the tab shows the file as it is now.
+    std::fs::write(&file, "一行目\n").unwrap();
+    let _ = app.update(Msg::FileRead(Box::new(crate::files::read(file.clone(), None))));
+    let _ = app.update(Msg::FileEditStart);
+    let _ = app.update(Msg::FileEditAction(Action::Move(Motion::DocumentEnd)));
+    let _ = app.update(Msg::FileEditAction(Action::Edit(Edit::Insert('3'))));
+    let _ = app.update(Msg::FileEditCancel);
+    assert!(app.file_edit.is_none());
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), "一行目\n3\n");
+    assert!(app.viewing.as_ref().unwrap().lines.iter().any(|l| l == "3"));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn the_files_tab_finds_files_by_what_they_hold_and_opens_one_at_its_line() {
     let mut app = window("ja");
     app.tab = Tab::Files;

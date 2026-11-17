@@ -3,6 +3,7 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::time::{Duration, Instant};
 
 use iced::Task;
 use iced::widget::text_editor;
@@ -21,7 +22,14 @@ pub struct FileEdit {
     pub original: String,
     /// What the editor held before anything was typed, to tell whether anything was.
     pub initial: String,
+    /// When something was last typed and not yet saved by itself.
+    pub typed_at: Option<Instant>,
+    /// Saved by itself while it stays open: what the tab shows is read again when it closes.
+    pub saved: bool,
 }
+
+/// How long after the last key the file is saved, when the settings save edits by themselves.
+pub const AUTOSAVE_AFTER: Duration = Duration::from_secs(1);
 
 impl std::fmt::Debug for FileEdit {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -120,6 +128,38 @@ pub fn is_markdown(path: &Path) -> bool {
 }
 
 impl App {
+    /// What is typed in the file written to it, the editor left open: the settings save edits by
+    /// themselves. Not written over what another wrote since it was read; told so instead.
+    pub(crate) fn autosave(&mut self) -> Task<Msg> {
+        let w = self.s.w();
+        let Some(edit) = &mut self.file_edit else {
+            return Task::none();
+        };
+        edit.typed_at = None;
+        if !edit.changed() {
+            return Task::none();
+        }
+        if std::fs::read_to_string(&edit.path).ok().as_deref() != Some(edit.original.as_str()) {
+            self.toast = Some(w.edit_changed.to_owned());
+            return Task::none();
+        }
+        let text = as_written(&edit.content.text(), &edit.original);
+        match std::fs::write(&edit.path, &text) {
+            Ok(()) => {
+                edit.original = text;
+                edit.initial = edit.content.text();
+                edit.saved = true;
+                // The git tab shows the change.
+                self.files_asked = false;
+                self.refresh_git()
+            }
+            Err(e) => {
+                self.toast = Some(format!("{}: {e}", edit.path.display()));
+                Task::none()
+            }
+        }
+    }
+
     /// The editing, preview and search messages; any other comes back.
     pub(crate) fn update_edit(&mut self, msg: Msg) -> Result<Task<Msg>, Msg> {
         let w = self.s.w();
@@ -138,6 +178,8 @@ impl App {
                             content,
                             original,
                             initial,
+                            typed_at: None,
+                            saved: false,
                         });
                     }
                     Err(e) => self.toast = Some(format!("{}: {e}", path.display())),
@@ -146,21 +188,50 @@ impl App {
             }
             Msg::FileEditAction(action) => {
                 if let Some(edit) = &mut self.file_edit {
+                    if action.is_edit() {
+                        edit.typed_at = Some(Instant::now());
+                    }
                     edit.content.perform(action);
                 }
                 Task::none()
             }
-            Msg::FileEditCancel => {
-                self.file_edit = None;
+            Msg::FileAutosave => {
+                if self
+                    .file_edit
+                    .as_ref()
+                    .and_then(|e| e.typed_at)
+                    .is_some_and(|at| at.elapsed() >= AUTOSAVE_AFTER)
+                {
+                    return Ok(self.autosave());
+                }
                 Task::none()
+            }
+            Msg::FileEditCancel => {
+                // Saved by itself, it is closed with what was typed last saved too, and read again.
+                let saving = self.prefs.more.autosave;
+                let task = if saving { self.autosave() } else { Task::none() };
+                if saving && self.file_edit.as_ref().is_some_and(FileEdit::changed) {
+                    // Not written (another wrote it since): left open, as told.
+                    return Ok(task);
+                }
+                let Some(edit) = self.file_edit.take() else {
+                    return Ok(task);
+                };
+                if edit.saved {
+                    let line = self.viewing.as_ref().and_then(|v| v.line);
+                    let now = crate::files::read(edit.path, line);
+                    let shown = self.update(Msg::FileRead(Box::new(now)));
+                    return Ok(Task::batch([task, shown]));
+                }
+                task
             }
             Msg::FileSave => {
                 let Some(edit) = &self.file_edit else {
                     return Ok(Task::none());
                 };
                 if !edit.changed() {
-                    self.file_edit = None;
-                    return Ok(Task::none());
+                    // Closed, and read again when it was saved by itself.
+                    return self.update_edit(Msg::FileEditCancel);
                 }
                 // Written by another since it was read: not written over.
                 if std::fs::read_to_string(&edit.path).ok().as_deref() != Some(edit.original.as_str()) {

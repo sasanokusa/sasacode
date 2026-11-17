@@ -386,6 +386,9 @@ words! {
     edit_start: "編集", "Edit";
     edit_save: "保存", "Save";
     edit_cancel: "やめる", "Cancel";
+    edit_close: "閉じる", "Close";
+    edit_autosaving: "自動で保存します", "Saved as you type";
+    set_autosave: "ファイルタブで編集したものを自動で保存する（打ち終えて1秒後）", "Save what is edited in the files tab by itself (a second after typing)";
     edit_saved: "保存しました", "Saved";
     edit_changed: "読んだあとにファイルが書き換えられています。やめてから開き直してください", "The file changed since it was read: cancel and open it again";
     edit_unsaved: "編集中のファイルを保存するか、やめてからにしてください", "Save or cancel the file being edited first";

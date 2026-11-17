@@ -757,6 +757,9 @@ pub enum Msg {
     SetQuietWait(bool),
     SetSound(bool),
     SetNotifyAlways(bool),
+    /// The files tab saves what is typed by itself; a look whether it is time to.
+    SetAutosave(bool),
+    FileAutosave,
     /// The sasacode executable the window runs; empty, the one on PATH.
     SetProgram(String),
     SetEditor(String),
@@ -1205,6 +1208,10 @@ impl App {
         // The clock only moves what is shown while something runs.
         if self.running() {
             all.push(iced::time::every(Duration::from_secs(1)).map(Msg::Tick));
+        }
+        // What is typed in the files tab, saved a moment after the last key.
+        if self.prefs.more.autosave && self.file_edit.as_ref().is_some_and(|e| e.typed_at.is_some()) {
+            all.push(iced::time::every(Duration::from_millis(400)).map(|_| Msg::FileAutosave));
         }
         // A drag follows the pointer, and ends where the button is let go, outside the window too.
         if self.drag.is_some() {

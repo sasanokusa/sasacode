@@ -258,10 +258,16 @@ impl App {
     pub(crate) fn update_files(&mut self, msg: Msg) -> Result<Task<Msg>, Msg> {
         let task = match msg {
             Msg::ViewFile(path, line) => {
-                // What is typed in a file is not left unsaved by opening another.
+                // What is typed in a file is not left unsaved by opening another: saved first when
+                // the settings save edits by themselves.
+                let flushed = if self.prefs.more.autosave && self.file_edit.as_ref().is_some_and(|e| e.path != path) {
+                    self.autosave()
+                } else {
+                    Task::none()
+                };
                 if self.file_edit.as_ref().is_some_and(|e| e.changed() && e.path != path) {
                     self.toast = Some(self.s.w().edit_unsaved.to_owned());
-                    return Ok(Task::none());
+                    return Ok(flushed);
                 }
                 self.tab = Tab::Files;
                 self.insp = true;
@@ -272,7 +278,7 @@ impl App {
                     let y = line.map_or(0.0, |n| at_line(n, v.lines.len()));
                     return Ok(operation::snap_to(INSPECTOR, operation::RelativeOffset { x: 0.0, y }));
                 }
-                Task::perform(
+                let read = Task::perform(
                     async move {
                         tokio::task::spawn_blocking(move || read(path, line))
                             .await
@@ -283,7 +289,8 @@ impl App {
                         Some(v) => Msg::FileRead(v),
                         None => Msg::CloseFile,
                     },
-                )
+                );
+                Task::batch([flushed, read])
             }
             Msg::FileRead(viewing) => {
                 let at = viewing.line.map(|n| at_line(n, viewing.lines.len()));
@@ -296,14 +303,19 @@ impl App {
                 }
             }
             Msg::CloseFile => {
+                let flushed = if self.prefs.more.autosave {
+                    self.autosave()
+                } else {
+                    Task::none()
+                };
                 if self.file_edit.as_ref().is_some_and(crate::edit::FileEdit::changed) {
                     self.toast = Some(self.s.w().edit_unsaved.to_owned());
-                    return Ok(Task::none());
+                    return Ok(flushed);
                 }
                 self.viewing = None;
                 self.file_preview = None;
                 self.file_edit = None;
-                operation::focus(FILES_FIELD)
+                Task::batch([flushed, operation::focus(FILES_FIELD)])
             }
             Msg::TreeFold(folder) => {
                 if !self.tree_open.remove(&folder) {

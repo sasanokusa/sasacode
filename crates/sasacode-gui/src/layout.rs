@@ -213,6 +213,8 @@ pub struct More {
     pub sound: bool,
     /// Notified with the window in front too, not only while it is behind others.
     pub notify_always: bool,
+    /// What is typed in the files tab saved by itself a moment after the last key.
+    pub autosave: bool,
     /// The sasacode the window runs, over `sasacode` on PATH; empty, that one (or $SASACODE_BIN).
     pub program: String,
     /// What each folder's last run used, and the conversation last shown there, by its path.
@@ -722,6 +724,7 @@ mod tests {
                 quiet_wait: false,
                 sound: true,
                 notify_always: true,
+                autosave: true,
                 program: "/opt/sasacode/bin/sasacode".into(),
                 folders: BTreeMap::from([(
                     "/w".into(),

@@ -1371,6 +1371,20 @@ fn edit_buttons<'a>(app: &'a App, v: &'a crate::files::Viewing) -> El<'a> {
         return Space::new().into();
     }
     if let Some(edit) = app.file_edit.as_ref().filter(|e| e.path == v.path) {
+        // Saved by itself, it is closed, not left unsaved.
+        if app.prefs.more.autosave {
+            return row![
+                text(w.edit_autosaving)
+                    .size(11)
+                    .color(t.fg_3)
+                    .wrapping(text::Wrapping::None),
+                small(w.edit_close, Some(Msg::FileEditCancel), false),
+                small(w.edit_save, edit.changed().then_some(Msg::FileSave), true),
+            ]
+            .spacing(4)
+            .align_y(Alignment::Center)
+            .into();
+        }
         return row![
             small(w.edit_cancel, Some(Msg::FileEditCancel), false),
             small(w.edit_save, edit.changed().then_some(Msg::FileSave), true),
