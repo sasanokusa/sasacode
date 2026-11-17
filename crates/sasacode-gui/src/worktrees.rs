@@ -65,6 +65,83 @@ pub fn list(cwd: &Path, home: &Path) -> Vec<Tree> {
     trees
 }
 
+/// The branches a worktree can be made from, the latest committed to first: this repository's
+/// and its remotes'.
+pub fn bases(cwd: &Path) -> Vec<String> {
+    let Ok(out) = git(
+        cwd,
+        &[
+            "for-each-ref".as_ref(),
+            "--sort=-committerdate".as_ref(),
+            "--count=40".as_ref(),
+            "--format=%(refname)".as_ref(),
+            "refs/heads".as_ref(),
+            "refs/remotes".as_ref(),
+        ],
+    ) else {
+        return Vec::new();
+    };
+    out.lines()
+        .filter_map(|r| {
+            let r = r.trim();
+            r.strip_prefix("refs/heads/")
+                // A remote's HEAD names another of its branches; it is not one.
+                .or_else(|| r.strip_prefix("refs/remotes/").filter(|b| !b.ends_with("/HEAD")))
+        })
+        .map(str::to_owned)
+        .collect()
+}
+
+/// What the remotes have now, fetched before a worktree is made from it. Nothing is asked for: a
+/// remote that wants a password or a passphrase fails instead. None to fetch from is no error.
+pub fn fetch(cwd: &Path) -> Result<(), String> {
+    if git(cwd, &["remote".as_ref()]).is_ok_and(|r| r.trim().is_empty()) {
+        return Ok(());
+    }
+    let mut command = Command::new("git");
+    command
+        .args(["fetch", "--quiet"])
+        .current_dir(cwd)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .stdin(std::process::Stdio::null());
+    if std::env::var_os("GIT_SSH_COMMAND").is_none() {
+        command.env("GIT_SSH_COMMAND", "ssh -o BatchMode=yes");
+    }
+    let out = command.output().map_err(|e| e.to_string())?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        Err(String::from_utf8_lossy(&out.stderr).trim().to_owned())
+    }
+}
+
+/// When the worktree at `path` was last used: its last commit, or what was last staged in it.
+fn last_used(path: &Path) -> Option<std::time::SystemTime> {
+    let committed = git(path, &["log".as_ref(), "-1".as_ref(), "--format=%ct".as_ref()])
+        .ok()
+        .and_then(|t| t.trim().parse::<u64>().ok())
+        .map(|s| std::time::UNIX_EPOCH + std::time::Duration::from_secs(s));
+    let staged = git(path, &["rev-parse".as_ref(), "--git-path".as_ref(), "index".as_ref()])
+        .ok()
+        .map(|index| path.join(index))
+        .and_then(|index| std::fs::metadata(index).ok()?.modified().ok());
+    committed.max(staged)
+}
+
+/// How long a worktree goes unused before the list offers to clean it up.
+pub const OLD_DAYS: u64 = 14;
+
+/// Of `trees`, those last used before `before`, but never the one at `here`.
+pub fn old(trees: &[Tree], before: std::time::SystemTime, here: &Path) -> Vec<PathBuf> {
+    let here = here.canonicalize().unwrap_or_else(|_| here.to_path_buf());
+    trees
+        .iter()
+        .filter(|t| !here.starts_with(t.path.canonicalize().unwrap_or_else(|_| t.path.clone())))
+        .filter(|t| last_used(&t.path).is_some_and(|used| used < before))
+        .map(|t| t.path.clone())
+        .collect()
+}
+
 /// Removes the worktree at `path` as git does: refused while it holds what is not committed.
 pub fn remove(cwd: &Path, path: &Path) -> Result<(), String> {
     git(cwd, &["worktree".as_ref(), "remove".as_ref(), path.as_os_str()]).map(|_| ())
@@ -107,19 +184,32 @@ impl App {
             return Task::none();
         };
         let (cwd, setup) = (self.cwd.clone(), self.worktree_setup());
-        self.toast = Some(self.s.w().worktree_making.to_owned());
+        let prefix = self.prefs.more.worktree_prefix.clone();
+        let w = self.s.w();
+        self.toast = Some(w.worktree_making.to_owned());
         Task::perform(
             async move {
-                let made =
-                    tokio::task::spawn_blocking(move || crate::system::make_worktree(&cwd, &home, base.as_deref()))
-                        .await
-                        .map_err(|e| e.to_string())
-                        .and_then(|r| r)?;
-                let note = match setup {
-                    Some(command) => ready(&made, &command).await.err(),
-                    None => None,
-                };
-                Ok((made, note))
+                // What the remotes have now first; made from what is here when that fails.
+                let (fetched, made) = tokio::task::spawn_blocking(move || {
+                    let fetched = fetch(&cwd);
+                    (
+                        fetched,
+                        crate::system::make_worktree(&cwd, &home, base.as_deref(), &prefix),
+                    )
+                })
+                .await
+                .map_err(|e| e.to_string())?;
+                let made = made?;
+                let mut notes: Vec<String> = Vec::new();
+                if let Err(why) = fetched {
+                    notes.push(crate::i18n::fill(w.worktree_fetch_failed, "why", why));
+                }
+                if let Some(command) = setup
+                    && let Err(why) = ready(&made, &command).await
+                {
+                    notes.push(crate::i18n::fill(w.worktree_setup_failed, "why", why));
+                }
+                Ok((made, (!notes.is_empty()).then(|| notes.join("\n"))))
             },
             Msg::WorktreeMade,
         )
@@ -135,11 +225,11 @@ impl App {
         let cwd = self.cwd.clone();
         Task::perform(
             async move {
-                tokio::task::spawn_blocking(move || list(&cwd, &home))
+                tokio::task::spawn_blocking(move || (list(&cwd, &home), bases(&cwd)))
                     .await
                     .unwrap_or_default()
             },
-            Msg::Worktrees,
+            |(trees, bases)| Msg::Worktrees(trees, bases),
         )
     }
 
@@ -153,6 +243,21 @@ impl App {
             keys: Some("/worktree".into()),
             msg: Msg::Command(crate::input::Command::Worktree),
         }];
+        // From a branch chosen, the latest committed to first.
+        for base in &self.worktree_bases {
+            all.push(Entry {
+                label: crate::i18n::fill(w.worktree_from, "branch", base),
+                keys: None,
+                msg: Msg::WorktreeFrom(base.clone()),
+            });
+        }
+        if self.worktree_list.as_ref().is_some_and(|l| !l.is_empty()) {
+            all.push(Entry {
+                label: crate::i18n::fill(w.worktree_sweep, "days", OLD_DAYS),
+                keys: None,
+                msg: Msg::WorktreeSweep,
+            });
+        }
         let here = self.cwd.canonicalize().unwrap_or_else(|_| self.cwd.clone());
         for tree in self.worktree_list.iter().flatten() {
             let at = tree.path.canonicalize().unwrap_or_else(|_| tree.path.clone());
@@ -201,10 +306,58 @@ impl App {
                 self.toast = Some(crate::i18n::fill(s.worktree_failed, "error", error));
                 Task::none()
             }
-            Msg::Worktrees(list) => {
+            Msg::Worktrees(list, bases) => {
                 self.worktree_list = Some(list);
+                self.worktree_bases = bases;
                 Task::none()
             }
+            Msg::WorktreeFrom(base) => {
+                self.overlay = None;
+                self.worktree(Some(base))
+            }
+            // Those unused for long, removed as one is: those holding changes are kept, and none
+            // other than the window made.
+            Msg::WorktreeSweep => {
+                let trees = self.worktree_list.clone().unwrap_or_default();
+                let (cwd, here) = (self.cwd.clone(), self.cwd.clone());
+                let before = std::time::SystemTime::now() - std::time::Duration::from_secs(OLD_DAYS * 86_400);
+                Task::perform(
+                    async move {
+                        tokio::task::spawn_blocking(move || {
+                            let (mut gone, mut kept) = (0, Vec::new());
+                            for path in old(&trees, before, &here) {
+                                match remove(&cwd, &path) {
+                                    Ok(()) => gone += 1,
+                                    Err(_) => kept.push(path.file_name().map_or_else(
+                                        || path.display().to_string(),
+                                        |n| n.to_string_lossy().into_owned(),
+                                    )),
+                                }
+                            }
+                            (gone, kept)
+                        })
+                        .await
+                        .unwrap_or_default()
+                    },
+                    |(gone, kept)| Msg::WorktreesSwept(gone, kept),
+                )
+            }
+            Msg::WorktreesSwept(gone, kept) => {
+                let mut said = if gone == 0 && kept.is_empty() {
+                    w.worktree_sweep_none.to_owned()
+                } else {
+                    crate::i18n::fill(w.worktree_swept, "n", gone)
+                };
+                if !kept.is_empty() {
+                    said = format!(
+                        "{said}\n{}",
+                        crate::i18n::fill(w.worktree_swept_kept, "names", kept.join(", "))
+                    );
+                }
+                self.toast = Some(said);
+                self.list_worktrees()
+            }
+            Msg::SetWorktreePrefix(prefix) => self.set(|p| p.more.worktree_prefix = prefix),
             Msg::WorktreeRemove(path) => {
                 // Only one made here, and never the one this window is in.
                 let ours = self.worktree_list.iter().flatten().any(|t| t.path == path);
@@ -312,7 +465,7 @@ mod tests {
         );
         assert!(list(&repo, &home).is_empty());
 
-        let made = crate::system::make_worktree(&repo, &home, Some("older")).unwrap();
+        let made = crate::system::make_worktree(&repo, &home, Some("older"), "").unwrap();
         let trees = list(&repo, &home);
         assert_eq!(trees.len(), 1);
         assert!(trees[0].branch.as_deref().is_some_and(|b| b.starts_with("sasacode/")));
@@ -331,6 +484,35 @@ mod tests {
                 .unwrap()
                 .contains("sasacode/")
         );
+
+        // The branches offered to make one from: here, the latest committed to first.
+        let offered = bases(&repo);
+        assert_eq!(offered.first().map(String::as_str), Some("main"), "{offered:?}");
+        assert!(offered.iter().any(|b| b == "older") && offered.iter().any(|b| b == "theirs"));
+        // With no remote, nothing to fetch; with one that is not there, why it failed.
+        fetch(&repo).unwrap();
+        run(
+            &repo,
+            &["remote", "add", "origin", base.join("nowhere").to_str().unwrap()],
+        );
+        assert!(fetch(&repo).is_err());
+
+        // The settings' start of the branch's name; one git would take as an option is not.
+        let named = crate::system::make_worktree(&repo, &home, None, "me/").unwrap();
+        let named_tree = list(&repo, &home);
+        assert!(named_tree[0].branch.as_deref().is_some_and(|b| b.starts_with("me/")));
+        // Old: last used before the time given, and never the one this window is in.
+        let later = std::time::SystemTime::now() + std::time::Duration::from_secs(86_400);
+        assert_eq!(old(&named_tree, later, &repo), vec![named_tree[0].path.clone()]);
+        assert!(old(&named_tree, std::time::UNIX_EPOCH, &repo).is_empty());
+        assert!(old(&named_tree, later, &named).is_empty());
+        // Made in the same second as those before it would share their names: they go first.
+        remove(&repo, &named).unwrap();
+        let first = git(&repo, &["branch".as_ref(), "--list".as_ref(), "sasacode/*".as_ref()]).unwrap();
+        run(&repo, &["branch", "-d", first.trim()]);
+        let odd = crate::system::make_worktree(&repo, &home, None, "--force").unwrap();
+        assert!(list(&repo, &home).iter().any(|t| crate::system::same_dir(&t.path, &odd)
+            && t.branch.as_deref().is_some_and(|b| b.starts_with("sasacode/"))));
         let _ = std::fs::remove_dir_all(&base);
     }
 

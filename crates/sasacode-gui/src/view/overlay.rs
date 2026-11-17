@@ -557,6 +557,13 @@ fn settings(app: &App) -> El<'_> {
             .font(mono())
             .padding([6, 10])
             .style(t.input()),
+        heading(w.set_worktree_prefix),
+        text_input(w.worktree_prefix_ph, &p.more.worktree_prefix)
+            .on_input(Msg::SetWorktreePrefix)
+            .size(13)
+            .font(mono())
+            .padding([6, 10])
+            .style(t.input()),
     ]
     .spacing(6);
     let body = column![

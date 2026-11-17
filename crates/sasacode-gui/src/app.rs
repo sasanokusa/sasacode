@@ -252,6 +252,8 @@ pub struct App {
     pub(crate) usage_part: crate::usage::Part,
     /// The worktrees made here, once read for their list.
     pub(crate) worktree_list: Option<Vec<crate::worktrees::Tree>>,
+    /// The branches a worktree can be made from, read with the list.
+    pub(crate) worktree_bases: Vec<String>,
     /// The permission mode before plan mode was chosen.
     pub(crate) before_plan: Option<&'static str>,
     /// The automation being written.
@@ -882,7 +884,14 @@ pub enum Msg {
     /// A worktree made (and readied, or what failed readying it), or why not.
     WorktreeMade(Result<(PathBuf, Option<String>), String>),
     /// The worktrees made here, read for the list; one to remove, and how that went.
-    Worktrees(Vec<crate::worktrees::Tree>),
+    Worktrees(Vec<crate::worktrees::Tree>, Vec<String>),
+    /// A worktree made from this branch, chosen in the list.
+    WorktreeFrom(String),
+    /// The worktrees unused for long are cleaned up.
+    WorktreeSweep,
+    /// How many were, and the names of those kept for what they hold.
+    WorktreesSwept(usize, Vec<String>),
+    SetWorktreePrefix(String),
     WorktreeRemove(PathBuf),
     WorktreeRemoved(PathBuf, Result<(), String>),
     /// The command that readies this folder's new worktrees.
@@ -1102,6 +1111,7 @@ impl App {
             usage_here: false,
             usage_part: crate::usage::Part::All,
             worktree_list: None,
+            worktree_bases: Vec::new(),
             before_plan: None,
             auto_form: crate::automations::Form::default(),
             gisting: false,

@@ -164,6 +164,14 @@ words! {
     worktrees_loading: "ワークツリーを読んでいます…", "Reading the worktrees…";
     worktree_making: "ワークツリーを作っています…", "Making a worktree…";
     worktree_setup_failed: "準備のコマンドが失敗しました：{why}", "Its setup command failed: {why}";
+    worktree_from: "ブランチ{branch}から新しいワークツリー", "New worktree from {branch}";
+    worktree_fetch_failed: "取ってこられなかったので、手元のもので作りました：{why}", "Could not fetch, so it was made from what is here: {why}";
+    worktree_sweep: "{days}日より前に使った、変更のないワークツリーを片付ける", "Remove the worktrees last used {days} days ago or more, unless they hold changes";
+    worktree_sweep_none: "片付ける古いワークツリーはありません", "No worktree is that old";
+    worktree_swept: "{n}件を片付けました（ブランチは残っています）", "Removed {n} (their branches are kept)";
+    worktree_swept_kept: "変更があるので残しました：{names}", "Kept, as they hold changes: {names}";
+    set_worktree_prefix: "ワークツリーのブランチ名の頭", "How a worktree's branch is named";
+    worktree_prefix_ph: "sasacode/", "sasacode/";
     worktree_remove: "片付ける：{name}（{branch}）", "Remove {name} ({branch})";
     worktree_removed: "{name}を片付けました（ブランチは残っています）", "Removed {name} (its branch is kept)";
     worktree_keep: "片付けませんでした：{why}", "Not removed: {why}";

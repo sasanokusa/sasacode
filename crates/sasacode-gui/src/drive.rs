@@ -2711,6 +2711,38 @@ fn settings_files_that_cannot_be_read_are_said_when_the_window_opens_and_its_own
 }
 
 #[test]
+fn the_worktree_list_offers_a_branch_to_start_from_and_to_clean_up_old_ones() {
+    let mut app = window("ja");
+    let w = crate::words::JA;
+    let _ = app.update(Msg::Worktrees(
+        vec![crate::worktrees::Tree {
+            path: "/tmp/home/worktrees/orders-api-1".into(),
+            branch: Some("sasacode/1".into()),
+        }],
+        vec!["main".into(), "origin/release".into()],
+    ));
+    let labels: Vec<String> = app.worktree_entries("").into_iter().map(|e| e.label).collect();
+    assert!(
+        labels.contains(&"ブランチmainから新しいワークツリー".to_owned()),
+        "{labels:?}"
+    );
+    assert!(labels.contains(&"ブランチorigin/releaseから新しいワークツリー".to_owned()));
+    assert!(labels.contains(&crate::i18n::fill(w.worktree_sweep, "days", crate::worktrees::OLD_DAYS)));
+    // Found by what is typed.
+    let found: Vec<String> = app.worktree_entries("release").into_iter().map(|e| e.label).collect();
+    assert_eq!(found, vec!["ブランチorigin/releaseから新しいワークツリー".to_owned()]);
+    // What the clean-up did is said.
+    let _ = app.update(Msg::WorktreesSwept(2, vec!["orders-api-3".into()]));
+    let said = app.toast.clone().unwrap_or_default();
+    assert!(
+        said.contains("2件を片付けました") && said.contains("orders-api-3"),
+        "{said}"
+    );
+    let _ = app.update(Msg::SetWorktreePrefix("me/".into()));
+    assert_eq!(app.prefs.more.worktree_prefix, "me/");
+}
+
+#[test]
 fn the_choices_made_now_become_the_defaults_of_a_folder_never_run_in() {
     let w = crate::words::JA;
     let mut app = window("ja");
@@ -3284,6 +3316,7 @@ fn worktrees_are_readied_by_the_folders_command_listed_and_offered_to_remove_but
     let found: Vec<Msg> = app.found_entries().into_iter().map(|e| e.msg).collect();
     assert!(matches!(&found[..], [
         Msg::Command(Command::Worktree),
+        Msg::WorktreeSweep,
         Msg::WorktreeRemove(p),
     ] if *p == made));
     // One not made here is never removed.

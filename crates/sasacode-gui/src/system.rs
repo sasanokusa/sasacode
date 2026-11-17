@@ -502,7 +502,7 @@ pub fn new_window(program: &Path, cwd: &Path, session: Option<&str>, at: Option<
 /// A git worktree of the repository `cwd` is in, on a new branch from what is checked out, under
 /// sasacode's home: where the same folder of it is, to be opened in a window of its own.
 /// A worktree of `cwd`'s repository on a new branch, from the branch checked out or `base`.
-pub fn make_worktree(cwd: &Path, home: &Path, base: Option<&str>) -> Result<PathBuf, String> {
+pub fn make_worktree(cwd: &Path, home: &Path, base: Option<&str>, prefix: &str) -> Result<PathBuf, String> {
     let git = |args: &[&std::ffi::OsStr]| -> Result<String, String> {
         let out = Command::new("git")
             .args(args)
@@ -522,7 +522,12 @@ pub fn make_worktree(cwd: &Path, home: &Path, base: Option<&str>) -> Result<Path
         .unwrap_or_default();
     let stamp = stamp(std::time::SystemTime::now());
     let dir = home.join("worktrees").join(format!("{name}-{stamp}"));
-    let branch = format!("sasacode/{stamp}");
+    // The settings' start of the branch's name, else sasacode's; never one git would take as an
+    // option.
+    let prefix = Some(prefix.trim())
+        .filter(|p| !p.is_empty() && !p.starts_with('-'))
+        .unwrap_or("sasacode/");
+    let branch = format!("{prefix}{stamp}");
     let mut args: Vec<&std::ffi::OsStr> = vec![
         "worktree".as_ref(),
         "add".as_ref(),

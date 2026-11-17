@@ -231,6 +231,8 @@ pub struct More {
     /// The model, permission and effort a folder starts with where it has none of its own: one
     /// never run in, or whose last run left it unset. Of `Folder`, those three only.
     pub defaults: Option<Folder>,
+    /// How the branch of a worktree made here starts; empty, `sasacode/`.
+    pub worktree_prefix: String,
     /// The sasacode the window runs, over `sasacode` on PATH; empty, that one (or $SASACODE_BIN).
     pub program: String,
     /// What each folder's last run used, and the conversation last shown there, by its path.
@@ -749,6 +751,7 @@ mod tests {
                 autosave: true,
                 auto_fix: true,
                 cut: BTreeSet::from(["s9".into()]),
+                worktree_prefix: "me/".into(),
                 defaults: Some(Folder {
                     model: "local/gemma4".into(),
                     effort: Some("high".into()),
