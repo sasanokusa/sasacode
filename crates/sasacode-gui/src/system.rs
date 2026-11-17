@@ -670,14 +670,12 @@ mod tests {
         let (old, new) = (home.join("old"), home.join("new"));
         std::fs::create_dir_all(&old).unwrap();
         std::fs::create_dir_all(&new).unwrap();
-        let mut logs = vec![(600, old.clone()), (0, new.clone())];
         // The same folder as `new` reached through a link, in a conversation older than both: one
-        // folder, listed once.
+        // folder, listed once. Where no link is made, it is a folder that is not there, left out.
+        let link = home.join("link");
         #[cfg(unix)]
-        {
-            std::os::unix::fs::symlink(&new, home.join("link")).unwrap();
-            logs.push((1200, home.join("link")));
-        }
+        std::os::unix::fs::symlink(&new, &link).unwrap();
+        let logs = [(600, old.clone()), (0, new.clone()), (1200, link.clone())];
         for (n, (age, cwd)) in logs.iter().enumerate() {
             let dir = home.join("sessions").join(format!("d{n}"));
             std::fs::create_dir_all(&dir).unwrap();
@@ -702,7 +700,7 @@ mod tests {
         .unwrap();
         let real = |p: &Path| std::fs::canonicalize(p).unwrap();
         assert_eq!(projects(&home), vec![real(&new), real(&old)]);
-        assert!(same_dir(&home.join("link"), &new) || cfg!(not(unix)));
+        assert!(same_dir(&link, &new) || cfg!(not(unix)));
         assert!(!same_dir(&old, &new));
         std::fs::remove_dir_all(home).unwrap();
     }
