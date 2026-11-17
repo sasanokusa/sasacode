@@ -166,6 +166,7 @@ impl App {
                 Msg::MarkUnread(id),
             ));
             all.push(entry(s.w().copy_log, None, Msg::Copy(Clip::Log)));
+            all.push(entry(s.w().menu_copy_id, None, Msg::Copy(Clip::Session)));
         }
         if self.chat.session.is_some() {
             all.push(entry(s.c_rename, None, Msg::Command(Command::Rename)));

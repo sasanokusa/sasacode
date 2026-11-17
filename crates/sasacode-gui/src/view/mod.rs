@@ -255,6 +255,32 @@ fn header(app: &App) -> El<'_> {
     if changed > 0 && !app.insp {
         inspector = inspector.push(tag(t, changed.to_string(), t.accent_wash, t.accent));
     }
+    // Only what can be used now: the outline of a conversation with messages, the folder's
+    // scripts once it has some. The palette has both always.
+    let mut extra = row![].spacing(10).align_y(Alignment::Center);
+    if !app.chat.transcript.exchanges.is_empty() {
+        extra = extra.push(tip(
+            t,
+            button(icon(Icon::Toc, 16.0, t.fg_2))
+                .padding(6)
+                .style(t.ghost(t.fg_2, false))
+                .on_press(Msg::Command(crate::input::Command::Outline)),
+            format!("{}  {}", s.w().c_outline, keys_for(crate::keys::Act::Outline)),
+            tooltip::Position::Bottom,
+        ));
+    }
+    let running = app.script_runs.iter().any(|r| r.running());
+    if running || !app.scripts().is_empty() {
+        extra = extra.push(tip(
+            t,
+            button(icon(Icon::Play, 15.0, if running { t.accent } else { t.fg_2 }))
+                .padding(6)
+                .style(t.ghost(t.fg_2, false))
+                .on_press(Msg::Command(crate::input::Command::Scripts)),
+            format!("{}  {}", s.w().c_scripts, keys_for(crate::keys::Act::Scripts)),
+            tooltip::Position::Bottom,
+        ));
+    }
     container(
         row![
             tip(
@@ -282,35 +308,7 @@ fn header(app: &App) -> El<'_> {
                 .align_y(Alignment::Center)
                 .into()
             }),
-            tip(
-                t,
-                button(icon(Icon::Toc, 16.0, t.fg_2))
-                    .padding(6)
-                    .style(t.ghost(t.fg_2, false))
-                    .on_press_maybe(
-                        (!app.chat.transcript.exchanges.is_empty())
-                            .then_some(Msg::Command(crate::input::Command::Outline))
-                    ),
-                format!("{}  {}", s.w().c_outline, keys_for(crate::keys::Act::Outline)),
-                tooltip::Position::Bottom,
-            ),
-            tip(
-                t,
-                button(icon(
-                    Icon::Play,
-                    15.0,
-                    if app.script_runs.iter().any(|r| r.running()) {
-                        t.accent
-                    } else {
-                        t.fg_2
-                    }
-                ))
-                .padding(6)
-                .style(t.ghost(t.fg_2, false))
-                .on_press(Msg::Command(crate::input::Command::Scripts)),
-                format!("{}  {}", s.w().c_scripts, keys_for(crate::keys::Act::Scripts)),
-                tooltip::Position::Bottom,
-            ),
+            extra,
             tip(
                 t,
                 button(icon(Icon::List, 16.0, t.fg_2))
@@ -552,27 +550,6 @@ fn status_bar(app: &App) -> El<'_> {
             tooltip::Position::Top,
         ));
     }
-    if let Some(id) = &app.chat.session {
-        // The start of the id, as `sasacode -r` takes it; a click copies all of it.
-        let label = if app.copied == Some(Clip::Session) {
-            rest += prose_width(s.copied);
-            item(s.copied.to_owned()).color(t.accent)
-        } else {
-            let shown = clip(id, 8).trim_end_matches('…').to_owned();
-            rest += mono_width(&shown);
-            item(shown).font(mono())
-        };
-        rest += BAR_GAP + 8.0;
-        tail = tail.push(dot()).push(tip(
-            t,
-            button(label)
-                .padding([1, 4])
-                .style(t.ghost(t.fg_3, false))
-                .on_press(Msg::Copy(Clip::Session)),
-            format!("{id}\n{}", s.copy_id),
-            tooltip::Position::Top,
-        ));
-    }
     // The model that answered, else the one asked for; what the config decides is not known here,
     // and is not guessed at.
     let model = match (app.model.trim(), &app.chat.transcript.model) {
@@ -637,15 +614,28 @@ fn status_bar(app: &App) -> El<'_> {
             tooltip::Position::Top,
         ));
     }
+    // What the conversation cost, its tokens in the tooltip; with none used yet, nothing.
     let u = &app.chat.transcript.usage;
-    let usage = format!(
-        "in {} · out {} · cache {} · ${:.4}",
+    let tokens = format!(
+        "in {} · out {} · cache {}",
         compact(u.input),
         compact(u.output),
-        compact(u.cache_read),
-        u.cost
+        compact(u.cache_read)
     );
-    rest += 12.0 + mono_width(&usage);
+    let usage = if u.cost > 0.0 {
+        Some(if u.cost >= 0.01 {
+            format!("${:.2}", u.cost)
+        } else {
+            format!("${:.4}", u.cost)
+        })
+    } else if u.input + u.output > 0 {
+        Some(format!("{} tok", compact(u.input + u.output)))
+    } else {
+        None
+    };
+    if let Some(usage) = &usage {
+        rest += 12.0 + mono_width(usage);
+    }
     let mut right = row![].spacing(8).align_y(Alignment::Center);
     // Copied from the palette or `/export`, where there is no button to say so.
     if app.copied == Some(Clip::Conversation) {
@@ -684,27 +674,33 @@ fn status_bar(app: &App) -> El<'_> {
             .on_press(Msg::Undo),
         );
     }
-    let cwd = app.cwd.to_string_lossy();
-    let shown = clip_start(&cwd, folder_cells(app.width, rest));
-    let folder: El<'_> = if shown == cwd {
-        item(shown).font(mono()).into()
-    } else {
-        tip(t, item(shown).font(mono()), cwd.into_owned(), tooltip::Position::Top)
-    };
+    // The folder by its name; where it is, in the tooltip.
+    let cwd = app.cwd.to_string_lossy().into_owned();
+    let name = app
+        .cwd
+        .file_name()
+        .map_or_else(|| cwd.clone(), |n| n.to_string_lossy().into_owned());
+    let shown = clip_start(&name, folder_cells(app.width, rest));
+    let folder = tip(t, item(shown).font(mono()), cwd, tooltip::Position::Top);
     let left = row![icon(Icon::Folder, 12.0, t.fg_3), folder, tail]
         .spacing(6)
         .align_y(Alignment::Center);
-    container(
-        row![
-            container(left).width(Length::Fill).clip(true),
-            right,
+    let right = match usage {
+        Some(usage) => right.push(tip(
+            t,
             button(item(usage).font(mono()))
                 .padding([1, 6])
                 .style(t.ghost(t.fg_3, false))
                 .on_press(Msg::Tab(Tab::Usage)),
-        ]
-        .spacing(8)
-        .align_y(Alignment::Center),
+            tokens,
+            tooltip::Position::Top,
+        )),
+        None => right,
+    };
+    container(
+        row![container(left).width(Length::Fill).clip(true), right,]
+            .spacing(8)
+            .align_y(Alignment::Center),
     )
     .padding([3, 12])
     .style(t.fill(t.surface))

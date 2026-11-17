@@ -283,6 +283,28 @@ fn a_code_block_is_copied_by_its_button_which_says_so_for_a_moment() {
 }
 
 #[test]
+fn the_bottom_bar_names_the_folder_and_the_cost_and_keeps_the_rest_in_tooltips() {
+    let mut app = window("ja");
+    markdown_reply(&mut app);
+    app.chat.transcript.usage.input = 0;
+    app.chat.transcript.usage.output = 0;
+    app.chat.transcript.usage.cost = 0.0;
+    // The folder by its name; no id, and nothing of the cost before any is used.
+    assert!(says(&app, "orders-api") && !says(&app, "/Users/me/src/orders-api"));
+    assert!(!says(&app, "0a1b2c3d") && !says(&app, "$0.0000"));
+    app.chat.transcript.usage.input = 12_000;
+    app.chat.transcript.usage.output = 800;
+    assert!(says(&app, "12.8k tok") || says(&app, "13k tok"));
+    app.chat.transcript.usage.cost = 0.0042;
+    assert!(says(&app, "$0.0042"));
+    app.chat.transcript.usage.cost = 1.234;
+    assert!(says(&app, "$1.23"));
+    // The id is copied from the palette instead.
+    let _ = app.update(Msg::Show(Some(crate::app::Overlay::palette())));
+    assert!(says(&app, crate::words::JA.menu_copy_id));
+}
+
+#[test]
 fn what_is_copied_is_the_source_not_what_is_shown() {
     let mut app = window("ja");
     markdown_reply(&mut app);
