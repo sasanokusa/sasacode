@@ -28,7 +28,7 @@ pub(crate) fn pointer(event: iced::Event, _status: iced::event::Status, _window:
     None
 }
 
-fn pointer_at() -> Point {
+pub(crate) fn pointer_at() -> Point {
     POINTER.lock().map(|at| *at).unwrap_or(Point::ORIGIN)
 }
 

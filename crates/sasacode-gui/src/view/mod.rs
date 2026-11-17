@@ -155,9 +155,50 @@ pub fn window(app: &App) -> El<'_> {
     // A menu a right click opened lies over all of it. With none, an empty layer keeps its place:
     // the window's tree stays as it is when one opens, and the conversation keeps where it was
     // read to.
-    let menu = menu::layer(app).unwrap_or_else(nothing);
+    let menu = menu::layer(app).or_else(|| dragged_row(app)).unwrap_or_else(nothing);
     let window: El<'_> = stack![window, menu].into();
     overlay::over(app, chords::chords(window))
+}
+
+/// The conversation's row being dragged, by the pointer: what is let go into the input.
+fn dragged_row(app: &App) -> Option<El<'_>> {
+    let at = app.row_drag?;
+    let (id, _) = app.row_grab.as_ref()?;
+    let t = app.t;
+    let name = app
+        .prefs
+        .names
+        .get(id)
+        .cloned()
+        .or_else(|| {
+            app.sessions
+                .iter()
+                .find(|s| &s.id == id)
+                .map(|s| s.first_prompt.trim().to_owned())
+        })
+        .unwrap_or_else(|| id.clone());
+    let chip = container(
+        row![
+            icon(Icon::Bot, 12.0, t.accent),
+            text(clip(&name, 40)).size(12).color(t.fg)
+        ]
+        .spacing(6)
+        .align_y(Alignment::Center),
+    )
+    .padding([4, 8])
+    .style(t.floating(t.raised, t.line_2));
+    Some(
+        container(chip)
+            .padding(iced::Padding {
+                top: at.y + 14.0,
+                left: at.x + 14.0,
+                right: 0.0,
+                bottom: 0.0,
+            })
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into(),
+    )
 }
 
 /// Where the side panels' inner edges are taken to be dragged: a strip over each one's line, with

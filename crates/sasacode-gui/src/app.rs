@@ -290,6 +290,12 @@ pub struct App {
     pub(crate) show_archived: bool,
     /// The conversation of the list under the pointer, which shows what can be done to it.
     pub(crate) row_hover: Option<String>,
+    /// The row the button went down on, and where: dragged once the pointer moves away.
+    pub(crate) row_grab: Option<(String, Point)>,
+    /// Where the pointer is, while a row is dragged.
+    pub(crate) row_drag: Option<Point>,
+    /// The pointer is over the input.
+    pub(crate) over_input: bool,
     /// The folder's repository, as last looked at, and whether git is at work on it.
     pub(crate) git: crate::git::Status,
     pub(crate) git_busy: bool,
@@ -883,6 +889,14 @@ pub enum Msg {
     SetMergeMethod(&'static str),
     /// The pointer over a row of the list, or off it.
     RowHover(Option<String>),
+    /// The left button went down somewhere in the window: a row under the pointer may be dragged.
+    Pressed,
+    /// Where the pointer is while a row is held.
+    RowDragTo(Point),
+    /// The button let go of a row held: into the input, the conversation is attached.
+    RowDrop,
+    /// The pointer is over the input and what is above it, or left it.
+    OverInput(bool),
     /// What the search inside the conversation looks for, and the search put away.
     FindInText(String),
     FindInClose,
@@ -1169,6 +1183,9 @@ impl App {
             find_held: false,
             show_archived: false,
             row_hover: None,
+            row_grab: None,
+            row_drag: None,
+            over_input: false,
             bodies: HashMap::new(),
             indexing: false,
             git: crate::git::Status::default(),
@@ -1311,6 +1328,11 @@ impl App {
         // A drag follows the pointer, and ends where the button is let go, outside the window too.
         if self.drag.is_some() {
             all.push(event::listen_with(dragging));
+        }
+        // A row held follows the pointer, until the button is let go.
+        all.push(event::listen_with(left_pressed));
+        if self.row_grab.is_some() {
+            all.push(event::listen_with(row_dragged));
         }
         Subscription::batch(all)
     }
@@ -2785,6 +2807,23 @@ fn window_event(event: iced::Event, _status: event::Status, _window: window::Id)
 
 /// While an edge is dragged: where the pointer goes, and the left button let go, wherever the
 /// pointer is. Out of the window the panel folds, or takes all the room it may.
+/// The left button going down, whatever took it: a row's button does, and a row may be dragged
+/// from there.
+fn left_pressed(event: iced::Event, _status: event::Status, _window: window::Id) -> Option<Msg> {
+    use iced::mouse::{Button, Event as Mouse};
+    matches!(event, iced::Event::Mouse(Mouse::ButtonPressed(Button::Left))).then_some(Msg::Pressed)
+}
+
+/// Where a row held is taken, and where it is let go.
+fn row_dragged(event: iced::Event, _status: event::Status, _window: window::Id) -> Option<Msg> {
+    use iced::mouse::{Button, Event as Mouse};
+    match event {
+        iced::Event::Mouse(Mouse::CursorMoved { position }) => Some(Msg::RowDragTo(position)),
+        iced::Event::Mouse(Mouse::ButtonReleased(Button::Left)) => Some(Msg::RowDrop),
+        _ => None,
+    }
+}
+
 pub(crate) fn dragging(event: iced::Event, _status: event::Status, _window: window::Id) -> Option<Msg> {
     use iced::mouse::{Button, Event as Mouse};
     match event {
@@ -2980,6 +3019,50 @@ mod tests {
             app.offer().map(|o| o.kind),
             Some(crate::input::OfferKind::Files(_, chats)) if chats.is_empty()
         ));
+        std::fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn a_conversations_row_dragged_into_the_input_is_attached_and_a_click_is_not_a_drag() {
+        let (mut app, home) = window_with("rowdrag", &["aaaa0000", "bbbb0000"]);
+        assert!(app.open_named("aaaa0000"));
+        let w = app.s.w();
+        // Held on a row: a press that only moves a little is a click, not a drag.
+        let _ = app.update(Msg::RowHover(Some("bbbb0000".into())));
+        let _ = app.update(Msg::Pressed);
+        let from = app.row_grab.as_ref().map(|(_, at)| *at).expect("held");
+        let _ = app.update(Msg::RowDragTo(Point::new(from.x + 3.0, from.y)));
+        assert!(app.row_drag.is_none());
+        let _ = app.update(Msg::RowDrop);
+        assert!(app.row_grab.is_none() && app.chat.editor.text().trim().is_empty());
+        // Dragged and let go away from the input: nothing.
+        let _ = app.update(Msg::Pressed);
+        let _ = app.update(Msg::RowHover(None));
+        let _ = app.update(Msg::RowDragTo(Point::new(from.x + 40.0, from.y + 300.0)));
+        assert!(app.row_drag.is_some());
+        let _ = app.update(Msg::RowDrop);
+        assert!(app.chat.editor.text().trim().is_empty());
+        // Dragged into the input: the input says so, and letting go attaches the conversation.
+        let _ = app.update(Msg::RowHover(Some("bbbb0000".into())));
+        let _ = app.update(Msg::Pressed);
+        let _ = app.update(Msg::RowHover(None));
+        let _ = app.update(Msg::RowDragTo(Point::new(from.x + 300.0, from.y + 500.0)));
+        let _ = app.update(Msg::OverInput(true));
+        let drawn = |app: &App, label: &str| {
+            let mut ui = iced_test::simulator(app.view());
+            ui.find(label).is_ok()
+        };
+        assert!(drawn(&app, w.drag_chat_here));
+        let _ = app.update(Msg::RowDrop);
+        assert!(
+            app.chat.editor.text().contains("bbbb0000.md"),
+            "{}",
+            app.chat.editor.text()
+        );
+        assert!(!drawn(&app, w.drag_chat_here));
+        // A press away from the rows holds nothing.
+        let _ = app.update(Msg::Pressed);
+        assert!(app.row_grab.is_none());
         std::fs::remove_dir_all(home).unwrap();
     }
 

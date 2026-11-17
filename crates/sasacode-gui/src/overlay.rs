@@ -102,6 +102,8 @@ pub struct Entry {
     pub msg: Msg,
 }
 
+/// How far the pointer goes, in points, before a row held is dragged rather than clicked.
+const ROW_DRAG_AFTER: f32 = 6.0;
 impl App {
     /// All the palette offers, in the order it lists them.
     pub(crate) fn entries(&self) -> Vec<Entry> {
@@ -573,6 +575,35 @@ impl App {
                     });
                 }
                 operation::focus(crate::app::INPUT)
+            }
+            Msg::Pressed => {
+                // On a row: held, to be dragged into the input. Anywhere else, nothing is.
+                self.row_grab = self.row_hover.clone().map(|id| (id, crate::rows::pointer_at()));
+                self.row_drag = None;
+                Task::none()
+            }
+            Msg::RowDragTo(at) => {
+                if let Some((_, from)) = &self.row_grab {
+                    // A drag once it is away from where it began: a click moves a little too.
+                    if self.row_drag.is_some() || at.distance(*from) > ROW_DRAG_AFTER {
+                        self.row_drag = Some(at);
+                    }
+                }
+                Task::none()
+            }
+            Msg::RowDrop => {
+                let held = self.row_grab.take();
+                let dragged = self.row_drag.take().is_some();
+                match held {
+                    Some((id, _)) if dragged && self.over_input && self.chat.session.as_deref() != Some(&id) => {
+                        self.attach_conversation(&id)
+                    }
+                    _ => Task::none(),
+                }
+            }
+            Msg::OverInput(over) => {
+                self.over_input = over;
+                Task::none()
             }
             Msg::RowHover(id) => {
                 self.row_hover = id;

@@ -34,6 +34,28 @@ pub fn dock(app: &App) -> El<'_> {
     if let Some(offer) = app.offer() {
         col = col.push(Above::Offer, offered(app, offer));
     }
+    // A conversation's row dragged here: let go, it is attached.
+    if app.row_drag.is_some() {
+        let color = if app.over_input { app.t.accent } else { app.t.fg_3 };
+        col = col.push(
+            Above::RowDrop,
+            container(
+                row![
+                    icon(Icon::Bot, 14.0, color),
+                    text(app.s.w().drag_chat_here).size(12.5).color(color)
+                ]
+                .spacing(8)
+                .align_y(Alignment::Center),
+            )
+            .width(Length::Fill)
+            .padding([8, 12])
+            .style(app.t.boxed(
+                if app.over_input { app.t.accent_wash } else { app.t.inset },
+                color,
+                crate::theme::RADIUS,
+            )),
+        );
+    }
     if app.dropping {
         col = col.push(
             Above::Drop,
@@ -76,15 +98,20 @@ pub fn dock(app: &App) -> El<'_> {
         col = col.push(Above::Plan, planned);
     }
     col = col.push(Above::Input, composer(app)).push(Above::Hints, hints(app));
-    container(container(col).max_width(col_w(app)))
-        .center_x(Length::Fill)
-        .padding(iced::Padding {
-            top: 4.0,
-            right: 24.0,
-            bottom: 10.0,
-            left: 24.0,
-        })
-        .into()
+    // Where a conversation's row dragged is let go into.
+    iced::widget::mouse_area(
+        container(container(col).max_width(col_w(app)))
+            .center_x(Length::Fill)
+            .padding(iced::Padding {
+                top: 4.0,
+                right: 24.0,
+                bottom: 10.0,
+                left: 24.0,
+            }),
+    )
+    .on_enter(Msg::OverInput(true))
+    .on_exit(Msg::OverInput(false))
+    .into()
 }
 
 /// What the dock holds, from the top.
@@ -94,6 +121,7 @@ enum Above {
     Ask,
     Trust,
     Offer,
+    RowDrop,
     Drop,
     Comments,
     Images,
