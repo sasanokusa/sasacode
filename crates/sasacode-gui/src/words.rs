@@ -271,6 +271,10 @@ words! {
     fold_all: "全部たたむ", "Fold all";
     open_all: "全部開く", "Open all";
     diff_view: "表示", "View";
+    part_general: "一般", "General";
+    part_look: "表示", "Appearance";
+    part_notices: "通知", "Notifications";
+    part_tools: "ツール", "Tools";
     viewed: "見た", "Viewed";
     viewed_n: "{n}/{all}件見た", "{n}/{all} viewed";
     default_sure: "{branch}に直接書き込みます。もう一度押すと続けます", "This goes straight to {branch}. Press again to go on";

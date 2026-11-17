@@ -14,6 +14,20 @@ use crate::system;
 /// The key of the side question's run, which is no conversation's.
 pub const SIDE: u64 = u64::MAX;
 
+/// The part of the settings shown: one at a time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Part {
+    /// How messages are sent, the language, archiving and titles, and what this conversation
+    /// allowed.
+    #[default]
+    General,
+    /// The theme, colours, fonts, size, and what the conversation shows.
+    Look,
+    Notices,
+    /// The editor, the executable, worktrees, checks fixed, and the folder's scripts.
+    Tools,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Overlay {
     /// What is typed, and which of what it finds is chosen, among what it picks from.
@@ -330,7 +344,7 @@ impl App {
             all.push(Entry {
                 label: w.script_edit.to_owned(),
                 keys: None,
-                msg: Msg::Show(Some(Overlay::Settings)),
+                msg: Msg::SettingsPart(Part::Tools),
             });
             return all;
         }

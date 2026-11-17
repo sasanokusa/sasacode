@@ -270,6 +270,17 @@ fn settings(app: &App) -> El<'_> {
         }
     };
     let heading = |label: &'static str| text(label).size(12).color(t.fg_3);
+    // A heading whose note is said by its tooltip.
+    let noted = |label: &'static str, note: &'static str| -> El<'_> {
+        super::tip(
+            t,
+            row![text(label).size(12).color(t.fg_3), text("?").size(10.5).color(t.fg_3),]
+                .spacing(4)
+                .align_y(Alignment::Center),
+            note.to_owned(),
+            iced::widget::tooltip::Position::Top,
+        )
+    };
     let enter = column![
         heading(s.set_enter),
         row![
@@ -330,7 +341,7 @@ fn settings(app: &App) -> El<'_> {
     ]
     .spacing(6);
     let fonts = column![
-        heading(w.set_fonts),
+        noted(w.set_fonts, w.fonts_note),
         row![
             text_input(w.ui_font_ph, &p.more.ui_font)
                 .on_input(Msg::SetUiFont)
@@ -344,7 +355,6 @@ fn settings(app: &App) -> El<'_> {
                 .style(t.input()),
         ]
         .spacing(8),
-        text(w.fonts_note).size(11.5).color(t.fg_3),
     ]
     .spacing(6);
     let width = column![
@@ -541,10 +551,9 @@ fn settings(app: &App) -> El<'_> {
         );
     }
     let defaults = column![
-        heading(w.defaults_head),
+        noted(w.defaults_head, w.defaults_note),
         text(now).size(12.5).color(t.fg_2),
         keep,
-        text(w.defaults_note).size(11.5).color(t.fg_3),
     ]
     .spacing(6);
     let setup = app
@@ -570,41 +579,93 @@ fn settings(app: &App) -> El<'_> {
             .style(t.input()),
     ]
     .spacing(6);
-    let body = column![
-        title(app, s.settings),
-        enter,
-        follow,
-        theme,
-        accent,
-        fonts,
-        zoom,
-        notices,
-        switch(s.set_awake, p.awake, Msg::SetAwake),
-        switch(s.set_steps, p.steps, Msg::SetSteps),
-        switch(s.w().set_failed_only, p.more.failed_only, Msg::SetFailedOnly),
-        switch(s.w().set_autosave, p.more.autosave, Msg::SetAutosave),
-        switch(s.w().set_auto_fix, p.more.auto_fix, Msg::SetAutoFix),
-        switch(s.w().set_show_thinking, !p.more.hide_thinking, |on| {
-            Msg::SetHideThinking(!on)
-        }),
-        switch(s.w().set_auto_archive, p.auto_archive, Msg::SetAutoArchive),
-        switch(s.w().set_suggest, p.suggest, Msg::SetSuggest),
-        switch(s.w().set_auto_title, p.more.auto_title, Msg::SetAutoTitle),
-        idle,
-        width,
-        lang,
-        defaults,
-        editor,
-        program,
-        setup,
-        scripts(app),
-        allowed(app),
-        text(s.set_kept).size(11.5).color(t.fg_3),
-    ]
+    // One part at a time, chosen above it.
+    use crate::overlay::Part;
+    let body = match app.settings_part {
+        Part::General => column![
+            enter,
+            follow,
+            lang,
+            switch(s.set_awake, p.awake, Msg::SetAwake),
+            switch(s.w().set_suggest, p.suggest, Msg::SetSuggest),
+            switch(s.w().set_auto_title, p.more.auto_title, Msg::SetAutoTitle),
+            switch(s.w().set_auto_archive, p.auto_archive, Msg::SetAutoArchive),
+            idle,
+            defaults,
+            allowed(app),
+        ],
+        Part::Look => column![
+            theme,
+            accent,
+            fonts,
+            zoom,
+            width,
+            switch(s.set_steps, p.steps, Msg::SetSteps),
+            switch(s.w().set_failed_only, p.more.failed_only, Msg::SetFailedOnly),
+            switch(s.w().set_show_thinking, !p.more.hide_thinking, |on| {
+                Msg::SetHideThinking(!on)
+            }),
+        ],
+        Part::Notices => column![notices],
+        Part::Tools => column![
+            editor,
+            switch(s.w().set_autosave, p.more.autosave, Msg::SetAutosave),
+            program,
+            setup,
+            switch(s.w().set_auto_fix, p.more.auto_fix, Msg::SetAutoFix),
+            scripts(app),
+        ],
+    }
     .spacing(16);
-    container(scrollable(body.padding(iced::Padding::ZERO.right(12))).style(t.scroll()))
-        .max_height(640)
-        .into()
+    let parts = row![
+        choice(
+            w.part_general.to_owned(),
+            app.settings_part == Part::General,
+            Msg::SettingsPart(Part::General)
+        ),
+        choice(
+            w.part_look.to_owned(),
+            app.settings_part == Part::Look,
+            Msg::SettingsPart(Part::Look)
+        ),
+        choice(
+            w.part_notices.to_owned(),
+            app.settings_part == Part::Notices,
+            Msg::SettingsPart(Part::Notices)
+        ),
+        choice(
+            w.part_tools.to_owned(),
+            app.settings_part == Part::Tools,
+            Msg::SettingsPart(Part::Tools)
+        ),
+    ]
+    .spacing(6)
+    .wrap();
+    // Where they are kept: the title's tooltip.
+    let head = row![
+        super::tip(
+            t,
+            text(s.settings).size(15).font(bold()).color(t.fg),
+            s.set_kept.to_owned(),
+            iced::widget::tooltip::Position::Bottom,
+        ),
+        Space::new().width(Length::Fill),
+        button(icon(Icon::Close, 14.0, t.fg_3))
+            .padding(4)
+            .style(t.ghost(t.fg_3, false))
+            .on_press(Msg::Show(None)),
+    ]
+    .align_y(Alignment::Center);
+    container(
+        column![
+            head,
+            parts,
+            scrollable(body.padding(iced::Padding::ZERO.right(12))).style(t.scroll()),
+        ]
+        .spacing(14),
+    )
+    .max_height(640)
+    .into()
 }
 
 /// What "always" allowed in the conversation shown, each of which can be taken back.

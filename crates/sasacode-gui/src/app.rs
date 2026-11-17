@@ -378,6 +378,8 @@ pub struct App {
     pub(crate) reply_hover: Option<usize>,
     /// The changed file under the pointer, whose head shows what can be done with it.
     pub(crate) file_hover: Option<String>,
+    /// The part of the settings shown.
+    pub(crate) settings_part: crate::overlay::Part,
     /// What is said in each conversation, lower case, for the search, as of when its log changed;
     /// and whether it is being read.
     pub(crate) bodies: HashMap<PathBuf, (std::time::SystemTime, String)>,
@@ -995,6 +997,8 @@ pub enum Msg {
     ReplyHover(usize, bool),
     /// The pointer onto a changed file's card, or off it, as for a reply.
     FileHover(String, bool),
+    /// The settings, open at this part of them.
+    SettingsPart(crate::overlay::Part),
     /// What waits to be sent when the run ends, back into the input.
     Retract,
     /// Back to the newest of the conversation.
@@ -1238,6 +1242,7 @@ impl App {
             ex_hover: None,
             reply_hover: None,
             file_hover: None,
+            settings_part: crate::overlay::Part::default(),
             aside: None,
             toast: None,
             unreadable: Vec::new(),
@@ -1565,6 +1570,12 @@ impl App {
             Msg::ReplyHover(i, false) => {
                 if self.reply_hover == Some(i) {
                     self.reply_hover = None;
+                }
+            }
+            Msg::SettingsPart(part) => {
+                self.settings_part = part;
+                if self.overlay != Some(Overlay::Settings) {
+                    return self.update(Msg::Show(Some(Overlay::Settings)));
                 }
             }
             Msg::FileHover(key, true) => self.file_hover = Some(key),

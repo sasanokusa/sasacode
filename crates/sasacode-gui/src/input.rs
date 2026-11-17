@@ -506,8 +506,7 @@ impl App {
             Command::Scripts => {
                 // None yet: the settings, where they are listed.
                 if self.scripts().is_empty() {
-                    self.overlay = Some(Overlay::Settings);
-                    return Task::none();
+                    return self.update(Msg::SettingsPart(crate::overlay::Part::Tools));
                 }
                 return self.update(Msg::Show(Some(Overlay::picker(crate::overlay::Pick::Scripts))));
             }

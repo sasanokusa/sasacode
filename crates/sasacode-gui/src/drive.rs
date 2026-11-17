@@ -2765,11 +2765,27 @@ fn a_folders_window_opens_again_on_its_last_conversation_choices_and_drafts() {
 
 #[test]
 fn the_settings_choose_the_notifications_their_sound_and_the_editor() {
+    use crate::overlay::Part;
     let mut app = window("ja");
     let _ = app.update(Msg::Show(Some(crate::app::Overlay::Settings)));
     let w = crate::words::JA;
+    // One part at a time: the general one first, the editor among the tools.
+    assert_eq!(app.settings_part, Part::General);
+    assert!(says(&app, app.s.set_enter) && !says(&app, w.set_editor));
+    act(&mut app, |ui| {
+        let _ = ui.click(w.part_tools).expect("the tools' part");
+    });
+    assert_eq!(app.settings_part, Part::Tools);
     // A switch's label is not text the simulator finds; the editor's heading is.
-    assert!(says(&app, w.set_editor) && says(&app, w.editor_ph));
+    assert!(says(&app, w.set_editor) && says(&app, w.editor_ph) && !says(&app, app.s.set_enter));
+    // The scripts' command with none yet opens the settings where they are added.
+    let _ = app.update(Msg::SettingsPart(Part::General));
+    let _ = app.update(Msg::Show(None));
+    let _ = app.update(Msg::Command(crate::input::Command::Scripts));
+    assert_eq!(
+        (app.overlay.clone(), app.settings_part),
+        (Some(crate::app::Overlay::Settings), Part::Tools)
+    );
     let _ = app.update(Msg::SetQuietWait(true));
     let _ = app.update(Msg::SetSound(true));
     let _ = app.update(Msg::SetEditor("zed".into()));
@@ -2905,9 +2921,11 @@ fn the_choices_made_now_become_the_defaults_of_a_folder_never_run_in() {
 #[test]
 fn the_accent_colour_shows_at_once_and_the_fonts_are_kept_for_the_next_window() {
     let mut app = window("ja");
-    let _ = app.update(Msg::Show(Some(crate::app::Overlay::Settings)));
+    let _ = app.update(Msg::SettingsPart(crate::overlay::Part::Look));
     let w = crate::words::JA;
-    assert!(says(&app, w.set_accent) && says(&app, w.accent_blue) && says(&app, w.fonts_note));
+    // The fonts' note is their heading's tooltip.
+    assert!(says(&app, w.set_accent) && says(&app, w.accent_blue) && says(&app, w.set_fonts));
+    assert!(!says(&app, w.fonts_note));
     let green = app.t.accent;
     let _ = app.update(Msg::SetAccent("blue".into()));
     assert_eq!(app.t.accent, iced::Color::from_rgb8(0x25, 0x63, 0xEB));
@@ -3052,7 +3070,7 @@ fn the_list_shows_those_done_and_the_settings_name_the_sasacode_run() {
     let _ = app.update(Msg::ListShow(crate::layout::Show::Done));
     let shown = app.sessions.iter().filter(|s| app.shows(s)).count();
     assert_eq!(shown, app.sessions.len(), "none runs here");
-    let _ = app.update(Msg::Show(Some(crate::app::Overlay::Settings)));
+    let _ = app.update(Msg::SettingsPart(crate::overlay::Part::Tools));
     let w = crate::words::JA;
     assert!(says(&app, w.set_program) && says(&app, w.program_ph));
     let _ = app.update(Msg::SetProgram("/opt/sasacode/bin/sasacode".into()));
@@ -3571,7 +3589,7 @@ fn worktrees_are_readied_by_the_folders_command_listed_and_offered_to_remove_but
     let mut app = window("ja");
     let w = crate::words::JA;
     // The command that readies them, kept for this folder.
-    let _ = app.update(Msg::Show(Some(crate::app::Overlay::Settings)));
+    let _ = app.update(Msg::SettingsPart(crate::overlay::Part::Tools));
     assert!(says(&app, w.set_setup));
     let _ = app.update(Msg::SetWorktreeSetup("npm install".into()));
     assert_eq!(app.worktree_setup().as_deref(), Some("npm install"));
