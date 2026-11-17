@@ -279,11 +279,13 @@ impl crate::app::App {
             }
             Msg::UsagePart(part) => {
                 self.usage_part = part;
-                // Shown already: only what of it changes; otherwise read, of every folder.
-                if self.overlay == Some(crate::app::Overlay::Usage) && self.usage.is_some() {
+                // Shown already: only what of it changes (still being read, it is read on, of
+                // where it was asked for); otherwise read, of every folder.
+                let shown = self.overlay == Some(crate::app::Overlay::Usage);
+                if shown && self.usage.is_some() {
                     iced::Task::none()
                 } else {
-                    return self.update_usage(Msg::Usage(false));
+                    return self.update_usage(Msg::Usage(shown && self.usage_here));
                 }
             }
             Msg::Usage(here) => {

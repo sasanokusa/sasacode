@@ -2645,6 +2645,10 @@ fn the_usage_screen_shows_the_spans_the_graph_the_days_and_the_models() {
     app.tab = Tab::Usage;
     app.insp = true;
     assert!(says(&app, w.usage_open));
+    // A part chosen while this folder's is still being read: still this folder's.
+    let _ = app.update(Msg::Usage(true));
+    let _ = app.update(Msg::UsagePart(crate::usage::Part::History));
+    assert!(app.usage_here && app.usage_part == crate::usage::Part::History);
 }
 
 #[test]

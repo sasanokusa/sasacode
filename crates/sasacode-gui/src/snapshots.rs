@@ -318,6 +318,17 @@ fn snapshots() {
     shoot(&app, "25-mention", (1280.0, 640.0));
     type_in(&mut app, "/");
     shoot(&app, "26-slash", (1280.0, 800.0));
+    app.set_dark(true);
+    shoot(&app, "41-slash-dark", (1280.0, 800.0));
+    app.set_input("");
+    app.overlay = Some(Overlay::Palette {
+        query: "テーマ".into(),
+        at: 1,
+        pick: crate::overlay::Pick::Commands,
+    });
+    shoot(&app, "42-palette-dark", WIDE);
+    app.overlay = None;
+    app.set_dark(false);
 
     // The git tab: the branch ahead of its upstream, a changed file and a new one, and how full
     // the conversation is in the status bar.

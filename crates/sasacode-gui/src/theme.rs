@@ -105,7 +105,8 @@ pub const DARK: Tokens = Tokens {
     ink: hex(0xD5D5D5),
     on_ink: hex(0x121212),
     link: hex(0x73B6FA),
-    state: hex(0x272727),
+    // Over a card, where a menu's chosen row is: on the panels it is lighter still.
+    state: hex(0x333333),
     select: hex(0x2D4964),
     warn: hex(0xF79C40),
     warn_solid: hex(0xED9235),
