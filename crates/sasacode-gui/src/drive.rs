@@ -3927,3 +3927,32 @@ fn a_new_conversations_message_can_start_in_a_new_worktree_whose_window_sends_it
     assert!(!app.offers_worktree() && !says(&app, w.where_here));
     let _ = std::fs::remove_dir_all(&home);
 }
+
+#[test]
+fn a_press_on_a_panels_words_keeps_it_open_and_one_beside_it_closes_it() {
+    use iced::mouse::{Button, Event as Mouse};
+    let mut app = window("ja");
+    let s = app.s;
+    let press = |ui: &mut Simulator<'_, Msg>, x: f32, y: f32| {
+        ui.point_at((x, y));
+        ui.simulate([
+            iced::Event::Mouse(Mouse::CursorMoved {
+                position: iced::Point::new(x, y),
+            }),
+            iced::Event::Mouse(Mouse::ButtonPressed(Button::Left)),
+            iced::Event::Mouse(Mouse::ButtonReleased(Button::Left)),
+        ]);
+    };
+    let _ = app.update(Msg::Show(Some(crate::app::Overlay::Settings)));
+    // Its title, and the room between its parts: the panel's own.
+    act(&mut app, |ui| {
+        ui.click(s.settings).expect("the settings are open");
+    });
+    assert_eq!(app.overlay, Some(crate::app::Overlay::Settings));
+    let middle = app.width / 2.0;
+    act(&mut app, |ui| press(ui, middle, 66.0));
+    assert_eq!(app.overlay, Some(crate::app::Overlay::Settings));
+    // Beside it, the backdrop: closed.
+    act(&mut app, |ui| press(ui, 8.0, 700.0));
+    assert_eq!(app.overlay, None);
+}

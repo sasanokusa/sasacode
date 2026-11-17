@@ -60,12 +60,14 @@ pub fn over<'a>(app: &'a App, base: El<'a>) -> El<'a> {
             .style(t.fill(shade)),
     )
     .on_press(Msg::Show(None));
-    let panel = container(
+    // A press on the panel, on its words or between its parts too, is the panel's: not the
+    // backdrop's under it, which would close it.
+    let panel = container(iced::widget::opaque(
         container(panel)
             .max_width(width)
             .padding(16)
             .style(t.floating(t.raised, t.line_2)),
-    )
+    ))
     .center_x(Length::Fill)
     .padding(iced::Padding {
         top,

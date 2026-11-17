@@ -279,10 +279,13 @@ pub fn layer(app: &App) -> Option<El<'_>> {
     // Where the pointer was, moved in as far as it must to be seen whole.
     let x = menu.at.x.min(app.width - WIDTH - 6.0).max(4.0);
     let y = menu.at.y.min(app.height - height - 6.0).max(4.0);
-    let boxed = container(list)
-        .width(WIDTH)
-        .padding(5)
-        .style(t.floating(t.raised, t.line));
+    // A press between its items is the menu's, not the layer's under it that closes it.
+    let boxed = iced::widget::opaque(
+        container(list)
+            .width(WIDTH)
+            .padding(5)
+            .style(t.floating(t.raised, t.line)),
+    );
     let away = mouse_area(Space::new().width(Length::Fill).height(Length::Fill))
         .on_press(Msg::CloseMenu)
         .on_right_press(Msg::CloseMenu);
