@@ -152,11 +152,11 @@ pub fn window(app: &App) -> El<'_> {
         );
     }
     let window = container(column![panes, hline(t), status_bar(app)]).style(t.fill(t.bg));
-    // A menu a right click opened lies over all of it.
-    let window: El<'_> = match menu::layer(app) {
-        Some(menu) => stack![window, menu].into(),
-        None => window.into(),
-    };
+    // A menu a right click opened lies over all of it. With none, an empty layer keeps its place:
+    // the window's tree stays as it is when one opens, and the conversation keeps where it was
+    // read to.
+    let menu = menu::layer(app).unwrap_or_else(nothing);
+    let window: El<'_> = stack![window, menu].into();
     overlay::over(app, chords::chords(window))
 }
 

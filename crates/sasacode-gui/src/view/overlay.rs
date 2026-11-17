@@ -22,8 +22,10 @@ const LISTED: usize = 12;
 
 /// `base`, and over it what is drawn over the window, if anything.
 pub fn over<'a>(app: &'a App, base: El<'a>) -> El<'a> {
+    // With none shown, empty layers in the places of its backdrop and panel: the tree under them
+    // stays as it is when one opens, and the conversation keeps where it was read to.
     let Some(overlay) = &app.overlay else {
-        return base;
+        return iced::widget::stack![base, Space::new(), Space::new()].into();
     };
     let t = app.t;
     let (panel, width, top) = match overlay {
