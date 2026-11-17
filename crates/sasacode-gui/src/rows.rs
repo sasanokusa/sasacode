@@ -215,6 +215,10 @@ impl App {
     /// Whether the list shows `session`, as its filter says.
     pub(crate) fn shows(&self, session: &SessionSummary) -> bool {
         let chat = self.chat_of(&session.id);
+        // A scratch conversation is not listed: it goes once it is left.
+        if chat.is_some_and(|c| c.scratch) {
+            return false;
+        }
         match self.prefs.more.list_show {
             Show::All => true,
             Show::Running => chat.is_some_and(|c| c.running()),

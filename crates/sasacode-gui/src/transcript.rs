@@ -273,6 +273,15 @@ pub struct Transcript {
 }
 
 /// How the summary compaction writes begins (`packages/bundled/src/compaction.ts`).
+/// What a stderr line warns of, as the CLI writes a warning in either language.
+pub fn warning_of(line: &str) -> Option<&str> {
+    ["warning: ", "警告: "]
+        .iter()
+        .find_map(|p| line.strip_prefix(p))
+        .map(str::trim)
+        .filter(|w| !w.is_empty())
+}
+
 pub const SUMMARY: &str = "[Summary of the earlier conversation, compacted to save context]";
 
 /// A plugin's question.
@@ -474,6 +483,18 @@ impl Transcript {
 
     pub fn note(&mut self, note: Note) {
         self.current().steps.push(Step::Note(note));
+    }
+
+    /// A warning the CLI wrote on stderr, noted once in the conversation: each run says it again.
+    pub fn warn(&mut self, text: &str) {
+        let seen = self
+            .exchanges
+            .iter()
+            .flat_map(|e| &e.steps)
+            .any(|s| matches!(s, Step::Note(Note::Notice(t)) if t == text));
+        if !seen {
+            self.note(Note::Notice(text.to_owned()));
+        }
     }
 
     /// Whether a compaction's summary is not known yet.

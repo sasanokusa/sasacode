@@ -107,7 +107,7 @@ impl App {
                 self.overlay = Some(Overlay::Side);
                 operation::focus(crate::view::overlay::SIDE_INPUT)
             }
-            other => return Err(other),
+            other => return self.update_about(other),
         };
         Ok(task)
     }

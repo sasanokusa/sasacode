@@ -2,6 +2,7 @@
 //! `sasacode -p … --output jsonl --control stdio` in the folder, so the agent, its tools, its
 //! permissions and its sessions are exactly those of the CLI and the TUI.
 
+mod about;
 mod app;
 mod cli;
 mod composer;
@@ -30,6 +31,7 @@ mod review;
 mod rows;
 mod runner;
 mod scope;
+mod scratch;
 mod scripts;
 #[cfg(test)]
 mod snapshots;
@@ -82,6 +84,16 @@ fn main() -> iced::Result {
             },
             Some(flag) if flag.starts_with('-') => exit_with(&format!("unknown option {flag}")),
             _ => folder = Some(PathBuf::from(arg)),
+        }
+    }
+    // Started from the Finder, the Dock or a desktop's menu, not a terminal: the PATH and the
+    // rest as the user's terminal has them, so that `sasacode`, git and gh are found.
+    #[cfg(unix)]
+    if std::env::var_os("TERM").is_none() {
+        for (name, value) in system::login_env() {
+            // SAFETY: nothing else runs yet that reads the environment: the window has not
+            // started, and the thread that read the shell's answer has ended or is gone.
+            unsafe { std::env::set_var(name, value) };
         }
     }
     let cwd = folder

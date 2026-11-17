@@ -2091,6 +2091,7 @@ fn listed() -> crate::cli::Listing {
         trust: Some(json(
             r#"{"trusted":false,"needed":true,"complete":true,"items":["plugin lint","MCP server db"],"mcpServers":["db"]}"#,
         )),
+        version: Some("0.8.0".into()),
     }
 }
 
@@ -2391,4 +2392,94 @@ fn the_settings_choose_the_notifications_their_sound_and_the_editor() {
     let _ = app.update(Msg::SetEditor("zed".into()));
     assert!(app.prefs.more.quiet_wait && !app.prefs.more.quiet_done && app.prefs.more.sound);
     assert_eq!(app.prefs.more.editor, "zed");
+}
+
+#[test]
+fn the_about_screen_says_the_versions_and_what_the_runs_wrote_and_a_warning_is_said_once() {
+    use crate::runner::RunUpdate;
+    let mut app = window("ja");
+    app.listing = listed();
+    let key = app.chat.key;
+    let _ = app.start_run(key, "やって".into(), false);
+    for _ in 0..2 {
+        let _ = app.update(Msg::Run(
+            key,
+            RunUpdate::Stderr("警告: config.json の permissions は古い書き方です".into()),
+        ));
+    }
+    let _ = app.update(Msg::Run(key, RunUpdate::Stderr("debug: started".into())));
+    let notes = app
+        .chat
+        .transcript
+        .exchanges
+        .iter()
+        .flat_map(|e| &e.steps)
+        .filter(|s| matches!(s, crate::transcript::Step::Note(Note::Notice(_))))
+        .count();
+    assert_eq!(notes, 1, "a warning each run says again is noted once");
+    assert_eq!(app.log.len(), 3);
+    let _ = app.update(Msg::Show(Some(crate::app::Overlay::About)));
+    let w = crate::words::JA;
+    assert!(says(&app, "0.8.0") && says(&app, w.about_log) && says(&app, w.about_copy));
+    let about = app.about_text();
+    assert!(
+        about.contains("sasacode 0.8.0") && about.contains("debug: started"),
+        "{about}"
+    );
+}
+
+#[test]
+fn a_review_is_asked_for_in_the_input_and_the_instruction_files_open_from_the_extensions() {
+    let mut app = window("ja");
+    let _ = app.update(Msg::AskReview);
+    assert!(app.chat.editor.text().contains("git diff"));
+    let dir = std::env::temp_dir().join(format!("sasacode-gui-instr-{}", std::process::id()));
+    std::fs::create_dir_all(dir.join(".git")).unwrap();
+    app.cwd = dir.clone();
+    app.listing = listed();
+    let _ = app.update(Msg::Show(Some(crate::app::Overlay::Extensions)));
+    let w = crate::words::JA;
+    assert!(says(&app, w.instr_head) && says(&app, w.instr_make));
+    // Made empty, then opened; listed from then on.
+    // An editor that opens nothing and ends.
+    app.prefs.more.editor = if cfg!(windows) { "cmd /C rem" } else { "true" }.into();
+    let _ = app.update(Msg::OpenInstructions(dir.join("AGENTS.md")));
+    assert!(dir.join("AGENTS.md").is_file());
+    assert!(says(&app, "AGENTS.md") && !says(&app, w.instr_make));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_scratch_conversation_is_not_listed_and_its_log_goes_once_it_is_left() {
+    use crate::runner::RunUpdate;
+    let mut app = window("ja");
+    let home = app.home.clone().unwrap();
+    let dir = real_logs(&mut app, "scratch");
+    let (a, b) = (app.sessions[1].clone(), app.sessions[2].clone());
+    let _ = app.update(Msg::NewScratch);
+    assert!(app.chat.scratch && says(&app, crate::words::JA.scratch_tag));
+    // Its first run named it as the second conversation's log, and is over.
+    app.chat.session = Some(a.id.clone());
+    assert!(!app.shows(&a), "a scratch conversation is not listed");
+    let _ = app.update(Msg::NewSession);
+    assert!(!a.path.exists(), "left, its log is in the trash");
+    assert!(std::fs::read_dir(home.join("trash")).unwrap().count() > 0);
+    assert!(
+        app.prefs
+            .more
+            .folders
+            .get(&app.folder_key())
+            .is_none_or(|f| f.last.as_deref() != Some(a.id.as_str())),
+        "never what the window opens on again"
+    );
+    // Left while it runs, it is kept until the run is over, then goes.
+    let _ = app.update(Msg::NewScratch);
+    let key = app.chat.key;
+    let _ = app.start_run(key, "ちょっと聞く".into(), false);
+    app.chat.session = Some(b.id.clone());
+    let _ = app.update(Msg::NewSession);
+    assert!(b.path.exists() && app.parked.iter().any(|c| c.scratch));
+    let _ = app.update(Msg::Run(key, RunUpdate::Exited(Some(0))));
+    assert!(!app.parked.iter().any(|c| c.scratch));
+    let _ = std::fs::remove_dir_all(&dir);
 }

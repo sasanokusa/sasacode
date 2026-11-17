@@ -50,6 +50,8 @@ pub enum Overlay {
     Extensions,
     /// A picture, larger: to fit, or at its own size.
     Image(std::path::PathBuf),
+    /// The versions, where things are, and what the runs wrote on stderr.
+    About,
 }
 
 /// What a palette picks from.
@@ -123,6 +125,14 @@ impl App {
             entry(s.w().copy_folder, None, Msg::Copy(Clip::Folder)),
             entry(s.w().c_tui, Some("/tui".into()), Msg::Command(Command::Tui)),
             entry(s.w().c_extensions, None, Msg::Show(Some(Overlay::Extensions))),
+            entry(s.w().c_about, None, Msg::Show(Some(Overlay::About))),
+            entry(s.w().c_scratch, None, Msg::NewScratch),
+            entry(s.w().c_review, None, Msg::AskReview),
+            entry(
+                s.w().c_instructions,
+                None,
+                Msg::OpenInstructions(self.cwd.join("AGENTS.md")),
+            ),
             entry(s.w().pr_title, None, Msg::PrOpen),
             entry(s.c_export, None, Msg::Copy(Clip::Conversation)),
             entry(s.c_steps, None, Msg::Command(Command::Steps)),

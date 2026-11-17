@@ -43,6 +43,8 @@ pub const MODEL: &str = "model";
 /// How far from its newest the conversation still counts as at it, in pixels: a nudge of the
 /// trackpad is not reading back.
 const NEAR_END: f32 = 24.0;
+/// The stderr lines the window keeps for its log.
+pub const LOG_LINES: usize = 400;
 /// How long a copy button says it copied.
 const COPIED_FOR: Duration = Duration::from_millis(1600);
 
@@ -122,6 +124,8 @@ pub enum Clip {
     Session,
     /// The whole conversation, as Markdown.
     Conversation,
+    /// The versions, the paths and the recent log, for a report of something wrong.
+    About,
     /// Text drawn whole where it is copied from: a code block.
     Text(String),
 }
@@ -225,6 +229,8 @@ pub struct App {
     pub(crate) compact_at: Option<f64>,
     /// The picture shown larger is at its own size, not fitted.
     pub(crate) image_actual: bool,
+    /// What the runs wrote on stderr, the newest last, as many as `LOG_LINES`.
+    pub(crate) log: std::collections::VecDeque<String>,
     /// The next side question, as it is typed.
     pub(crate) side_typed: String,
     /// Conversations whose title the model is writing.
@@ -351,6 +357,8 @@ pub(crate) struct Chat {
     /// The run is of a CLI that reads edited arguments and stops one call (it listed the plugins'
     /// commands, as one since 0.8 does at its start); an older one would take them for others.
     pub(crate) newer: bool,
+    /// A scratch conversation: its log goes into the trash once it is left and its run is over.
+    pub(crate) scratch: bool,
 }
 
 impl Chat {
@@ -371,6 +379,7 @@ impl Chat {
             whole: HashSet::new(),
             follow: Vec::new(),
             newer: false,
+            scratch: false,
         }
     }
 
@@ -651,6 +660,14 @@ pub enum Msg {
     SetQuietWait(bool),
     SetSound(bool),
     SetEditor(String),
+    /// A message asking for a review of the changes, put in the input.
+    AskReview,
+    /// A new conversation whose log goes once it is left.
+    NewScratch,
+    /// A file of instructions opened in the editor, made empty first when it is not there.
+    OpenInstructions(PathBuf),
+    /// The sasacode home folder, shown in the file manager.
+    OpenHome,
     /// To the conversation left, and forward again.
     Back,
     Forward,
@@ -873,6 +890,7 @@ impl App {
             trust_once: false,
             compact_at: None,
             image_actual: false,
+            log: Default::default(),
             side_typed: String::new(),
             titling: Default::default(),
             back: Vec::new(),
@@ -1181,10 +1199,11 @@ impl App {
             }
             Msg::Run(key, update) => return self.on_run(key, update),
             Msg::Answer(decision) => return self.answer(decision),
+            Msg::NewScratch => return self.new_scratch(),
             Msg::NewSession => {
                 if !self.chat.untouched() {
                     // What was typed for a new conversation before is still there.
-                    let chat = match self.parked.iter().position(Chat::untouched) {
+                    let chat = match self.parked.iter().position(|c| c.untouched() && !c.scratch) {
                         Some(i) => self.parked.remove(i),
                         None => self.new_chat(),
                     };
@@ -1548,7 +1567,7 @@ impl App {
     }
 
     /// Shows `chat` in place of the conversation shown, which is kept while it is still wanted.
-    fn bring(&mut self, chat: Chat) {
+    pub(crate) fn bring(&mut self, chat: Chat) {
         self.bring_as(chat, false);
     }
 
@@ -1574,12 +1593,19 @@ impl App {
         if chat.session.is_some() && chat.session == self.split {
             self.split = None;
         }
-        let last = chat.session.clone();
+        let last = chat.session.clone().filter(|_| !chat.scratch);
         let left = std::mem::replace(&mut self.chat, chat);
-        self.keep_draft(&left);
         self.keep_last(last);
-        if left.wanted() || (keep && left.session.is_some()) {
-            self.parked.push(left);
+        // A scratch conversation left is gone, once its run is over.
+        if left.scratch && !left.busy() {
+            self.drop_scratch(&left);
+        } else {
+            if !left.scratch {
+                self.keep_draft(&left);
+            }
+            if left.wanted() || (keep && left.session.is_some()) {
+                self.parked.push(left);
+            }
         }
         self.copied = None;
         self.reading = false;
@@ -1687,6 +1713,7 @@ impl App {
             Clip::Conversation => Some(crate::export::markdown(self.name(), &self.chat.transcript, self.s)),
             Clip::Text(text) => Some(text.clone()),
             Clip::Folder => Some(self.cwd.display().to_string()),
+            Clip::About => Some(self.about_text()),
             Clip::Log => {
                 let id = self.chat.session.as_deref()?;
                 Some(self.sessions.iter().find(|s| s.id == id)?.path.display().to_string())
@@ -1998,6 +2025,8 @@ impl App {
         let mut commands = None;
         // The conversation whose log now holds a summary to show.
         let mut compacted: Option<String> = None;
+        // A stderr line, for the window's log.
+        let mut logged: Option<String> = None;
         match update {
             RunUpdate::Started(control) => run.control = Some(control),
             RunUpdate::Event(event) => {
@@ -2059,6 +2088,11 @@ impl App {
                 relist = matches!(*event, sasacode_protocol::Event::MessageEnd { .. }) && chat.session.is_some();
             }
             RunUpdate::Stderr(line) => {
+                // The config's warnings, and others the CLI gives, are said in the conversation.
+                if let Some(warning) = crate::transcript::warning_of(&line) {
+                    chat.transcript.warn(warning);
+                }
+                logged = Some(line.clone());
                 run.stderr.push(line);
                 if run.stderr.len() > 40 {
                     run.stderr.remove(0);
@@ -2121,6 +2155,12 @@ impl App {
             self.reload_sessions();
         }
         self.now = now;
+        if let Some(line) = logged {
+            self.log.push_back(line);
+            if self.log.len() > LOG_LINES {
+                self.log.pop_front();
+            }
+        }
         if let Some(text) = notice {
             self.toast = Some(text);
         }
@@ -2162,10 +2202,22 @@ impl App {
             tasks.push(self.guess_next(key));
             // A conversation's first run ended: it may get a title of the model's.
             if key != SIDE
-                && let Some(id) = self.chat_mut(key).and_then(|c| c.session.clone())
+                && let Some(id) = self
+                    .chat_mut(key)
+                    .filter(|c| !c.scratch)
+                    .and_then(|c| c.session.clone())
             {
                 tasks.push(self.write_title(&id, false));
             }
+        }
+        // A scratch conversation left while it ran is gone, now that its run is over.
+        if ended_now
+            && !again
+            && key != self.chat.key
+            && let Some(i) = self.parked.iter().position(|c| c.key == key && c.scratch)
+        {
+            let chat = self.parked.remove(i);
+            self.drop_scratch(&chat);
         }
         if attention && !again {
             // The run waits for the user or ended: say so even when the window is behind others

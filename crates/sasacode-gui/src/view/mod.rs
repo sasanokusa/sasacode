@@ -351,6 +351,21 @@ fn title(app: &App) -> El<'_> {
             .color(t.fg)
             .wrapping(text::Wrapping::None)
     };
+    // A scratch conversation says it goes once it is left.
+    if app.chat.scratch {
+        return row![
+            tag(t, s.w().scratch_tag.to_owned(), t.warn_wash, t.warn),
+            title_text(
+                app.chat
+                    .transcript
+                    .title()
+                    .map_or_else(|| s.new_session.to_owned(), |p| clip(first_line(p), 40))
+            ),
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center)
+        .into();
+    }
     // The name it was given in the list, as the list shows it; else its first message.
     match app.name().or(app.chat.transcript.title()) {
         Some(prompt) => {

@@ -87,6 +87,8 @@ pub struct Listing {
     pub skills: Option<Vec<Skill>>,
     pub plugins: Option<Vec<Plugin>>,
     pub trust: Option<Trust>,
+    /// `sasacode --version`.
+    pub version: Option<String>,
 }
 
 impl Listing {
@@ -106,6 +108,9 @@ impl Listing {
         }
         if other.trust.is_some() {
             self.trust = other.trust;
+        }
+        if other.version.is_some() {
+            self.version = other.version;
         }
     }
 
@@ -151,7 +156,7 @@ pub fn listing(program: &Path, cwd: &Path, lang: Option<String>) -> Task<Msg> {
     let quick = {
         let (program, cwd, lang) = (program.to_owned(), cwd.to_owned(), lang.clone());
         async move {
-            let (commands, skills, plugins, trust) = tokio::join!(
+            let (commands, skills, plugins, trust, version) = tokio::join!(
                 ask(
                     program.clone(),
                     cwd.clone(),
@@ -170,13 +175,18 @@ pub fn listing(program: &Path, cwd: &Path, lang: Option<String>) -> Task<Msg> {
                     vec!["plugin", "list", "--json"],
                     lang.clone()
                 ),
-                ask(program, cwd, vec!["trust", "--json"], lang),
+                ask(program.clone(), cwd.clone(), vec!["trust", "--json"], lang.clone()),
+                ask(program, cwd, vec!["--version"], lang),
             );
             Listing {
                 commands: parsed(commands),
                 skills: parsed(skills),
                 plugins: parsed(plugins),
                 trust: parsed(trust),
+                version: version
+                    .ok()
+                    .map(|v| v.trim().to_owned())
+                    .filter(|v| !v.is_empty() && !v.contains('\n')),
                 ..Listing::default()
             }
         }

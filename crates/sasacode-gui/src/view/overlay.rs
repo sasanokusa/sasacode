@@ -39,6 +39,7 @@ pub fn over<'a>(app: &'a App, base: El<'a>) -> El<'a> {
         Overlay::Quote => (quote(app), 720.0, 50.0),
         Overlay::Args => (args(app), 640.0, 60.0),
         Overlay::Extensions => (extensions(app), 640.0, 50.0),
+        Overlay::About => (about(app), 680.0, 50.0),
         Overlay::Image(path) => (picture(app, path), (app.width - 80.0).clamp(360.0, 1200.0), 30.0),
     };
     let shade = Color {
@@ -626,7 +627,46 @@ fn extensions(app: &App) -> El<'_> {
             }
         }
     }
-    body = body.push(plugins).push(skills).push(mcp).push(
+    // The instructions every run here reads, each to open; one for the folder, to make.
+    let mut instr = column![heading(w.instr_head)].spacing(4);
+    let files = crate::about::instruction_files(app.home.as_deref(), &app.cwd);
+    if files.is_empty() {
+        instr = instr.push(text(w.instr_none).size(12).color(t.fg_3));
+    }
+    for file in &files {
+        let shown = file
+            .strip_prefix(&app.cwd)
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|_| file.display().to_string());
+        instr = instr.push(
+            button(text(shown).size(12.5).font(MONO).color(t.accent))
+                .padding([2, 0])
+                .style(t.ghost(t.accent, false))
+                .on_press(Msg::OpenInstructions(file.clone())),
+        );
+    }
+    let mine = app.cwd.join("AGENTS.md");
+    let mut make = row![].spacing(8);
+    if !files.contains(&mine) {
+        make = make.push(
+            button(text(w.instr_make).size(12.5))
+                .padding([4, 10])
+                .style(t.outline(t.fg))
+                .on_press(Msg::OpenInstructions(mine)),
+        );
+    }
+    if let Some(home) = &app.home
+        && !files.contains(&home.join("AGENTS.md"))
+    {
+        make = make.push(
+            button(text(w.instr_global).size(12.5))
+                .padding([4, 10])
+                .style(t.ghost(t.fg_2, false))
+                .on_press(Msg::OpenInstructions(home.join("AGENTS.md"))),
+        );
+    }
+    instr = instr.push(make);
+    body = body.push(instr).push(plugins).push(skills).push(mcp).push(
         row![
             Space::new().width(Length::Fill),
             button(text(w.ext_reload).size(13))
@@ -643,6 +683,85 @@ fn extensions(app: &App) -> El<'_> {
     container(scrollable(body.padding(iced::Padding::ZERO.right(12))).style(t.scroll()))
         .max_height(620)
         .into()
+}
+
+/// The versions, where things are kept, and what the runs wrote on stderr.
+fn about(app: &App) -> El<'_> {
+    let (t, w) = (app.t, app.s.w());
+    let line = |label: &'static str, value: String| -> El<'_> {
+        row![
+            text(label).size(12.5).color(t.fg_3).width(150),
+            text(value)
+                .size(12.5)
+                .font(MONO)
+                .color(t.fg)
+                .width(Length::Fill)
+                .wrapping(text::Wrapping::WordOrGlyph),
+        ]
+        .spacing(8)
+        .into()
+    };
+    let cli = app.listing.version.clone().unwrap_or_else(|| w.about_old.to_owned());
+    let home = app
+        .home
+        .as_ref()
+        .map_or_else(|| w.about_unknown.to_owned(), |h| h.display().to_string());
+    let info = column![
+        line("sasacode-gui", crate::about::VERSION.to_owned()),
+        line("sasacode", cli),
+        line(w.about_program, app.program.display().to_string()),
+        line(w.about_folder, app.cwd.display().to_string()),
+        line(w.about_home, home),
+        line(
+            w.about_system,
+            format!("{} {}", std::env::consts::OS, std::env::consts::ARCH)
+        ),
+    ]
+    .spacing(4);
+    let log: El<'_> = if app.log.is_empty() {
+        text(w.about_log_none).size(12).color(t.fg_3).into()
+    } else {
+        let all: Vec<&str> = app.log.iter().map(String::as_str).collect();
+        container(
+            scrollable(
+                text(all.join("\n"))
+                    .size(11.5)
+                    .font(MONO)
+                    .color(t.fg_2)
+                    .wrapping(text::Wrapping::WordOrGlyph),
+            )
+            .anchor_bottom()
+            .style(t.scroll()),
+        )
+        .max_height(260)
+        .padding(8)
+        .style(t.boxed(t.inset, t.line, 6.0))
+        .into()
+    };
+    column![
+        title(app, w.about_title),
+        info,
+        text(w.about_log).size(13).font(super::BOLD).color(t.fg),
+        log,
+        row![
+            button(text(w.about_open_home).size(13))
+                .padding([6, 14])
+                .style(t.ghost(t.fg_2, false))
+                .on_press(Msg::OpenHome),
+            Space::new().width(Length::Fill),
+            button(text(w.about_copy).size(13))
+                .padding([6, 14])
+                .style(t.outline(t.fg))
+                .on_press(Msg::Copy(crate::app::Clip::About)),
+            button(text(app.s.close).size(13))
+                .padding([6, 14])
+                .style(t.primary())
+                .on_press(Msg::Show(None)),
+        ]
+        .spacing(8),
+    ]
+    .spacing(12)
+    .into()
 }
 
 /// The waiting call's arguments, as JSON to edit before it is allowed with them.

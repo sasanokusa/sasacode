@@ -557,3 +557,90 @@ mod tests {
         std::fs::remove_dir_all(home).unwrap();
     }
 }
+
+/// What sets the environment apart around a login shell's: not the user's choices.
+const SHELL_OWN: [&str; 5] = ["PWD", "OLDPWD", "SHLVL", "_", "TERM"];
+
+/// The environment `env -0` printed between two `mark`s: name and value, the shell's own left
+/// out.
+pub fn parse_env(out: &str, mark: &str) -> Vec<(String, String)> {
+    let Some(start) = out.find(mark) else {
+        return Vec::new();
+    };
+    let rest = &out[start + mark.len()..];
+    let Some(end) = rest.rfind(mark) else {
+        return Vec::new();
+    };
+    rest[..end]
+        .split('\0')
+        .filter_map(|pair| pair.split_once('='))
+        .filter(|(name, _)| !name.is_empty() && !SHELL_OWN.contains(name))
+        .map(|(name, value)| (name.to_owned(), value.to_owned()))
+        .collect()
+}
+
+/// The environment the user's login shell sets up, as a terminal of theirs has it. A window
+/// started from the Finder, the Dock or a desktop's menu gets the system's bare one, where
+/// neither `sasacode` nor `git` may be on the PATH. Nothing when the shell does not answer
+/// within a few seconds.
+#[cfg(unix)]
+pub fn login_env() -> Vec<(String, String)> {
+    use std::io::Read;
+    const MARK: &str = "__SASACODE_GUI_ENV__";
+    let shell = std::env::var("SHELL")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "/bin/sh".into());
+    let Ok(mut child) = Command::new(&shell)
+        .args(["-i", "-l", "-c", &format!("printf {MARK}; env -0; printf {MARK}")])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+    else {
+        return Vec::new();
+    };
+    let Some(mut out) = child.stdout.take() else {
+        return Vec::new();
+    };
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut all = Vec::new();
+        let _ = out.read_to_end(&mut all);
+        let _ = tx.send(all);
+    });
+    let all = rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap_or_default();
+    let _ = child.kill();
+    let _ = child.wait();
+    parse_env(&String::from_utf8_lossy(&all), MARK)
+}
+
+#[cfg(test)]
+mod env_tests {
+    use super::*;
+
+    #[test]
+    fn the_login_shells_environment_is_read_between_the_marks_without_the_shells_own() {
+        let out = "Last login: today\nMARKPATH=/opt/homebrew/bin:/usr/bin\0HOME=/Users/me\0SHLVL=2\0EQ=a=b\0MARK";
+        let env = parse_env(out, "MARK");
+        assert_eq!(
+            env,
+            [
+                ("PATH".to_owned(), "/opt/homebrew/bin:/usr/bin".to_owned()),
+                ("HOME".to_owned(), "/Users/me".to_owned()),
+                ("EQ".to_owned(), "a=b".to_owned()),
+            ]
+        );
+        assert!(parse_env("no marks here", "MARK").is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_login_shell_answers_with_a_path() {
+        let env = login_env();
+        // A machine whose shell cannot start says nothing; one that can gives a PATH.
+        if !env.is_empty() {
+            assert!(env.iter().any(|(k, v)| k == "PATH" && !v.is_empty()));
+        }
+    }
+}

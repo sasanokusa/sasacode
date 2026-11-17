@@ -370,6 +370,10 @@ fn git_tab(app: &App) -> El<'_> {
                 w.draft_commit_hint.to_owned(),
                 tooltip::Position::Bottom,
             ),
+            button(text(w.review_ask).size(12.5))
+                .padding([5, 10])
+                .style(t.ghost(t.fg_2, false))
+                .on_press_maybe((!g.files.is_empty()).then_some(Msg::AskReview)),
         ]
         .spacing(6)
         .wrap(),

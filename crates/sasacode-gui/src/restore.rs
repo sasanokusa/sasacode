@@ -129,10 +129,25 @@ impl App {
     pub(crate) fn keep_all_drafts(&mut self) {
         let all = std::iter::once(&self.chat)
             .chain(&self.parked)
+            .filter(|c| !c.scratch)
             .map(|c| self.draft_of(c))
             .collect();
         self.keep_drafts(all);
-        self.keep_last(self.chat.session.clone());
+        self.keep_last(self.chat.session.clone().filter(|_| !self.chat.scratch));
+        // The scratch conversations go with the window, their runs stopped with it.
+        let scratch: Vec<crate::app::Chat> = std::iter::once(&self.chat)
+            .chain(&self.parked)
+            .filter(|c| c.scratch)
+            .map(|c| {
+                let mut gone = Chat::new(c.key);
+                gone.session = c.session.clone();
+                gone.scratch = true;
+                gone
+            })
+            .collect();
+        for chat in &scratch {
+            self.drop_scratch(chat);
+        }
     }
 
     /// A message was sent from conversation `key`: what was kept typed in it is gone.
