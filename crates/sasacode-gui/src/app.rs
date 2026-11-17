@@ -330,6 +330,9 @@ pub struct App {
     pub(crate) grep_hits: Option<Vec<crate::edit::Hit>>,
     pub(crate) grep_busy: bool,
     pub(crate) file_query: String,
+    /// The files tab's folders opened in its tree, and the git tab's folders folded, by path.
+    pub(crate) tree_open: HashSet<String>,
+    pub(crate) git_folded: HashSet<String>,
     /// The conversation a second click deletes.
     pub(crate) confirm_delete: Option<String>,
     /// The groups of the list folded shut, by name.
@@ -586,6 +589,9 @@ pub enum Msg {
     FileRead(Box<crate::files::Viewing>),
     CloseFile,
     FileQuery(String),
+    /// A folder of the files tab's tree opened or shut, and one of the git tab's folded or not.
+    TreeFold(String),
+    GitFold(String),
     /// The file read in the tab, edited and saved, or left as it was.
     FileEditStart,
     FileEditAction(text_editor::Action),
@@ -1056,6 +1062,8 @@ impl App {
             grep_hits: None,
             grep_busy: false,
             file_query: String::new(),
+            tree_open: HashSet::new(),
+            git_folded: HashSet::new(),
             key_capture: None,
             key_note: None,
             git_scope: crate::scope::Scope::Changes,

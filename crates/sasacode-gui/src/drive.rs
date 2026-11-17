@@ -893,6 +893,44 @@ fn the_palette_finds_what_is_typed_and_runs_it_by_enter() {
     assert!(app.overlay.is_none());
 }
 
+/// The files tab shows the project as a tree while nothing is typed, opened folder by folder; the
+/// git tab lists the changed files under their folders, each folder folding its own.
+#[test]
+fn the_files_are_a_tree_and_the_changed_files_are_listed_by_folder() {
+    let mut app = window("ja");
+    app.files = ["src/", "src/retry.rs", "src/view/list.rs", "README.md"]
+        .map(String::from)
+        .to_vec();
+    app.files_asked = true;
+    app.tab = Tab::Files;
+    assert!(says(&app, "src") && says(&app, "README.md"));
+    assert!(!says(&app, "retry.rs"), "what is in a shut folder is out of sight");
+    let _ = app.update(Msg::TreeFold("src/".into()));
+    assert!(says(&app, "retry.rs") && says(&app, "view") && !says(&app, "list.rs"));
+    let _ = app.update(Msg::FileQuery("list".into()));
+    assert!(says(&app, "src/view/list.rs"), "what is typed finds files as before");
+
+    let changed = |path: &str| crate::git::File {
+        path: path.into(),
+        index: ' ',
+        tree: 'M',
+        staged_diff: crate::diff::Diff::default(),
+        unstaged_diff: crate::diff::Diff::parse("@@ -1 +1 @@\n-a\n+b\n"),
+    };
+    app.git = crate::git::Status {
+        repo: true,
+        top: app.cwd.clone(),
+        branch: Some("topic".into()),
+        files: vec![changed("src/retry.rs"), changed("README.md"), changed("src/backoff.rs")],
+        ..Default::default()
+    };
+    app.tab = Tab::Git;
+    assert!(says(&app, "src/") && says(&app, "(2)") && says(&app, "（最上位）"));
+    assert!(says(&app, "retry.rs") && says(&app, "backoff.rs"));
+    let _ = app.update(Msg::GitFold("src/".into()));
+    assert!(!says(&app, "retry.rs") && says(&app, "README.md"));
+}
+
 #[test]
 fn a_file_is_staged_by_its_button_and_discarded_only_on_the_second_press() {
     let mut app = window("ja");

@@ -440,6 +440,7 @@ words! {
     ui_font_ph: "文字（空欄なら既定）", "Words (empty: the default)";
     code_font_ph: "コード（空欄なら既定）", "Code (empty: the default)";
     fonts_note: "インストールされているフォントの名前で指定します（例：Noto Sans JP、JetBrains Mono）。次に開くウィンドウから使われます", "Name a font that is installed (e.g. Noto Sans JP, JetBrains Mono). Windows opened from now on use it";
+    git_top: "（最上位）", "(top)";
     other_folders: "ほかのフォルダ", "Other folders";
     other_folders_tip: "そのフォルダの会話を、別のウィンドウで開きます", "Opens that folder's conversations in a window of its own";
     about_update_check: "更新を確かめる", "Check for updates";

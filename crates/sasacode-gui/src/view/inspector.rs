@@ -391,9 +391,52 @@ fn git_tab(app: &App) -> El<'_> {
         return col.push(empty(app, Icon::Check, s.git_clean, "")).into();
     }
     col = col.push(text(w.quote_hint).size(11.5).color(t.fg_3));
-    for f in &g.files {
+    // By folder: each folder's changed files under its line, which folds them.
+    let folder_of = |path: &str| {
+        path.rsplit_once('/')
+            .map_or(String::new(), |(dir, _)| format!("{dir}/"))
+    };
+    let mut files: Vec<&crate::git::File> = g.files.iter().collect();
+    files.sort_by(|a, b| (folder_of(&a.path), &a.path).cmp(&(folder_of(&b.path), &b.path)));
+    let mut last: Option<String> = None;
+    for f in files {
+        let folder = folder_of(&f.path);
+        if last.as_ref() != Some(&folder) {
+            let count = g.files.iter().filter(|x| folder_of(&x.path) == folder).count();
+            let shut = app.git_folded.contains(&folder);
+            let label = if folder.is_empty() {
+                w.git_top.to_owned()
+            } else {
+                folder.clone()
+            };
+            col = col.push(
+                button(
+                    row![
+                        icon(if shut { Icon::ChevronRight } else { Icon::ChevronDown }, 11.0, t.fg_3),
+                        icon(Icon::Folder, 12.0, t.fg_3),
+                        text(clip_start(&label, cells(app, 120.0)))
+                            .size(12)
+                            .font(mono())
+                            .color(t.fg_2)
+                            .wrapping(text::Wrapping::None),
+                        text(format!("({count})")).size(11).color(t.fg_3),
+                    ]
+                    .spacing(6)
+                    .align_y(Alignment::Center),
+                )
+                .width(Length::Fill)
+                .padding([3, 6])
+                .style(t.ghost(t.fg_2, false))
+                .on_press(Msg::GitFold(folder.clone())),
+            );
+            last = Some(folder.clone());
+        }
+        if app.git_folded.contains(&folder) {
+            continue;
+        }
         let letters = format!("{}{}", f.index, f.tree).replace(' ', "·");
-        let path = clip_start(&f.path, cells(app, 130.0));
+        let shown = f.path.strip_prefix(&folder).unwrap_or(&f.path);
+        let path = clip_start(shown, cells(app, 130.0));
         let mut head = row![
             text(letters)
                 .size(11.5)
@@ -1054,6 +1097,48 @@ fn files_tab(app: &App) -> El<'_> {
         let mut list = column![].spacing(1);
         if app.files.is_empty() {
             list = list.push(text(w.files_listing).size(12.5).color(t.fg_3));
+        }
+        // Nothing typed: the project as a tree, opened folder by folder.
+        if app.file_query.trim().is_empty() && !app.files.is_empty() {
+            for r in crate::files::tree(&app.files, &app.tree_open)
+                .into_iter()
+                .take(crate::files::LISTED)
+            {
+                let mark = if !r.folder {
+                    Icon::File
+                } else if r.open {
+                    Icon::ChevronDown
+                } else {
+                    Icon::ChevronRight
+                };
+                let line = row![
+                    Space::new().width(14.0 * r.depth as f32),
+                    icon(mark, 11.0, t.fg_3),
+                    text(r.name)
+                        .size(12)
+                        .font(if r.folder { bold() } else { mono() })
+                        .color(if r.folder { t.fg_2 } else { t.fg })
+                        .wrapping(text::Wrapping::None),
+                ]
+                .spacing(6)
+                .align_y(Alignment::Center);
+                let msg = if r.folder {
+                    Msg::TreeFold(r.path.clone())
+                } else {
+                    Msg::ViewFile(app.cwd.join(&r.path), None)
+                };
+                let b = button(line)
+                    .width(Length::Fill)
+                    .padding([3, 8])
+                    .style(t.ghost(t.fg, false))
+                    .on_press(msg);
+                list = list.push(if r.folder {
+                    b.into()
+                } else {
+                    on_file(app, &r.path, b.into())
+                });
+            }
+            return column![modes, field, list].spacing(10).into();
         }
         let found: Vec<&String> = app.found_files().collect();
         for f in found.iter().take(crate::files::LISTED) {

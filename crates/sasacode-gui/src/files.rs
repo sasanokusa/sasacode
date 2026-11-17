@@ -2,7 +2,7 @@
 //! colored, a line of it commented on as a line of a diff is. And the colors of code, which the
 //! code blocks of replies are drawn in too.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -24,6 +24,63 @@ pub const SHOWN_LINES: usize = 3000;
 const READ_MAX: u64 = 4 * 1024 * 1024;
 /// How many code blocks keep their colors, until they are colored again.
 const KEPT: usize = 128;
+
+/// A line of the files tab's tree: a folder, open or not, or a file, as deep as it lies.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TreeRow {
+    pub depth: usize,
+    pub name: String,
+    /// From the project's top; a folder's ends with `/`.
+    pub path: String,
+    pub folder: bool,
+    pub open: bool,
+}
+
+/// The project's files as a tree, folders first and each by name, opened where `open` says: what
+/// is in a folder is listed while it and every folder above it are open.
+pub fn tree(files: &[String], open: &HashSet<String>) -> Vec<TreeRow> {
+    fn walk(files: &[&str], prefix: &str, depth: usize, open: &HashSet<String>, rows: &mut Vec<TreeRow>) {
+        let (mut folders, mut leaves) = (BTreeSet::new(), BTreeSet::new());
+        for rest in files.iter().filter_map(|f| f.strip_prefix(prefix)) {
+            match rest.split_once('/') {
+                Some((folder, _)) => {
+                    folders.insert(folder);
+                }
+                None if !rest.is_empty() => {
+                    leaves.insert(rest);
+                }
+                None => {}
+            }
+        }
+        for folder in folders {
+            let path = format!("{prefix}{folder}/");
+            let is_open = open.contains(&path);
+            rows.push(TreeRow {
+                depth,
+                name: folder.to_owned(),
+                path: path.clone(),
+                folder: true,
+                open: is_open,
+            });
+            if is_open {
+                walk(files, &path, depth + 1, open, rows);
+            }
+        }
+        for leaf in leaves {
+            rows.push(TreeRow {
+                depth,
+                name: leaf.to_owned(),
+                path: format!("{prefix}{leaf}"),
+                folder: false,
+                open: false,
+            });
+        }
+    }
+    let files: Vec<&str> = files.iter().map(String::as_str).filter(|f| !f.ends_with('/')).collect();
+    let mut rows = Vec::new();
+    walk(&files, "", 0, open, &mut rows);
+    rows
+}
 
 /// The colored stretches of a line: bytes of it, and their color if the syntax gives one.
 pub type Spans = Vec<(Range<usize>, Option<Color>)>;
@@ -248,6 +305,18 @@ impl App {
                 self.file_edit = None;
                 operation::focus(FILES_FIELD)
             }
+            Msg::TreeFold(folder) => {
+                if !self.tree_open.remove(&folder) {
+                    self.tree_open.insert(folder);
+                }
+                Task::none()
+            }
+            Msg::GitFold(folder) => {
+                if !self.git_folded.remove(&folder) {
+                    self.git_folded.insert(folder);
+                }
+                Task::none()
+            }
             Msg::FileQuery(query) => {
                 self.file_query = query;
                 // What was found was for what was typed before.
@@ -292,6 +361,45 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_tree_lists_folders_first_and_what_is_in_one_only_while_it_is_open() {
+        let files: Vec<String> = [
+            "src/",
+            "src/app.rs",
+            "src/view/mod.rs",
+            "README.md",
+            "Cargo.toml",
+            "docs/gui.md",
+        ]
+        .map(String::from)
+        .into();
+        let names = |rows: &[TreeRow]| -> Vec<String> {
+            rows.iter()
+                .map(|r| format!("{}{}", "  ".repeat(r.depth), r.name))
+                .collect()
+        };
+        let shut = tree(&files, &HashSet::new());
+        assert_eq!(names(&shut), ["docs", "src", "Cargo.toml", "README.md"]);
+        assert!(shut[1].folder && !shut[1].open && shut[1].path == "src/");
+        let open: HashSet<String> = ["src/".into(), "src/view/".into()].into();
+        assert_eq!(
+            names(&tree(&files, &open)),
+            [
+                "docs",
+                "src",
+                "  view",
+                "    mod.rs",
+                "  app.rs",
+                "Cargo.toml",
+                "README.md"
+            ]
+        );
+        // A folder opened inside a shut one stays out of sight.
+        let inner: HashSet<String> = ["src/view/".into()].into();
+        assert_eq!(names(&tree(&files, &inner)), ["docs", "src", "Cargo.toml", "README.md"]);
+        assert_eq!(tree(&files, &open)[3].path, "src/view/mod.rs");
+    }
 
     #[test]
     fn a_line_is_colored_by_its_syntax_and_the_colors_cover_it() {
