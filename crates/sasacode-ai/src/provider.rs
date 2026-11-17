@@ -9,7 +9,9 @@ use futures::stream::BoxStream;
 use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 
-use crate::types::{AssistantMessage, Message, ModelInfo, Price, ProviderConfig, SamplingOptions, ThinkingLevel, ToolSpec};
+use crate::types::{
+    AssistantMessage, Message, ModelInfo, Price, ProviderConfig, SamplingOptions, ThinkingLevel, ToolSpec,
+};
 
 /// Replaces the HTTP client's send, e.g. for a provider that wraps another and must adjust the
 /// request on the wire (the openai-codex plugin drops fields its backend rejects), or to observe
@@ -149,29 +151,9 @@ pub fn is_context_overflow(e: &anyhow::Error) -> bool {
 }
 
 /// The connection broke while the reply was streaming in: a cut reply to ask again for, not an
-/// error the provider sent (`droppedMidReply`).
+/// error the provider sent (`droppedMidReply`). Decided by the error's type, not its text.
 pub fn dropped_mid_reply(e: &anyhow::Error) -> bool {
-    for cause in e.chain() {
-        if let Some(io) = cause.downcast_ref::<std::io::Error>() {
-            use std::io::ErrorKind::*;
-            if matches!(
-                io.kind(),
-                ConnectionReset | ConnectionAborted | BrokenPipe | TimedOut | UnexpectedEof
-            ) {
-                return true;
-            }
-        }
-        if let Some(r) = cause.downcast_ref::<reqwest::Error>()
-            && (r.is_body() || r.is_decode() || r.is_timeout())
-        {
-            return true;
-        }
-    }
-    let text = format!("{e:#}");
-    let lower = text.to_lowercase();
-    ["econnreset", "epipe", "etimedout", "connectionclosed", "connection closed", "socket hang up", "connection reset"]
-        .iter()
-        .any(|p| lower.contains(p))
+    crate::transport::is_cut_reply(e)
 }
 
 type Registry = RwLock<HashMap<String, Arc<dyn Provider>>>;
@@ -183,7 +165,10 @@ fn registry() -> &'static Registry {
 
 /// Register the adapter for an api name (a plugin may replace a built-in one).
 pub fn register_provider(api: &str, provider: Arc<dyn Provider>) {
-    registry().write().unwrap_or_else(|e| e.into_inner()).insert(api.to_string(), provider);
+    registry()
+        .write()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(api.to_string(), provider);
 }
 
 /// The adapter for `api`, built-ins included (`getProvider`).
@@ -198,5 +183,9 @@ pub fn get_provider(api: &str) -> anyhow::Result<Arc<dyn Provider>> {
 }
 
 pub(crate) fn register_provider_if_absent(api: &str, provider: Arc<dyn Provider>) {
-    registry().write().unwrap_or_else(|e| e.into_inner()).entry(api.to_string()).or_insert(provider);
+    registry()
+        .write()
+        .unwrap_or_else(|e| e.into_inner())
+        .entry(api.to_string())
+        .or_insert(provider);
 }

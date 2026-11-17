@@ -10,9 +10,12 @@ pub mod openai_responses;
 pub mod provider;
 pub mod replay;
 pub mod sse;
+pub mod transport;
 pub mod types;
 
+pub use format::*;
 pub use provider::*;
+pub use replay::*;
 pub use types::*;
 
 /// Registers the three built-in adapters once (anthropic, openai-chat, openai-responses).
@@ -23,7 +26,10 @@ pub fn register_builtins() {
         let builtins: [(&str, std::sync::Arc<dyn Provider>); 3] = [
             ("anthropic", std::sync::Arc::new(anthropic::AnthropicProvider)),
             ("openai-chat", std::sync::Arc::new(openai_chat::OpenAiChatProvider)),
-            ("openai-responses", std::sync::Arc::new(openai_responses::OpenAiResponsesProvider)),
+            (
+                "openai-responses",
+                std::sync::Arc::new(openai_responses::OpenAiResponsesProvider),
+            ),
         ];
         for (api, p) in builtins {
             provider::register_provider_if_absent(api, p);

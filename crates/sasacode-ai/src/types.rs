@@ -34,7 +34,11 @@ pub enum Phase {
 pub struct TextContent {
     pub text: String,
     /// Responses phase is per output message, not per response. `Some(None)` is an explicit `null`.
-    #[serde(default, skip_serializing_if = "Option::is_none", with = "crate::json::double_option")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "crate::json::double_option"
+    )]
     pub phase: Option<Option<Phase>>,
 }
 
@@ -104,7 +108,10 @@ pub enum AssistantContent {
 
 impl UserContent {
     pub fn text(t: impl Into<String>) -> Self {
-        UserContent::Text(TextContent { text: t.into(), phase: None })
+        UserContent::Text(TextContent {
+            text: t.into(),
+            phase: None,
+        })
     }
     pub fn as_text(&self) -> Option<&str> {
         match self {
@@ -116,7 +123,10 @@ impl UserContent {
 
 impl AssistantContent {
     pub fn text(t: impl Into<String>) -> Self {
-        AssistantContent::Text(TextContent { text: t.into(), phase: None })
+        AssistantContent::Text(TextContent {
+            text: t.into(),
+            phase: None,
+        })
     }
     pub fn as_text(&self) -> Option<&str> {
         match self {
@@ -266,7 +276,10 @@ pub enum Message {
 
 impl Message {
     pub fn user(content: Vec<UserContent>) -> Self {
-        Message::User(UserMessage { content, timestamp: now_ms() })
+        Message::User(UserMessage {
+            content,
+            timestamp: now_ms(),
+        })
     }
     pub fn role(&self) -> &'static str {
         match self {
