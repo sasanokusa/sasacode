@@ -115,7 +115,7 @@ pub fn search_tools(query: &str, tools: &[ToolRef], limit: usize) -> Vec<ToolRef
         .filter(|(_, s)| *s > 0)
         .collect();
     // Stable, like Array.prototype.sort.
-    scored.sort_by(|a, b| b.1.cmp(&a.1));
+    scored.sort_by_key(|s| std::cmp::Reverse(s.1));
     scored.into_iter().take(limit).map(|(t, _)| t).collect()
 }
 

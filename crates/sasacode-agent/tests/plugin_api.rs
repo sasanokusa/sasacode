@@ -487,13 +487,16 @@ fn host(settings: Value) -> Arc<PluginHost> {
     })
 }
 
+type InputFn = Arc<dyn Fn(String, InputOptions) -> Option<String> + Send + Sync>;
+type ShowTextFn = Arc<dyn Fn(ShowTextOptions) -> BoxFuture<'static, ()> + Send + Sync>;
+
 #[derive(Default)]
 struct TestUi {
     interactive: bool,
     notices: Arc<Mutex<Vec<String>>>,
-    input: Option<Arc<dyn Fn(String, InputOptions) -> Option<String> + Send + Sync>>,
+    input: Option<InputFn>,
     select_many: Option<Arc<dyn Fn() -> Option<Vec<String>> + Send + Sync>>,
-    show_text: Option<Arc<dyn Fn(ShowTextOptions) -> BoxFuture<'static, ()> + Send + Sync>>,
+    show_text: Option<ShowTextFn>,
 }
 
 #[async_trait]

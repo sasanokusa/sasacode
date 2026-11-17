@@ -205,6 +205,9 @@ pub fn response_room(model: &ModelInfo) -> u64 {
         .min((model.context_window as f64 * 0.15).floor() as u64)
 }
 
+/// Told what the user_prompt hooks made of a prompt (None: a plugin handled it).
+pub type Accepted = Box<dyn FnOnce(Option<Vec<UserContent>>) + Send>;
+
 type RunFuture = Shared<BoxFuture<'static, Result<StopCause, String>>>;
 type HaltFuture = Shared<BoxFuture<'static, ()>>;
 
@@ -429,7 +432,7 @@ impl Agent {
     pub async fn prompt(
         &self,
         input: Vec<UserContent>,
-        accepted: Option<Box<dyn FnOnce(Option<Vec<UserContent>>) + Send>>,
+        accepted: Option<Accepted>,
     ) -> anyhow::Result<StopCause> {
         // Sent while a halt waits for the run to stop: it belongs after the halt, not to the
         // stopping run. (Input sent before the halt was queued for that run, and the halt drops it.)
@@ -514,7 +517,7 @@ impl Agent {
             st.queued.push(content);
         } else {
             // Spawned: it runs whether or not anyone awaits it.
-            let _ = self.start_locked(&mut st, vec![content]);
+            drop(self.start_locked(&mut st, vec![content]));
         }
     }
 
@@ -629,7 +632,8 @@ impl Agent {
         st.running = None;
         if st.halted.is_none() && !st.queued.is_empty() {
             let queued = std::mem::take(&mut st.queued);
-            let _ = self.start_locked(&mut st, queued);
+            // Spawned: nobody awaits this run; prompt() callers wait on their own.
+            drop(self.start_locked(&mut st, queued));
         }
     }
 

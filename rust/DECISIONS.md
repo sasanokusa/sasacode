@@ -98,13 +98,19 @@ was for: an MCP stdio server `uvx free-search-mcp` registered through `sasacode-
 Consequences: Old configs stay valid (the TS check ignores unknown keys under `plugins`). Old
 installs in `~/.sasacode/plugins` are no longer loaded; the plugin names stay the same, so
 `plugins.settings` for them keep working once enabled.
+jev-guard's own switch, `plugins.settings["jev-guard"].enabled: true`, also turns it on, so
+configs written for the installed plugin keep working.
 
-## ADR-012: One `unsafe`: setsid before exec for bash
+## ADR-012: Two `unsafe` sites: setsid before exec for bash, and the environment at startup
 Status: accepted (2026-11-18)
 Context: PORTING forbids `unsafe`. Node's `detached: true` calls `setsid()` in the child, so a bash
 command has no controlling terminal: ssh/git credential prompts and gpg fail at once. Rust's
 `process_group(0)` keeps the terminal, and those commands would hang until the timeout.
 Decision: `sasacode_plugin_api::detach_session` calls `setsid` in `pre_exec`, the only `unsafe` block
 in the code base, with a SAFETY note. The bash tool uses it instead of `process_group(0)`.
+`std::env::set_var` and `remove_var` are `unsafe` since edition 2024. main.rs needs them to load
+`~/.sasacode/.env` and to drop blank key variables, as main.ts did. It calls them in `fn main`
+before the tokio runtime or any other thread starts, so nothing reads the environment
+concurrently, with a SAFETY note at each call. That is the second and last place.
 Consequences: std spawns with fork+exec instead of posix_spawn for bash; the error for a missing
 bash is the same `io::Error`. Any other `unsafe` needs its own ADR.
