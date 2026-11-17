@@ -347,6 +347,8 @@ pub struct App {
     pub(crate) branch_list: Option<Vec<String>>,
     /// The branch's pull request, as last read, and whether it is being read.
     pub(crate) pr: Option<crate::git::Pr>,
+    /// How many times this window started a conversation to fix each pull request's checks.
+    pub(crate) auto_fixes: HashMap<u64, usize>,
     pub(crate) pr_loading: bool,
     /// The comment being written under a line of a diff.
     pub(crate) commenting: Option<crate::review::Draft>,
@@ -771,6 +773,9 @@ pub enum Msg {
     SetNotifyAlways(bool),
     /// The files tab saves what is typed by itself; a look whether it is time to.
     SetAutosave(bool),
+    /// Failed checks fixed by a conversation started by itself; their logs, read for it.
+    SetAutoFix(bool),
+    AutoFixReady(String),
     FileAutosave,
     /// The sasacode executable the window runs; empty, the one on PATH.
     SetProgram(String),
@@ -1133,6 +1138,7 @@ impl App {
             collapsed: HashSet::new(),
             branch_list: None,
             pr: None,
+            auto_fixes: HashMap::new(),
             pr_loading: false,
             commenting: None,
             ex_hover: None,

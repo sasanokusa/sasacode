@@ -215,6 +215,8 @@ pub struct More {
     pub notify_always: bool,
     /// What is typed in the files tab saved by itself a moment after the last key.
     pub autosave: bool,
+    /// A pull request's checks that fail start a conversation that is given their logs to fix them.
+    pub auto_fix: bool,
     /// The sasacode the window runs, over `sasacode` on PATH; empty, that one (or $SASACODE_BIN).
     pub program: String,
     /// What each folder's last run used, and the conversation last shown there, by its path.
@@ -725,6 +727,7 @@ mod tests {
                 sound: true,
                 notify_always: true,
                 autosave: true,
+                auto_fix: true,
                 program: "/opt/sasacode/bin/sasacode".into(),
                 folders: BTreeMap::from([(
                     "/w".into(),

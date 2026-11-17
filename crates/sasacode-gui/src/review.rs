@@ -13,6 +13,9 @@ use crate::git::{self, Pr};
 /// How many branches one look asks `gh` about: each is a request.
 const SWEPT_BRANCHES: usize = 30;
 
+/// How many times a window starts a conversation to fix one pull request's failed checks.
+pub const AUTO_FIXES: usize = 3;
+
 /// The field of a comment being written.
 pub const COMMENT: &str = "comment";
 
@@ -112,15 +115,55 @@ impl App {
             Msg::PrLoaded(pr) => {
                 let before = std::mem::replace(&mut self.pr, pr.map(|pr| *pr));
                 // Its checks finished while they were watched: said, as a run that ends is.
+                let mut fix = Task::none();
                 if let Some(failed) = git::checks_finished(before.as_ref(), self.pr.as_ref()) {
                     self.tell_checks(failed);
+                    // Failed: their logs read for a conversation to fix them, when the settings
+                    // say so, a few times a pull request at most.
+                    if failed > 0
+                        && self.prefs.more.auto_fix
+                        && let Some(pr) = self.pr.clone()
+                    {
+                        let tries = self.auto_fixes.entry(pr.number).or_default();
+                        if *tries < AUTO_FIXES {
+                            *tries += 1;
+                            let cwd = self.cwd.clone();
+                            fix = Task::perform(
+                                async move {
+                                    tokio::task::spawn_blocking(move || git::failed_logs(&cwd, &pr))
+                                        .await
+                                        .unwrap_or_default()
+                                },
+                                Msg::AutoFixReady,
+                            );
+                        }
+                    }
                 }
                 // Kept by branch, for the conversations started on it.
                 if let (Some(pr), Some(branch)) = (&self.pr, &self.git.branch) {
                     self.prs.insert(branch.clone(), (pr.number, pr.state.clone()));
                 }
                 self.pr_loading = false;
-                Task::none()
+                fix
+            }
+            Msg::AutoFixReady(logs) => {
+                let Some(pr) = self.pr.clone() else {
+                    return Ok(Task::none());
+                };
+                let w = self.s.w();
+                let prompt = crate::i18n::fill(&crate::i18n::fill(w.fix_prompt, "url", &pr.url), "logs", logs.trim());
+                // Beside the one shown, as an automation runs: in the mode chosen in the window, but
+                // never `auto` (`edits` in its place, commands asked); asking for all with none chosen.
+                let mut chat = self.new_chat();
+                chat.mode = Some(match self.permission {
+                    Some("auto") => "edits",
+                    Some(mode) => mode,
+                    None => "ask",
+                });
+                let key = chat.key;
+                self.parked.push(chat);
+                self.toast = Some(crate::i18n::fill(w.auto_fix_started, "n", pr.number));
+                self.start_run(key, prompt, false)
             }
             Msg::FixChecks => {
                 let Some(pr) = self.pr.clone() else {

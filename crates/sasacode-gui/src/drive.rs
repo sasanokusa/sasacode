@@ -1103,6 +1103,58 @@ fn a_hunk_is_discarded_and_a_pull_request_merged_only_on_the_second_press() {
 }
 
 #[test]
+fn failed_checks_start_a_conversation_to_fix_them_when_the_settings_say_so() {
+    use crate::git::CheckState::{Failed, Pending};
+    let mut app = window("ja");
+    app.prefs.notify = false;
+    let pr = |state: crate::git::CheckState| crate::git::Pr {
+        number: 9,
+        title: "再試行".into(),
+        url: "https://example.invalid/pull/9".into(),
+        state: "OPEN".into(),
+        checks: vec![crate::git::Check {
+            name: "rust".into(),
+            state,
+            url: String::new(),
+        }],
+        ..Default::default()
+    };
+    // Off: told, nothing started.
+    app.pr = Some(pr(Pending));
+    let _ = app.update(Msg::PrLoaded(Some(Box::new(pr(Failed)))));
+    assert!(app.auto_fixes.is_empty());
+    // On: the logs are read for it, three times a pull request at most.
+    let _ = app.update(Msg::SetAutoFix(true));
+    assert!(app.prefs.more.auto_fix);
+    for _ in 0..5 {
+        let _ = app.update(Msg::PrLoaded(Some(Box::new(pr(Pending)))));
+        let _ = app.update(Msg::PrLoaded(Some(Box::new(pr(Failed)))));
+    }
+    assert_eq!(app.auto_fixes[&9], crate::review::AUTO_FIXES);
+    // The logs read: a conversation beside the one shown, given them, never in auto.
+    app.permission = Some("auto");
+    let shown = app.chat.key;
+    let _ = app.update(Msg::AutoFixReady("error: missing module 'retry'".into()));
+    assert_eq!(app.chat.key, shown, "the one shown stays");
+    let fixing = app.parked.last().unwrap();
+    assert!(fixing.busy());
+    let asked = fixing
+        .transcript
+        .exchanges
+        .last()
+        .map(|e| e.prompt.clone())
+        .unwrap_or_default();
+    assert!(
+        asked.contains("missing module 'retry'") && asked.contains("pull/9"),
+        "{asked}"
+    );
+    assert_eq!(
+        app.toast.as_deref(),
+        Some(crate::i18n::fill(crate::words::JA.auto_fix_started, "n", 9).as_str())
+    );
+}
+
+#[test]
 fn a_pull_requests_running_checks_are_watched_and_their_end_is_told() {
     let mut app = window("ja");
     app.prefs.notify = false;

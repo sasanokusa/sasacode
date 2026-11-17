@@ -530,6 +530,7 @@ fn settings(app: &App) -> El<'_> {
         switch(s.set_steps, p.steps, Msg::SetSteps),
         switch(s.w().set_failed_only, p.more.failed_only, Msg::SetFailedOnly),
         switch(s.w().set_autosave, p.more.autosave, Msg::SetAutosave),
+        switch(s.w().set_auto_fix, p.more.auto_fix, Msg::SetAutoFix),
         switch(s.w().set_show_thinking, !p.more.hide_thinking, |on| {
             Msg::SetHideThinking(!on)
         }),
