@@ -317,7 +317,7 @@ fn installed_binary() -> anyhow::Result<PathBuf> {
     // never that.
     if exec.ancestors().skip(1).any(is_cargo_target_dir) {
         anyhow::bail!(t!(
-            "this sasacode runs from source: update the checkout (git pull && bun install) instead of `sasacode update`"
+            "this sasacode runs from source: update the checkout (git pull && cargo build --release) instead of `sasacode update`"
         ));
     }
     Ok(exec)

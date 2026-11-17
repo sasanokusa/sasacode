@@ -375,8 +375,8 @@ pub static TO_JA: &[(&str, &str)] = &[
     ("unsupported OS: {platform}", "未対応の OS: {platform}"),
     ("unsupported CPU: {arch}", "未対応の CPU: {arch}"),
     (
-        "this sasacode runs from source: update the checkout (git pull && bun install) instead of `sasacode update`",
-        "この sasacode はソースから動いている。`sasacode update` の代わりにチェックアウトを更新（git pull && bun install）",
+        "this sasacode runs from source: update the checkout (git pull && cargo build --release) instead of `sasacode update`",
+        "この sasacode はソースから動いている。`sasacode update` の代わりにチェックアウトを更新（git pull && cargo build --release）",
     ),
     (
         "newer version available: {wanted} (this is {version})",

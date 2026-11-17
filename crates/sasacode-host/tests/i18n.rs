@@ -57,68 +57,6 @@ fn table(text: &str) -> Option<&'static str> {
         .filter(|v| !v.is_empty())
 }
 
-/// Every t("…") / t('…') literal in the TS interface's sources, as the TS test collected them.
-/// Kept while packages/ exists (the reference for the tables); None once it is gone.
-fn ts_literals() -> Option<Vec<(String, String)>> {
-    let root = repo().join("packages");
-    if !root.is_dir() {
-        return None;
-    }
-    let call_const = Regex::new(r"(?:^|[^A-Za-z0-9_])t\(([A-Z_a-z][A-Za-z0-9_]*)[,)]").unwrap();
-    let record = Regex::new(r"const ([A-Za-z0-9_]+): Partial<Record<[A-Za-z0-9_]+, string>> = \{([^}]*)\}").unwrap();
-    let record_value = Regex::new(r#":\s*("(?:[^"\\]|\\.)*")"#).unwrap();
-    let call_lit = Regex::new(r#"(?:^|[^A-Za-z0-9_])t\(\s*("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')"#).unwrap();
-    let mut out = Vec::new();
-    for pkg in ["tui", "cli", "bundled", "agent", "host"] {
-        let dir = root.join(pkg).join("src");
-        let mut list = Vec::new();
-        files(&dir, "ts", &mut list);
-        for f in list {
-            let rel = f.strip_prefix(&dir).unwrap().to_string_lossy().into_owned();
-            if rel.starts_with("messages-") {
-                continue;
-            }
-            let file = format!("{pkg}/{rel}");
-            let src = std::fs::read_to_string(&f).unwrap();
-            // Constants shown through t(NAME): `const NAME = "…"` or a template without substitutions.
-            for m in call_const.captures_iter(&src) {
-                let def = Regex::new(&format!(
-                    r#"const {} = (`[^`$]*`|"(?:[^"\\]|\\.)*")"#,
-                    regex::escape(&m[1])
-                ))
-                .unwrap()
-                .captures(&src)
-                .map(|c| c[1].to_string());
-                if let Some(def) = def {
-                    let text = if def.starts_with('`') {
-                        def[1..def.len() - 1].to_string()
-                    } else {
-                        serde_json::from_str(&def).unwrap()
-                    };
-                    out.push((file.clone(), text));
-                }
-            }
-            // Tables of messages looked up and then translated (headless.ts's STOP_HINT).
-            for m in record.captures_iter(&src) {
-                for v in record_value.captures_iter(&m[2]) {
-                    out.push((file.clone(), serde_json::from_str(&v[1]).unwrap()));
-                }
-            }
-            for m in call_lit.captures_iter(&src) {
-                let raw = &m[1];
-                let text: String = if raw.starts_with('"') {
-                    serde_json::from_str(raw).unwrap()
-                } else {
-                    let inner = raw[1..raw.len() - 1].replace("\\'", "'").replace('"', "\\\"");
-                    serde_json::from_str(&format!("\"{inner}\"")).unwrap()
-                };
-                out.push((file.clone(), text));
-            }
-        }
-    }
-    Some(out)
-}
-
 /// A Rust string literal (`"…"` with escapes, or `r#"…"#`) at the start of `s`.
 fn rust_literal(s: &str) -> Option<String> {
     if let Some(rest) = s.strip_prefix('r') {
@@ -209,12 +147,10 @@ fn every_string_shown_through_t_has_a_translation_with_the_same_placeholders() {
             .map(|(f, text)| format!("{f}: {text}"))
             .collect()
     };
-    if let Some(found) = ts_literals() {
-        assert!(found.len() > 100, "only {} literals in the TS sources", found.len());
-        assert_eq!(missing(&found), Vec::<String>::new());
-    }
-    // The Rust call sites. The TS test's floor (> 100 literals) waits for the tui and cli ports.
+    // The Rust call sites (the TS sources were the reference until the port; their strings that
+    // 0.20 changed, like the help's `sasacode plugin` lines, are gone from the tables).
     let found = rust_literals();
+    assert!(found.len() > 100, "only {} literals in the Rust sources", found.len());
     assert_eq!(missing(&found), Vec::<String>::new());
     for table in [TO_EN, TO_JA] {
         for (from, to) in table {
@@ -225,9 +161,11 @@ fn every_string_shown_through_t_has_a_translation_with_the_same_placeholders() {
 
 #[test]
 fn the_tables_hold_every_ts_entry() {
-    // Counted from Object.keys of the TS tables when they were generated.
+    // Counted from Object.keys of the TS tables when they were generated (273 and 158), plus the
+    // three English texts 0.20 added: `plugins.enabled` in the trust list, the unknown thinking
+    // level, and `sasacode plugin` being removed.
     assert_eq!(TO_EN.len(), 273);
-    assert_eq!(TO_JA.len(), 158);
+    assert_eq!(TO_JA.len(), 158 + 3);
 }
 
 #[test]
