@@ -183,9 +183,6 @@ fn changes_tab(app: &App) -> El<'_> {
     if app.chat.transcript.changes().next().is_none() {
         return empty(app, Icon::Diff, s.ch_empty, s.ch_empty_p);
     }
-    if app.chat.loaded {
-        col = col.push(text(s.ch_from_args).size(12).color(t.fg_3));
-    }
     for (tool, change) in app.chat.transcript.changes() {
         let path = clip_start(&short_path(&change.path, &app.cwd), cells(app, 110.0));
         let mut head = row![

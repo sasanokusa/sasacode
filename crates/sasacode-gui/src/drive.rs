@@ -356,10 +356,12 @@ fn a_long_conversation_opens_on_its_newest_without_being_scrolled_there() {
         ..Settings::default()
     };
     let mut ui = Simulator::with_size(settings, Size::new(1280.0, 700.0), app.view());
-    let first = ui.find(s.loaded_note).expect("the note over a loaded conversation");
+    let first = ui.find(crate::outline::exchange_id(0)).expect("the first exchange");
     assert!(first.visible_bounds().is_none(), "the oldest is out of view");
     let last = ui.find(LONG_LOG_LAST).expect("the last message");
     assert!(last.visible_bounds().is_some(), "the newest is in view");
+    // What a log does not keep is said by the state's tooltip, not by a line over it.
+    assert!(ui.find(s.loaded_note).is_err() && ui.find(s.st_loaded).is_ok());
 }
 
 #[test]

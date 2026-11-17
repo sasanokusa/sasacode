@@ -497,14 +497,24 @@ fn pill(app: &App) -> El<'_> {
     if dot {
         content = content.push(icon(Icon::Dot, 10.0, color));
     }
-    container(content.push(text(label).size(12).color(color)))
+    let pill = container(content.push(text(label).size(12).color(color)))
         .padding([2, 8])
         .style(move |_| container::Style {
             background: Some(fill.into()),
             border: iced::border::rounded(999.0),
             ..container::Style::default()
-        })
-        .into()
+        });
+    // Read back from a log: what it does not keep, said where it is asked about.
+    if matches!(app.status(), Status::Loaded) {
+        let s = app.s;
+        return tip(
+            app.t,
+            pill,
+            format!("{}\n{}", s.loaded_note, s.ch_from_args),
+            tooltip::Position::Bottom,
+        );
+    }
+    pill.into()
 }
 
 fn status_bar(app: &App) -> El<'_> {

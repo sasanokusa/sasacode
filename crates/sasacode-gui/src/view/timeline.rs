@@ -25,9 +25,6 @@ pub fn timeline(app: &App) -> El<'_> {
         return blank(app);
     }
     let mut col = column![].spacing(22).width(Length::Fill);
-    if app.chat.loaded {
-        col = col.push(text(s.loaded_note).size(12).color(t.fg_3));
-    }
     // While the search inside the conversation has something typed, only what has it is shown.
     let needle = app
         .find_in
