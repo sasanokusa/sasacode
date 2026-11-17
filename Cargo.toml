@@ -1,5 +1,5 @@
-# sasacode in Rust. The CLI and its core are the crates below; `packages/` (TypeScript) is the
-# reference they were ported from and is removed at the end of the rewrite (rust/DECISIONS.md).
+# sasacode in Rust. The CLI and its core are the crates below. The TypeScript original they were
+# ported from (0.15.2) is in the git history at tag v0.15.2 (rust/DECISIONS.md).
 [workspace]
 resolver = "3"
 members = [

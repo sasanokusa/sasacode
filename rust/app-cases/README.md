@@ -5,11 +5,12 @@
 prompt, so none reaches a model or the keychain. Headless runs against a fake model are covered by
 `crates/sasacode-testing/tests/cli_e2e.rs`.
 
-Replay a build against them:
+Replay a build against them (the original in `rust-anything.json`, the TS, is gone, so always pass
+`--build`, as an absolute path: the cases run in their own sandbox):
 
 ```sh
 cargo build -p sasacode-cli
-rust-anything app replay . --build target/debug/sasacode
+rust-anything app replay . --build "$PWD/target/debug/sasacode"
 ```
 
 Changed by hand after recording, because 0.20 changes them on purpose (rust/DECISIONS.md):

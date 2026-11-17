@@ -9,10 +9,10 @@ sasacodeのGUIは、sasacode本体を子プロセスとして動かすRust製の
 | 部品 | 場所 | 役割 |
 | --- | --- | --- |
 | `sasacode-gui` | `crates/sasacode-gui` | 窓。入力ごとに `sasacode -p <入力> --output jsonl --control stdio`（続きなら `-r <id>`）を作業フォルダで起動し、stdoutのイベントを画面に出し、承認・追加の指示・中断をstdinに書く |
-| `sasacode-protocol` | `crates/sasacode-protocol` | イベント、制御メッセージ、セッションログの型と、セッションの一覧。将来のRust版コアも同じ型を使う想定 |
-| sasacode本体 | `packages/` | これまでどおり。エージェントのループ、ツール、権限確認、セッションの保存はすべてこちらに残るので、TUIとGUIで振る舞いがずれない |
+| `sasacode-protocol` | `crates/sasacode-protocol` | イベント、制御メッセージ、セッションログの型と、セッションの一覧 |
+| sasacode本体 | `crates/`のほかのクレート | 0.20でRustになった。エージェントのループ、ツール、権限確認、セッションの保存はすべてこちらにあるので、TUIとGUIで振る舞いがずれない |
 
-中継のサーバーは置かない。Rust版のコアができたら、GUIは子プロセスをやめてコアのクレートを直接使う形に移れる。そのときも画面側は `sasacode-protocol` の型だけを見ているので、書き換えは接続部分（`runner.rs`）に収まる。
+中継のサーバーは置かない。本体がRustになったので、GUIは子プロセスをやめてコアのクレートを直接使う形にも移れる（0.20では子プロセスのまま）。そのときも画面側は `sasacode-protocol` の型だけを見ているので、書き換えは接続部分（`runner.rs`）に収まる。
 
 ## プロトコル
 

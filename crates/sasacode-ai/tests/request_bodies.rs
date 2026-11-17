@@ -1,6 +1,7 @@
 //! The request bodies byte for byte: key order, number format and escaping as the TS adapters wrote
-//! them. `fixtures/request-bodies.json` is what the TS sent for the same request
-//! (`fixtures/request-bodies.probe.ts` makes it); `Value` equality would not see the order.
+//! them. `fixtures/request-bodies.json` is what the TS sent for the same request (made by a Bun
+//! probe removed with the TS: `git log --diff-filter=D -- tests/fixtures/request-bodies.probe.ts`);
+//! `Value` equality would not see the order.
 
 mod common;
 

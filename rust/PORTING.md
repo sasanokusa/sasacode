@@ -5,7 +5,8 @@ Every unit of the rewrite follows these. Decisions are in [DECISIONS.md](DECISIO
 
 ## Where things are
 
-- TS original (the reference; do not edit): `packages/<pkg>/src`, tests in `packages/<pkg>/test`.
+- TS original (the reference): `packages/<pkg>/src`, tests in `packages/<pkg>/test`, removed at the end of
+  the rewrite; read them at tag v0.15.2 (`git show v0.15.2:packages/<pkg>/src/<file>.ts`).
 - Rust: `crates/sasacode-<pkg>/src`. One TS file → one Rust module of the same name (`-` → `_`).
 - Shared contract (written first, change only with the coordinator): `crates/sasacode-ai/src/{types,provider,json,http}.rs`
   and `crates/sasacode-plugin-api/src/{api,hooks,tool,host}.rs`.

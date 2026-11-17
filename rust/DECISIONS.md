@@ -47,7 +47,8 @@ Status: accepted (2026-11-18)
 Decision: The rust-anything CLI (v1.2.0) records CLI cases from the TS original into
 `rust/app-cases/` and replays them against the Rust binary. The TS e2e suite (`packages/e2e`) is
 pointed at the Rust binary through `SASACODE_E2E_BIN`. Every TS unit test is ported to Rust;
-dropped tests are listed with their reason in `rust/MAP.md`.
+dropped tests are listed with their reason in `rust/MAP.md`. With the TS removed (the last commit of
+the rewrite), the oracles left are the recorded cases, the Rust `cli_e2e` and the protocol fixtures.
 
 ## ADR-005: Core budget re-measured after the port
 Status: accepted (2026-11-18)
