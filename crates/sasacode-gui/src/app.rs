@@ -382,6 +382,10 @@ pub struct App {
     /// Where each conversation left was read back to, from its start, by session id: shown again
     /// there while the window is open. One left at the newest is not here.
     pub(crate) read_to: HashMap<String, f32>,
+    /// What is left of a review's findings after some were taken or put away, by session id, with
+    /// how many exchanges its conversation had then: kept while the window is open, so that one
+    /// read from its log again does not bring them back.
+    pub(crate) reviews: HashMap<String, (usize, Vec<crate::review::Comment>)>,
 }
 
 /// One conversation: what it says, what is typed for it, and its run.
@@ -1200,6 +1204,7 @@ impl App {
             settling: false,
             offset: 0.0,
             read_to: HashMap::new(),
+            reviews: HashMap::new(),
         }
     }
 
@@ -1816,7 +1821,11 @@ impl App {
             ex.prompt = crate::transcript::as_typed(&ex.prompt, &self.cwd);
         }
         chat.loaded = true;
-        chat.review = crate::review::of_review(&chat.transcript, &self.cwd);
+        let exchanges = chat.transcript.exchanges.len();
+        chat.review = match chat.session.as_ref().and_then(|id| self.reviews.get(id)) {
+            Some((at, left)) if *at == exchanges => left.clone(),
+            _ => crate::review::of_review(&chat.transcript, &self.cwd),
+        };
         // What was typed in it and not sent, before a restart.
         if let Some(draft) = chat.session.as_deref().and_then(|id| self.kept_draft(id)) {
             chat.editor = text_editor::Content::with_text(draft);

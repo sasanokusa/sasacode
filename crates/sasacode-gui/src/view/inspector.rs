@@ -885,6 +885,14 @@ fn hunks<'a>(app: &'a App, f: &'a crate::git::File, staged: bool) -> El<'a> {
     let (width, wrapping) = super::diff_line_width(wide);
     // Comments under a line stay as wide as the panel when the lines scroll sideways.
     let note_width = wide.map_or(Length::Fill, |_| Length::Fixed(app.insp_width() - 48.0));
+    // The review's findings on this file, looked up once.
+    let found: Vec<(usize, &crate::review::Comment)> = app
+        .chat
+        .review
+        .iter()
+        .enumerate()
+        .filter(|(_, c)| crate::review::same_file(&c.path, &path))
+        .collect();
     let mut lines = column![];
     let mut hunk = 0usize;
     for (line, n) in diff.lines.iter().zip(numbers).take(300) {
@@ -974,9 +982,9 @@ fn hunks<'a>(app: &'a App, f: &'a crate::git::File, staged: bool) -> El<'a> {
                 lines = lines.push(container(comment_note(app, i, c)).width(note_width));
             }
         }
-        for (i, c) in app.chat.review.iter().enumerate() {
-            if c.path == path && c.line == n {
-                lines = lines.push(container(review_note(app, i, c, false)).width(note_width));
+        for (i, c) in &found {
+            if c.line == n {
+                lines = lines.push(container(review_note(app, *i, c, false)).width(note_width));
             }
         }
         if let Some(draft) = &app.commenting
@@ -1314,10 +1322,14 @@ fn files_tab(app: &App) -> El<'_> {
         );
     }
     let spans = if t.dark { &v.dark } else { &v.light };
-    // The file as the system names it, as a review's findings are kept: only when there are some.
-    let real = (!app.chat.review.is_empty())
-        .then(|| std::fs::canonicalize(&v.path).ok())
-        .flatten();
+    // The review's findings on this file, looked up once.
+    let found: Vec<(usize, &crate::review::Comment)> = app
+        .chat
+        .review
+        .iter()
+        .enumerate()
+        .filter(|(_, c)| crate::review::same_file(&c.path, &v.path))
+        .collect();
     let mut lines = column![];
     for (i, line) in v.lines.iter().enumerate() {
         let n = i + 1;
@@ -1358,9 +1370,9 @@ fn files_tab(app: &App) -> El<'_> {
                 lines = lines.push(comment_note(app, i, c));
             }
         }
-        for (i, c) in app.chat.review.iter().enumerate() {
-            if (c.path == v.path || Some(&c.path) == real.as_ref()) && c.line == n {
-                lines = lines.push(review_note(app, i, c, false));
+        for (i, c) in &found {
+            if c.line == n {
+                lines = lines.push(review_note(app, *i, c, false));
             }
         }
         if let Some(draft) = &app.commenting
@@ -1510,11 +1522,14 @@ fn review_found(app: &App) -> El<'_> {
     let g = &app.git;
     // Whether a line of a changed file is drawn in its diff, staged or not.
     let drawn = |c: &crate::review::Comment| {
-        g.files.iter().filter(|f| g.top.join(&f.path) == c.path).any(|f| {
-            [&f.staged_diff, &f.unstaged_diff]
-                .iter()
-                .any(|d| crate::git::numbers(d).into_iter().take(300).any(|n| n == Some(c.line)))
-        })
+        g.files
+            .iter()
+            .filter(|f| crate::review::same_file(&g.top.join(&f.path), &c.path))
+            .any(|f| {
+                [&f.staged_diff, &f.unstaged_diff]
+                    .iter()
+                    .any(|d| crate::git::numbers(d).into_iter().take(300).any(|n| n == Some(c.line)))
+            })
     };
     let mut col = column![
         row![

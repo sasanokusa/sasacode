@@ -36,6 +36,13 @@ pub struct Draft {
     pub text: String,
 }
 
+/// Whether `a` and `b` are the same file, however each is spelled: the folder may be named through
+/// a link (`/var` is `/private/var` on macOS, as git names it) or with `\\?\` on Windows. Only
+/// files of the same name are looked up.
+pub fn same_file(a: &Path, b: &Path) -> bool {
+    a == b || (a.file_name() == b.file_name() && crate::system::same_dir(a, b))
+}
+
 /// `@path:line`, as a dropped file's path is given.
 pub fn place(path: &Path, line: usize, cwd: &Path) -> String {
     let at = crate::composer::path_ref(path, cwd);
@@ -174,8 +181,7 @@ fn unlink(text: &str) -> String {
 
 /// The first line of a file in `cwd` the text names, read as `path:12`, `path:12-14`, `path:12:3`
 /// or `path#L12`; a path may have `@` or `./` before it, or be the folder's own absolute path.
-/// The file as the system names it (`/var` is `/private/var` on macOS, as git says it), and the
-/// word that named it.
+/// The word that named it too.
 fn first_place<'a>(line: &'a str, cwd: &Path) -> Option<(PathBuf, usize, &'a str)> {
     let breaks = |c: char| {
         c.is_whitespace()
@@ -210,7 +216,7 @@ fn first_place<'a>(line: &'a str, cwd: &Path) -> Option<(PathBuf, usize, &'a str
         } else {
             cwd.join(path)
         };
-        (full.starts_with(cwd) && full.is_file()).then(|| (full.canonicalize().unwrap_or(full), n, raw))
+        (full.starts_with(cwd) && full.is_file()).then_some((full, n, raw))
     })
 }
 
@@ -278,19 +284,27 @@ impl App {
             }
             Msg::ReviewTake(i) => {
                 if i < self.chat.review.len() {
-                    let found = self.chat.review.remove(i);
+                    let mut found = self.chat.review.remove(i);
+                    // Named as the git tab names the file, for the comment to show on its line.
+                    let g = &self.git;
+                    if let Some(f) = g.files.iter().find(|f| same_file(&g.top.join(&f.path), &found.path)) {
+                        found.path = g.top.join(&f.path);
+                    }
                     self.chat.comments.push(found);
+                    self.keep_review();
                 }
                 Task::none()
             }
             Msg::ReviewDrop(i) => {
                 if i < self.chat.review.len() {
                     self.chat.review.remove(i);
+                    self.keep_review();
                 }
                 Task::none()
             }
             Msg::ReviewClear => {
                 self.chat.review.clear();
+                self.keep_review();
                 Task::none()
             }
             Msg::Branches(list) => {
@@ -469,6 +483,14 @@ impl App {
         )
     }
 
+    /// What is left of the shown conversation's review, kept for when it is read from its log again.
+    fn keep_review(&mut self) {
+        if let Some(id) = self.chat.session.clone() {
+            let at = self.chat.transcript.exchanges.len();
+            self.reviews.insert(id, (at, self.chat.review.clone()));
+        }
+    }
+
     /// `text` in the input after what is typed there, the keyboard given to it.
     pub(crate) fn put_in_input(&mut self, text: &str) -> Task<Msg> {
         let typed = self.chat.editor.text();
@@ -594,31 +616,31 @@ mod tests {
             見出しの下の段落は別のものです。\n\n\
             まとめ：段落の@./src/a.rs:7は指摘ではない。\n\n\
             | 場所 | 指摘 |\n| --- | --- |\n| src/a.rs:30 | 名前が長い |\n";
-        let real = dir.canonicalize().unwrap();
         let found = findings(reply, &dir);
-        let got: Vec<(String, usize, &str)> = found
+        let got: Vec<(PathBuf, usize, &str)> = found
             .iter()
             .map(|c| {
                 (
-                    c.path.strip_prefix(&real).unwrap().display().to_string(),
+                    c.path.strip_prefix(&dir).unwrap().to_path_buf(),
                     c.line,
                     c.text.as_str(),
                 )
             })
             .collect();
+        let a = PathBuf::from("src").join("a.rs");
         assert_eq!(
             got,
             vec![
-                (
-                    "src/a.rs".into(),
-                    12,
-                    "境界の扱いが逆です。 12より大きいときに落ちます。"
-                ),
-                ("b.txt".into(), 3, "b.txt のテストがありません"),
-                ("src/a.rs".into(), 20, "src/a.rs:20-24 の名前"),
-                ("src/a.rs".into(), 30, "名前が長い"),
+                (a.clone(), 12, "境界の扱いが逆です。 12より大きいときに落ちます。"),
+                (PathBuf::from("b.txt"), 3, "b.txt のテストがありません"),
+                (a.clone(), 20, "src/a.rs:20-24 の名前"),
+                (a, 30, "名前が長い"),
             ]
         );
+        // The same file, named through the link to the folder (on macOS) or as it is.
+        let real = dir.canonicalize().unwrap();
+        assert!(same_file(&real.join("b.txt"), &dir.join("b.txt")));
+        assert!(!same_file(&dir.join("b.txt"), &dir.join("src/a.rs")));
         assert!(
             asks_review(crate::words::JA.review_prompt)
                 && asks_review(&format!("  {}\n特にa.rs", crate::words::EN.review_prompt))

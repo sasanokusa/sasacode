@@ -3725,11 +3725,12 @@ fn what_a_review_asked_for_finds_is_shown_on_the_lines_of_the_diff_until_put_awa
     let w = app.s.w();
     let dir = std::env::temp_dir().join(format!("sasacode-gui-review-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    // As git names the folder: with `/private` in front on macOS.
-    let dir = dir.canonicalize().unwrap();
     std::fs::write(dir.join("a.txt"), "a\nb\nc\nd\ne\nf\ng\nh\nd\n").unwrap();
     app.cwd = dir.clone();
     changed_repo(&mut app);
+    // Git names the folder as the system does: `/private/var/…` on macOS for a window opened on
+    // `/var/…`, `\\?\C:\…` here for `C:\…` on Windows.
+    app.git.top = dir.canonicalize().unwrap();
     // The review asked for, sent, and answered.
     let _ = app.update(Msg::AskReview);
     let _ = app.update(Msg::Send);
@@ -3748,12 +3749,16 @@ fn what_a_review_asked_for_finds_is_shown_on_the_lines_of_the_diff_until_put_awa
     assert!(says(&app, &crate::i18n::fill(w.review_found, "n", 2)));
     assert!(says(&app, "dに変えた理由が分かりません。") && !says(&app, "@a.txt:9"));
     assert!(says(&app, "@a.txt:3") && says(&app, "差分の外の行です。"));
-    // One goes with the next message, as a comment on its line; the other is put away.
+    // One goes with the next message, as a comment on its line, named as the git tab names the
+    // file; the other is put away. What is left is kept for when the log is read again.
+    app.chat.session = Some("rv-1".into());
     let _ = app.update(Msg::ReviewTake(0));
     assert_eq!(app.chat.comments.len(), 1);
     assert_eq!(app.chat.comments[0].line, 9);
+    assert_eq!(app.chat.comments[0].path, app.git.top.join("a.txt"));
     let _ = app.update(Msg::ReviewDrop(0));
     assert!(app.chat.review.is_empty() && !says(&app, &crate::i18n::fill(w.review_found, "n", 1)));
+    assert_eq!(app.reviews.get("rv-1"), Some(&(1, Vec::new())));
     // All put away at once.
     app.chat.review = crate::review::findings("a.txt:2 です", &app.cwd);
     let _ = app.update(Msg::ReviewClear);
