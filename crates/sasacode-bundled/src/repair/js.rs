@@ -45,36 +45,8 @@ pub fn js_trim(s: &str) -> &str {
     s.trim_matches(js_space)
 }
 
-/// `String(v)` for a JSON value.
-pub fn js_string(v: &Value) -> String {
-    match v {
-        Value::Null => "null".into(),
-        Value::Bool(b) => b.to_string(),
-        Value::Number(n) => match (n.as_i64(), n.as_u64()) {
-            (Some(i), _) => i.to_string(),
-            (_, Some(u)) => u.to_string(),
-            _ => sasacode_ai::json::js_f64_string(n.as_f64().unwrap_or(f64::NAN)),
-        },
-        Value::String(s) => s.clone(),
-        Value::Array(a) => a
-            .iter()
-            .map(|x| if x.is_null() { String::new() } else { js_string(x) })
-            .collect::<Vec<_>>()
-            .join(","),
-        Value::Object(_) => "[object Object]".into(),
-    }
-}
-
-/// JS truthiness of a JSON value (`undefined` is the caller's `None`).
-pub fn truthy(v: &Value) -> bool {
-    match v {
-        Value::Null => false,
-        Value::Bool(b) => *b,
-        Value::Number(n) => n.as_f64().is_some_and(|f| f != 0.0 && !f.is_nan()),
-        Value::String(s) => !s.is_empty(),
-        Value::Array(_) | Value::Object(_) => true,
-    }
-}
+/// `String(v)` and JS truthiness, shared with the core's schema check.
+pub use sasacode_plugin_api::validate::{js_string, truthy};
 
 /// `typeof v === "number" ? v : d` for a setting.
 pub fn num_setting(settings: &Value, key: &str, d: f64) -> f64 {

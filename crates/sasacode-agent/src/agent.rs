@@ -138,7 +138,7 @@ fn blank_data(v: &mut Value) {
             for (k, x) in o.iter_mut() {
                 if k == "data"
                     && let Value::String(s) = x
-                    && js_len(s) > 64
+                    && s.encode_utf16().nth(64).is_some()
                 {
                     *x = Value::String(String::new());
                 } else {

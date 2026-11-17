@@ -129,7 +129,7 @@ fn bound(errors: &mut Vec<String>, schema: &Map<String, Value>, path: &str, key:
     if let Some(limit) = schema.get(key).and_then(Value::as_f64)
         && (if smaller { actual < limit } else { actual > limit })
     {
-        errors.push(format!("{path} violates {key} {}", js_number_string(limit)));
+        errors.push(format!("{path} violates {key} {}", sasacode_ai::json::js_f64_string(limit)));
     }
 }
 
@@ -183,7 +183,7 @@ pub(crate) fn equal(a: &Value, b: &Value) -> bool {
 }
 
 /// JS truthiness of a JSON value.
-pub(crate) fn truthy(v: &Value) -> bool {
+pub fn truthy(v: &Value) -> bool {
     match v {
         Value::Null => false,
         Value::Bool(b) => *b,
@@ -194,14 +194,14 @@ pub(crate) fn truthy(v: &Value) -> bool {
 }
 
 /// `String(v)` in JS.
-pub(crate) fn js_string(v: &Value) -> String {
+pub fn js_string(v: &Value) -> String {
     match v {
         Value::Null => "null".into(),
         Value::Bool(b) => b.to_string(),
         Value::Number(n) => match (n.as_i64(), n.as_u64()) {
             (Some(i), _) => i.to_string(),
             (_, Some(u)) => u.to_string(),
-            _ => js_number_string(n.as_f64().unwrap_or(0.0)),
+            _ => sasacode_ai::json::js_f64_string(n.as_f64().unwrap_or(0.0)),
         },
         Value::String(s) => s.clone(),
         Value::Array(a) => a.iter().map(join_element).collect::<Vec<_>>().join(","),
@@ -214,38 +214,8 @@ fn join_element(v: &Value) -> String {
     if v.is_null() { String::new() } else { js_string(v) }
 }
 
-/// A number as JS prints it: `1` not `1.0`, `1e-7`, `1e+21`.
-pub(crate) fn js_number_string(v: f64) -> String {
-    if !v.is_finite() {
-        return if v.is_nan() {
-            "NaN".into()
-        } else if v > 0.0 {
-            "Infinity".into()
-        } else {
-            "-Infinity".into()
-        };
-    }
-    if v == 0.0 {
-        return "0".into();
-    }
-    let a = v.abs();
-    if a >= 1e21 || a < 1e-6 {
-        let s = format!("{v:e}");
-        // Rust writes 1e21 and 1.5e-7; JS writes 1e+21 and 1.5e-7.
-        return match s.split_once('e') {
-            Some((m, e)) if !e.starts_with('-') => format!("{m}e+{e}"),
-            _ => s,
-        };
-    }
-    if v.fract() == 0.0 {
-        format!("{v:.0}")
-    } else {
-        format!("{v}")
-    }
-}
-
 /// `JSON.stringify` of a value: numbers in JS form (`1` for `1.0`).
-pub(crate) fn js_stringify(v: &Value) -> String {
+pub fn js_stringify(v: &Value) -> String {
     fn normalize(v: &Value) -> Value {
         match v {
             Value::Number(n) if !(n.is_i64() || n.is_u64()) => sasacode_ai::json::js_number(n.as_f64().unwrap_or(0.0)),
@@ -267,7 +237,7 @@ fn array_index(k: &str) -> Option<u32> {
 
 /// The keys of an object in JS iteration order: integer-like keys ascending, then the rest in
 /// insertion order.
-pub(crate) fn js_keys(o: &Map<String, Value>) -> Vec<&String> {
+pub fn js_keys(o: &Map<String, Value>) -> Vec<&String> {
     let mut indexed: Vec<(u32, &String)> = o.keys().filter_map(|k| array_index(k).map(|n| (n, k))).collect();
     if indexed.is_empty() {
         return o.keys().collect();
@@ -626,6 +596,7 @@ mod tests {
 
     #[test]
     fn js_number_strings() {
+        use sasacode_ai::json::js_f64_string as js_number_string;
         assert_eq!(js_number_string(1.0), "1");
         assert_eq!(js_number_string(0.3), "0.3");
         assert_eq!(js_number_string(-2.5), "-2.5");
