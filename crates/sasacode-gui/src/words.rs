@@ -226,6 +226,21 @@ words! {
     set_archive_after: "使っていない会話を自動でアーカイブ", "Archive conversations not used for";
     archive_never: "しない", "Never";
     archive_days: "{n}日", "{n} days";
+    // The conversation shown: branching after a reply, its search, its steps.
+    fork_after: "ここから分岐", "Branch from here";
+    fork_after_hint: "この返事までを持つ新しい会話を作ります。元の会話はそのまま残ります", "Starts a new conversation holding this one through this reply; this one is kept as it is";
+    forked: "ここまでの内容で新しい会話を作りました", "Started a new conversation from here";
+    found_at: "{at}/{n}件", "{at} of {n}";
+    find_prev: "前を探す（⇧⌘G）", "Previous (⇧⌘G)";
+    find_next: "次を探す（↵ / ⌘G）", "Next (↵ / ⌘G)";
+    ref_missing: "{path} は見つかりませんでした", "{path} was not found";
+    set_failed_only: "ツール呼び出しは失敗したものだけ表示する", "Show only the tool calls that failed";
+    set_show_thinking: "モデルの考えを表示する", "Show what the model thought";
+    alert_note: "メモ", "Note";
+    alert_tip: "ヒント", "Tip";
+    alert_important: "重要", "Important";
+    alert_warning: "注意", "Warning";
+    alert_caution: "警告", "Caution";
 }
 
 #[cfg(test)]

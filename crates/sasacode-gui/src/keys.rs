@@ -341,6 +341,8 @@ pub fn check(table: &Table, act: Act, chord: &Chord) -> Result<(), Clash> {
 fn reserved(chord: &Chord) -> bool {
     (!chord.shift && !chord.alt && RESERVED.contains(&chord.key.as_str()))
         || (chord.key == "z")
+        // ⌘G and ⌘⇧G step through what the search in the conversation finds.
+        || (chord.key == "g" && !chord.alt)
         || chord.key == "enter"
         || chord.key == "escape"
         || chord.key == "tab"

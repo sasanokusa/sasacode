@@ -105,7 +105,7 @@ impl Markdown {
     pub fn new(text: &str) -> Self {
         Self {
             raw: text.to_owned(),
-            content: markdown::Content::parse(&crate::figure::prepare(text)),
+            content: markdown::Content::parse(&crate::figure::prepare(&crate::figure::alerts(text))),
         }
     }
 

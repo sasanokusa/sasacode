@@ -209,6 +209,8 @@ pub struct App {
     pub(crate) toast: Option<String>,
     /// The search inside the conversation shown, while it is open.
     pub(crate) find_in: Option<String>,
+    /// Which of what the search in the conversation finds is in view: an index into those found.
+    pub(crate) find_at: usize,
     /// That search's field was the last to take the keyboard: an Esc there puts it away.
     pub(crate) find_held: bool,
     /// The list shows the conversations taken out of it, instead of the others.
@@ -572,6 +574,15 @@ pub enum Msg {
     Undo,
     UndoKey,
     UndoKeyHeld(bool),
+    /// A new conversation that holds the one shown through exchange `i`'s reply.
+    ForkAfter(usize),
+    /// To the next, or the last, of what the search in the conversation finds.
+    FindStep(i8),
+    /// A file named with its line in what a program wrote, `src/a.rs:12`, opened.
+    OpenRef(String),
+    /// Of the calls, only those that failed are shown; what the model thought is not.
+    SetFailedOnly(bool),
+    SetHideThinking(bool),
     SetMergeMethod(&'static str),
     /// The pointer over a row of the list, or off it.
     RowHover(Option<String>),
@@ -752,6 +763,7 @@ impl App {
             dropping: false,
             awake: None,
             find_in: None,
+            find_at: 0,
             find_held: false,
             show_archived: false,
             row_hover: None,
@@ -1338,7 +1350,7 @@ impl App {
     /// Shows the conversation a log holds, to be continued by the next message: as it was left
     /// when it was kept, running or typed in, else as its log has it. False when it is the one
     /// shown, or its log cannot be read.
-    fn open_session(&mut self, path: &Path) -> bool {
+    pub(crate) fn open_session(&mut self, path: &Path) -> bool {
         let id = self.sessions.iter().find(|s| s.path == path).map(|s| s.id.clone());
         if id.is_some() && id == self.chat.session {
             return false;
@@ -1985,6 +1997,13 @@ pub(crate) fn shortcut(key: &Key, modifiers: keyboard::Modifiers) -> Option<Msg>
     {
         return Some(Msg::UndoKey);
     }
+    // ⌘G and ⌘⇧G: the next and the last of what the search in the conversation finds.
+    if let Key::Character(c) = key.as_ref()
+        && c.eq_ignore_ascii_case("g")
+        && !modifiers.alt()
+    {
+        return Some(Msg::FindStep(if modifiers.shift() { -1 } else { 1 }));
+    }
     // The others as bound: by default, or as the settings say.
     let chord = crate::keys::Chord::of(key, modifiers)?;
     crate::keys::bound().act(&chord).map(crate::keys::Act::msg)
@@ -2191,6 +2210,28 @@ mod tests {
         let key = app.chat.key;
         let _ = app.update(Msg::NewSession);
         assert_eq!(app.chat.key, key);
+        std::fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn a_conversation_branched_off_after_a_reply_holds_it_through_that_reply() {
+        let (mut app, home) = window_with("fork-after", &["aaaa0000"]);
+        assert!(app.open_named("aaaa0000"));
+        let count = app.chat.transcript.exchanges.len();
+        assert!(count >= 2, "the fixture has {count} exchanges");
+
+        // After the first reply: that exchange alone, nothing typed, the old one listed still.
+        let _ = app.update(Msg::ForkAfter(0));
+        assert_ne!(app.chat.session.as_deref(), Some("aaaa0000"));
+        assert_eq!(app.chat.transcript.exchanges.len(), 1);
+        assert!(app.chat.editor.text().trim().is_empty());
+        assert_eq!(app.sessions.len(), 2);
+
+        // After the last: all of it.
+        assert!(app.open_named("aaaa0000"));
+        let _ = app.update(Msg::ForkAfter(count - 1));
+        assert_eq!(app.chat.transcript.exchanges.len(), count);
+        assert_eq!(app.sessions.len(), 3);
         std::fs::remove_dir_all(home).unwrap();
     }
 

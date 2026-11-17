@@ -499,6 +499,7 @@ impl App {
             }
             Msg::FindInText(text) => {
                 self.find_in = Some(text);
+                self.find_at = 0;
                 Task::none()
             }
             Msg::FindInClose => {

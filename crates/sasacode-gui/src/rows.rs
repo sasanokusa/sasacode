@@ -374,7 +374,7 @@ impl App {
                     self.undo_last()
                 }
             }
-            other => return Err(other),
+            other => return self.update_talk(other),
         };
         Ok(task)
     }

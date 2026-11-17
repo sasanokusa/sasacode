@@ -382,6 +382,10 @@ fn settings(app: &App) -> El<'_> {
         switch(s.set_notify, p.notify, Msg::SetNotify),
         switch(s.set_awake, p.awake, Msg::SetAwake),
         switch(s.set_steps, p.steps, Msg::SetSteps),
+        switch(s.w().set_failed_only, p.more.failed_only, Msg::SetFailedOnly),
+        switch(s.w().set_show_thinking, !p.more.hide_thinking, |on| {
+            Msg::SetHideThinking(!on)
+        }),
         switch(s.w().set_auto_archive, p.auto_archive, Msg::SetAutoArchive),
         switch(s.w().set_suggest, p.suggest, Msg::SetSuggest),
         idle,

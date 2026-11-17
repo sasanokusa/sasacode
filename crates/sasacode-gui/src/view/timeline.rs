@@ -35,9 +35,15 @@ pub fn timeline(app: &App) -> El<'_> {
         .map(str::trim)
         .filter(|n| !n.is_empty())
         .map(str::to_lowercase);
+    // Of those found, the one stepped to is marked.
+    let current = needle.as_ref().and_then(|_| app.find_current());
     for (i, ex) in app.chat.transcript.exchanges.iter().enumerate() {
         if needle.as_deref().is_none_or(|n| has(ex, n)) {
-            col = col.push(container(exchange(app, i, ex)).id(crate::outline::exchange_id(i)));
+            let mut shown = container(exchange(app, i, ex)).id(crate::outline::exchange_id(i));
+            if current == Some(i) {
+                shown = shown.padding([6, 8]).style(t.boxed(t.bg, t.accent, RADIUS));
+            }
+            col = col.push(shown);
         }
     }
     for queued in &app.chat.transcript.queued {
@@ -303,7 +309,28 @@ fn exchange<'a>(app: &'a App, i: usize, ex: &'a Exchange) -> El<'a> {
         col = col.push(reply(app, md, true));
     }
     // The reply as it was written, Markdown and all: its text cannot be selected here.
-    let copy = answer.map(|_| copy_button(app, Clip::Reply(i), app.s.copy));
+    let copy = answer.map(|_| {
+        let mut foot = row![].spacing(2).align_y(Alignment::Center);
+        // Branched off here: a new conversation holding this one through this reply.
+        if !app.busy() && app.chat.session.is_some() {
+            let w = app.s.w();
+            foot = foot.push(super::tip(
+                t,
+                button(
+                    text(w.fork_after)
+                        .size(11.5)
+                        .color(t.fg_3)
+                        .wrapping(text::Wrapping::None),
+                )
+                .padding([2, 8])
+                .style(t.ghost(t.fg_2, false))
+                .on_press(Msg::ForkAfter(i)),
+                w.fork_after_hint.to_owned(),
+                iced::widget::tooltip::Position::Bottom,
+            ));
+        }
+        foot.push(copy_button(app, Clip::Reply(i), app.s.copy)).into()
+    });
     match (&ex.end, copy) {
         (Some(end), copy) => col = col.push(ending(app, ex, end, last, copy)),
         (None, Some(copy)) => col = col.push(copy),
@@ -391,7 +418,14 @@ fn steps<'a>(app: &'a App, i: usize, work: &'a [Step]) -> Column<'a, Msg> {
     // What is still being written is not offered to copy.
     let live = i + 1 == app.chat.transcript.exchanges.len() && app.running();
     let mut col = column![].spacing(2);
+    let more = &app.prefs.more;
     for (j, step) in work.iter().enumerate() {
+        // As the settings say: calls that went well, and what the model thought, left out.
+        match step {
+            Step::Thinking(_) if more.hide_thinking => continue,
+            Step::Tool(tool) if more.failed_only && tool.state == crate::transcript::ToolState::Done => continue,
+            _ => {}
+        }
         col = col.push(match step {
             Step::Thinking(thought) => thinking(app, i, j, thought),
             Step::Text(md) => container(reply(app, md, !live)).padding([6, 8]).into(),
@@ -874,6 +908,49 @@ struct Reply<'b> {
 impl<'a> markdown::Viewer<'a, Msg> for Reply<'a> {
     fn on_link_click(url: markdown::Uri) -> Msg {
         Msg::Link(url)
+    }
+
+    /// A quote; a GitHub alert, `> [!WARNING]`, under a head that names it in its color.
+    fn quote(&self, settings: markdown::Settings, contents: &'a [markdown::Item]) -> El<'a> {
+        let t = self.app.t;
+        let kind = match contents.first() {
+            Some(markdown::Item::Paragraph(first)) => {
+                let said: String = first.spans(settings.style).iter().map(|s| s.text.as_ref()).collect();
+                said.strip_prefix(crate::figure::ALERT).map(str::to_owned)
+            }
+            _ => None,
+        };
+        let Some(kind) = kind else {
+            return markdown::quote(self, settings, contents);
+        };
+        let w = self.app.s.w();
+        let (mark, label, color) = match kind.as_str() {
+            "NOTE" => (Icon::Bot, w.alert_note, t.accent),
+            "TIP" => (Icon::Bulb, w.alert_tip, t.accent),
+            "IMPORTANT" => (Icon::Spark, w.alert_important, t.accent),
+            "WARNING" => (Icon::Alert, w.alert_warning, t.warn),
+            _ => (Icon::Alert, w.alert_caution, t.err),
+        };
+        let body = Column::with_children(
+            contents[1..]
+                .iter()
+                .enumerate()
+                .map(|(i, item)| markdown::item(self, settings, item, i)),
+        )
+        .spacing(settings.spacing.0);
+        let head = row![
+            icon(mark, 14.0, color),
+            text(label).size(13.5).font(super::BOLD).color(color)
+        ]
+        .spacing(6)
+        .align_y(Alignment::Center);
+        row![
+            rule::vertical(3).style(t.rule(color)),
+            column![head, body].spacing(settings.spacing.0 * 0.6)
+        ]
+        .height(Length::Shrink)
+        .spacing(settings.spacing.0)
+        .into()
     }
 
     /// The code as it was written, in the monospaced font. iced's own code block draws each line

@@ -181,6 +181,10 @@ pub struct More {
     pub archive_after: Option<u32>,
     /// Conversations taken back from the archive by hand, which are not archived again for age.
     pub kept: BTreeSet<String>,
+    /// Of the calls in the steps, only those that failed are shown.
+    pub failed_only: bool,
+    /// What the model thought is left out of the steps.
+    pub hide_thinking: bool,
 }
 
 impl More {
@@ -642,6 +646,8 @@ mod tests {
                 list_order: Order::Created,
                 archive_after: Some(30),
                 kept: ["eeee".to_owned()].into(),
+                failed_only: true,
+                hide_thinking: true,
             },
         };
         write(&file, &Layout::default(), &prefs).unwrap();

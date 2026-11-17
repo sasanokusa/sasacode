@@ -34,8 +34,19 @@ pub fn fork(log: &Path, at: usize, prompt: &str) -> Result<(String, PathBuf), St
         .or_else(|| transcript.exchanges.iter().rev().find(same))
         .ok_or("the message is not in the log")?;
     let entry = exchange.entry.ok_or("the message was compacted away")?;
-    let cut = parsed[entry].0;
+    branch(log, &lines, parsed[entry].0)
+}
 
+/// A copy of the whole log at `log` under a new id: the conversation branched off after its last
+/// reply.
+pub fn copy_whole(log: &Path) -> Result<(String, PathBuf), String> {
+    let raw = std::fs::read_to_string(log).map_err(|e| e.to_string())?;
+    let lines: Vec<&str> = raw.lines().filter(|l| !l.trim().is_empty()).collect();
+    branch(log, &lines, lines.len())
+}
+
+/// Writes `lines` of the log at `log` up to line `cut` beside it, under a new id and time.
+fn branch(log: &Path, lines: &[&str], cut: usize) -> Result<(String, PathBuf), String> {
     let mut head: serde_json::Value =
         serde_json::from_str(lines.first().ok_or("an empty log")?).map_err(|e| e.to_string())?;
     if head["type"] != "session" {
@@ -131,6 +142,11 @@ mod tests {
                 .exchanges
                 .is_empty()
         );
+        // After the last reply: all of it, under a new id.
+        let (whole_id, whole) = copy_whole(&log).unwrap();
+        let entries = sasacode_protocol::read_entries(&whole).unwrap();
+        assert_eq!(Transcript::from_entries(&entries).exchanges.len(), 3);
+        assert!(matches!(&entries[0], SessionEntry::Session { id, .. } if *id == whole_id));
         std::fs::remove_dir_all(dir).unwrap();
     }
 

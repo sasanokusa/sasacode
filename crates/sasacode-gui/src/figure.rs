@@ -104,6 +104,53 @@ fn size_of(svg: &str) -> Option<(f32, f32)> {
 
 /// `markdown` with its display math made into blocks of `math` and its math inside a line written
 /// in Unicode; itself when it has none.
+/// The mark a GitHub alert's first line is turned into: a paragraph of its own, which the reply's
+/// quote finds and draws as the alert's head.
+pub const ALERT: char = '\u{2060}';
+
+/// GitHub's alerts, `> [!NOTE]` and the rest, as a quote whose first paragraph is the mark and the
+/// kind; and `<details>`, which is not drawn, as its summary in bold over what it holds. Not in
+/// code.
+pub fn alerts(markdown: &str) -> Cow<'_, str> {
+    if !markdown.contains("[!") && !markdown.contains("<details") {
+        return Cow::Borrowed(markdown);
+    }
+    let mut out = String::with_capacity(markdown.len() + 16);
+    let mut fence = false;
+    for line in markdown.split_inclusive('\n') {
+        let bare = line.trim();
+        if bare.starts_with("```") || bare.starts_with("~~~") {
+            fence = !fence;
+        }
+        if !fence {
+            if let Some(kind) = bare
+                .strip_prefix('>')
+                .map(str::trim)
+                .and_then(|r| r.strip_prefix("[!"))
+                .and_then(|r| r.strip_suffix(']'))
+                .filter(|k| {
+                    ["NOTE", "TIP", "IMPORTANT", "WARNING", "CAUTION"].contains(&k.to_ascii_uppercase().as_str())
+                })
+            {
+                out.push_str(&format!("> {ALERT}{}\n>\n", kind.to_ascii_uppercase()));
+                continue;
+            }
+            if bare == "<details>" || bare == "</details>" || bare.starts_with("<details ") {
+                continue;
+            }
+            if let Some(summary) = bare
+                .strip_prefix("<summary>")
+                .and_then(|r| r.strip_suffix("</summary>"))
+            {
+                out.push_str(&format!("**▸ {}**\n\n", summary.trim()));
+                continue;
+            }
+        }
+        out.push_str(line);
+    }
+    Cow::Owned(out)
+}
+
 pub fn prepare(markdown: &str) -> Cow<'_, str> {
     if !markdown.contains('$') && !markdown.contains("\\[") && !markdown.contains("\\(") {
         return Cow::Borrowed(markdown);
@@ -533,6 +580,20 @@ fn symbol(name: &str) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_alert_gets_a_head_of_its_own_and_details_show_their_summary() {
+        let md =
+            "> [!warning]\n> 消えます\n\n<details>\n<summary>ログ</summary>\n\n中身\n</details>\n```\n> [!NOTE]\n```\n";
+        let out = alerts(md);
+        assert!(out.starts_with(&format!("> {ALERT}WARNING\n>\n> 消えます\n")), "{out}");
+        assert!(out.contains("**▸ ログ**\n\n\n中身\n```"), "{out}");
+        assert!(
+            out.contains("```\n> [!NOTE]\n```"),
+            "in code it is left as it is: {out}"
+        );
+        assert!(matches!(alerts("ふつう"), Cow::Borrowed(_)));
+    }
 
     #[test]
     fn display_math_becomes_a_block_and_inline_math_unicode_but_code_and_money_stay() {

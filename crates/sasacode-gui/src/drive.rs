@@ -1220,9 +1220,9 @@ fn a_folders_script_is_listed_in_the_settings_run_from_the_list_and_its_output_s
     // None yet: the key opens the settings, where one is added.
     let _ = app.update(shortcut(&Key::Character("r".into()), Modifiers::COMMAND | Modifiers::SHIFT).unwrap());
     assert_eq!(app.overlay, Some(crate::app::Overlay::Settings));
-    act(&mut app, |ui| {
-        let _ = ui.click(crate::words::JA.script_add);
-    });
+    // Its button is at the end of the settings, past where they scroll in this window.
+    assert!(says(&app, crate::words::JA.script_add));
+    let _ = app.update(Msg::ScriptAdd);
     let _ = app.update(Msg::ScriptName(0, "テスト".into()));
     let _ = app.update(Msg::ScriptCommand(0, "echo ok".into()));
     assert_eq!(app.scripts().len(), 1);
@@ -1695,4 +1695,93 @@ fn conversations_unused_for_long_are_archived_but_not_a_pinned_one_or_one_taken_
     assert!(!app.prefs.archived.contains(&three) && app.prefs.more.kept.contains(&three));
     app.archive_idle();
     assert!(!app.prefs.archived.contains(&three));
+}
+
+#[test]
+fn the_search_in_the_conversation_steps_through_what_it_finds_and_counts_them() {
+    let mut app = window("ja");
+    crate::snapshots::long_log(&mut app);
+    let first = app.chat.transcript.exchanges[0]
+        .prompt
+        .chars()
+        .take(6)
+        .collect::<String>();
+    let _ = app.update(Msg::Command(Command::Find));
+    let _ = app.update(Msg::FindInText(first));
+    let n = app.found_in().len();
+    assert!(n >= 2, "found {n}");
+    assert!(says(&app, &format!("1/{n}件")));
+    assert_eq!(app.find_current(), Some(app.found_in()[0]));
+
+    // Enter and ⌘G go on, ⌘⇧G back, round from the last to the first.
+    assert!(matches!(
+        shortcut(&Key::Character("g".into()), Modifiers::COMMAND),
+        Some(Msg::FindStep(1))
+    ));
+    assert!(matches!(
+        shortcut(&Key::Character("G".into()), Modifiers::COMMAND | Modifiers::SHIFT),
+        Some(Msg::FindStep(-1))
+    ));
+    let _ = app.update(Msg::FindStep(1));
+    assert_eq!(app.find_at, 1);
+    assert!(says(&app, &format!("2/{n}件")));
+    let _ = app.update(Msg::FindStep(-1));
+    let _ = app.update(Msg::FindStep(-1));
+    assert_eq!(app.find_at, n - 1);
+    // Typing again starts from the first.
+    let _ = app.update(Msg::FindInText("README".into()));
+    assert_eq!(app.find_at, 0);
+}
+
+#[test]
+fn calls_that_went_well_and_what_was_thought_are_left_out_when_the_settings_say_so() {
+    let mut app = window("ja");
+    play(&mut app, "work.jsonl", "再試行を指数バックオフにして", |_| false);
+    let s = app.s;
+    act(&mut app, |ui| {
+        ui.click(s.show_steps)
+            .expect("a finished exchange has its steps folded");
+    });
+    let verbs = [
+        s.v_read,
+        s.v_edit,
+        s.v_write,
+        s.v_bash,
+        s.v_overwrite,
+        s.v_wrote,
+        s.v_task,
+    ];
+    let shown = |app: &App| verbs.iter().filter(|verb| says(app, verb)).count();
+    let before = shown(&app);
+    assert!(before > 0);
+    let _ = app.update(Msg::SetFailedOnly(true));
+    assert_eq!(shown(&app), 0);
+    let _ = app.update(Msg::SetFailedOnly(false));
+    assert_eq!(shown(&app), before);
+}
+
+#[test]
+fn a_github_alert_is_drawn_under_its_name_and_a_reply_can_be_branched_from() {
+    let mut app = window("ja");
+    let mut now = std::time::Instant::now();
+    app.chat.session = Some("0a1b2c3d-0".into());
+    app.chat.transcript.send("気をつけることは？", now);
+    for line in [
+        r#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"> [!WARNING]\n> 本番のデータが消えます\n\n- [x] 済み\n- [ ] まだ"}],"provider":"fake","model":"m","usage":{"input":1,"output":1},"stopReason":"stop"}}"#,
+        r#"{"type":"agent_end","cause":"done"}"#,
+    ] {
+        now += std::time::Duration::from_secs(1);
+        app.chat
+            .transcript
+            .apply(&sasacode_protocol::parse_event(line).unwrap(), now);
+    }
+    assert!(says(&app, crate::words::JA.alert_warning));
+    let fork = crate::words::JA.fork_after;
+    act(&mut app, |ui| {
+        let _ = ui.click(fork).expect("a finished reply can be branched from");
+    });
+
+    // A file named with its line that is not there says so.
+    let _ = app.update(Msg::OpenRef("src/nope.rs:3".into()));
+    assert!(app.toast.as_deref().is_some_and(|t| t.contains("src/nope.rs:3")));
 }

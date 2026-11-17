@@ -8,6 +8,7 @@ mod chords;
 mod dock;
 mod inspector;
 mod menu;
+pub(crate) use timeline::has;
 mod overlay;
 mod sidebar;
 mod split;
@@ -298,7 +299,7 @@ fn find_bar(app: &App) -> El<'_> {
         iced::widget::text_input(s.find_in_ph, typed)
             .id(crate::app::FIND_IN)
             .on_input(Msg::FindInText)
-            .on_submit(Msg::FocusInput)
+            .on_submit(Msg::FindStep(1))
             .size(13)
             .padding(0)
             .style(t.input_bare()),
@@ -306,11 +307,28 @@ fn find_bar(app: &App) -> El<'_> {
     .spacing(8)
     .align_y(Alignment::Center);
     if let Some(n) = found {
-        line = line.push(
-            text(fill(s.found_n, "n", n))
-                .size(12)
-                .color(if n == 0 { t.err } else { t.fg_3 }),
-        );
+        let w = s.w();
+        let said = if n == 0 {
+            fill(s.found_n, "n", 0)
+        } else {
+            fill(fill(w.found_at, "at", app.find_at.min(n - 1) + 1).as_str(), "n", n)
+        };
+        line = line.push(text(said).size(12).color(if n == 0 { t.err } else { t.fg_3 }));
+        // The last and the next of those found: also ⇧↵ / ↵ and ⌘⇧G / ⌘G.
+        let step = |mark: Icon, hint: &'static str, by: i8| {
+            tip(
+                t,
+                button(icon(mark, 13.0, t.fg_3))
+                    .padding(4)
+                    .style(t.ghost(t.fg_3, false))
+                    .on_press_maybe((n > 0).then_some(Msg::FindStep(by))),
+                hint.to_owned(),
+                tooltip::Position::Bottom,
+            )
+        };
+        line = line
+            .push(step(Icon::ChevronUp, w.find_prev, -1))
+            .push(step(Icon::ChevronDown, w.find_next, 1));
     }
     line = line.push(
         button(icon(Icon::Close, 13.0, t.fg_3))
@@ -698,7 +716,8 @@ pub(crate) fn diff_view<'a>(t: Tokens, s: Strings, diff: &'a Diff, max: usize) -
         .into()
 }
 
-/// Text a program wrote: its last `max` lines, set in.
+/// Text a program wrote: its last `max` lines, set in. A file named with its line in it opens in
+/// the files tab at that line.
 pub(crate) fn output_block<'a>(t: Tokens, s: Strings, out: &str, max: usize) -> El<'a> {
     let lines: Vec<&str> = out.trim_end().lines().collect();
     let skip = lines.len().saturating_sub(max);
@@ -706,18 +725,40 @@ pub(crate) fn output_block<'a>(t: Tokens, s: Strings, out: &str, max: usize) -> 
     if skip > 0 {
         body = body.push(text(fill(s.more_lines, "n", skip)).size(11.5).color(t.fg_3));
     }
-    let shown = if lines.is_empty() {
-        s.no_output.to_owned()
+    let shown: El<'a> = if lines.is_empty() {
+        text(s.no_output).size(12).font(MONO).color(t.fg_3).into()
     } else {
-        lines[skip..].join("\n")
-    };
-    body = body.push(
-        text(shown)
+        let mut spans: Vec<iced::widget::text::Span<'a, String, Font>> = Vec::new();
+        for (n, line) in lines[skip..].iter().enumerate() {
+            if n > 0 {
+                spans.push(iced::widget::span("\n"));
+            }
+            let mut at = 0;
+            for (range, link) in crate::talk::refs(line) {
+                if range.start > at {
+                    spans.push(iced::widget::span(line[at..range.start].to_owned()));
+                }
+                spans.push(
+                    iced::widget::span(line[range.clone()].to_owned())
+                        .color(t.accent)
+                        .underline(true)
+                        .link(link),
+                );
+                at = range.end;
+            }
+            if at < line.len() {
+                spans.push(iced::widget::span(line[at..].to_owned()));
+            }
+        }
+        iced::widget::rich_text(spans)
             .size(12)
             .font(MONO)
-            .color(if lines.is_empty() { t.fg_3 } else { t.fg_2 })
-            .wrapping(text::Wrapping::WordOrGlyph),
-    );
+            .color(t.fg_2)
+            .wrapping(text::Wrapping::WordOrGlyph)
+            .on_link_click(Msg::OpenRef)
+            .into()
+    };
+    body = body.push(shown);
     container(body)
         .width(Length::Fill)
         .padding([6, 10])

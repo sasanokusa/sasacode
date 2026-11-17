@@ -110,22 +110,27 @@ impl App {
         all
     }
 
+    /// Scrolls the conversation to exchange `i`, held there by its start, so the place scrolled to
+    /// stays as the conversation grows.
+    pub(crate) fn locate(&mut self, i: usize) -> Task<Msg> {
+        self.reading = true;
+        self.settling = true;
+        iced::advanced::widget::operate(Locate {
+            target: exchange_id(i),
+            top: None,
+            at: None,
+        })
+        .then(|y| op::scroll_to(TIMELINE, AbsoluteOffset { x: 0.0, y }))
+        .chain(Task::done(Msg::Settled))
+    }
+
     /// The outline's messages; any other comes back.
     pub(crate) fn update_outline(&mut self, msg: Msg) -> Result<Task<Msg>, Msg> {
         match msg {
             Msg::JumpTo(i) => {
                 // A search inside the conversation may have hidden it.
                 self.find_in = None;
-                // Held by its start, so the place scrolled to stays as the conversation grows.
-                self.reading = true;
-                self.settling = true;
-                Ok(iced::advanced::widget::operate(Locate {
-                    target: exchange_id(i),
-                    top: None,
-                    at: None,
-                })
-                .then(|y| op::scroll_to(TIMELINE, AbsoluteOffset { x: 0.0, y }))
-                .chain(Task::done(Msg::Settled)))
+                Ok(self.locate(i))
             }
             other => self.update_split(other),
         }

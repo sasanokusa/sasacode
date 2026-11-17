@@ -31,6 +31,7 @@ mod scripts;
 mod snapshots;
 mod split;
 mod system;
+mod talk;
 mod theme;
 mod transcript;
 mod view;
