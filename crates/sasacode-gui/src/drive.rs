@@ -1270,3 +1270,25 @@ fn a_shortcut_is_given_a_new_key_in_the_list_of_keys_but_not_one_that_is_taken_o
     assert!(app.prefs.keys.is_empty());
     assert!(shortcut(&Key::Character("p".into()), Modifiers::COMMAND | Modifiers::SHIFT).is_some());
 }
+
+#[test]
+fn an_image_named_in_the_input_is_shown_small_above_it_and_taken_out_by_its_cross() {
+    let mut app = window("ja");
+    let dir = std::env::temp_dir().join(format!("sasacode-gui-thumb-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let shot = dir.join("shot 1.png");
+    std::fs::write(&shot, "not really a picture").unwrap();
+    let _ = app.update(Msg::Dropped(shot.clone()));
+    let written = crate::composer::path_ref(&shot, &app.cwd);
+    assert_eq!(
+        crate::composer::image_refs(&typed(&app), &app.cwd),
+        vec![(shot.clone(), written.clone())]
+    );
+    // Its name under the pointer; the cross takes it out of the input, and the rest stays.
+    let _ = app.update(Msg::Edit(text_editor::Action::Edit(text_editor::Edit::Paste(
+        std::sync::Arc::new("これを見て".into()),
+    ))));
+    let _ = app.update(Msg::Unattach(written));
+    assert_eq!(typed(&app).trim(), "これを見て");
+    let _ = std::fs::remove_dir_all(&dir);
+}

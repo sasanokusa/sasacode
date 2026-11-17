@@ -162,6 +162,28 @@ fn exchange<'a>(app: &'a App, i: usize, ex: &'a Exchange) -> El<'a> {
     let mut col = column![].spacing(10);
     if !ex.prompt.is_empty() {
         let mut said = column![bubble(t, &ex.prompt)].spacing(3);
+        // The images it named, small, each opened by a click.
+        let images = crate::composer::image_refs(&ex.prompt, &app.cwd);
+        if !images.is_empty() {
+            let mut line = row![Space::new().width(Length::Fill)].spacing(6);
+            for (path, _) in images {
+                line = line.push(
+                    button(
+                        container(
+                            iced::widget::image(iced::widget::image::Handle::from_path(&path))
+                                .height(96)
+                                .content_fit(iced::ContentFit::Contain),
+                        )
+                        .max_width(220)
+                        .style(t.boxed(t.raised, t.line, RADIUS)),
+                    )
+                    .padding(0)
+                    .style(t.ghost(t.fg, false))
+                    .on_press(Msg::OpenPath(path)),
+                );
+            }
+            said = said.push(line);
+        }
         // When it was sent, as the list says how long ago a conversation was used.
         if let Some(at) = ex.at {
             let ago = std::time::SystemTime::now().duration_since(at).unwrap_or_default();

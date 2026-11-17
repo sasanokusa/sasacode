@@ -44,6 +44,10 @@ pub fn dock(app: &App) -> El<'_> {
     if !app.chat.comments.is_empty() {
         col = col.push(Above::Comments, comments(app));
     }
+    let images = crate::composer::image_refs(&app.chat.editor.text(), &app.cwd);
+    if !images.is_empty() {
+        col = col.push(Above::Images, attached(app, images));
+    }
     col = col.push(Above::Input, composer(app)).push(Above::Hints, hints(app));
     container(container(col).max_width(COL_W))
         .center_x(Length::Fill)
@@ -63,12 +67,49 @@ enum Above {
     Offer,
     Drop,
     Comments,
+    Images,
     Input,
     Hints,
 }
 
 fn t_accent(app: &App) -> iced::Color {
     app.t.accent
+}
+
+/// The images the input names, each small, with the way to take it out of the input.
+fn attached(app: &App, images: Vec<(std::path::PathBuf, String)>) -> El<'_> {
+    let t = app.t;
+    let mut line = row![].spacing(8);
+    for (path, written) in images {
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let picture = iced::widget::image(iced::widget::image::Handle::from_path(&path))
+            .width(56)
+            .height(56)
+            .content_fit(iced::ContentFit::Cover);
+        line = line.push(super::tip(
+            t,
+            iced::widget::stack![
+                button(container(picture).style(t.boxed(t.raised, t.line, crate::theme::RADIUS)))
+                    .padding(0)
+                    .style(t.ghost(t.fg, false))
+                    .on_press(Msg::OpenPath(path)),
+                container(
+                    button(icon(Icon::Close, 9.0, t.fg))
+                        .padding(2)
+                        .style(t.outline(t.fg))
+                        .on_press(Msg::Unattach(written))
+                )
+                .align_right(56)
+                .padding(2),
+            ],
+            name,
+            iced::widget::tooltip::Position::Top,
+        ));
+    }
+    line.wrap().into()
 }
 
 /// The comments on a diff that go with the next message, each where it was made and with the way

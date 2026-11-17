@@ -373,6 +373,23 @@ impl App {
                 Task::none()
             }
             Msg::Command(command) => self.command(command),
+            Msg::OpenPath(path) => {
+                system::open(&path);
+                Task::none()
+            }
+            Msg::Unattach(written) => {
+                let text = self.chat.editor.text();
+                if let Some(at) = text.find(&written) {
+                    let mut rest = format!("{}{}", &text[..at], &text[at + written.len()..]);
+                    // The space it was set apart by goes with it.
+                    rest = rest.replace("  ", " ");
+                    self.chat.editor = iced::widget::text_editor::Content::with_text(rest.trim_start());
+                    self.chat.editor.perform(iced::widget::text_editor::Action::Move(
+                        iced::widget::text_editor::Motion::DocumentEnd,
+                    ));
+                }
+                operation::focus(crate::app::INPUT)
+            }
             Msg::Reveal(path) => {
                 system::reveal(&path);
                 Task::none()

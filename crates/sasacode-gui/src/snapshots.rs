@@ -441,6 +441,13 @@ fn snapshots_of_figures() {
     app.tab = Tab::Files;
     let _ = app.update(Msg::CommentAt(path, 14, false));
     shoot(&app, "32-files", WIDE);
+    // An image named in the input, small above it, and in a message sent.
+    let picture = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/snapshots/30-figures-wgpu.png");
+    let _ = app.update(Msg::Dropped(picture.clone()));
+    app.chat
+        .transcript
+        .send(&format!("この画面の @{} の余白を詰めて", picture.display()), now);
+    shoot(&app, "33-images", WIDE);
     app.set_dark(true);
     shoot(&app, "31-figures-dark", WIDE);
 }

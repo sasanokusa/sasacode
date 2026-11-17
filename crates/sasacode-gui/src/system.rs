@@ -28,6 +28,19 @@ fn command(program: &str) -> Command {
     command
 }
 
+/// `path` opened by the program the system opens it with.
+pub fn open(path: &Path) -> bool {
+    if cfg!(target_os = "macos") {
+        spawn_with(command("open"), path)
+    } else if cfg!(windows) {
+        let mut c = command("rundll32");
+        c.arg("url.dll,FileProtocolHandler");
+        spawn_with(c, path)
+    } else {
+        spawn_with(command("xdg-open"), path)
+    }
+}
+
 /// The file manager, at `path`: a folder opened, a file shown in its folder.
 pub fn reveal(path: &Path) -> bool {
     if cfg!(target_os = "macos") {

@@ -2,7 +2,7 @@
 //! and what was sent before. The list of what was sent is the TUI's (`history.jsonl` in sasacode's
 //! home), so both remember the same.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 /// How many of the files a list offers at once.
@@ -137,6 +137,59 @@ pub fn path_ref(path: &Path, cwd: &Path) -> String {
     at_ref(&shown)
 }
 
+/// The extensions of the images an `@` brings to the agent.
+const IMAGE: [&str; 6] = ["png", "jpg", "jpeg", "gif", "webp", "bmp"];
+
+/// The images `text` names that are there, each with how it is written in it: `@path`,
+/// `@"path with space"`, or as a message read back from its log says one was sent,
+/// `[Image 1: path]`. Relative to `cwd`.
+pub fn image_refs(text: &str, cwd: &Path) -> Vec<(PathBuf, String)> {
+    let mut found: Vec<(PathBuf, String)> = Vec::new();
+    let mut put = |raw: &str, written: &str| {
+        let path = Path::new(raw);
+        let is_image = path
+            .extension()
+            .is_some_and(|e| IMAGE.contains(&e.to_string_lossy().to_lowercase().as_str()));
+        let path = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            cwd.join(path)
+        };
+        if is_image && path.is_file() && !found.iter().any(|(p, _)| *p == path) {
+            found.push((path, written.to_owned()));
+        }
+    };
+    let mut rest = text;
+    while let Some(at) = rest.find('@') {
+        let after = &rest[at + 1..];
+        let before_ok = at == 0 || rest[..at].ends_with(char::is_whitespace);
+        if let Some(quoted) = after.strip_prefix('"') {
+            if let Some(end) = quoted.find('"') {
+                if before_ok {
+                    put(&quoted[..end], &rest[at..at + end + 3]);
+                }
+                rest = &quoted[end + 1..];
+                continue;
+            }
+        }
+        let end = after.find(char::is_whitespace).unwrap_or(after.len());
+        if before_ok && end > 0 {
+            put(&after[..end], &rest[at..at + 1 + end]);
+        }
+        rest = &after[end..];
+    }
+    let mut rest = text;
+    while let Some(at) = rest.find("[Image ") {
+        let after = &rest[at..];
+        let Some(close) = after.find(']') else { break };
+        if let Some((_, path)) = after[..close].split_once(": ") {
+            put(path.trim(), &after[..=close]);
+        }
+        rest = &after[close + 1..];
+    }
+    found
+}
+
 /// `@path`, quoted when the path has a space.
 pub fn at_ref(path: &str) -> String {
     if path.chars().any(char::is_whitespace) {
@@ -178,6 +231,27 @@ pub fn append_history(file: &Path, sent: &str) {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn the_images_a_message_names_are_found_with_how_they_are_written() {
+        let dir = std::env::temp_dir().join(format!("sasacode-gui-images-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        for f in ["a.png", "b c.jpg", "n.txt"] {
+            std::fs::write(dir.join(f), "x").unwrap();
+        }
+        let text = "見て @a.png と @\"b c.jpg\"、@n.txt と @gone.png、mail@a.png\n[Image 1: a.png]";
+        let found = image_refs(text, &dir);
+        assert_eq!(
+            found,
+            vec![
+                (dir.join("a.png"), "@a.png".to_owned()),
+                (dir.join("b c.jpg"), "@\"b c.jpg\"".to_owned()),
+            ]
+        );
+        let logged = image_refs(&format!("[Image 1: {}] これ", dir.join("a.png").display()), &dir);
+        assert_eq!(logged.len(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
     use super::*;
 
     #[test]

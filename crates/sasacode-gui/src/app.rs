@@ -420,8 +420,11 @@ pub enum Msg {
     Dismiss,
     /// A command of the window, from `/`, the palette or a key.
     Command(Command),
-    /// A path in the file manager or an editor.
+    /// A path in the file manager or an editor, or opened as the system opens it.
     Reveal(PathBuf),
+    OpenPath(PathBuf),
+    /// An image named in the input, taken out of it as it is written there.
+    Unattach(String),
     Editor(PathBuf),
     /// A conversation kept at the top of the list, or let go; taken out of it, or put back.
     Pin(String),
