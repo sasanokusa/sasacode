@@ -167,6 +167,29 @@ fn file_items(app: &App, path: &std::path::Path) -> Vec<Item> {
     items
 }
 
+/// The models a run here can use, the one it starts with marked.
+fn model_items(app: &App) -> Vec<Item> {
+    let typed = app.model.trim();
+    app.listing
+        .models
+        .iter()
+        .flatten()
+        .map(|m| {
+            let on = if typed.is_empty() { m.current } else { m.id == typed };
+            let label = match m.context_window {
+                Some(n) => format!("{} · {}", m.id, crate::i18n::compact(n)),
+                None => m.id.clone(),
+            };
+            Some((
+                if on { Icon::Check } else { Icon::Bot },
+                label,
+                Msg::Model(m.id.clone()),
+                false,
+            ))
+        })
+        .collect()
+}
+
 /// The menu over the window, if one is open.
 pub fn layer(app: &App) -> Option<El<'_>> {
     let menu = app.menu.as_ref()?;
@@ -174,6 +197,7 @@ pub fn layer(app: &App) -> Option<El<'_>> {
     let items = match &menu.what {
         MenuFor::Row(id) => row_items(app, id),
         MenuFor::File(path) => file_items(app, path),
+        MenuFor::Models => model_items(app),
     };
     if items.is_empty() {
         return None;

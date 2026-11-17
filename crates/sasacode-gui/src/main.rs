@@ -3,6 +3,7 @@
 //! permissions and its sessions are exactly those of the CLI and the TUI.
 
 mod app;
+mod cli;
 mod composer;
 mod diff;
 #[cfg(test)]

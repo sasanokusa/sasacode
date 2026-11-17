@@ -2061,8 +2061,103 @@ fn what_always_allowed_is_kept_for_the_conversations_later_runs_and_can_be_taken
         no_session: false,
         lang: None,
         allow: app.prefs.more.allowed["s-always"].clone(),
+        trust_project: false,
+        slash: false,
     };
     assert!(spec.args().windows(2).any(|w| w == ["--allow", "bash(echo one)"]));
     let _ = app.update(Msg::ForgetAllowed("bash(echo one)".into()));
     assert!(!app.prefs.more.allowed.contains_key("s-always"));
+}
+
+fn listed() -> crate::cli::Listing {
+    fn json<T: serde::de::DeserializeOwned>(s: &str) -> T {
+        serde_json::from_str(s).unwrap()
+    }
+    crate::cli::Listing {
+        models: Some(json(
+            r#"[{"id":"local/gemma4","contextWindow":131072,"current":true},{"id":"cloud/big"}]"#,
+        )),
+        commands: Some(json(
+            r#"[{"name":"help","description":"h","owner":"core-commands","headless":false},
+                {"name":"review","description":"変更を見直す","argumentHint":"[path]","owner":"skills","headless":true}]"#,
+        )),
+        skills: Some(json(
+            r#"[{"name":"review","description":"変更を見直す","path":"/s/review"}]"#,
+        )),
+        plugins: Some(json(
+            r#"[{"name":"todo","version":"1.0.0","source":"bundled","enabled":true},
+                {"name":"broken","source":"global","enabled":false,"error":"API 9 is newer"}]"#,
+        )),
+        trust: Some(json(
+            r#"{"trusted":false,"needed":true,"complete":true,"items":["plugin lint","MCP server db"],"mcpServers":["db"]}"#,
+        )),
+    }
+}
+
+#[test]
+fn the_plugins_and_skills_commands_are_offered_after_a_slash_and_run_as_commands() {
+    let mut app = window("ja");
+    app.listing = listed();
+    app.plugin_commands = vec![sasacode_protocol::event::Command {
+        name: "hello".into(),
+        description: "say hello".into(),
+        argument_hint: None,
+        owner: "asker".into(),
+    }];
+    app.set_input("/");
+    app.chat
+        .editor
+        .perform(text_editor::Action::Move(text_editor::Motion::DocumentEnd));
+    assert!(says(&app, "/review") && says(&app, "/hello") && !says(&app, "/help"));
+    app.set_input("/rev");
+    let Some(crate::input::Offer {
+        kind: crate::input::OfferKind::Commands(window_commands, plugins),
+        ..
+    }) = app.offer()
+    else {
+        panic!("nothing offered");
+    };
+    assert!(window_commands.is_empty() && plugins[0].name == "review");
+    let _ = app.update(Msg::Complete(None));
+    assert_eq!(app.chat.editor.text().trim_end(), "/review");
+    assert!(app.is_slash("/review src") && app.is_slash("/hello") && !app.is_slash("/help") && !app.is_slash("review"));
+    app.set_input("/review src");
+    let _ = app.update(Msg::Send);
+    assert!(app.running(), "it runs");
+    assert!(app.chat.editor.text().trim().is_empty());
+}
+
+#[test]
+fn an_untrusted_folder_says_what_trust_would_use_and_a_window_can_use_it_alone() {
+    let mut app = window("ja");
+    app.listing = listed();
+    let w = crate::words::JA;
+    assert!(says(&app, w.trust_head) && says(&app, "・MCP server db") && says(&app, w.trust_save));
+    act(&mut app, |ui| {
+        ui.click(w.trust_once).expect("the button is there");
+    });
+    assert!(app.trust_once && !says(&app, w.trust_head));
+    // Its plugins' code could not all be read: trust cannot be kept, only used here.
+    let mut app = window("ja");
+    app.listing = listed();
+    app.listing.trust.as_mut().unwrap().complete = false;
+    assert!(says(&app, w.trust_partial) && !says(&app, w.trust_save));
+}
+
+#[test]
+fn the_models_the_cli_lists_are_picked_from_a_menu_and_the_rest_from_a_screen() {
+    let mut app = window("ja");
+    app.listing = listed();
+    let _ = app.update(Msg::OpenMenu(crate::rows::MenuFor::Models));
+    assert!(says(&app, "cloud/big") && says(&app, "local/gemma4 · 131.1k"));
+    act(&mut app, |ui| {
+        ui.click("cloud/big").expect("the model is there");
+    });
+    assert_eq!(app.model, "cloud/big");
+    assert!(app.menu.is_none());
+
+    let _ = app.update(Msg::Show(Some(crate::app::Overlay::Extensions)));
+    for said in ["todo", "API 9 is newer", "/review", "変更を見直す", "db"] {
+        assert!(says(&app, said), "{said}");
+    }
 }

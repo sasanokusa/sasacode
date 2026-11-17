@@ -31,6 +31,10 @@ pub struct RunSpec {
     pub lang: Option<String>,
     /// Calls allowed without asking (`--allow`), as "always" allowed them in earlier runs.
     pub allow: Vec<String>,
+    /// The folder's config is used though it was not trusted for good (`--trust-project`).
+    pub trust_project: bool,
+    /// The prompt is a plugin's slash command, run as one (`--slash`).
+    pub slash: bool,
 }
 
 impl RunSpec {
@@ -55,6 +59,12 @@ impl RunSpec {
         opt("--thinking", &self.thinking);
         if self.no_session {
             args.push("--no-session".into());
+        }
+        if self.trust_project {
+            args.push("--trust-project".into());
+        }
+        if self.slash {
+            args.push("--slash".into());
         }
         for rule in &self.allow {
             args.push("--allow".into());

@@ -46,6 +46,8 @@ pub enum Overlay {
     Quote,
     /// The waiting call's arguments being edited, `App::editing_args`.
     Args,
+    /// The plugins, skills and MCP servers a run here can use.
+    Extensions,
 }
 
 /// What a palette picks from.
@@ -118,6 +120,7 @@ impl App {
             entry(s.w().c_draft_commit, None, Msg::Draft(crate::helper::Draft::Commit)),
             entry(s.w().copy_folder, None, Msg::Copy(Clip::Folder)),
             entry(s.w().c_tui, Some("/tui".into()), Msg::Command(Command::Tui)),
+            entry(s.w().c_extensions, None, Msg::Show(Some(Overlay::Extensions))),
             entry(s.w().pr_title, None, Msg::PrOpen),
             entry(s.c_export, None, Msg::Copy(Clip::Conversation)),
             entry(s.c_steps, None, Msg::Command(Command::Steps)),

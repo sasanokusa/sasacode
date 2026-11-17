@@ -28,6 +28,9 @@ pub fn dock(app: &App) -> El<'_> {
     if let Some(ask) = app.chat.transcript.asks.first() {
         col = col.push(Above::Ask, ask_card(app, ask));
     }
+    if let Some(trust) = app.listing.untrusted().filter(|_| !app.trust_once) {
+        col = col.push(Above::Trust, trust_card(app, trust));
+    }
     if let Some(offer) = app.offer() {
         col = col.push(Above::Offer, offered(app, offer));
     }
@@ -80,6 +83,7 @@ pub fn dock(app: &App) -> El<'_> {
 enum Above {
     Approval,
     Ask,
+    Trust,
     Offer,
     Drop,
     Comments,
@@ -314,7 +318,46 @@ fn offered(app: &App, offer: Offer) -> El<'_> {
                 );
             }
         }
-        OfferKind::Commands(commands) => {
+        OfferKind::Commands(commands, plugins) => {
+            let first = commands.len();
+            // After the window's own, in the order picked with ↑ and ↓.
+            let mut later: Vec<El<'_>> = Vec::new();
+            for (i, plugin) in plugins.into_iter().enumerate() {
+                let what = match &plugin.argument_hint {
+                    Some(hint) => format!("{hint}  {}", plugin.description),
+                    None => plugin.description.clone(),
+                };
+                let from = if plugin.owner == "skills" {
+                    app.s.w().slash_skill.to_owned()
+                } else {
+                    plugin.owner.clone()
+                };
+                later.push(
+                    button(
+                        row![
+                            text(format!("/{}", plugin.name))
+                                .size(12.5)
+                                .font(MONO)
+                                .color(t.fg)
+                                .width(110)
+                                .wrapping(text::Wrapping::None),
+                            text(clip(&what, 70))
+                                .size(12.5)
+                                .color(t.fg_2)
+                                .width(Length::Fill)
+                                .wrapping(text::Wrapping::None),
+                            text(from).size(11).color(t.fg_3).wrapping(text::Wrapping::None),
+                        ]
+                        .spacing(10)
+                        .align_y(Alignment::Center),
+                    )
+                    .width(Length::Fill)
+                    .padding([4, 10])
+                    .style(t.ghost(t.fg, first + i == pick))
+                    .on_press(Msg::Complete(Some(first + i)))
+                    .into(),
+                );
+            }
             for (i, (name, command)) in commands.into_iter().enumerate() {
                 list = list.push(
                     button(
@@ -330,6 +373,9 @@ fn offered(app: &App, offer: Offer) -> El<'_> {
                     .style(t.ghost(t.fg, i == pick))
                     .on_press(Msg::Complete(Some(i))),
                 );
+            }
+            for el in later {
+                list = list.push(el);
             }
         }
     }
@@ -487,6 +533,45 @@ fn ask_card<'a>(app: &'a App, ask: &'a Ask) -> El<'a> {
         .width(Length::Fill)
         .padding(14)
         .style(t.floating(t.raised, t.accent))
+        .into()
+}
+
+/// The folder's config wants what is used only once it is trusted: what, and the two ways to.
+fn trust_card<'a>(app: &'a App, trust: &'a crate::cli::Trust) -> El<'a> {
+    let (t, w) = (app.t, app.s.w());
+    let mut body = column![
+        row![
+            icon(Icon::Shield, 15.0, t.warn),
+            text(w.trust_head).size(13).font(BOLD).color(t.fg)
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center)
+    ]
+    .spacing(6);
+    for item in &trust.items {
+        body = body.push(text(format!("・{item}")).size(12.5).color(t.fg_2));
+    }
+    let mut buttons = row![].spacing(8).align_y(Alignment::Center);
+    if trust.complete {
+        buttons = buttons.push(
+            button(text(w.trust_save).size(13))
+                .padding([6, 16])
+                .style(t.primary())
+                .on_press(Msg::TrustFolder),
+        );
+    } else {
+        body = body.push(text(w.trust_partial).size(12).color(t.fg_3));
+    }
+    buttons = buttons.push(
+        button(text(w.trust_once).size(13))
+            .padding([6, 12])
+            .style(t.outline(t.fg))
+            .on_press(Msg::TrustOnce),
+    );
+    container(body.push(buttons.wrap()))
+        .width(Length::Fill)
+        .padding(14)
+        .style(t.floating(t.raised, t.warn_line))
         .into()
 }
 
@@ -704,6 +789,18 @@ fn composer(app: &App) -> El<'_> {
                 .padding([4, 8])
                 .width(260)
                 .style(t.input()),
+            iced::widget::mouse_area(
+                button(icon(Icon::ChevronDown, 12.0, t.fg_3))
+                    .padding(3)
+                    .style(t.ghost(t.fg_3, false))
+                    .on_press_maybe(
+                        app.listing
+                            .models
+                            .as_ref()
+                            .filter(|m| !m.is_empty())
+                            .map(|_| Msg::OpenMenu(crate::rows::MenuFor::Models)),
+                    ),
+            ),
         ]
         .spacing(5)
         .align_y(Alignment::Center),

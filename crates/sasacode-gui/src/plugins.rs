@@ -131,7 +131,7 @@ impl App {
                     }
                 })
             }
-            other => return Err(other),
+            other => return self.update_cli(other),
         };
         Ok(task)
     }

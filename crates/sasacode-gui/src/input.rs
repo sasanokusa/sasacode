@@ -123,15 +123,15 @@ pub struct Offer {
 pub enum OfferKind {
     /// Files and folders after `@`, best first.
     Files(Vec<String>),
-    /// The window's commands after `/`.
-    Commands(Vec<(&'static str, Command)>),
+    /// The window's commands after `/`, then the plugins' and the skills', which the CLI runs.
+    Commands(Vec<(&'static str, Command)>, Vec<crate::cli::Command>),
 }
 
 impl Offer {
     pub fn len(&self) -> usize {
         match &self.kind {
             OfferKind::Files(files) => files.len(),
-            OfferKind::Commands(commands) => commands.len(),
+            OfferKind::Commands(commands, plugins) => commands.len() + plugins.len(),
         }
     }
 }
@@ -157,11 +157,17 @@ impl App {
                 .copied()
                 .filter(|(name, _)| name.starts_with(&word.to_lowercase()))
                 .collect();
-            return (!commands.is_empty()).then_some(Offer {
+            let plugins: Vec<_> = self
+                .slash_commands()
+                .into_iter()
+                .filter(|c| c.name.to_lowercase().starts_with(&word.to_lowercase()))
+                .filter(|c| !commands.iter().any(|(name, _)| *name == c.name))
+                .collect();
+            return (!commands.is_empty() || !plugins.is_empty()).then_some(Offer {
                 line: at.line,
                 start: 0,
                 end: at.column,
-                kind: OfferKind::Commands(commands),
+                kind: OfferKind::Commands(commands, plugins),
             });
         }
         let (start, query) = composer::mention(before)?;
@@ -262,8 +268,12 @@ impl App {
                 self.replace(offer.line, offer.start, offer.end, &with);
                 self.ask_files()
             }
-            OfferKind::Commands(commands) => {
+            OfferKind::Commands(commands, plugins) => {
                 let Some(&(name, command)) = commands.get(at) else {
+                    // A plugin's command goes in with room for its text; ↵ runs it.
+                    if let Some(plugin) = plugins.get(at - commands.len()) {
+                        self.replace(offer.line, offer.start, offer.end, &format!("/{} ", plugin.name));
+                    }
                     return Task::none();
                 };
                 if command.takes_text() {
@@ -509,7 +519,7 @@ mod tests {
         let mut app = window();
         typed(&mut app, "/ste");
         let Some(Offer {
-            kind: OfferKind::Commands(found),
+            kind: OfferKind::Commands(found, _),
             ..
         }) = app.offer()
         else {

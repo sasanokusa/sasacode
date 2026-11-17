@@ -217,6 +217,10 @@ pub struct App {
     pub(crate) editing_args: Option<(String, text_editor::Content)>,
     /// The slash commands the plugins offered in the newest run.
     pub(crate) plugin_commands: Vec<sasacode_protocol::event::Command>,
+    /// What the CLI said a run here can use, and whether the folder is trusted.
+    pub(crate) listing: crate::cli::Listing,
+    /// The folder's config is trusted for this window's runs only (`--trust-project`).
+    pub(crate) trust_once: bool,
     /// Conversations whose notice that the branch changed was put away.
     pub(crate) branch_seen: HashSet<String>,
     /// That search's field was the last to take the keyboard: an Esc there puts it away.
@@ -617,6 +621,13 @@ pub enum Msg {
     ArgsSend,
     /// A rule "always" added for the conversation shown, taken back.
     ForgetAllowed(String),
+    /// What the CLI listed (part of it), asked again, and the folder trusted: for good, as the
+    /// CLI asks, or for this window's runs.
+    Listed(Box<crate::cli::Listing>),
+    Relist,
+    TrustFolder,
+    Trusted(Result<String, String>),
+    TrustOnce,
     /// Back to the branch the conversation was started on.
     BackToBranch(String),
     /// The notice that the branch changed, put away for this conversation.
@@ -746,6 +757,7 @@ impl App {
         let front = window::oldest().and_then(window::gain_focus);
         let git = app.refresh_git();
         let sweep = app.sweep();
+        let listed = app.relist_cli();
         (
             app,
             Task::batch([
@@ -755,6 +767,7 @@ impl App {
                 front,
                 git,
                 sweep,
+                listed,
             ]),
         )
     }
@@ -814,6 +827,8 @@ impl App {
             quoting: None,
             editing_args: None,
             plugin_commands: Vec::new(),
+            listing: crate::cli::Listing::default(),
+            trust_once: false,
             branch_seen: HashSet::new(),
             find_held: false,
             show_archived: false,
@@ -1725,6 +1740,13 @@ impl App {
             let _ = self.take_input();
             return self.run_command(format!("!{command}"), command);
         }
+        // A plugin's slash command, or a skill's: run as one, not sent to the model as text.
+        if !self.running() && !self.busy() && self.is_slash(&self.chat.editor.text()) {
+            let Some(text) = self.take_input() else {
+                return Task::none();
+            };
+            return self.start_run(self.chat.key, text, true);
+        }
         if self.running() {
             let Some(text) = self.take_input() else {
                 return Task::none();
@@ -1810,6 +1832,20 @@ impl App {
 
     /// Starts a run of conversation `key` on `prompt`.
     pub(crate) fn start(&mut self, key: u64, prompt: String) -> Task<Msg> {
+        self.start_run(key, prompt, false)
+    }
+
+    /// Whether `text` names one of the slash commands the CLI runs: `/name`, alone or with text.
+    pub(crate) fn is_slash(&self, text: &str) -> bool {
+        let Some(word) = text.trim_start().strip_prefix('/') else {
+            return false;
+        };
+        let name = word.split(char::is_whitespace).next().unwrap_or_default();
+        !name.is_empty() && self.slash_commands().iter().any(|c| c.name == name)
+    }
+
+    /// Starts a run of conversation `key` on `prompt`; with `slash`, a slash command it runs.
+    pub(crate) fn start_run(&mut self, key: u64, prompt: String, slash: bool) -> Task<Msg> {
         let now = Instant::now();
         let model = self.model.trim();
         let mut spec = RunSpec {
@@ -1823,6 +1859,8 @@ impl App {
             no_session: key == SIDE,
             lang: self.prefs.more.lang.clone(),
             allow: Vec::new(),
+            trust_project: self.trust_once,
+            slash,
         };
         // What "always" allowed in its earlier runs.
         let session = std::iter::once(&self.chat)

@@ -38,6 +38,7 @@ pub fn over<'a>(app: &'a App, base: El<'a>) -> El<'a> {
         Overlay::ConfirmAuto => (confirm_auto(app), 480.0, 120.0),
         Overlay::Quote => (quote(app), 720.0, 50.0),
         Overlay::Args => (args(app), 640.0, 60.0),
+        Overlay::Extensions => (extensions(app), 640.0, 50.0),
     };
     let shade = Color {
         a: if t.dark { 0.45 } else { 0.25 },
@@ -483,6 +484,88 @@ fn quote(app: &App) -> El<'_> {
     ]
     .spacing(10)
     .into()
+}
+
+/// The plugins a run here loads, the skills it can use and the folder's MCP servers, as the CLI
+/// lists them.
+fn extensions(app: &App) -> El<'_> {
+    let (t, w) = (app.t, app.s.w());
+    let l = &app.listing;
+    let heading = |label: &'static str| text(label).size(13).font(super::BOLD).color(t.fg);
+    let none = || text(w.ext_none).size(12).color(t.fg_3);
+    let mut body = column![title(app, w.ext_title)].spacing(14);
+    if l.plugins.is_none() && l.skills.is_none() && l.trust.is_none() {
+        body = body.push(text(w.ext_old).size(12.5).color(t.fg_3));
+    }
+    let mut plugins = column![heading(w.ext_plugins)].spacing(4);
+    match l.plugins.as_deref() {
+        None | Some([]) => plugins = plugins.push(none()),
+        Some(list) => {
+            for p in list {
+                let mut line = row![
+                    text(p.name.as_str())
+                        .size(12.5)
+                        .font(MONO)
+                        .color(if p.enabled { t.fg } else { t.fg_3 }),
+                    text(p.version.clone().unwrap_or_default()).size(11.5).color(t.fg_3),
+                    text(p.source.as_str()).size(11.5).color(t.fg_3),
+                ]
+                .spacing(8)
+                .align_y(iced::Alignment::Center);
+                if !p.enabled {
+                    line = line.push(text(w.ext_off).size(11.5).color(t.warn));
+                }
+                plugins = plugins.push(line);
+                if let Some(error) = &p.error {
+                    plugins = plugins.push(text(error.as_str()).size(11.5).color(t.err));
+                }
+            }
+        }
+    }
+    let mut skills = column![heading(w.ext_skills)].spacing(4);
+    match l.skills.as_deref() {
+        None | Some([]) => skills = skills.push(none()),
+        Some(list) => {
+            for k in list {
+                skills = skills.push(
+                    column![
+                        text(format!("/{}", k.name)).size(12.5).font(MONO).color(t.fg),
+                        text(k.description.as_str())
+                            .size(12)
+                            .color(t.fg_2)
+                            .wrapping(text::Wrapping::WordOrGlyph),
+                    ]
+                    .spacing(1),
+                );
+            }
+        }
+    }
+    let mut mcp = column![heading(w.ext_mcp)].spacing(4);
+    match l.trust.as_ref().map(|t| t.mcp_servers.as_slice()) {
+        None | Some([]) => mcp = mcp.push(none()),
+        Some(servers) => {
+            for name in servers {
+                mcp = mcp.push(text(name.as_str()).size(12.5).font(MONO).color(t.fg));
+            }
+        }
+    }
+    body = body.push(plugins).push(skills).push(mcp).push(
+        row![
+            Space::new().width(Length::Fill),
+            button(text(w.ext_reload).size(13))
+                .padding([6, 14])
+                .style(t.outline(t.fg))
+                .on_press(Msg::Relist),
+            button(text(app.s.close).size(13))
+                .padding([6, 14])
+                .style(t.primary())
+                .on_press(Msg::Show(None)),
+        ]
+        .spacing(8),
+    );
+    container(scrollable(body.padding(iced::Padding::ZERO.right(12))).style(t.scroll()))
+        .max_height(620)
+        .into()
 }
 
 /// The waiting call's arguments, as JSON to edit before it is allowed with them.

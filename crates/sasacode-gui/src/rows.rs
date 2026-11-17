@@ -39,6 +39,8 @@ pub enum MenuFor {
     Row(String),
     /// A file of the folder: in the files tab, or a changed file of the git tab.
     File(PathBuf),
+    /// The models the CLI listed, for the next run.
+    Models,
 }
 
 /// A menu opened by a right click, where the pointer was.

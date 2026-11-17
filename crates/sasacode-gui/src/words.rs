@@ -276,6 +276,21 @@ words! {
     judged_ask: "判定役が確認に回した", "The judge asked you";
     allowed_head: "この会話で常に許可したもの", "Always allowed in this conversation";
     allowed_none: "まだありません", "Nothing yet";
+    slash_skill: "スキル", "skill";
+    trust_head: "このフォルダの設定は、信頼するまで使われません", "This folder's settings are not used until it is trusted";
+    trust_save: "信頼する", "Trust";
+    trust_once: "このウィンドウでだけ使う", "Use in this window only";
+    trust_partial: "プラグインのコードをすべては読めなかったので、信頼を保存できません", "Its plugins' code could not all be read, so trust cannot be saved";
+    ext_title: "プラグイン・スキル・MCP", "Plugins, skills and MCP";
+    ext_plugins: "プラグイン", "Plugins";
+    ext_skills: "スキル", "Skills";
+    ext_mcp: "このフォルダのMCPサーバー", "This folder's MCP servers";
+    ext_off: "オフ", "off";
+    ext_none: "ありません", "None";
+    ext_old: "このsasacodeは一覧を返しません（0.8より前）", "This sasacode does not list them (before 0.8)";
+    ext_reload: "読み直す", "Reload";
+    c_extensions: "プラグイン・スキル・MCPを見る", "Plugins, skills and MCP";
+    model_pick: "モデルを選ぶ", "Choose a model";
 }
 
 #[cfg(test)]
