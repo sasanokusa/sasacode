@@ -328,6 +328,8 @@ pub struct App {
     pub(crate) viewing: Option<crate::files::Viewing>,
     /// The file of the tab, being edited; or shown as it reads, when it is Markdown.
     pub(crate) file_edit: Option<crate::edit::FileEdit>,
+    /// The known editors found on the PATH, read when the settings open.
+    pub(crate) editors: Vec<(&'static str, &'static str)>,
     pub(crate) file_preview: Option<crate::transcript::Markdown>,
     /// The tab searches what files hold; what the last search found, and one going on.
     pub(crate) file_grep: bool,
@@ -1090,6 +1092,7 @@ impl App {
             confirm_delete: None,
             viewing: None,
             file_edit: None,
+            editors: Vec::new(),
             file_preview: None,
             file_grep: false,
             grep_hits: None,

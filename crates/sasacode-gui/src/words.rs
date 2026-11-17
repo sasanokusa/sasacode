@@ -383,6 +383,7 @@ words! {
     program_ph: "空欄ならPATHのsasacode（または$SASACODE_BIN）", "Empty: sasacode on PATH (or $SASACODE_BIN)";
     set_editor: "ファイルを開くエディタ", "Editor files open in";
     editor_ph: "空欄ならVS Codeか既定のアプリ（例: zed、subl）", "Empty: VS Code or the system's (e.g. zed, subl)";
+    editors_found: "見つかったもの：", "Found:";
     edit_start: "編集", "Edit";
     edit_save: "保存", "Save";
     edit_cancel: "やめる", "Cancel";

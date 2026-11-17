@@ -2520,6 +2520,14 @@ fn the_settings_choose_the_notifications_their_sound_and_the_editor() {
     let _ = app.update(Msg::SetEditor("zed".into()));
     assert!(app.prefs.more.quiet_wait && !app.prefs.more.quiet_done && app.prefs.more.sound);
     assert_eq!(app.prefs.more.editor, "zed");
+    // The editors found on the PATH are listed to choose from (here, as if two were).
+    app.editors = vec![("VS Code", "code"), ("Zed", "zed")];
+    assert!(says(&app, w.editors_found) && says(&app, "VS Code") && says(&app, "Zed"));
+    let _ = app.update(Msg::SetEditor("code".into()));
+    assert_eq!(app.prefs.more.editor, "code");
+    // None found: nothing listed.
+    app.editors.clear();
+    assert!(!says(&app, w.editors_found));
 }
 
 /// sasacode's colour is chosen by name or as #RRGGBB and shows at once, in light and in dark; the

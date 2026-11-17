@@ -358,6 +358,9 @@ impl App {
                     None => operation::focus(crate::app::INPUT),
                     _ => Task::none(),
                 };
+                if overlay == Some(Overlay::Settings) {
+                    self.editors = system::editors_on(std::env::var_os("PATH").as_deref());
+                }
                 // A key waited for is let go with the list of keys.
                 self.key_capture = None;
                 self.key_note = None;

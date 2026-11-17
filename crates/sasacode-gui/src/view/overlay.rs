@@ -466,7 +466,7 @@ fn settings(app: &App) -> El<'_> {
                 switch(w.set_notify_always, p.more.notify_always, Msg::SetNotifyAlways).into(),
             ));
     }
-    let editor = column![
+    let mut editor = column![
         heading(w.set_editor),
         text_input(w.editor_ph, &p.more.editor)
             .on_input(Msg::SetEditor)
@@ -476,6 +476,21 @@ fn settings(app: &App) -> El<'_> {
             .style(t.input()),
     ]
     .spacing(6);
+    // The known editors on the PATH, one press to choose.
+    if !app.editors.is_empty() {
+        let mut found = row![text(w.editors_found).size(11.5).color(t.fg_3)]
+            .spacing(6)
+            .align_y(Alignment::Center);
+        for (name, program) in &app.editors {
+            let chosen = p.more.editor.split_whitespace().next() == Some(*program);
+            found = found.push(choice(
+                (*name).to_owned(),
+                chosen,
+                Msg::SetEditor((*program).to_owned()),
+            ));
+        }
+        editor = editor.push(found.wrap());
+    }
     let program = column![
         heading(w.set_program),
         text_input(w.program_ph, &p.more.program)

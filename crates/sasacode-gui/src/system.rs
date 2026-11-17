@@ -137,8 +137,39 @@ pub fn resume_in_terminal(dir: &Path, program: &Path, id: &str) -> bool {
     }
 }
 
-/// `path` in the editor the settings name (a command, with its arguments), else as [`editor`]
-/// opens it.
+/// The editors known to open a file from a command, as named and as run.
+pub const EDITORS: [(&str, &str); 12] = [
+    ("VS Code", "code"),
+    ("Cursor", "cursor"),
+    ("Windsurf", "windsurf"),
+    ("VSCodium", "codium"),
+    ("Zed", "zed"),
+    ("Sublime Text", "subl"),
+    ("IntelliJ IDEA", "idea"),
+    ("WebStorm", "webstorm"),
+    ("PyCharm", "pycharm"),
+    ("GoLand", "goland"),
+    ("RustRover", "rustrover"),
+    ("CLion", "clion"),
+];
+
+/// The known editors whose command is in one of the folders of `path` (as `PATH` lists them).
+pub fn editors_on(path: Option<&std::ffi::OsStr>) -> Vec<(&'static str, &'static str)> {
+    let dirs: Vec<PathBuf> = path.map(|p| std::env::split_paths(p).collect()).unwrap_or_default();
+    let ends: &[&str] = if cfg!(windows) {
+        &[".cmd", ".exe", ".bat"]
+    } else {
+        &[""]
+    };
+    EDITORS
+        .into_iter()
+        .filter(|(_, program)| {
+            dirs.iter()
+                .any(|d| ends.iter().any(|end| d.join(format!("{program}{end}")).is_file()))
+        })
+        .collect()
+}
+
 /// What opens `path` at `line` in `program`, as editors take it: `-g path:line` for VS Code and
 /// its kin, `path:line` for Zed and Sublime Text, `--line n path` for JetBrains' launchers; none for
 /// an editor whose way is not known.
@@ -176,6 +207,8 @@ pub fn editor_at(path: &Path, line: usize, chosen: &str) -> bool {
     editor_with(path, chosen)
 }
 
+/// `path` in the editor the settings name (a command, with its arguments), else as [`editor`]
+/// opens it.
 pub fn editor_with(path: &Path, chosen: &str) -> bool {
     let mut words = chosen.split_whitespace();
     if let Some(program) = words.next() {
@@ -610,6 +643,23 @@ mod tests {
         assert_eq!(said("zed").unwrap(), ["/w/src/app.rs:42"]);
         assert_eq!(said("idea").unwrap(), ["--line", "42", "/w/src/app.rs"]);
         assert_eq!(said("emacs"), None);
+    }
+
+    #[test]
+    fn the_editors_on_the_path_are_found_in_the_order_known() {
+        let root = std::env::temp_dir().join(format!("sasacode-editors-{}", std::process::id()));
+        let (a, b) = (root.join("a"), root.join("b"));
+        std::fs::create_dir_all(&a).unwrap();
+        std::fs::create_dir_all(&b).unwrap();
+        let end = if cfg!(windows) { ".cmd" } else { "" };
+        std::fs::write(b.join(format!("zed{end}")), "").unwrap();
+        std::fs::write(a.join(format!("code{end}")), "").unwrap();
+        // A folder named as an editor is not one.
+        std::fs::create_dir_all(a.join("subl")).unwrap();
+        let path = std::env::join_paths([&a, &b, &root.join("gone")]).unwrap();
+        assert_eq!(editors_on(Some(&path)), [("VS Code", "code"), ("Zed", "zed")]);
+        assert!(editors_on(None).is_empty());
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]
