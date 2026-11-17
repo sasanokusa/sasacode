@@ -838,6 +838,10 @@ pub enum Msg {
     BackToBranch(String),
     /// The notice that the branch changed, put away for this conversation.
     BranchSeen(String),
+    /// The run cut short when the window closed goes on, in the conversation shown: by its id.
+    GoOn(String),
+    /// The notice of a run cut short is put away.
+    CutSeen(String),
     /// A new conversation that holds the one shown through exchange `i`'s reply.
     ForkAfter(usize),
     /// To the next, or the last, of what the search in the conversation finds.
@@ -2212,6 +2216,14 @@ impl App {
     /// Starts a run of conversation `key` on `prompt`; with `slash`, a slash command it runs.
     pub(crate) fn start_run(&mut self, key: u64, prompt: String, slash: bool) -> Task<Msg> {
         let now = Instant::now();
+        // A run in a conversation cut short when the window closed: going on is not offered now.
+        if let Some(id) = self.chat_mut(key).and_then(|c| c.session.clone())
+            && self.prefs.more.cut.contains(&id)
+        {
+            let _ = self.set(|p| {
+                p.more.cut.remove(&id);
+            });
+        }
         // An automation's run goes in its own mode, and is not the user's choice either; what is
         // sent after it in that conversation is.
         let own_mode = self.chat_mut(key).and_then(|c| c.mode.take());

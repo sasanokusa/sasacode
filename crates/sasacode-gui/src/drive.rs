@@ -1659,6 +1659,45 @@ fn the_window_asks_before_it_closes_on_a_run_and_before_auto_and_keeps_what_was_
 }
 
 #[test]
+fn a_run_cut_short_by_closing_the_window_is_offered_to_go_on_when_shown_again() {
+    let w = crate::words::JA;
+    let mut app = window("ja");
+    let id = app.sessions[0].id.clone();
+    app.chat.session = Some(id.clone());
+    app.chat.transcript.send("長い作業", std::time::Instant::now());
+    let _written = app.pretend_running();
+    let closing = iced::window::Id::unique();
+    let _ = app.update(Msg::CloseAsked(closing));
+    let _ = app.update(Msg::Quit(closing));
+    assert!(app.prefs.more.cut.contains(&id));
+    // Not offered while it still runs.
+    assert!(!says(&app, w.cut_short));
+
+    // Shown again in the next window: offered, and going on asks for the rest of it.
+    let mut again = window("ja");
+    again.prefs.more.cut = app.prefs.more.cut.clone();
+    again.chat.session = Some(id.clone());
+    assert!(says(&again, w.cut_short));
+    act(&mut again, |ui| {
+        let _ = ui.click(w.cut_go_on);
+    });
+    assert!(again.chat.busy() && again.prefs.more.cut.is_empty());
+    let asked = again.chat.transcript.exchanges.last().map(|e| e.prompt.clone());
+    assert_eq!(asked.as_deref(), Some(w.cut_prompt));
+    assert!(!says(&again, w.cut_short));
+
+    // Put away, or another run started there: not offered any more.
+    let mut away = window("ja");
+    away.prefs.more.cut.insert(id.clone());
+    away.chat.session = Some(id.clone());
+    let _ = away.update(Msg::CutSeen(id.clone()));
+    assert!(away.prefs.more.cut.is_empty() && !says(&away, w.cut_short));
+    away.prefs.more.cut.insert(id.clone());
+    let _ = away.start_run(away.chat.key, "別のこと".into(), false);
+    assert!(away.prefs.more.cut.is_empty());
+}
+
+#[test]
 fn the_git_tab_shows_the_branch_or_a_commit_side_by_side_with_files_marked_viewed() {
     use crate::diff::Diff;
     use crate::scope::Scope;

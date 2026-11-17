@@ -57,6 +57,9 @@ words! {
     fix_checks: "失敗したチェックを直させる", "Have the agent fix the failing checks";
     fix_reading: "失敗したログを読み込み中…", "Reading the failed logs…";
     set_auto_fix: "PRのチェックが失敗したら、ログを渡して直す会話を自動で始める（このウィンドウが開いている間、1つのPRに3回まで。autoでは走らせない）", "When a pull request's checks fail, start a conversation given their logs to fix them (while this window is open, three times a pull request at most, never in auto)";
+    cut_short: "この会話の実行は、窓を閉じたときに途中で止まりました", "This conversation's run stopped partway when the window was closed";
+    cut_go_on: "続ける", "Continue";
+    cut_prompt: "前回の実行は、窓を閉じたため途中で止まりました。止まったところから続けてください。", "The last run stopped partway because the window was closed. Please continue from where it stopped.";
     auto_fix_started: "#{n}のチェックが失敗したので、直す会話を始めました", "#{n}'s checks failed: a conversation to fix them was started";
     fix_prompt: "このブランチのプルリクエスト（{url}）で、次のチェックが失敗しています。原因を調べて直してください。\n\n{logs}", "These checks fail on this branch's pull request ({url}). Find out why and fix them.\n\n{logs}";
     merge: "マージ", "Merge";

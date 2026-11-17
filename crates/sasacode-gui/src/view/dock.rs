@@ -63,6 +63,9 @@ pub fn dock(app: &App) -> El<'_> {
     if let Some(moved) = branch_moved(app) {
         col = col.push(Above::Branch, moved);
     }
+    if let Some(cut) = cut_short(app) {
+        col = col.push(Above::Cut, cut);
+    }
     if !app.chat.follow.is_empty() {
         col = col.push(Above::Follow, follow_ups(app));
     }
@@ -93,6 +96,7 @@ enum Above {
     Images,
     Suggestion,
     Branch,
+    Cut,
     Follow,
     Plan,
     Input,
@@ -167,6 +171,36 @@ fn planned(app: &App) -> Option<El<'_>> {
         )
         .padding([6, 10])
         .style(t.boxed(t.accent_wash, t.accent, crate::theme::RADIUS))
+        .into(),
+    )
+}
+
+/// The conversation's run was stopped partway by closing the window, and nothing runs in it now.
+fn cut_short(app: &App) -> Option<El<'_>> {
+    let (t, w) = (app.t, app.s.w());
+    let id = app.chat.session.clone()?;
+    if !app.prefs.more.cut.contains(&id) || app.chat.busy() {
+        return None;
+    }
+    Some(
+        container(
+            row![
+                icon(Icon::Play, 13.0, t.warn),
+                text(w.cut_short).size(12.5).color(t.fg).width(Length::Fill),
+                button(text(w.cut_go_on).size(12))
+                    .padding([3, 10])
+                    .style(t.outline(t.fg))
+                    .on_press(Msg::GoOn(id.clone())),
+                button(icon(Icon::Close, 11.0, t.fg_3))
+                    .padding(4)
+                    .style(t.ghost(t.fg_3, false))
+                    .on_press(Msg::CutSeen(id)),
+            ]
+            .spacing(8)
+            .align_y(Alignment::Center),
+        )
+        .padding([6, 10])
+        .style(t.boxed(t.warn_wash, t.warn_line, crate::theme::RADIUS))
         .into(),
     )
 }

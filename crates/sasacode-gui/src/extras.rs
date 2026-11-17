@@ -57,9 +57,30 @@ impl App {
                 Task::none()
             }
             Msg::Quit(id) => {
+                // The conversations whose runs this stops, offered to go on when shown again.
+                let cut: Vec<String> = std::iter::once(&self.chat)
+                    .chain(&self.parked)
+                    .filter(|c| c.busy())
+                    .filter_map(|c| c.session.clone())
+                    .collect();
+                if !cut.is_empty() {
+                    let _ = self.set(|p| p.more.cut.extend(cut));
+                }
                 self.keep_all_drafts();
                 window::close(id)
             }
+            Msg::GoOn(id) => {
+                let _ = self.set(|p| {
+                    p.more.cut.remove(&id);
+                });
+                if self.chat.session.as_deref() != Some(id.as_str()) || self.chat.busy() {
+                    return Ok(Task::none());
+                }
+                self.start_run(self.chat.key, self.s.w().cut_prompt.to_owned(), false)
+            }
+            Msg::CutSeen(id) => self.set(|p| {
+                p.more.cut.remove(&id);
+            }),
             Msg::AutoAgree => {
                 let _ = self.set(|p| p.more.auto_agreed = true);
                 self.overlay = None;

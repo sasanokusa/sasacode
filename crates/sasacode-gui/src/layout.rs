@@ -225,6 +225,9 @@ pub struct More {
     pub autosave: bool,
     /// A pull request's checks that fail start a conversation that is given their logs to fix them.
     pub auto_fix: bool,
+    /// Conversations whose run was stopped by closing the window, by session id: offered to go on
+    /// when shown again.
+    pub cut: BTreeSet<String>,
     /// The sasacode the window runs, over `sasacode` on PATH; empty, that one (or $SASACODE_BIN).
     pub program: String,
     /// What each folder's last run used, and the conversation last shown there, by its path.
@@ -742,6 +745,7 @@ mod tests {
                 notify_always: true,
                 autosave: true,
                 auto_fix: true,
+                cut: BTreeSet::from(["s9".into()]),
                 program: "/opt/sasacode/bin/sasacode".into(),
                 folders: BTreeMap::from([(
                     "/w".into(),
