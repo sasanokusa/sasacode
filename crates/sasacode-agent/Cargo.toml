@@ -28,3 +28,5 @@ indexmap.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+sasacode-testing.workspace = true
+sasacode-tools.workspace = true
