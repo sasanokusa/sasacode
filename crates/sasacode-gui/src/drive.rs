@@ -3718,3 +3718,44 @@ fn a_secret_gist_is_asked_for_each_time_and_its_url_is_said() {
     let _ = app.update(Msg::GistMade(Err("gh auth login".into())));
     assert_eq!(app.toast.as_deref(), Some("gistを作れませんでした：gh auth login"));
 }
+
+#[test]
+fn what_a_review_asked_for_finds_is_shown_on_the_lines_of_the_diff_until_put_away() {
+    let mut app = window("ja");
+    let w = app.s.w();
+    let dir = std::env::temp_dir().join(format!("sasacode-gui-review-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.txt"), "a\nb\nc\nd\ne\nf\ng\nh\nd\n").unwrap();
+    app.cwd = dir.clone();
+    changed_repo(&mut app);
+    // The review asked for, sent, and answered.
+    let _ = app.update(Msg::AskReview);
+    let _ = app.update(Msg::Send);
+    let _ = app.pretend_running();
+    let key = app.chat.key;
+    let reply =
+        "1. a.txt:9 で`d`に変えた理由が分かりません。\n2. a.txt:3 の行は差分の外です。\n3. 全体にテストが足りません。";
+    for line in [
+        serde_json::json!({"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":reply}],"provider":"fake","model":"m","usage":{"input":10,"output":10},"stopReason":"stop"}}),
+        serde_json::json!({"type":"agent_end","cause":"done"}),
+    ] {
+        let event = sasacode_protocol::parse_event(&line.to_string()).unwrap();
+        let _ = app.update(Msg::Run(key, crate::runner::RunUpdate::Event(Box::new(event))));
+    }
+    assert_eq!(app.chat.review.len(), 2);
+    // On its line in the diff, and the one off the diff above it with where it is.
+    assert!(says(&app, &crate::i18n::fill(w.review_found, "n", 2)));
+    assert!(says(&app, "a.txt:9 で`d`に変えた理由が分かりません。"));
+    assert!(says(&app, "@a.txt:3") && says(&app, "a.txt:3 の行は差分の外です。"));
+    // One goes with the next message, as a comment on its line; the other is put away.
+    let _ = app.update(Msg::ReviewTake(0));
+    assert_eq!(app.chat.comments.len(), 1);
+    assert_eq!(app.chat.comments[0].line, 9);
+    let _ = app.update(Msg::ReviewDrop(0));
+    assert!(app.chat.review.is_empty() && !says(&app, &crate::i18n::fill(w.review_found, "n", 1)));
+    // All put away at once.
+    app.chat.review = crate::review::findings("a.txt:2 です", &app.cwd);
+    let _ = app.update(Msg::ReviewClear);
+    assert!(app.chat.review.is_empty());
+    let _ = std::fs::remove_dir_all(&dir);
+}

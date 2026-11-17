@@ -45,6 +45,132 @@ pub fn place(path: &Path, line: usize, cwd: &Path) -> String {
     }
 }
 
+/// How long one finding of a review is kept, in characters.
+const FINDING_CHARS: usize = 600;
+
+/// Whether `prompt` is the window's request for a review, in either language.
+pub fn asks_review(prompt: &str) -> bool {
+    let prompt = prompt.trim_start();
+    [crate::words::JA.review_prompt, crate::words::EN.review_prompt]
+        .iter()
+        .any(|asked| prompt.starts_with(asked))
+}
+
+/// What the agent found when the newest message asked for a review, each on the line of the file
+/// in the folder it names: none when it was not asked, or its reply is not there yet.
+pub fn of_review(transcript: &crate::transcript::Transcript, cwd: &Path) -> Vec<Comment> {
+    match transcript.exchanges.last() {
+        Some(ex) if asks_review(&ex.prompt) && ex.answer().is_some() => findings(&ex.answer_text(), cwd),
+        _ => Vec::new(),
+    }
+}
+
+/// The findings of a review: each paragraph or list item that names a line of a file in `cwd`
+/// (`path:12`, `path:12-14`, `path#L12`), with what it says. Its first such line is where it goes.
+pub fn findings(reply: &str, cwd: &Path) -> Vec<Comment> {
+    let mut out: Vec<Comment> = Vec::new();
+    let mut fence = false;
+    // The finding being read, and whether a blank line closed it.
+    let mut open: Option<usize> = None;
+    for raw in reply.lines() {
+        let line = raw.trim();
+        if line.starts_with("```") || line.starts_with("~~~") {
+            fence = !fence;
+            open = None;
+            continue;
+        }
+        if fence || line.is_empty() {
+            open = None;
+            continue;
+        }
+        let said = plain(line);
+        match first_place(line, cwd) {
+            Some((path, at)) => {
+                out.push(Comment {
+                    path,
+                    line: at,
+                    text: said,
+                });
+                open = Some(out.len() - 1);
+            }
+            // A line that carries on the finding above it, not a new item or a heading.
+            None => match open {
+                Some(i) if !item(line) && !line.starts_with('#') => {
+                    let c = &mut out[i];
+                    if c.text.chars().count() < FINDING_CHARS {
+                        c.text.push(' ');
+                        c.text.push_str(&said);
+                    }
+                }
+                _ => open = None,
+            },
+        }
+    }
+    for c in &mut out {
+        if c.text.chars().count() > FINDING_CHARS {
+            c.text = c.text.chars().take(FINDING_CHARS).collect::<String>() + "…";
+        }
+    }
+    out
+}
+
+/// Whether a line begins an item of a list.
+fn item(line: &str) -> bool {
+    let digits = line.chars().take_while(char::is_ascii_digit).count();
+    ["- ", "* ", "+ "].iter().any(|m| line.starts_with(m))
+        || (digits > 0 && (line[digits..].starts_with(". ") || line[digits..].starts_with(") ")))
+}
+
+/// A line of Markdown as it reads: without the mark of its item or heading, and without emphasis.
+fn plain(line: &str) -> String {
+    let mut rest = line.trim_start_matches('#').trim_start();
+    if item(rest) {
+        rest = rest.trim_start_matches(|c: char| c.is_ascii_digit());
+        rest = rest[1..].trim_start();
+    }
+    rest.replace("**", "").replace("__", "")
+}
+
+/// The first line of a file in `cwd` the text names, read as `path:12`, `path:12-14`, `path:12:3`
+/// or `path#L12`; a path may have `@` or `./` before it, or be the folder's own absolute path.
+fn first_place(line: &str, cwd: &Path) -> Option<(PathBuf, usize)> {
+    let breaks = |c: char| {
+        c.is_whitespace()
+            || !c.is_ascii()
+            || matches!(
+                c,
+                '`' | '(' | ')' | '[' | ']' | '*' | ',' | '"' | '\'' | '<' | '>' | '|'
+            )
+    };
+    line.split(breaks).find_map(|word| {
+        let word = word.trim_start_matches('@');
+        // A drive's colon is not where the line is said.
+        let drive = word.as_bytes().get(1) == Some(&b':') && matches!(word.as_bytes().get(2), Some(b'\\' | b'/'));
+        let (head, word) = word.split_at(if drive { 2 } else { 0 });
+        let (path, at) = match word.split_once("#L") {
+            Some(split) => split,
+            None => word.split_once(':')?,
+        };
+        let digits = at.chars().take_while(char::is_ascii_digit).count();
+        let n: usize = at[..digits].parse().ok().filter(|&n| n > 0)?;
+        let path = format!("{head}{}", path.strip_prefix("./").unwrap_or(path));
+        let path = path.as_str();
+        if path.is_empty()
+            || Path::new(path)
+                .components()
+                .any(|c| c == std::path::Component::ParentDir)
+        {
+            return None;
+        }
+        let full = if Path::new(path).is_absolute() {
+            PathBuf::from(path)
+        } else {
+            cwd.join(path)
+        };
+        (full.starts_with(cwd) && full.is_file()).then_some((full, n))
+    })
+}
+
 /// `text` and after it the comments, each with where it was made, as the agent is sent them.
 pub fn with_comments(text: &str, comments: &[Comment], cwd: &Path, head: &str) -> String {
     if comments.is_empty() {
@@ -105,6 +231,23 @@ impl App {
                 if i < self.chat.comments.len() {
                     self.chat.comments.remove(i);
                 }
+                Task::none()
+            }
+            Msg::ReviewTake(i) => {
+                if i < self.chat.review.len() {
+                    let found = self.chat.review.remove(i);
+                    self.chat.comments.push(found);
+                }
+                Task::none()
+            }
+            Msg::ReviewDrop(i) => {
+                if i < self.chat.review.len() {
+                    self.chat.review.remove(i);
+                }
+                Task::none()
+            }
+            Msg::ReviewClear => {
+                self.chat.review.clear();
                 Task::none()
             }
             Msg::Branches(list) => {
@@ -390,5 +533,52 @@ mod tests {
             "C:\n- @src/a.rs:12: ここは逆では？"
         );
         assert_eq!(with_comments("そのまま", &[], cwd, "C:"), "そのまま");
+    }
+
+    #[test]
+    fn a_reviews_findings_are_read_with_the_line_of_the_file_each_names() {
+        let dir = std::env::temp_dir().join(format!("sasacode-gui-findings-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("src")).unwrap();
+        std::fs::write(dir.join("src/a.rs"), "fn a() {}\n").unwrap();
+        std::fs::write(dir.join("b.txt"), "b\n").unwrap();
+        let reply = "## 指摘\n\n\
+            1. **`src/a.rs:12`**：境界の扱いが逆です。\n   12より大きいときに落ちます。\n\
+            2. [b.txt](b.txt#L3) のテストがありません\n\
+            - ないファイル src/gone.rs:4 は出さない\n\
+            - URL https://example.com:8080 も出さない\n\n\
+            ```\nsrc/a.rs:99 コードの中は読まない\n```\n\n\
+            ### src/a.rs:20-24 の名前\n\n\
+            見出しの下の段落は別のものです。\n\n\
+            まとめ：@./src/a.rs:7で終わり。";
+        let found = findings(reply, &dir);
+        let got: Vec<(String, usize, &str)> = found
+            .iter()
+            .map(|c| {
+                (
+                    c.path.strip_prefix(&dir).unwrap().display().to_string(),
+                    c.line,
+                    c.text.as_str(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            got,
+            vec![
+                (
+                    "src/a.rs".into(),
+                    12,
+                    "`src/a.rs:12`：境界の扱いが逆です。 12より大きいときに落ちます。"
+                ),
+                ("b.txt".into(), 3, "[b.txt](b.txt#L3) のテストがありません"),
+                ("src/a.rs".into(), 20, "src/a.rs:20-24 の名前"),
+                ("src/a.rs".into(), 7, "まとめ：@./src/a.rs:7で終わり。"),
+            ]
+        );
+        assert!(
+            asks_review(crate::words::JA.review_prompt)
+                && asks_review(&format!("  {}\n特にa.rs", crate::words::EN.review_prompt))
+        );
+        assert!(!asks_review("レビューして"));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

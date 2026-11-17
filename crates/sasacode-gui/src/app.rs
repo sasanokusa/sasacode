@@ -407,6 +407,8 @@ pub(crate) struct Chat {
     pub(crate) unread: bool,
     /// Comments on lines of a diff, to go with the next message.
     pub(crate) comments: Vec<crate::review::Comment>,
+    /// What the agent found when it was last asked for a review, on lines of the diff.
+    pub(crate) review: Vec<crate::review::Comment>,
     /// Long messages opened whole, by exchange.
     pub(crate) whole: HashSet<usize>,
     /// Messages sent while it ran, each to start a run of its own after it, in order.
@@ -451,6 +453,7 @@ impl Chat {
             closed: HashSet::new(),
             unread: false,
             comments: Vec::new(),
+            review: Vec::new(),
             whole: HashSet::new(),
             follow: Vec::new(),
             newer: false,
@@ -926,6 +929,12 @@ pub enum Msg {
     CommentCancel,
     /// A comment kept to go with the next message, taken back.
     CommentRemove(usize),
+    /// A finding of the agent's review goes with the next message, as a comment on its line.
+    ReviewTake(usize),
+    /// A finding of the agent's review is put away.
+    ReviewDrop(usize),
+    /// All the findings of the agent's review are put away.
+    ReviewClear,
     /// The branches there are to switch to.
     Branches(Vec<String>),
     /// The branch's pull request read again, and as it was found.
@@ -1807,6 +1816,7 @@ impl App {
             ex.prompt = crate::transcript::as_typed(&ex.prompt, &self.cwd);
         }
         chat.loaded = true;
+        chat.review = crate::review::of_review(&chat.transcript, &self.cwd);
         // What was typed in it and not sent, before a restart.
         if let Some(draft) = chat.session.as_deref().and_then(|id| self.kept_draft(id)) {
             chat.editor = text_editor::Content::with_text(draft);
@@ -2403,6 +2413,7 @@ impl App {
         let shown = key == self.chat.key || key == SIDE;
         let now = Instant::now();
         let s = self.s;
+        let cwd = self.cwd.clone();
         let Some(chat) = self.chat_mut(key) else {
             return Task::none();
         };
@@ -2441,6 +2452,8 @@ impl App {
                     run.ended = true;
                     // A plan written: offered to go ahead with.
                     chat.planned = run.plan && cause == StopCause::Done;
+                    // A review asked for: what it found, on the lines of the diff.
+                    chat.review = crate::review::of_review(&chat.transcript, &cwd);
                     chat.unread |= !shown;
                     news = Some(if cause == StopCause::Done {
                         s.n_done

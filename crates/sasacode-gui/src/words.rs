@@ -509,7 +509,10 @@ words! {
     about_update_hint: "新しい版は、ターミナルで「sasacode update」を実行すると入ります（npmで入れたときは「npm install -g sasacode@latest」）", "A newer version goes in with `sasacode update` in a terminal (`npm install -g sasacode@latest` when npm installed it)";
     about_old: "CLIが古いため、バージョンがわかりません", "The CLI is too old to say its version";
     review_ask: "レビューを頼む", "Ask for a review";
-    review_prompt: "まだコミットしていない変更（git statusとgit diffで見られます）をレビューしてください。バグ、扱いの抜け、足りないテストを、重いものから順に、ファイルと行を添えて挙げてください。直すのは、私が頼むまで待ってください。", "Review the uncommitted changes (see git status and git diff). List bugs, unhandled cases and missing tests, most serious first, each with its file and line. Wait for me before fixing anything.";
+    review_found: "エージェントのレビューの指摘：{n}件。差分の行に出しています", "The agent's review found {n}, shown on the lines of the diff";
+    review_take: "次のメッセージに添える", "Send with next message";
+    review_clear: "すべて消す", "Clear all";
+    review_prompt: "まだコミットしていない変更（git statusとgit diffで見られます）をレビューしてください。バグ、扱いの抜け、足りないテストを、重いものから順に1件ずつ箇条書きで、`src/a.rs:12`のようにファイルと行を添えて挙げてください。直すのは、私が頼むまで待ってください。", "Review the uncommitted changes (see git status and git diff). List bugs, unhandled cases and missing tests, most serious first, one list item each, with its file and line written like `src/a.rs:12`. Wait for me before fixing anything.";
     instr_head: "指示ファイル（AGENTS.md）", "Instructions (AGENTS.md)";
     instr_none: "このフォルダで読まれる指示ファイルはありません", "No instruction file applies to this folder";
     instr_make: "このフォルダに作る", "Make one here";

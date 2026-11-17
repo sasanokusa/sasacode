@@ -391,6 +391,9 @@ fn git_tab(app: &App) -> El<'_> {
         return col.push(empty(app, Icon::Check, s.git_clean, "")).into();
     }
     col = col.push(text(w.quote_hint).size(11.5).color(t.fg_3));
+    if !app.chat.review.is_empty() {
+        col = col.push(review_found(app));
+    }
     // By folder: each folder's changed files under its line, which folds them.
     let folder_of = |path: &str| {
         path.rsplit_once('/')
@@ -964,10 +967,16 @@ fn hunks<'a>(app: &'a App, f: &'a crate::git::File, staged: bool) -> El<'a> {
                 .interaction(iced::mouse::Interaction::Pointer)
                 .on_press(Msg::CommentAt(path.clone(), n, staged)),
         );
-        // What was said about this line, and the comment being written under it.
+        // What was said about this line, what the agent's review found on it, and the comment
+        // being written under it.
         for (i, c) in app.chat.comments.iter().enumerate() {
             if c.path == path && c.line == n {
                 lines = lines.push(container(comment_note(app, i, c)).width(note_width));
+            }
+        }
+        for (i, c) in app.chat.review.iter().enumerate() {
+            if c.path == path && c.line == n {
+                lines = lines.push(container(review_note(app, i, c, false)).width(note_width));
             }
         }
         if let Some(draft) = &app.commenting
@@ -1345,6 +1354,11 @@ fn files_tab(app: &App) -> El<'_> {
                 lines = lines.push(comment_note(app, i, c));
             }
         }
+        for (i, c) in app.chat.review.iter().enumerate() {
+            if c.path == v.path && c.line == n {
+                lines = lines.push(review_note(app, i, c, false));
+            }
+        }
         if let Some(draft) = &app.commenting
             && draft.path == v.path
             && draft.line == n
@@ -1481,6 +1495,91 @@ fn comment_note<'a>(app: &'a App, i: usize, c: &'a crate::review::Comment) -> El
     .width(Length::Fill)
     .padding([4, 8])
     .style(t.fill(t.accent_wash))
+    .into()
+}
+
+/// What the agent's review found: how many, the way to put them all away, and those on lines the
+/// diff does not show, each with where it is.
+fn review_found(app: &App) -> El<'_> {
+    let t = app.t;
+    let w = app.s.w();
+    let g = &app.git;
+    // Whether a line of a changed file is drawn in its diff, staged or not.
+    let drawn = |c: &crate::review::Comment| {
+        g.files.iter().filter(|f| g.top.join(&f.path) == c.path).any(|f| {
+            [&f.staged_diff, &f.unstaged_diff]
+                .iter()
+                .any(|d| crate::git::numbers(d).into_iter().take(300).any(|n| n == Some(c.line)))
+        })
+    };
+    let mut col = column![
+        row![
+            icon(Icon::Bot, 12.0, t.accent),
+            text(fill(w.review_found, "n", app.chat.review.len()))
+                .size(12)
+                .color(t.fg_2)
+                .width(Length::Fill),
+            button(text(w.review_clear).size(11.5).color(t.fg_2))
+                .padding([2, 8])
+                .style(t.ghost(t.fg_2, false))
+                .on_press(Msg::ReviewClear),
+        ]
+        .spacing(6)
+        .align_y(Alignment::Center)
+    ]
+    .spacing(4);
+    for (i, c) in app.chat.review.iter().enumerate() {
+        if !drawn(c) {
+            col = col.push(review_note(app, i, c, true));
+        }
+    }
+    col.into()
+}
+
+/// A finding of the agent's review under its line: to go with the next message, or put away.
+/// `placed` says where it is, for one shown away from its line.
+fn review_note<'a>(app: &'a App, i: usize, c: &'a crate::review::Comment, placed: bool) -> El<'a> {
+    let t = app.t;
+    let w = app.s.w();
+    let mut said = column![].spacing(2).width(Length::Fill);
+    if placed {
+        said = said.push(
+            text(crate::review::place(&c.path, c.line, &app.cwd))
+                .size(11)
+                .font(mono())
+                .color(t.fg_3),
+        );
+    }
+    said = said.push(
+        text(c.text.as_str())
+            .size(12)
+            .color(t.fg)
+            .wrapping(text::Wrapping::WordOrGlyph),
+    );
+    container(
+        row![
+            icon(Icon::Bot, 11.0, t.warn),
+            said,
+            button(
+                text(w.review_take)
+                    .size(11)
+                    .color(t.fg_2)
+                    .wrapping(text::Wrapping::None)
+            )
+            .padding([1, 6])
+            .style(t.ghost(t.fg_2, false))
+            .on_press(Msg::ReviewTake(i)),
+            button(icon(Icon::Close, 10.0, t.fg_3))
+                .padding(2)
+                .style(t.ghost(t.fg_3, false))
+                .on_press(Msg::ReviewDrop(i)),
+        ]
+        .spacing(6)
+        .align_y(Alignment::Center),
+    )
+    .width(Length::Fill)
+    .padding([4, 8])
+    .style(t.fill(t.warn_wash))
     .into()
 }
 
