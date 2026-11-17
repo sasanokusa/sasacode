@@ -3068,6 +3068,55 @@ fn a_scratch_conversation_with_no_folder_runs_in_an_empty_one_and_its_log_goes_f
 }
 
 #[test]
+fn a_paragraph_of_a_reply_with_links_offers_them_on_a_right_click() {
+    use iced::mouse::{Button, Event as Mouse};
+    let mut app = window("ja");
+    let w = crate::words::JA;
+    let md = crate::transcript::Markdown::new(
+        "[手順](https://example.com/guide)と[client.ts](src/client.ts#L8)を見てください。\n\nリンクのない段落です。",
+    );
+    // Pressed with the right button over the first paragraph: its two links, in order.
+    let produced: Vec<Msg> = {
+        let settings = Settings {
+            default_font: crate::view::ui(),
+            ..Settings::default()
+        };
+        let mut ui = Simulator::with_size(
+            settings,
+            Size::new(600.0, 400.0),
+            crate::view::timeline::reply(&app, &md, false),
+        );
+        ui.point_at(iced::Point::new(30.0, 10.0));
+        let _ = ui.simulate([
+            iced::Event::Mouse(Mouse::ButtonPressed(Button::Right)),
+            iced::Event::Mouse(Mouse::ButtonReleased(Button::Right)),
+        ]);
+        ui.into_messages().collect()
+    };
+    let links = produced.iter().find_map(|m| match m {
+        Msg::OpenMenu(crate::rows::MenuFor::Links(links)) => Some(links.clone()),
+        _ => None,
+    });
+    assert_eq!(
+        links,
+        Some(vec![
+            "https://example.com/guide".to_owned(),
+            "src/client.ts#L8".to_owned()
+        ])
+    );
+    // Its menu: each opened and copied, and the folder's file in the editor at its line.
+    let dir = std::env::temp_dir().join(format!("sasacode-gui-links-{}", std::process::id()));
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("src/client.ts"), "export {};\n").unwrap();
+    app.cwd = dir.clone();
+    let _ = app.update(Msg::OpenMenu(crate::rows::MenuFor::Links(links.unwrap())));
+    assert!(says(&app, "開く：https://example.com/guide") && says(&app, "コピー：https://example.com/guide"));
+    assert!(says(&app, "開く：src/client.ts#L8") && says(&app, "エディタで開く"));
+    assert!(w.menu_open_link.contains("{link}"));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn what_the_search_inside_the_conversation_finds_is_marked_in_the_words_themselves() {
     use iced::advanced::text::{Highlight, Span};
     let mark = Highlight {
@@ -3084,11 +3133,22 @@ fn what_the_search_inside_the_conversation_finds_is_marked_in_the_words_themselv
     let own = |all: &[(&str, bool)]| all.iter().map(|(t, m)| ((*t).to_owned(), *m)).collect::<Vec<_>>();
     assert_eq!(
         pieces("re"),
-        own(&[("Re", true), ("try the ", false), ("RE", true), ("quest", false), ("再試行を見る", false)])
+        own(&[
+            ("Re", true),
+            ("try the ", false),
+            ("RE", true),
+            ("quest", false),
+            ("再試行を見る", false)
+        ])
     );
     assert_eq!(
         pieces("試行"),
-        own(&[("Retry the REquest", false), ("再", false), ("試行", true), ("を見る", false)])
+        own(&[
+            ("Retry the REquest", false),
+            ("再", false),
+            ("試行", true),
+            ("を見る", false)
+        ])
     );
     // Nothing looked for: as it was.
     assert_eq!(pieces("").len(), 2);

@@ -1081,18 +1081,29 @@ impl<'a> markdown::Viewer<'a, Msg> for Reply<'a> {
         Msg::Link(url)
     }
 
-    /// As iced draws one, with what the search inside the conversation found marked.
+    /// As iced draws one, with what the search inside the conversation found marked. One with
+    /// links offers them on a right click: iced does not say which of them is under the pointer.
     fn paragraph(&self, settings: markdown::Settings, text: &markdown::Text) -> El<'a> {
-        match self.app.find_needle() {
-            Some(needle) => {
-                let spans = text.spans(settings.style);
-                iced::widget::rich_text(found_marked(&spans, &needle, found_mark(self.app.t)))
-                    .size(settings.text_size)
-                    .on_link_click(Self::on_link_click)
-                    .into()
-            }
+        let spans = text.spans(settings.style);
+        let drawn: El<'a> = match self.app.find_needle() {
+            Some(needle) => iced::widget::rich_text(found_marked(&spans, &needle, found_mark(self.app.t)))
+                .size(settings.text_size)
+                .on_link_click(Self::on_link_click)
+                .into(),
             None => markdown::paragraph(settings, text, Self::on_link_click),
+        };
+        let mut links: Vec<String> = Vec::new();
+        for link in spans.iter().filter_map(|s| s.link.clone()) {
+            if !links.contains(&link) {
+                links.push(link);
+            }
         }
+        if links.is_empty() {
+            return drawn;
+        }
+        iced::widget::mouse_area(drawn)
+            .on_right_press(Msg::OpenMenu(crate::rows::MenuFor::Links(links)))
+            .into()
     }
 
     /// A picture that is a file here, shown, and larger on a click; any other, its words.

@@ -131,6 +131,44 @@ fn row_items(app: &App, id: &str) -> Vec<Item> {
     items
 }
 
+/// Each link of a paragraph of a reply: opened, copied, and a file of the folder in the editor or
+/// the file manager too.
+fn link_items(app: &App, links: &[String]) -> Vec<Item> {
+    let (s, w) = (app.s, app.s.w());
+    let mut items: Vec<Item> = Vec::new();
+    for link in links.iter().take(4) {
+        if !items.is_empty() {
+            items.push(None);
+        }
+        let short = crate::view::clip(link, 44);
+        items.push(Some((
+            Icon::Arrow,
+            fill(w.menu_open_link, "link", &short),
+            Msg::Link(link.clone()),
+            false,
+        )));
+        items.push(Some((
+            Icon::Copy,
+            fill(w.menu_copy_link, "link", &short),
+            Msg::Copy(Clip::Text(link.clone())),
+            false,
+        )));
+        if let Some((path, line)) = crate::files::linked_file(link, &app.cwd) {
+            items.push(Some((
+                Icon::Pencil,
+                s.open_editor.to_owned(),
+                match line {
+                    Some(line) => Msg::EditorAt(path.clone(), line),
+                    None => Msg::Editor(path.clone()),
+                },
+                false,
+            )));
+            items.push(Some((Icon::Folder, s.reveal.to_owned(), Msg::Reveal(path), false)));
+        }
+    }
+    items
+}
+
 fn file_items(app: &App, path: &std::path::Path) -> Vec<Item> {
     let (s, w) = (app.s, app.s.w());
     let mut items: Vec<Item> = Vec::new();
@@ -204,6 +242,7 @@ pub fn layer(app: &App) -> Option<El<'_>> {
         MenuFor::Row(id) => row_items(app, id),
         MenuFor::File(path) => file_items(app, path),
         MenuFor::Models => model_items(app),
+        MenuFor::Links(links) => link_items(app, links),
     };
     if items.is_empty() {
         return None;

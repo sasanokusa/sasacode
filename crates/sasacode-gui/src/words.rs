@@ -295,6 +295,8 @@ words! {
     menu_copy_id: "会話IDをコピー", "Copy conversation ID";
     menu_copy_log: "ログのパスをコピー", "Copy log path";
     menu_copy_path: "パスをコピー", "Copy path";
+    menu_open_link: "開く：{link}", "Open {link}";
+    menu_copy_link: "コピー：{link}", "Copy {link}";
     menu_mention: "@で入力欄に入れる", "Mention in the input (@)";
     selected_n: "{n}件を選択中", "{n} selected";
     select_hint: "⇧クリックで会話をまとめて選べます", "⇧-click conversations to choose several";

@@ -41,6 +41,8 @@ pub enum MenuFor {
     File(PathBuf),
     /// The models the CLI listed, for the next run.
     Models,
+    /// The links of a paragraph of a reply, as written.
+    Links(Vec<String>),
 }
 
 /// A menu opened by a right click, where the pointer was.
