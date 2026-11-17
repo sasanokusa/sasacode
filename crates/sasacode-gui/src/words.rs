@@ -290,6 +290,7 @@ words! {
     show_running: "動作中", "Running";
     show_waiting: "承認待ち", "Waiting";
     show_unread: "未読", "Unread";
+    show_done: "完了", "Done";
     order_updated: "更新順", "Last updated";
     order_created: "作成順", "Created";
     row_model: "モデル: {model}", "Model: {model}";
@@ -376,6 +377,9 @@ words! {
     set_notify_done: "実行が終わったとき", "When a run ends";
     set_notify_wait: "答えを待っているとき", "When a run waits for an answer";
     set_sound: "通知で音を鳴らす", "Play a sound with notifications";
+    set_notify_always: "ウィンドウが前にあるときも通知する", "Notify with the window in front too";
+    set_program: "sasacodeの実行ファイル", "The sasacode executable";
+    program_ph: "空欄ならPATHのsasacode（または$SASACODE_BIN）", "Empty: sasacode on PATH (or $SASACODE_BIN)";
     set_editor: "ファイルを開くエディタ", "Editor files open in";
     editor_ph: "空欄ならVS Codeか既定のアプリ（例: zed、subl）", "Empty: VS Code or the system's (e.g. zed, subl)";
     edit_start: "編集", "Edit";

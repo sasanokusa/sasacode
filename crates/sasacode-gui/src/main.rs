@@ -124,6 +124,10 @@ fn main() -> iced::Result {
     let layout = layout_file.as_deref().map(layout::Layout::read).unwrap_or_default();
     let prefs = layout_file.as_deref().map(layout::Prefs::read).unwrap_or_default();
     let zoom = prefs.zoom;
+    // The settings' sasacode, unless this launch named one.
+    if program.is_none() && !prefs.more.program.trim().is_empty() {
+        program = Some(app::program_of(&prefs.more.program));
+    }
     view::set_fonts(&prefs.more.ui_font, &prefs.more.code_font);
     let options = app::Options {
         program: program.unwrap_or_else(|| PathBuf::from("sasacode")),

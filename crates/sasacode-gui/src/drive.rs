@@ -2627,6 +2627,28 @@ fn the_background_jobs_are_listed_and_a_running_one_is_stopped_on_the_second_pre
     }
 }
 
+/// The list shows the conversations done too; the settings name the sasacode run, empty for the
+/// one on PATH, and whether to notify with the window in front.
+#[test]
+fn the_list_shows_those_done_and_the_settings_name_the_sasacode_run() {
+    let mut app = window("ja");
+    let _ = app.update(Msg::ListTools);
+    assert!(says(&app, "完了"));
+    let _ = app.update(Msg::ListShow(crate::layout::Show::Done));
+    let shown = app.sessions.iter().filter(|s| app.shows(s)).count();
+    assert_eq!(shown, app.sessions.len(), "none runs here");
+    let _ = app.update(Msg::Show(Some(crate::app::Overlay::Settings)));
+    let w = crate::words::JA;
+    assert!(says(&app, w.set_program) && says(&app, w.program_ph));
+    let _ = app.update(Msg::SetProgram("/opt/sasacode/bin/sasacode".into()));
+    assert_eq!(app.program, std::path::PathBuf::from("/opt/sasacode/bin/sasacode"));
+    assert_eq!(app.prefs.more.program, "/opt/sasacode/bin/sasacode");
+    let _ = app.update(Msg::SetProgram(String::new()));
+    assert_eq!(app.program, crate::app::program_of(""));
+    let _ = app.update(Msg::SetNotifyAlways(true));
+    assert!(app.prefs.more.notify_always);
+}
+
 /// "Check for updates" asks the CLI on a click and says its line; a check not made says why.
 #[test]
 fn updates_are_checked_on_a_click_and_what_the_cli_said_is_shown() {

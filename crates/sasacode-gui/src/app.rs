@@ -492,6 +492,14 @@ impl Chat {
     }
 }
 
+/// The sasacode a path in the settings names: empty, `$SASACODE_BIN` or `sasacode` on PATH.
+pub(crate) fn program_of(path: &str) -> PathBuf {
+    match path.trim() {
+        "" => std::env::var_os("SASACODE_BIN").map_or_else(|| PathBuf::from("sasacode"), PathBuf::from),
+        path => PathBuf::from(path),
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum Msg {
     Edit(text_editor::Action),
@@ -742,6 +750,9 @@ pub enum Msg {
     SetQuietDone(bool),
     SetQuietWait(bool),
     SetSound(bool),
+    SetNotifyAlways(bool),
+    /// The sasacode executable the window runs; empty, the one on PATH.
+    SetProgram(String),
     SetEditor(String),
     /// sasacode's colour, and the fonts the window uses from its next start.
     SetAccent(String),
@@ -2440,7 +2451,7 @@ impl App {
             });
         }
         if let Some(body) = news
-            && !self.focused
+            && (!self.focused || self.prefs.more.notify_always)
         {
             self.tell(key, body);
             attention = true;

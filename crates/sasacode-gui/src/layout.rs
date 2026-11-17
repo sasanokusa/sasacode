@@ -142,6 +142,8 @@ pub enum Show {
     Waiting,
     /// Those with news, or marked unread.
     Unread,
+    /// Those not working now: done, stopped, or never run here.
+    Done,
 }
 
 /// In which order the list shows them.
@@ -207,6 +209,10 @@ pub struct More {
     pub quiet_done: bool,
     pub quiet_wait: bool,
     pub sound: bool,
+    /// Notified with the window in front too, not only while it is behind others.
+    pub notify_always: bool,
+    /// The sasacode the window runs, over `sasacode` on PATH; empty, that one (or $SASACODE_BIN).
+    pub program: String,
     /// What each folder's last run used, and the conversation last shown there, by its path.
     pub folders: BTreeMap<String, Folder>,
     /// What was typed and not sent in each conversation, by its id, kept over a restart.
@@ -712,6 +718,8 @@ mod tests {
                 quiet_done: true,
                 quiet_wait: false,
                 sound: true,
+                notify_always: true,
+                program: "/opt/sasacode/bin/sasacode".into(),
                 folders: BTreeMap::from([(
                     "/w".into(),
                     Folder {

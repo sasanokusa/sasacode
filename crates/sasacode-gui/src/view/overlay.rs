@@ -456,6 +456,7 @@ fn settings(app: &App) -> El<'_> {
             indent(switch(w.set_notify_done, !p.more.quiet_done, |on| Msg::SetQuietDone(!on)).into()),
             indent(switch(w.set_notify_wait, !p.more.quiet_wait, |on| Msg::SetQuietWait(!on)).into()),
             indent(switch(w.set_sound, p.more.sound, Msg::SetSound).into()),
+            indent(switch(w.set_notify_always, p.more.notify_always, Msg::SetNotifyAlways).into()),
         ]
         .spacing(10)
         .into()
@@ -466,6 +467,16 @@ fn settings(app: &App) -> El<'_> {
         heading(w.set_editor),
         text_input(w.editor_ph, &p.more.editor)
             .on_input(Msg::SetEditor)
+            .size(13)
+            .font(mono())
+            .padding([6, 10])
+            .style(t.input()),
+    ]
+    .spacing(6);
+    let program = column![
+        heading(w.set_program),
+        text_input(w.program_ph, &p.more.program)
+            .on_input(Msg::SetProgram)
             .size(13)
             .font(mono())
             .padding([6, 10])
@@ -511,6 +522,7 @@ fn settings(app: &App) -> El<'_> {
         width,
         lang,
         editor,
+        program,
         setup,
         scripts(app),
         allowed(app),

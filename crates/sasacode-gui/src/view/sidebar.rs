@@ -260,6 +260,7 @@ fn filters(app: &App) -> El<'_> {
         (w.show_running, Show::Running),
         (w.show_waiting, Show::Waiting),
         (w.show_unread, Show::Unread),
+        (w.show_done, Show::Done),
     ];
     let orders = [(w.order_updated, Order::Updated), (w.order_created, Order::Created)];
     let mut line = iced::widget::Row::new().spacing(4);
@@ -354,10 +355,25 @@ fn row_of<'a>(app: &'a App, session: &'a SessionSummary, now: SystemTime, cells:
                 None
             }
         });
+    // Something typed in it and not sent, kept for it.
+    let drafted = !current
+        && (app
+            .prefs
+            .more
+            .drafts
+            .get(&session.id)
+            .is_some_and(|d| !d.trim().is_empty())
+            || app
+                .chat_of(&session.id)
+                .is_some_and(|c| !c.editor.text().trim().is_empty()));
     if let Some((color, _)) = mark {
         title_row = title_row
             .push(Space::new().width(Length::Fill))
             .push(icon(Icon::Dot, 15.0, color));
+    } else if drafted {
+        title_row = title_row
+            .push(Space::new().width(Length::Fill))
+            .push(icon(Icon::Pencil, 11.0, t.fg_3));
     }
     let item = button(column![title_row, text(meta).size(11.5).color(t.fg_3)].spacing(2))
         .width(Length::Fill)

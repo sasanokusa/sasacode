@@ -129,6 +129,13 @@ impl App {
             Msg::SetQuietDone(quiet) => self.set(|p| p.more.quiet_done = quiet),
             Msg::SetQuietWait(quiet) => self.set(|p| p.more.quiet_wait = quiet),
             Msg::SetSound(on) => self.set(|p| p.more.sound = on),
+            Msg::SetNotifyAlways(on) => self.set(|p| p.more.notify_always = on),
+            Msg::SetProgram(path) => {
+                self.program = crate::app::program_of(&path);
+                let task = self.set(|p| p.more.program = path);
+                // What it offers (its commands, models, version) is that program's.
+                Task::batch([task, self.relist_cli()])
+            }
             Msg::SetEditor(command) => self.set(|p| p.more.editor = command),
             Msg::SetAccent(accent) => {
                 let task = self.set(|p| p.more.accent = accent);
