@@ -16,6 +16,7 @@ mod headless;
 mod plugins;
 mod setup_models;
 mod support;
+mod tui;
 
 /// The lib's test server (the TS tests' `Bun.serve`), shared with the integration tests.
 #[path = "../../src/test_server.rs"]

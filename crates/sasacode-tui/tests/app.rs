@@ -175,8 +175,10 @@ impl Term {
     }
 }
 
+/// Waits for `f`. Every use expects it to come true, so the limit only matters on a loaded machine
+/// (3 s was too short at a load average around 30).
 async fn until(mut f: impl FnMut() -> bool) -> bool {
-    let deadline = Instant::now() + Duration::from_secs(3);
+    let deadline = Instant::now() + Duration::from_secs(10);
     while Instant::now() < deadline {
         if f() {
             return true;

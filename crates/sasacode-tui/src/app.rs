@@ -813,7 +813,14 @@ impl App {
             tokio::select! {
                 ev = async { match input.as_mut() { Some(s) => s.next().await, None => std::future::pending().await } } => {
                     match ev {
-                        Some(ev) => self.on_input(ev),
+                        Some(ev) => {
+                            // What was already waiting (a command a plugin just registered, an
+                            // agent event) goes first: the TS ran those callbacks before the next key.
+                            while let Ok(msg) = rx.try_recv() {
+                                msg(&mut self);
+                            }
+                            self.on_input(ev)
+                        }
                         None => {
                             // The input is gone (stdin closed): nothing can be typed any more.
                             input = None;

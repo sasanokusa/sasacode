@@ -26,8 +26,8 @@ State: `open`, `claimed by <who> <date>`, `done (<evidence>)`.
 | 3 | bundled table and ADR-011 switch (`sasacode-bundled/src/lib.rs`) | done by coordinator |
 | 3 | bundled: web-fetch, web-search, rustxng, browsr, openai-codex, usage, background-sessions, auto-reconnect, goal, gui, image-attach, image-slim, free-search | done: 83 net tests, all TS tests ported (37b7a35) |
 | 3 | bundled: tool-repair, repair, text-tool-calls, guards, agents-md, compaction, diagnostics, subagent, todo, progress-notes, permission-presets, agent-judge, checkpoints, official plugins, jev-guard | done: all TS tests ported (4eff22d); compaction checks the history still begins with what it summarized (the TS compared array identity) |
-| 3 | tui | done: 133 tests, every TS test ported (b976fae); CLI entry (`TuiHost`) claimed by subagent T 2026-11-18 |
-| 3 | cli: setup, catalog, endpoints, detect, env, keys, list-models, trust, update, stdin (loader: ADR-002) | done (1ed76bb, ae4d9bc); TUI entry waits for T |
+| 3 | tui | done: 133 tests, every TS test ported (b976fae); `sasacode` opens it through `TuiHost` (5 CLI tests, pty smoke runs) |
+| 3 | cli: setup, catalog, endpoints, detect, env, keys, list-models, trust, update, stdin (loader: ADR-002) | done (1ed76bb, ae4d9bc) |
 | 4 | xtask (build, checks, improve), CI and release workflows, install scripts | done (170c981); release.yml not run yet, its first run is the PR |
 | 4 | docs (READMEs, docs/*.md, landing page, built-in skill) | done (dd61b5e); site/docs/index.html claimed by subagent S 2026-11-18 |
 | 4 | Anthropic `ant auth login` profile fallback (the SDK did it; README promised it) | done: `user_oauth` profiles, refresh and write-back, 401 retry (21 tests); `oidc_federation` is not ported and fails with the SDK's unknown-type error |
