@@ -83,3 +83,18 @@ ratatui + crossterm for the TUI; clap for arguments; serde_json with `preserve_o
 errors that only become messages. MCP: see `research/mcp.md`.
 Consequences: Hook handlers and tools are `Send + Sync` and run on the tokio runtime; the agent's
 state sits behind a mutex that is never held across an await.
+
+## ADR-011: Formerly separate plugins are bundled but off; `plugins.enabled` turns them on
+Status: accepted (2026-11-18)
+Context: ADR-002 bundles the official plugins (ask-user, git-context, project-checks, workflows),
+jev-guard and free-search, disabled by default. Before the rewrite a user turned them on by
+installing them; with no installer, config needs a switch.
+Decision: `sasacode_bundled::PLUGINS` lists every shipped plugin in load order with an
+`on_by_default` flag. A plugin with the flag off loads only when `plugins.enabled` (a string list,
+accumulated across config files like `plugins.disabled`) names it; `plugins.disabled` always wins.
+In a project config, `plugins.enabled` is an elevated key (needs trust), like `plugins.disabled`.
+free-search was a provider registration that started `uvx free-search-mcp`; it is ported as what it
+was for: an MCP stdio server `uvx free-search-mcp` registered through `sasacode-mcp`.
+Consequences: Old configs stay valid (the TS check ignores unknown keys under `plugins`). Old
+installs in `~/.sasacode/plugins` are no longer loaded; the plugin names stay the same, so
+`plugins.settings` for them keep working once enabled.

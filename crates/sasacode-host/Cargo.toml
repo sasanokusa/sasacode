@@ -12,9 +12,16 @@ sasacode-ai.workspace = true
 sasacode-plugin-api.workspace = true
 sasacode-agent.workspace = true
 serde.workspace = true
-serde_json.workspace = true
+# float_roundtrip: without it serde_json reads some floats one ulp off, and the session index's
+# mtimes (and costs) would never compare equal to what was stored.
+serde_json = { workspace = true, features = ["float_roundtrip"] }
 tokio.workspace = true
 anyhow.workspace = true
 chrono.workspace = true
 dirs.workspace = true
 sha2.workspace = true
+indexmap.workspace = true
+
+[dev-dependencies]
+regex.workspace = true
+tempfile.workspace = true
