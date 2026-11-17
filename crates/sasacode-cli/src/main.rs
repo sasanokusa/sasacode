@@ -55,13 +55,22 @@ Subcommands:
 
 /// Translated when shown, not when this loads: main sets the language first.
 fn help() -> String {
-    let modes = PERMISSION_MODES.iter().map(|m| m.as_str()).collect::<Vec<_>>().join(" | ");
+    let modes = PERMISSION_MODES
+        .iter()
+        .map(|m| m.as_str())
+        .collect::<Vec<_>>()
+        .join(" | ");
     t!(HELP_TEXT, modes = modes)
 }
 
 const OPTIONS: &[OptionSpec] = &[
     string("print", Some('p')),
-    OptionSpec { name: "output", kind: sasacode_cli::args::Kind::String, short: None, default: Some("text") },
+    OptionSpec {
+        name: "output",
+        kind: sasacode_cli::args::Kind::String,
+        short: None,
+        default: Some("text"),
+    },
     string("control", None),
     string("append-system-prompt-file", None),
     string("model", Some('m')),
@@ -78,7 +87,9 @@ const OPTIONS: &[OptionSpec] = &[
 ];
 
 fn main() {
-    let cwd = std::env::current_dir().map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(|_| ".".into());
+    let cwd = std::env::current_dir()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| ".".into());
     // One language everywhere: SASACODE_LANG, else the `lang` setting, else the system locale.
     let lang = read_config_files(Path::new(&cwd))
         .ok()
@@ -110,7 +121,10 @@ fn main() {
     }
     hide_from_children(loaded.into_iter().map(|(n, _)| n));
     if created && std::io::stderr().is_terminal() {
-        eprintln!("{}", t!("created {path}: add your API key there", path = env_path.display()));
+        eprintln!(
+            "{}",
+            t!("created {path}: add your API key there", path = env_path.display())
+        );
     }
 
     sasacode_ai::http::init_tls();
@@ -159,7 +173,10 @@ async fn run(args: Vec<String>, cwd: String) -> anyhow::Result<i32> {
     let output = values.string("output").map(str::to_string);
     // Checked before anything is loaded: a wrong combination should fail at once, not after the setup.
     let control = control_mode(values.string("control"), print.as_deref(), output.as_deref())?;
-    let append_system_prompt = values.string("append-system-prompt-file").map(read_prompt_file).transpose()?;
+    let append_system_prompt = values
+        .string("append-system-prompt-file")
+        .map(read_prompt_file)
+        .transpose()?;
     // One trust decision covers the parts of .sasacode/config.json that could run code or send
     // data elsewhere. Asked here, before anything from the project is used.
     let project = assess_project(Path::new(&cwd))?;
@@ -171,13 +188,21 @@ async fn run(args: Vec<String>, cwd: String) -> anyhow::Result<i32> {
             save_trust(&cwd, &project)?;
         }
     }
-    let max_turns = values.string("max-turns").filter(|v| !v.is_empty()).map(turns_arg).transpose()?;
+    let max_turns = values
+        .string("max-turns")
+        .filter(|v| !v.is_empty())
+        .map(turns_arg)
+        .transpose()?;
     let mut opts = SetupOptions::new(cwd.clone());
     opts.model = values.string("model").map(str::to_string);
     opts.permission = values.string("permission").map(str::to_string);
     opts.thinking = values.string("thinking").map(str::to_string);
     opts.max_turns = max_turns;
-    opts.resume = if values.flag("continue") { Some("last".into()) } else { values.string("resume").map(str::to_string) };
+    opts.resume = if values.flag("continue") {
+        Some("last".into())
+    } else {
+        values.string("resume").map(str::to_string)
+    };
     opts.no_session = values.flag("no-session");
     opts.append_system_prompt = append_system_prompt;
     opts.trust_project = trusted;
@@ -192,9 +217,16 @@ async fn run(args: Vec<String>, cwd: String) -> anyhow::Result<i32> {
     }
 
     if let Some(print) = print {
-        let mut prompt = std::iter::once(print).chain(values.positionals.iter().cloned()).collect::<Vec<_>>().join(" ");
+        let mut prompt = std::iter::once(print)
+            .chain(values.positionals.iter().cloned())
+            .collect::<Vec<_>>()
+            .join(" ");
         // With --control, stdin is the control channel: it is not part of the prompt.
-        let piped = if control { String::new() } else { read_piped_stdin(values.flag("stdin")).await };
+        let piped = if control {
+            String::new()
+        } else {
+            read_piped_stdin(values.flag("stdin")).await
+        };
         if !piped.trim().is_empty() {
             prompt = format!("{prompt}\n\n{piped}");
         }
@@ -213,7 +245,10 @@ async fn run(args: Vec<String>, cwd: String) -> anyhow::Result<i32> {
 fn turns_arg(v: &str) -> anyhow::Result<u64> {
     let n = js_number(v);
     if !(n.is_finite() && n.fract() == 0.0 && n >= 0.0) {
-        anyhow::bail!(t!("--max-turns needs a whole number (0 = no limit), got \"{value}\"", value = v));
+        anyhow::bail!(t!(
+            "--max-turns needs a whole number (0 = no limit), got \"{value}\"",
+            value = v
+        ));
     }
     Ok(n as u64)
 }

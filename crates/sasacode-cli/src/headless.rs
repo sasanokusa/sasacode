@@ -133,7 +133,11 @@ async fn run<R: AsyncRead + Unpin + Send + 'static>(
         let out = out.clone();
         Arc::new(move |s: &str| {
             let s = plain(s);
-            out.stderr(if dim { format!("\x1b[2m{s}\x1b[0m\n") } else { format!("{s}\n") })
+            out.stderr(if dim {
+                format!("\x1b[2m{s}\x1b[0m\n")
+            } else {
+                format!("{s}\n")
+            })
         })
     };
     let at_line_start = Arc::new(AtomicBool::new(true));
@@ -146,11 +150,16 @@ async fn run<R: AsyncRead + Unpin + Send + 'static>(
                 return;
             }
             match e {
-                AgentEvent::MessageUpdate { event: StreamEvent::TextDelta { delta, .. }, .. } => {
+                AgentEvent::MessageUpdate {
+                    event: StreamEvent::TextDelta { delta, .. },
+                    ..
+                } => {
                     write(delta);
                     at_line_start.store(delta.ends_with('\n'), Ordering::SeqCst);
                 }
-                AgentEvent::MessageEnd { message: Message::Assistant(m) } => {
+                AgentEvent::MessageEnd {
+                    message: Message::Assistant(m),
+                } => {
                     if !m.text().is_empty() && !at_line_start.load(Ordering::SeqCst) {
                         write("\n");
                         at_line_start.store(true, Ordering::SeqCst);
@@ -169,12 +178,18 @@ async fn run<R: AsyncRead + Unpin + Send + 'static>(
                     status(&format!("  ⎿ {}", text.split('\n').next_back().unwrap_or("")));
                 }
                 AgentEvent::Error { error } => out.stderr(format!("{}\n", t!("error: {error}", error = plain(error)))),
-                AgentEvent::ToolRepaired { call, note, .. } => {
-                    status(&format!("  {}", t!("↻ repaired {name}: {note}", name = call.name, note = note)))
-                }
+                AgentEvent::ToolRepaired { call, note, .. } => status(&format!(
+                    "  {}",
+                    t!("↻ repaired {name}: {note}", name = call.name, note = note)
+                )),
                 AgentEvent::PluginError { plugin, hook, error } => out.stderr(format!(
                     "{}\n",
-                    t!("plugin {plugin} ({hook}): {error}", plugin = plugin, hook = hook, error = error)
+                    t!(
+                        "plugin {plugin} ({hook}): {error}",
+                        plugin = plugin,
+                        hook = hook,
+                        error = error
+                    )
                 )),
                 _ => {}
             }
@@ -192,25 +207,31 @@ async fn run<R: AsyncRead + Unpin + Send + 'static>(
     // Through the writer above, so a control line never lands in the middle of an event.
     let controller = control.map(|input| {
         let write = write.clone();
-        start_control(agent, input, Arc::new(move |m: Value| write(&format!("{}\n", sasacode_ai::json::stringify(&m)))))
+        start_control(
+            agent,
+            input,
+            Arc::new(move |m: Value| write(&format!("{}\n", sasacode_ai::json::stringify(&m)))),
+        )
     });
     // A local server knows the context the model really gets: asked while the plugins load, as the
     // TUI does at startup, and with the TUI's warning when Ollama will cut the input short (#61).
     // A custom server not told apart may be LM Studio added before sasacode knew it (#59).
     let provider = agent.model().provider;
-    let local = h.providers.read().unwrap_or_else(|e| e.into_inner()).get(&provider).cloned();
-    let ask = local.as_ref().is_some_and(|p| p.ollama == Some(true) || p.lmstudio == Some(true) || p.llamacpp == Some(true))
+    let local = h
+        .providers
+        .read()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(&provider)
+        .cloned();
+    let ask = local
+        .as_ref()
+        .is_some_and(|p| p.ollama == Some(true) || p.lmstudio == Some(true) || p.llamacpp == Some(true))
         || untold(&provider, local.as_ref());
-    let (listing, _) = tokio::join!(
-        async {
-            if ask { h.current_listing().await } else { None }
-        },
-        async {
-            h.load_plugins(None).await;
-            // Unlike the TUI, a one-shot run should start with MCP servers and similar tools connected.
-            h.host.settle(std::time::Duration::from_secs(30)).await;
-        }
-    );
+    let (listing, _) = tokio::join!(async { if ask { h.current_listing().await } else { None } }, async {
+        h.load_plugins(None).await;
+        // Unlike the TUI, a one-shot run should start with MCP servers and similar tools connected.
+        h.host.settle(std::time::Duration::from_secs(30)).await;
+    });
     if let Some(listed) = listing
         && listed.server.as_deref() == Some("ollama")
         && listed.context_window.is_none_or(|c| c == 0)
@@ -276,4 +297,3 @@ async fn run<R: AsyncRead + Unpin + Send + 'static>(
     }
     if cause == StopCause::Done { 0 } else { 1 }
 }
-

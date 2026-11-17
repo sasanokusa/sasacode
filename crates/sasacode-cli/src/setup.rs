@@ -110,7 +110,9 @@ fn default_model(providers: &IndexMap<String, ProviderConfig>, codex: bool) -> S
 
 /// `{ ...a, ...b }` for provider entries kept as JSON (a URL-only entry has no `api` yet).
 fn merge_provider(base: Option<&ProviderConfig>, over: &Value) -> ProviderConfig {
-    let mut v = base.and_then(|b| serde_json::to_value(b).ok()).unwrap_or_else(|| json!({}));
+    let mut v = base
+        .and_then(|b| serde_json::to_value(b).ok())
+        .unwrap_or_else(|| json!({}));
     if let (Value::Object(a), Value::Object(b)) = (&mut v, over) {
         for (k, x) in b {
             a.insert(k.clone(), x.clone());
@@ -163,7 +165,11 @@ pub async fn setup(mut opts: SetupOptions) -> anyhow::Result<Arc<Harness>> {
         .model_overrides
         .iter()
         .flatten()
-        .filter_map(|(k, v)| serde_json::from_value::<ModelOverride>(v.clone()).ok().map(|o| (k.clone(), o)))
+        .filter_map(|(k, v)| {
+            serde_json::from_value::<ModelOverride>(v.clone())
+                .ok()
+                .map(|o| (k.clone(), o))
+        })
         .collect();
     let resolve: Resolve = {
         let (providers, catalog_cell) = (providers.clone(), catalog_cell.clone());
@@ -186,8 +192,16 @@ pub async fn setup(mut opts: SetupOptions) -> anyhow::Result<Arc<Harness>> {
         .or_else(|| permissions.mode.map(|m| m.as_str().to_string()))
         .unwrap_or_else(|| "edits".into());
     let Some(mode) = PERMISSION_MODES.iter().copied().find(|m| m.as_str() == mode_name) else {
-        let modes = PERMISSION_MODES.iter().map(|m| m.as_str()).collect::<Vec<_>>().join(", ");
-        anyhow::bail!(t!("unknown permission mode \"{mode}\" ({modes})", mode = mode_name, modes = modes));
+        let modes = PERMISSION_MODES
+            .iter()
+            .map(|m| m.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        anyhow::bail!(t!(
+            "unknown permission mode \"{mode}\" ({modes})",
+            mode = mode_name,
+            modes = modes
+        ));
     };
     let home = sasacode_home();
     let sessions_dir = session_dir(&home, &opts.cwd);
@@ -291,7 +305,10 @@ pub async fn setup(mut opts: SetupOptions) -> anyhow::Result<Arc<Harness>> {
                 if let Some(imp) = imp {
                     sasacode_ai::register_api(&cfg.api, imp);
                 }
-                providers.write().unwrap_or_else(|e| e.into_inner()).insert(name.to_string(), cfg);
+                providers
+                    .write()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .insert(name.to_string(), cfg);
                 Ok(())
             })
         }),
@@ -299,7 +316,8 @@ pub async fn setup(mut opts: SetupOptions) -> anyhow::Result<Arc<Harness>> {
         lang: current_lang(),
     });
     // Built-in tools go through the same API as everything else (P2); they load first.
-    host.load(sasacode_tools::PLUGIN_NAME, |api| sasacode_tools::plugin(api).boxed()).await;
+    host.load(sasacode_tools::PLUGIN_NAME, |api| sasacode_tools::plugin(api).boxed())
+        .await;
     // Loaded now, not with the other plugins: /model lists its models at startup.
     if !disabled.iter().any(|d| d == "openai-codex")
         && let Some(codex) = sasacode_bundled::find("openai-codex")
@@ -365,13 +383,25 @@ pub async fn setup(mut opts: SetupOptions) -> anyhow::Result<Arc<Harness>> {
 /// listed the model, and is still not told apart, is not. One that has not is listed again once:
 /// it has just answered the turn, so it is up, and one still not told apart then is not asked
 /// again. Telling a server apart is the provider's, so it is counted by the provider's name.
-fn turn_end_listing(agent: &Agent, providers: &Providers, catalog: &ModelCatalog, resolve: &Resolve, settings: &Settings) {
+fn turn_end_listing(
+    agent: &Agent,
+    providers: &Providers,
+    catalog: &ModelCatalog,
+    resolve: &Resolve,
+    settings: &Settings,
+) {
     let asked: Arc<Mutex<HashMap<String, u32>>> = Arc::new(Mutex::new(HashMap::new()));
     let (agent2, providers, catalog, resolve) = (agent.clone(), providers.clone(), catalog.clone(), resolve.clone());
     let overrides = settings.model_overrides.clone().unwrap_or_default();
     agent.hooks().on::<hook::TurnEnd, _, _>("sasacode", move |_e, _ctx| {
-        let (agent, providers, catalog, resolve, asked, overrides) =
-            (agent2.clone(), providers.clone(), catalog.clone(), resolve.clone(), asked.clone(), overrides.clone());
+        let (agent, providers, catalog, resolve, asked, overrides) = (
+            agent2.clone(),
+            providers.clone(),
+            catalog.clone(),
+            resolve.clone(),
+            asked.clone(),
+            overrides.clone(),
+        );
         async move {
             let model = agent.model();
             let spec = model.spec();
@@ -379,12 +409,22 @@ fn turn_end_listing(agent: &Agent, providers: &Providers, catalog: &ModelCatalog
             let p = providers.read().unwrap_or_else(|e| e.into_inner()).get(&name).cloned();
             let is_untold = untold(&name, p.as_ref());
             let key = if is_untold { name.clone() } else { spec.clone() };
-            let n = asked.lock().unwrap_or_else(|e| e.into_inner()).get(&key).copied().unwrap_or(0);
-            let local = p.as_ref().is_some_and(|p| p.ollama == Some(true) || p.lmstudio == Some(true));
-            let user_size = overrides.get(&spec).and_then(|o| o.get("contextWindow")).is_some_and(|v| {
-                // A JS truthy number: 0 and null do not count.
-                v.as_f64().is_some_and(|n| n != 0.0)
-            });
+            let n = asked
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .get(&key)
+                .copied()
+                .unwrap_or(0);
+            let local = p
+                .as_ref()
+                .is_some_and(|p| p.ollama == Some(true) || p.lmstudio == Some(true));
+            let user_size = overrides
+                .get(&spec)
+                .and_then(|o| o.get("contextWindow"))
+                .is_some_and(|v| {
+                    // A JS truthy number: 0 and null do not count.
+                    v.as_f64().is_some_and(|n| n != 0.0)
+                });
             if !(local || is_untold) || n >= 3 || user_size {
                 return Ok(None);
             }
@@ -392,10 +432,16 @@ fn turn_end_listing(agent: &Agent, providers: &Providers, catalog: &ModelCatalog
             let mut done = listed.as_ref().is_some_and(|l| l.context_window.is_some_and(|c| c > 0))
                 || (listed.is_some() && is_untold);
             if !done {
-                done = catalog.entry(&spec, true).await.is_some_and(|l| l.context_window.is_some_and(|c| c > 0))
+                done = catalog
+                    .entry(&spec, true)
+                    .await
+                    .is_some_and(|l| l.context_window.is_some_and(|c| c > 0))
                     || is_untold;
             }
-            asked.lock().unwrap_or_else(|e| e.into_inner()).insert(key, if done { 3 } else { n + 1 });
+            asked
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .insert(key, if done { 3 } else { n + 1 });
             adopt(&agent, &catalog, &resolve);
             Ok(None)
         }
@@ -453,7 +499,9 @@ impl Harness {
         if known_model(id).is_some() || self.settings.model_override(spec).is_some() {
             return Ok(());
         }
-        let Some(r) = self.catalog.offers(spec).await else { return Ok(()) };
+        let Some(r) = self.catalog.offers(spec).await else {
+            return Ok(());
+        };
         if r.ok {
             return Ok(());
         }
@@ -465,7 +513,12 @@ impl Harness {
                 spec = spec
             ));
         }
-        let similar = r.similar.iter().map(|s| format!("{provider}/{s}")).collect::<Vec<_>>().join(", ");
+        let similar = r
+            .similar
+            .iter()
+            .map(|s| format!("{provider}/{s}"))
+            .collect::<Vec<_>>()
+            .join(", ");
         anyhow::bail!(t!(
             "{provider} has no model \"{spec}\". Did you mean: {similar}",
             provider = provider,
@@ -478,12 +531,21 @@ impl Harness {
         let entries = self.session_entries.lock().unwrap_or_else(|e| e.into_inner()).clone();
         self.host.set_session_entries(&entries);
         let session_id = self.agent.session().map(|s| s.id().to_string());
-        self.agent.hooks().emit::<hook::SessionStart>(SessionStartEvent { session_id, resumed }).await;
+        self.agent
+            .hooks()
+            .emit::<hook::SessionStart>(SessionStartEvent { session_id, resumed })
+            .await;
     }
 
     async fn end_session(&self, reason: SessionEndReason) {
         let session_id = self.agent.session().map(|s| s.id().to_string());
-        self.agent.hooks().emit::<hook::SessionEnd>(SessionEndEvent { session_id, reason: Some(reason) }).await;
+        self.agent
+            .hooks()
+            .emit::<hook::SessionEnd>(SessionEndEvent {
+                session_id,
+                reason: Some(reason),
+            })
+            .await;
     }
 
     /// `keep_model`: -m was given on the command line, and beats the model the session ended with.
@@ -493,10 +555,13 @@ impl Harness {
         let state = restore(&entries);
         self.agent.reset(state.messages.clone());
         // --no-session: the old conversation is read, and nothing more is written to it.
-        self.agent.set_session(if self.opts.no_session { None } else { Some(file.clone()) });
+        self.agent
+            .set_session(if self.opts.no_session { None } else { Some(file.clone()) });
         // Record the repair, so restoring again (after more turns are appended) gives the same history.
         if state.repaired && !self.opts.no_session {
-            file.append(&SessionEntry::Replace { messages: state.messages })?;
+            file.append(&SessionEntry::Replace {
+                messages: state.messages,
+            })?;
         }
         *self.session_entries.lock().unwrap_or_else(|e| e.into_inner()) = entries;
         if let Some(model) = state.model
@@ -562,8 +627,12 @@ impl Harness {
                         self.home.join("skills"),
                         Path::new(&self.opts.cwd).join(".sasacode").join("skills"),
                     ];
-                    let opts = sasacode_skills::SkillsOptions { builtin_dir: Some(self.home.join("builtin-skills")) };
-                    self.host.load("skills", sasacode_skills::create_skills_plugin(dirs, opts)).await;
+                    let opts = sasacode_skills::SkillsOptions {
+                        builtin_dir: Some(self.home.join("builtin-skills")),
+                    };
+                    self.host
+                        .load("skills", sasacode_skills::create_skills_plugin(dirs, opts))
+                        .await;
                 }
                 if !disabled.iter().any(|d| d == "mcp") {
                     // Project MCP servers are only in `config` when the project is trusted.
@@ -600,7 +669,12 @@ impl Harness {
         // And the model's key, as a prompt would register it (the old log may have had none yet).
         if let Some(session) = self.agent.session() {
             let provider = self.agent.model().provider;
-            let cfg = self.providers.read().unwrap_or_else(|e| e.into_inner()).get(&provider).cloned();
+            let cfg = self
+                .providers
+                .read()
+                .unwrap_or_else(|e| e.into_inner())
+                .get(&provider)
+                .cloned();
             let key = resolve_api_key(&provider, cfg.as_ref()).await;
             session.add_secret(key.as_deref());
             for m in &kept {

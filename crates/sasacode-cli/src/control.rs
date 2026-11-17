@@ -52,7 +52,10 @@ impl Control {
 type Pending = Arc<Mutex<HashMap<String, oneshot::Sender<ApprovalAnswer>>>>;
 
 fn deny(feedback: Option<&str>) -> ApprovalAnswer {
-    ApprovalAnswer { decision: ApprovalDecision::Deny, feedback: feedback.map(str::to_string) }
+    ApprovalAnswer {
+        decision: ApprovalDecision::Deny,
+        feedback: feedback.map(str::to_string),
+    }
 }
 
 /// Lets the process that started this run answer for the user. It reads JSON Lines from `input`:
@@ -100,17 +103,18 @@ pub fn start_control<R: AsyncRead + Unpin + Send + 'static>(agent: &Agent, input
                     o.shift_remove("reason");
                 }
                 emit(request);
-                tokio::select! {
-                    answer = rx => Ok(answer.unwrap_or_else(|_| deny(Some(CLOSED)))),
-                    _ = req.signal.cancelled() => {
-                        let was_pending = pending.lock().unwrap_or_else(|e| e.into_inner()).remove(&id).is_some();
-                        if was_pending {
-                            emit(json!({ "type": "approval_cancelled", "id": id }));
-                        }
-                        // Like the TUI: the run is being interrupted, the call does not run.
-                        Ok(deny(None))
-                    }
-                }
+                // Told on its own task: an interrupted run may drop this future without polling it
+                // again, and the parent still has to hear that the request is gone.
+                let watcher = {
+                    let (pending, emit, id, signal) = (pending.clone(), emit.clone(), id.clone(), req.signal.clone());
+                    tokio::spawn(async move {
+                        signal.cancelled().await;
+                        cancel(&pending, &emit, &id);
+                    })
+                };
+                let answer = rx.await.unwrap_or_else(|_| deny(Some(CLOSED)));
+                watcher.abort();
+                Ok(answer)
             }
             .boxed()
         })
@@ -143,19 +147,37 @@ pub fn start_control<R: AsyncRead + Unpin + Send + 'static>(agent: &Agent, input
                 return;
             }
             closed.store(true, Ordering::SeqCst);
-            let waiting: Vec<oneshot::Sender<ApprovalAnswer>> =
-                pending.lock().unwrap_or_else(|e| e.into_inner()).drain().map(|(_, tx)| tx).collect();
+            let waiting: Vec<oneshot::Sender<ApprovalAnswer>> = pending
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .drain()
+                .map(|(_, tx)| tx)
+                .collect();
             for tx in waiting {
                 let _ = tx.send(deny(Some(CLOSED)));
             }
         })
     };
-    Control { stopped, closed, reader }
+    Control {
+        stopped,
+        closed,
+        reader,
+    }
+}
+
+/// The run is being interrupted: the request is withdrawn and the call does not run (like the TUI).
+fn cancel(pending: &Pending, emit: &Emit, id: &str) {
+    let tx = pending.lock().unwrap_or_else(|e| e.into_inner()).remove(id);
+    if let Some(tx) = tx {
+        emit(json!({ "type": "approval_cancelled", "id": id }));
+        let _ = tx.send(deny(None));
+    }
 }
 
 /// `JSON.stringify(v) ?? "(none)"` for a value that may be missing.
 fn shown(v: Option<&Value>) -> String {
-    v.map(sasacode_ai::json::stringify).unwrap_or_else(|| "(none)".to_string())
+    v.map(sasacode_ai::json::stringify)
+        .unwrap_or_else(|| "(none)".to_string())
 }
 
 fn handle(agent: &Agent, pending: &Pending, emit: &Emit, line: &str) {
@@ -168,6 +190,17 @@ fn handle(agent: &Agent, pending: &Pending, emit: &Emit, line: &str) {
     };
     let kind = msg.get("type");
     if kind.and_then(Value::as_str) == Some("abort") {
+        // Withdrawn before the run unwinds, so the parent reads it before agent_end (the TS
+        // signal listener ran at once, inside abort()).
+        let ids: Vec<String> = pending
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .keys()
+            .cloned()
+            .collect();
+        for id in ids {
+            cancel(pending, emit, &id);
+        }
         return agent.abort();
     }
     if kind.and_then(Value::as_str) == Some("message") {

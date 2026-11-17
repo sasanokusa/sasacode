@@ -13,3 +13,8 @@ pub mod env;
 pub mod keys;
 pub mod stdin;
 pub mod trust;
+pub mod control;
+pub mod headless;
+pub mod setup;
+pub mod subcommands;
+pub mod tui;
