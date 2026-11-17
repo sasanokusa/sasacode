@@ -32,3 +32,10 @@ chrono.workspace = true
 image.workspace = true
 unicode-width.workspace = true
 dirs.workspace = true
+which.workspace = true
+indexmap.workspace = true
+
+[dev-dependencies]
+sasacode-testing.workspace = true
+tempfile.workspace = true
+tokio = { workspace = true, features = ["test-util"] }
