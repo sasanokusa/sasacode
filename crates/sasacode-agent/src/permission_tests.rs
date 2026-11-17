@@ -378,6 +378,11 @@ fn globs_match_as_bun_glob_did() {
         if path.len() > 1 && path.ends_with('/') && pattern.contains("**/*") {
             continue;
         }
+        // On Windows `\` is a separator: a path reaches the glob with `/` only (glob_path), and the
+        // recording, made on macOS, read it as part of a name.
+        if WINDOWS && path.contains('\\') {
+            continue;
+        }
         if glob(pattern).is_match(path) != want {
             wrong.push(format!("{pattern:?} {path:?}: bun {want}"));
         }

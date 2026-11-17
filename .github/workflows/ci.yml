@@ -21,7 +21,8 @@ jobs:
       - run: rustup update stable && rustup default stable && rustup component add rustfmt clippy
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
-      - run: cargo test --workspace --locked
+      # Every crate runs even after one fails, so one run shows every failure (Windows above all).
+      - run: cargo test --workspace --locked --no-fail-fast
       # The CLI end to end: the tests start the binary SASACODE_E2E_BIN names, and skip (passing)
       # without it, so it is set here, to the sasacode just built (with .exe on Windows).
       - name: CLI end to end
