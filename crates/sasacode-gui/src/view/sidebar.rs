@@ -9,6 +9,7 @@ use super::{BOLD, El, clip, tip};
 use crate::app::{App, Msg, SEARCH};
 use crate::i18n::fill;
 use crate::icons::{Icon, icon};
+use crate::layout::{Order, Show};
 use crate::list::Section;
 use sasacode_protocol::SessionSummary;
 
@@ -52,6 +53,9 @@ pub fn sidebar(app: &App) -> El<'_> {
     .style(t.outline(t.fg))
     .on_press(Msg::NewSession);
 
+    let w = s.w();
+    let more = &app.prefs.more;
+    let filtered = more.list_show != Show::All || more.list_order != Order::Updated;
     let search = container(
         row![
             icon(Icon::Search, 14.0, t.fg_3),
@@ -64,6 +68,15 @@ pub fn sidebar(app: &App) -> El<'_> {
                 .padding(0)
                 .style(t.input_bare()),
             text(super::keys_for(crate::keys::Act::Find)).size(11).color(t.fg_3),
+            tip(
+                t,
+                button(icon(Icon::Filter, 12.0, if filtered { t.accent } else { t.fg_3 }))
+                    .padding(2)
+                    .style(t.ghost(t.fg_3, app.list_tools))
+                    .on_press(Msg::ListTools),
+                w.list_filter.to_owned(),
+                iced::widget::tooltip::Position::Bottom,
+            ),
         ]
         .spacing(8)
         .align_y(Alignment::Center),
@@ -126,11 +139,23 @@ pub fn sidebar(app: &App) -> El<'_> {
         list = list.push(container(text(none).size(12.5).color(t.fg_3)).padding([6, 10]));
     }
 
+    // Which are listed, and in which order: open from the search's button, and kept open while it
+    // leaves some out.
+    let mut top = column![
+        container(head).padding([0, 4]).height(30).align_y(Alignment::Center),
+        new,
+        search,
+    ]
+    .spacing(8);
+    if app.list_tools || filtered {
+        top = top.push(filters(app));
+    }
+    if let Some(bar) = super::menu::bulk_bar(app) {
+        top = top.push(bar);
+    }
     container(
         column![
-            container(head).padding([0, 4]).height(30).align_y(Alignment::Center),
-            new,
-            search,
+            top,
             scrollable(list)
                 .direction(scrollable::Direction::Vertical(
                     scrollable::Scrollbar::new().width(6).scroller_width(6).margin(1)
@@ -145,6 +170,39 @@ pub fn sidebar(app: &App) -> El<'_> {
     .padding(10)
     .style(t.fill(t.surface))
     .into()
+}
+
+/// Which conversations are listed, and in which order.
+fn filters(app: &App) -> El<'_> {
+    let t = app.t;
+    let w = app.s.w();
+    let more = &app.prefs.more;
+    let chip = |label: &'static str, on: bool, msg: Msg| -> El<'_> {
+        let b = button(text(label).size(11.5).wrapping(text::Wrapping::None))
+            .padding([2, 8])
+            .on_press(msg);
+        if on {
+            b.style(t.primary()).into()
+        } else {
+            b.style(t.outline(t.fg_2)).into()
+        }
+    };
+    let shows = [
+        (w.show_all, Show::All),
+        (w.show_running, Show::Running),
+        (w.show_waiting, Show::Waiting),
+        (w.show_unread, Show::Unread),
+    ];
+    let orders = [(w.order_updated, Order::Updated), (w.order_created, Order::Created)];
+    let mut line = iced::widget::Row::new().spacing(4);
+    for (label, show) in shows {
+        line = line.push(chip(label, more.list_show == show, Msg::ListShow(show)));
+    }
+    let mut order = iced::widget::Row::new().spacing(4);
+    for (label, by) in orders {
+        order = order.push(chip(label, more.list_order == by, Msg::ListOrder(by)));
+    }
+    column![line.wrap(), order.wrap()].spacing(4).into()
 }
 
 /// A group's line in the list: its name, folded or not, and how many it hides while folded.
@@ -198,8 +256,17 @@ fn row_of<'a>(app: &'a App, session: &'a SessionSummary, now: SystemTime, cells:
     // A title that had to be cut says all of itself under the pointer.
     let whole = (!prompt.is_empty() && title != prompt).then(|| clip(prompt, 600));
     let ago = now.duration_since(session.modified).unwrap_or_default();
-    let meta = format!("{} · {}", s.ago(ago), fill(s.msgs, "n", session.message_count));
+    let mut meta = format!("{} · {}", s.ago(ago), fill(s.msgs, "n", session.message_count));
+    // The pull request of the branch it was started on, once the git tab has read it.
+    let pr = app.pr_of(&session.id);
+    if let Some((n, _)) = pr {
+        meta.push_str(&format!(" · #{n}"));
+    }
+    let chosen = app.selected.contains(&session.id);
     let mut title_row = row![].spacing(6).align_y(Alignment::Center);
+    if chosen {
+        title_row = title_row.push(icon(Icon::Check, 12.0, t.accent));
+    }
     if pinned {
         title_row = title_row.push(icon(Icon::Pin, 11.0, t.fg_3));
     }
@@ -227,15 +294,20 @@ fn row_of<'a>(app: &'a App, session: &'a SessionSummary, now: SystemTime, cells:
     let item = button(column![title_row, text(meta).size(11.5).color(t.fg_3)].spacing(2))
         .width(Length::Fill)
         .padding([6, 10])
-        .style(t.ghost(t.fg, current || beside))
-        .on_press_maybe((!current).then(|| {
-            // With ⌘ held, beside the one shown.
-            if app.modifiers.command() && !beside {
-                Msg::Split(session.path.clone())
-            } else {
-                Msg::OpenSession(session.path.clone())
-            }
-        }));
+        .style(t.ghost(t.fg, current || beside || chosen))
+        .on_press_maybe(if app.modifiers.shift() {
+            // With ⇧ held, chosen with others, the one shown too.
+            Some(Msg::Select(session.id.clone()))
+        } else {
+            (!current).then(|| {
+                // With ⌘ held, beside the one shown.
+                if app.modifiers.command() && !beside {
+                    Msg::Split(session.path.clone())
+                } else {
+                    Msg::OpenSession(session.path.clone())
+                }
+            })
+        });
     // Pinned, named, grouped, archived or deleted from the row the pointer is on.
     let act = |mark: Icon, color, hint: &'static str, msg: Msg| {
         tip(
@@ -281,12 +353,27 @@ fn row_of<'a>(app: &'a App, session: &'a SessionSummary, now: SystemTime, cells:
     } else {
         Space::new().into()
     };
-    // And what the mark means.
-    let hint = match (whole, mark) {
-        (Some(whole), Some((_, what))) => Some(format!("{whole}\n\n{what}")),
+    // And what the mark means, its model, the branch it was started on and that branch's pull
+    // request.
+    let w = s.w();
+    let mut about: Vec<String> = Vec::new();
+    if let Some((_, what)) = mark {
+        about.push(what.to_owned());
+    }
+    if let Some(model) = &session.model {
+        about.push(fill(w.row_model, "model", model));
+    }
+    if let Some(branch) = app.prefs.branches.get(&session.id) {
+        about.push(fill(w.row_branch, "branch", branch));
+    }
+    if let Some((n, state)) = pr {
+        about.push(fill(fill(w.row_pr, "n", n).as_str(), "state", state.to_lowercase()));
+    }
+    let about = (!about.is_empty()).then(|| about.join("\n"));
+    let hint = match (whole, about) {
+        (Some(whole), Some(about)) => Some(format!("{whole}\n\n{about}")),
         (Some(whole), None) => Some(whole),
-        (None, Some((_, what))) => Some(what.to_owned()),
-        (None, None) => None,
+        (None, about) => about,
     };
     // Beside the whole row, past its buttons: beside the title alone it covered them.
     let line = row![item, actions].spacing(2).align_y(Alignment::Center);
@@ -297,5 +384,6 @@ fn row_of<'a>(app: &'a App, session: &'a SessionSummary, now: SystemTime, cells:
     mouse_area(line)
         .on_enter(Msg::RowHover(Some(session.id.clone())))
         .on_exit(Msg::RowHover(None))
+        .on_right_press(Msg::OpenMenu(crate::rows::MenuFor::Row(session.id.clone())))
         .into()
 }

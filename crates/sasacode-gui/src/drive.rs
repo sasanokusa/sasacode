@@ -1114,6 +1114,18 @@ fn a_conversation_is_deleted_only_on_the_second_press_and_never_while_it_runs() 
     assert!(!app.prefs.names.contains_key(&id) && !app.prefs.pinned.contains(&id));
     assert!(!app.prefs.groups.contains_key(&id));
 
+    // Into the trash, and out of it again by the bar's button: its name, pin and group with it.
+    let undo = crate::words::JA.undo;
+    act(&mut app, |ui| {
+        let _ = ui.click(undo).expect("the bar offers to take it back");
+    });
+    assert!(gone.exists());
+    assert_eq!(app.prefs.names.get(&id).map(String::as_str), Some("消す会話"));
+    assert!(app.prefs.pinned.contains(&id) && app.prefs.groups.contains_key(&id));
+    app.sessions = window("ja").sessions;
+    app.sessions[1].path = gone.clone();
+    app.sessions[0].path = kept.clone();
+
     // The one that runs is kept, from `/delete` too.
     app.chat.session = Some(running.clone());
     let _written = app.pretend_running();
@@ -1554,4 +1566,133 @@ fn the_git_tab_shows_the_branch_or_a_commit_side_by_side_with_files_marked_viewe
     let _ = app.update(Msg::GitDo(crate::git::Op::Commit("x".into())));
     assert!(app.confirm_default && !app.git_busy);
     assert!(app.toast.as_deref().is_some_and(|t| t.contains("mainに直接")));
+}
+
+#[test]
+fn a_right_click_on_a_row_opens_its_menu_whose_items_act_and_esc_puts_it_away() {
+    use crate::rows::MenuFor;
+    let mut app = window("ja");
+    let id = app.sessions[2].id.clone();
+    // A right click on its row.
+    act(&mut app, |ui| {
+        use iced::mouse::{Button, Event as Mouse};
+        let at = ui
+            .find("1日前 · 12件のメッセージ")
+            .expect("the row is listed")
+            .bounds()
+            .center();
+        ui.point_at(at);
+        let _ = ui.simulate([
+            iced::Event::Mouse(Mouse::ButtonPressed(Button::Right)),
+            iced::Event::Mouse(Mouse::ButtonReleased(Button::Right)),
+        ]);
+    });
+    assert!(matches!(&app.menu, Some(m) if m.what == MenuFor::Row(id.clone())));
+    assert!(app.menu.is_some());
+    let pin = app.s.pin;
+    act(&mut app, |ui| {
+        let _ = ui.click(pin).expect("the menu offers to pin it");
+    });
+    assert!(app.prefs.pinned.contains(&id) && app.menu.is_none());
+
+    // Esc puts it away, and does not stop the run of the one shown.
+    let _ = app.update(Msg::OpenMenu(MenuFor::Row(id.clone())));
+    let _written = app.pretend_running();
+    let _ = app.update(Msg::Stop);
+    assert!(app.menu.is_none() && app.running());
+
+    // A file's menu puts it in the input.
+    let _ = app.update(Msg::OpenMenu(MenuFor::File(app.cwd.join("src/lib.rs"))));
+    let mention = crate::words::JA.menu_mention;
+    act(&mut app, |ui| {
+        let _ = ui.click(mention).expect("the file's menu offers to mention it");
+    });
+    assert!(typed(&app).contains("@src/lib.rs"), "{}", typed(&app));
+}
+
+#[test]
+fn conversations_chosen_together_are_archived_at_once_and_taken_back_by_cmd_z() {
+    let mut app = window("ja");
+    let (a, b) = (app.sessions[1].id.clone(), app.sessions[3].id.clone());
+    // ⇧-click on a row chooses it.
+    app.modifiers = Modifiers::SHIFT;
+    act(&mut app, |ui| {
+        let _ = ui.click("3時間前 · 41件のメッセージ").expect("the row is listed");
+    });
+    app.modifiers = Modifiers::empty();
+    assert!(app.selected.contains(&a));
+    let _ = app.update(Msg::Select(b.clone()));
+    assert!(says(&app, "2件を選択中"));
+
+    let _ = app.update(Msg::Bulk(crate::rows::Bulk::Archive));
+    assert!(app.prefs.archived.contains(&a) && app.prefs.archived.contains(&b));
+    assert!(app.selected.is_empty() && !app.found().any(|s| s.id == a || s.id == b));
+    assert!(says(&app, "2件をアーカイブしました"));
+
+    // ⌘Z is the window's while no field has the keyboard, and takes it back.
+    assert!(matches!(
+        shortcut(&Key::Character("z".into()), Modifiers::COMMAND),
+        Some(Msg::UndoKey)
+    ));
+    let _ = app.update(Msg::UndoKeyHeld(true));
+    assert!(app.prefs.archived.contains(&a));
+    let _ = app.update(Msg::UndoKeyHeld(false));
+    assert!(!app.prefs.archived.contains(&a) && !app.prefs.archived.contains(&b));
+    let _ = app.update(Msg::Undo);
+    assert_eq!(app.toast.as_deref(), Some(crate::words::JA.undo_none));
+
+    // Deleted together, on the second press only.
+    let _ = app.update(Msg::Select(a.clone()));
+    let _ = app.update(Msg::Bulk(crate::rows::Bulk::Delete));
+    assert!(app.sessions.iter().any(|s| s.id == a));
+    assert!(says(&app, "もう一度押すと1件の会話を削除します（7日間は元に戻せます）"));
+}
+
+#[test]
+fn the_list_shows_the_unread_alone_or_the_newest_started_first_and_finds_a_branch() {
+    let mut app = window("ja");
+    let unread = app.sessions[2].id.clone();
+    let _ = app.update(Msg::MarkUnread(unread.clone()));
+    let _ = app.update(Msg::ListShow(crate::layout::Show::Unread));
+    let shown: Vec<String> = app.found().map(|s| s.id.clone()).collect();
+    assert_eq!(shown, vec![unread.clone()]);
+    // Kept open while it leaves some out.
+    assert!(says(&app, crate::words::JA.show_unread));
+    let _ = app.update(Msg::ListShow(crate::layout::Show::All));
+
+    for (i, s) in app.sessions.iter_mut().enumerate() {
+        s.created_at = format!("2026-11-0{}T00:00:00Z", i + 1);
+    }
+    let _ = app.update(Msg::ListOrder(crate::layout::Order::Created));
+    let first = app.found().next().map(|s| s.id.clone());
+    assert_eq!(first, Some(app.sessions[3].id.clone()));
+
+    let id = app.sessions[2].id.clone();
+    let _ = app.set(|p| {
+        p.branches.insert(id.clone(), "fix/timezone".into());
+    });
+    app.prs.insert("fix/timezone".into(), (42, "OPEN".into()));
+    app.filter = "fix/time".into();
+    assert_eq!(app.found().map(|s| s.id.clone()).collect::<Vec<_>>(), vec![id.clone()]);
+    app.filter = "#42".into();
+    assert_eq!(app.found().map(|s| s.id.clone()).collect::<Vec<_>>(), vec![id.clone()]);
+    app.filter.clear();
+    let _ = app.update(Msg::ListOrder(crate::layout::Order::Updated));
+    assert!(says(&app, "1日前 · 12件のメッセージ · #42"));
+}
+
+#[test]
+fn conversations_unused_for_long_are_archived_but_not_a_pinned_one_or_one_taken_back() {
+    let mut app = window("ja");
+    let (day, three) = (app.sessions[2].id.clone(), app.sessions[3].id.clone());
+    let _ = app.update(Msg::Pin(day.clone()));
+    let _ = app.update(Msg::SetArchiveAfter(Some(1)));
+    // Older than a day: the one 26 hours ago is pinned, the one 3 days ago is archived.
+    assert!(app.prefs.archived.contains(&three) && !app.prefs.archived.contains(&day));
+    assert!(says(&app, "しばらく使っていない会話を1件アーカイブしました"));
+    // Taken back by hand, it stays.
+    let _ = app.update(Msg::Archive(three.clone()));
+    assert!(!app.prefs.archived.contains(&three) && app.prefs.more.kept.contains(&three));
+    app.archive_idle();
+    assert!(!app.prefs.archived.contains(&three));
 }

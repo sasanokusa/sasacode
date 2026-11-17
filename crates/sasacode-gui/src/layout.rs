@@ -130,6 +130,31 @@ pub enum Width {
     Full,
 }
 
+/// Which conversations the list shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Show {
+    #[default]
+    All,
+    /// Those working now.
+    Running,
+    /// Those waiting for an approval.
+    Waiting,
+    /// Those with news, or marked unread.
+    Unread,
+}
+
+/// In which order the list shows them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Order {
+    /// The one written to last first.
+    #[default]
+    Updated,
+    /// The one started last first.
+    Created,
+}
+
 /// The choices added later, each kept under its own name at the top of the file. Two windows keep
 /// each other's: a choice this window did not change is taken from the file.
 #[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
@@ -149,6 +174,13 @@ pub struct More {
     pub hide_whitespace: bool,
     /// Files of the git tab marked as viewed, by branch: `path#hash` of their diff.
     pub viewed: BTreeMap<String, BTreeSet<String>>,
+    /// Which conversations the list shows, and in which order.
+    pub list_show: Show,
+    pub list_order: Order,
+    /// Conversations not written to for this many days are archived; none keeps them.
+    pub archive_after: Option<u32>,
+    /// Conversations taken back from the archive by hand, which are not archived again for age.
+    pub kept: BTreeSet<String>,
 }
 
 impl More {
@@ -606,6 +638,10 @@ mod tests {
                 split_diff: true,
                 hide_whitespace: true,
                 viewed: [("topic".to_owned(), ["a.rs#1".to_owned()].into())].into(),
+                list_show: Show::Unread,
+                list_order: Order::Created,
+                archive_after: Some(30),
+                kept: ["eeee".to_owned()].into(),
             },
         };
         write(&file, &Layout::default(), &prefs).unwrap();

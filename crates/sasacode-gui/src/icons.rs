@@ -42,6 +42,8 @@ pub enum Icon {
     Tag,
     Play,
     Toc,
+    Filter,
+    Undo,
 }
 
 impl Icon {
@@ -96,6 +98,8 @@ impl Icon {
             Icon::Tag => r#"<path d="M2.5 2.5h5.2l6 6-5.2 5.2-6-6zM5.3 5.3h.1"/>"#,
             Icon::Play => r#"<path d="M5 3.5v9l7-4.5z"/>"#,
             Icon::Toc => r#"<path d="M6 4h7.5M6 8h7.5M8 12h5.5M2.5 4h.1M2.5 8h.1M4.5 12h.1"/>"#,
+            Icon::Filter => r#"<path d="M2.5 3.5h11l-4.3 5v4.2l-2.4 1v-5.2z"/>"#,
+            Icon::Undo => r#"<path d="M5.5 3 2.5 6l3 3M2.8 6h6.7a4 4 0 0 1 0 8H7"/>"#,
         }
     }
 

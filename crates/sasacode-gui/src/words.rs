@@ -67,7 +67,7 @@ words! {
     swept: "プルリクエストが閉じた会話を{n}件アーカイブしました", "Archived {n} conversations whose pull request closed";
     // The list of conversations: deleting one, and groups.
     c_delete: "会話を削除", "Delete conversation";
-    delete_sure: "もう一度押すと会話のログを削除します（元に戻せません）", "Click again to delete the conversation's log (this can't be undone)";
+    delete_sure: "もう一度押すと会話を削除します（7日間は元に戻せます）", "Click again to delete the conversation (it can be brought back for 7 days)";
     delete_running: "実行中の会話は削除できません。止めてからもう一度", "A running conversation can't be deleted. Stop it first";
     deleted: "会話を削除しました", "Conversation deleted";
     c_group: "会話をグループに入れる", "Put conversation in a group";
@@ -188,6 +188,44 @@ words! {
     split_swap: "こちらで続ける", "Continue here";
     split_swap_hint: "メインに移して入力や承認ができるようにします。今の会話はこちらに来ます", "Moves it to the main place to type or answer; the current one comes here";
     split_waiting: "承認を待っています。続けるにはメインに移してください", "Waiting for an approval. Move it to the main place to answer";
+    // The list: its menu, rows chosen together, its filter, the trash and taking back.
+    menu_open: "開く", "Open";
+    menu_window: "新しいウィンドウで開く", "Open in a new window";
+    menu_select: "選択に加える", "Add to selection";
+    menu_unselect: "選択から外す", "Remove from selection";
+    menu_copy_id: "会話IDをコピー", "Copy conversation ID";
+    menu_copy_log: "ログのパスをコピー", "Copy log path";
+    menu_copy_path: "パスをコピー", "Copy path";
+    menu_mention: "@で入力欄に入れる", "Mention in the input (@)";
+    selected_n: "{n}件を選択中", "{n} selected";
+    select_hint: "⇧クリックで会話をまとめて選べます", "⇧-click conversations to choose several";
+    select_none: "選択をやめる", "Clear selection";
+    bulk_unread: "未読・既読を切り替える", "Toggle read";
+    delete_n_sure: "もう一度押すと{n}件の会話を削除します（7日間は元に戻せます）", "Click again to delete {n} conversations (they can be brought back for 7 days)";
+    deleted_n: "{n}件の会話を削除しました", "Deleted {n} conversations";
+    archived_one: "アーカイブしました", "Archived";
+    unarchived_one: "一覧に戻しました", "Moved back to the list";
+    archived_n_done: "{n}件をアーカイブしました", "Archived {n} conversations";
+    unarchived_n: "{n}件を一覧に戻しました", "Moved {n} conversations back to the list";
+    archived_idle: "しばらく使っていない会話を{n}件アーカイブしました", "Archived {n} conversations not used for a while";
+    c_undo: "一覧の変更を元に戻す", "Undo the last list change";
+    undo: "元に戻す", "Undo";
+    undone: "元に戻しました", "Undone";
+    undo_none: "元に戻せる変更はありません", "Nothing to undo";
+    read_all: "すべての会話を既読にする", "Mark all conversations read";
+    list_filter: "絞り込みと並べ替え", "Filter and sort";
+    show_all: "すべて", "All";
+    show_running: "動作中", "Running";
+    show_waiting: "承認待ち", "Waiting";
+    show_unread: "未読", "Unread";
+    order_updated: "更新順", "Last updated";
+    order_created: "作成順", "Created";
+    row_model: "モデル: {model}", "Model: {model}";
+    row_branch: "ブランチ: {branch}", "Branch: {branch}";
+    row_pr: "プルリクエスト: #{n}（{state}）", "Pull request: #{n} ({state})";
+    set_archive_after: "使っていない会話を自動でアーカイブ", "Archive conversations not used for";
+    archive_never: "しない", "Never";
+    archive_days: "{n}日", "{n} days";
 }
 
 #[cfg(test)]

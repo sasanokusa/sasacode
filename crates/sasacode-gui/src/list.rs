@@ -1,5 +1,5 @@
 //! What the list of conversations does besides opening one: its groups, which the user names and
-//! folds, and deleting a conversation's log for good.
+//! folds, and deleting a conversation's log, into the trash.
 
 use iced::Task;
 use iced::widget::operation;
@@ -46,16 +46,22 @@ impl App {
     /// shows none of its own, unless something is searched for.
     pub(crate) fn listed(&self) -> Vec<Listed<'_>> {
         let searching = !self.filter.trim().is_empty();
+        // Newest first, by the last time written to, or as the settings say by when started.
+        let mut by_order: Vec<&SessionSummary> = self.sessions.iter().collect();
+        if self.prefs.more.list_order == crate::layout::Order::Created {
+            by_order.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        }
+        let wanted = |s: &&SessionSummary| self.finds(s) && self.shows(s);
         let found: Vec<&SessionSummary> = if self.show_archived {
-            self.sessions.iter().filter(|s| self.finds(s)).collect()
+            by_order.into_iter().filter(wanted).collect()
         } else {
             let pins = self
                 .prefs
                 .pinned
                 .iter()
                 .filter_map(|id| self.sessions.iter().find(|s| s.id == *id));
-            let rest = self.sessions.iter().filter(|s| !self.prefs.pinned.contains(&s.id));
-            pins.chain(rest).filter(|s| self.finds(s)).collect()
+            let rest = by_order.into_iter().filter(|s| !self.prefs.pinned.contains(&s.id));
+            pins.chain(rest).filter(wanted).collect()
         };
         let mut out: Vec<Listed<'_>> = Vec::new();
         let mut sections = vec![Section::Archived, Section::Pinned, Section::Rest];
@@ -105,7 +111,8 @@ impl App {
         let w = self.s.w();
         let task = match msg {
             Msg::Delete(id) => {
-                // Asked twice: a log deleted is gone, and `sasacode -r` and `/usage` lose it too.
+                // Asked twice: the log goes to the trash, where `sasacode -r` and `/usage` do not
+                // see it, and comes back from it with 元に戻す for a week.
                 if self.confirm_delete.as_deref() != Some(id.as_str()) {
                     self.confirm_delete = Some(id);
                     self.toast = Some(w.delete_sure.to_owned());
@@ -116,25 +123,11 @@ impl App {
                     self.toast = Some(w.delete_running.to_owned());
                     return Ok(Task::none());
                 }
-                let Some(path) = self.sessions.iter().find(|s| s.id == id).map(|s| s.path.clone()) else {
-                    return Ok(Task::none());
-                };
-                if let Err(e) = std::fs::remove_file(&path) {
-                    self.toast = Some(format!("{}: {e}", path.display()));
-                    return Ok(Task::none());
-                }
-                self.forget(&id);
-                self.bodies.remove(&path);
-                self.toast = Some(w.deleted.to_owned());
-                if self.chat.session.as_deref() == Some(id.as_str()) {
-                    self.chat = self.new_chat();
-                    return Ok(operation::focus(crate::app::INPUT));
-                }
-                Task::none()
+                self.delete_one(&id)
             }
             Msg::Group(id) => {
                 let name = self.prefs.groups.get(&id).cloned().unwrap_or_default();
-                self.overlay = Some(Overlay::Group { id, name });
+                self.overlay = Some(Overlay::Group { ids: vec![id], name });
                 Task::batch([operation::focus(GROUP), operation::select_all(GROUP)])
             }
             Msg::GroupPick(name) => {
@@ -144,15 +137,19 @@ impl App {
                 return Ok(self.update(Msg::GroupSave));
             }
             Msg::GroupSave => {
-                if let Some(Overlay::Group { id, name }) = self.overlay.take() {
+                if let Some(Overlay::Group { ids, name }) = self.overlay.take() {
                     let name = name.trim().to_owned();
+                    self.remember();
                     let _ = self.set(|p| {
-                        if name.is_empty() {
-                            p.groups.remove(&id);
-                        } else {
-                            p.groups.insert(id, name);
+                        for id in ids {
+                            if name.is_empty() {
+                                p.groups.remove(&id);
+                            } else {
+                                p.groups.insert(id, name.clone());
+                            }
                         }
                     });
+                    self.selected.clear();
                 }
                 operation::focus(crate::app::INPUT)
             }
@@ -168,7 +165,7 @@ impl App {
     }
 
     /// A deleted conversation: what the window held of it, and what the settings said of it.
-    fn forget(&mut self, id: &str) {
+    pub(crate) fn forget(&mut self, id: &str) {
         self.parked.retain(|c| c.session.as_deref() != Some(id));
         let _ = self.set(|p| {
             p.names.remove(id);
@@ -176,7 +173,10 @@ impl App {
             p.archived.remove(id);
             p.branches.remove(id);
             p.groups.remove(id);
+            p.more.unread.remove(id);
+            p.more.kept.remove(id);
         });
+        self.selected.remove(id);
         self.sessions.retain(|s| s.id != id);
     }
 }

@@ -31,9 +31,9 @@ pub enum Overlay {
     },
     /// The side question and its answer, `App::aside`.
     Side,
-    /// The group of the conversation with this id, as it is typed.
+    /// The group of the conversations with these ids, as it is typed.
     Group {
-        id: String,
+        ids: Vec<String>,
         name: String,
     },
     /// The pull request being written, `App::pr_draft`.
@@ -118,6 +118,8 @@ impl App {
             entry(s.c_export, None, Msg::Copy(Clip::Conversation)),
             entry(s.c_steps, None, Msg::Command(Command::Steps)),
             entry(s.c_model, None, Msg::Command(Command::Model)),
+            entry(s.w().c_undo, Some(format!("{}Z", crate::view::MOD)), Msg::Undo),
+            entry(s.w().read_all, None, Msg::ReadAll),
         ];
         if let Some(id) = self.chat.session.clone() {
             let unread = self.prefs.more.unread.contains(&id) || self.chat.unread;
@@ -446,19 +448,33 @@ impl App {
                 system::new_window(&self.program, &cwd, session.as_deref(), at);
                 Task::none()
             }
-            Msg::Pin(id) => self.set(|p| {
-                if let Some(i) = p.pinned.iter().position(|x| *x == id) {
-                    p.pinned.remove(i);
-                } else {
-                    p.pinned.push(id);
-                }
-            }),
-            Msg::Archive(id) => self.set(|p| {
-                if !p.archived.remove(&id) {
-                    p.pinned.retain(|x| *x != id);
-                    p.archived.insert(id);
-                }
-            }),
+            Msg::Pin(id) => {
+                self.remember();
+                self.set(|p| {
+                    if let Some(i) = p.pinned.iter().position(|x| *x == id) {
+                        p.pinned.remove(i);
+                    } else {
+                        p.pinned.push(id);
+                    }
+                })
+            }
+            Msg::Archive(id) => {
+                self.remember();
+                let archiving = !self.prefs.archived.contains(&id);
+                let _ = self.set(|p| {
+                    if p.archived.remove(&id) {
+                        // Taken back by hand: not archived again for its age.
+                        p.more.kept.insert(id);
+                    } else {
+                        p.pinned.retain(|x| *x != id);
+                        p.more.kept.remove(&id);
+                        p.archived.insert(id);
+                    }
+                });
+                let w = self.s.w();
+                self.told_undoable(if archiving { w.archived_one } else { w.unarchived_one }.to_owned());
+                Task::none()
+            }
             Msg::Rename(id) => {
                 let name = self.prefs.names.get(&id).cloned().unwrap_or_default();
                 self.overlay = Some(Overlay::Rename { id, name });

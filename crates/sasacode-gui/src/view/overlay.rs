@@ -352,6 +352,20 @@ fn settings(app: &App) -> El<'_> {
         .align_y(Alignment::Center),
     ]
     .spacing(6);
+    let mut idle = row![choice(
+        w.archive_never.to_owned(),
+        p.more.archive_after.is_none(),
+        Msg::SetArchiveAfter(None)
+    )]
+    .spacing(8);
+    for days in [7, 30, 90] {
+        idle = idle.push(choice(
+            fill(w.archive_days, "n", days),
+            p.more.archive_after == Some(days),
+            Msg::SetArchiveAfter(Some(days)),
+        ));
+    }
+    let idle = column![heading(w.set_archive_after), idle].spacing(6);
     let switch = |label: &'static str, on: bool, msg: fn(bool) -> Msg| {
         toggler(on)
             .label(label)
@@ -370,6 +384,7 @@ fn settings(app: &App) -> El<'_> {
         switch(s.set_steps, p.steps, Msg::SetSteps),
         switch(s.w().set_auto_archive, p.auto_archive, Msg::SetAutoArchive),
         switch(s.w().set_suggest, p.suggest, Msg::SetSuggest),
+        idle,
         width,
         lang,
         scripts(app),

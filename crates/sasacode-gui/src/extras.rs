@@ -98,7 +98,7 @@ impl App {
                 self.s = App::strings_for(lang);
                 Task::none()
             }
-            other => return Err(other),
+            other => return self.update_rows(other),
         };
         Ok(task)
     }

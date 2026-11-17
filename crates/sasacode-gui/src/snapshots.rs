@@ -39,6 +39,8 @@ pub(crate) fn window(lang: &str) -> App {
         },
         Strings::get(lang),
     );
+    // Never the user's own: a deleted log would go to its trash.
+    app.home = Some(std::env::temp_dir().join(format!("sasacode-gui-home-{}", std::process::id())));
     let prompts = [
         ("再試行を指数バックオフにして", 40, 28),
         ("注文一覧のページングが2ページ目で重複する", 3 * 3600, 41),

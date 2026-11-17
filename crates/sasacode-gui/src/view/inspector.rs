@@ -421,9 +421,20 @@ fn git_tab(app: &App) -> El<'_> {
             }
             body = body.push(hunks(app, f, false));
         }
-        col = col.push(card(app, &f.path, head.into(), Some(body.into())));
+        col = col.push(on_file(
+            app,
+            &f.path,
+            card(app, &f.path, head.into(), Some(body.into())),
+        ));
     }
     col.into()
+}
+
+/// What a right click on a file of the folder opens: its menu.
+fn on_file<'a>(app: &App, path: &str, content: El<'a>) -> El<'a> {
+    iced::widget::mouse_area(content)
+        .on_right_press(Msg::OpenMenu(crate::rows::MenuFor::File(app.cwd.join(path))))
+        .into()
 }
 
 /// The branch's pull request: its state, its checks, what its reviewers said, and what can be done
@@ -740,7 +751,11 @@ fn scoped_files(app: &App) -> El<'_> {
         } else {
             diff_view(t, s, diff, 400)
         };
-        col = col.push(card(app, path, head.into(), (!viewed).then_some(body)));
+        col = col.push(on_file(
+            app,
+            path,
+            card(app, path, head.into(), (!viewed).then_some(body)),
+        ));
     }
     col.into()
 }
@@ -1019,7 +1034,9 @@ fn files_tab(app: &App) -> El<'_> {
         }
         let found: Vec<&String> = app.found_files().collect();
         for f in found.iter().take(crate::files::LISTED) {
-            list = list.push(
+            list = list.push(on_file(
+                app,
+                f,
                 button(
                     text(clip_start(f, cells(app, 40.0)))
                         .size(12)
@@ -1030,8 +1047,9 @@ fn files_tab(app: &App) -> El<'_> {
                 .width(Length::Fill)
                 .padding([3, 8])
                 .style(t.ghost(t.fg, false))
-                .on_press(Msg::ViewFile(app.cwd.join(f.as_str()), None)),
-            );
+                .on_press(Msg::ViewFile(app.cwd.join(f.as_str()), None))
+                .into(),
+            ));
         }
         if found.len() > crate::files::LISTED {
             list = list.push(

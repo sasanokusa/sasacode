@@ -243,6 +243,17 @@ pub struct App {
     pub(crate) suggestion: Option<(u64, String)>,
     /// The conversation beside the one shown, by id: one of `parked`.
     pub(crate) split: Option<String>,
+    /// The menu a right click opened.
+    pub(crate) menu: Option<crate::rows::Menu>,
+    /// Conversations chosen together in the list, by id.
+    pub(crate) selected: std::collections::BTreeSet<String>,
+    /// Changes of the list to take back, the last last; and the notice that offers to.
+    pub(crate) undo: Vec<crate::rows::Undo>,
+    pub(crate) undo_toast: Option<String>,
+    /// The line under the search that picks which conversations are listed, open.
+    pub(crate) list_tools: bool,
+    /// Pull requests read so far, by branch: number and state.
+    pub(crate) prs: HashMap<String, (u64, String)>,
     /// The modifier keys held, for ⌘ and a click in the list.
     pub(crate) modifiers: keyboard::Modifiers,
     /// The shortcut whose new key is waited for in the list of keys, and what was said of the last
@@ -539,6 +550,28 @@ pub enum Msg {
     SetWhitespace(bool),
     /// A file marked as viewed, or not, by its key.
     Viewed(String),
+    /// A menu opened by a right click, where the pointer is; put away; or one of its items chosen.
+    OpenMenu(crate::rows::MenuFor),
+    CloseMenu,
+    MenuDo(Box<Msg>),
+    /// A conversation chosen in the list with others, by ⇧-click; none chosen; done to all chosen.
+    Select(String),
+    SelectNone,
+    Bulk(crate::rows::Bulk),
+    /// Which conversations the list shows and in which order, and the line that picks them.
+    ListShow(crate::layout::Show),
+    ListOrder(crate::layout::Order),
+    ListTools,
+    /// Conversations archived after this many days unwritten to.
+    SetArchiveAfter(Option<u32>),
+    /// Every conversation marked read.
+    ReadAll,
+    /// A conversation of the list, gone on with in the terminal.
+    RowTui(String),
+    /// The last change of the list taken back; by ⌘Z, unless a field has the keyboard.
+    Undo,
+    UndoKey,
+    UndoKeyHeld(bool),
     SetMergeMethod(&'static str),
     /// The pointer over a row of the list, or off it.
     RowHover(Option<String>),
@@ -636,6 +669,10 @@ impl App {
             .map(crate::composer::read_history)
             .unwrap_or_default();
         app.reload_sessions();
+        if let Some(home) = &app.home {
+            crate::rows::purge_trash(home);
+        }
+        app.archive_idle();
         // One that is not there is not an error: a conversation nobody has said anything in has an
         // id and no log yet. The window opens on a new one.
         if let Some(wanted) = wanted
@@ -739,6 +776,12 @@ impl App {
             pr_draft: None,
             suggestion: None,
             split: None,
+            menu: None,
+            selected: std::collections::BTreeSet::new(),
+            undo: Vec::new(),
+            undo_toast: None,
+            list_tools: false,
+            prs: HashMap::new(),
             modifiers: keyboard::Modifiers::default(),
             script_runs: Vec::new(),
             script_runs_made: 0,
@@ -809,6 +852,7 @@ impl App {
             window::resize_events().map(|(_, size)| Msg::Resized(size)),
             keys,
             event::listen_with(window_event),
+            event::listen_with(crate::rows::pointer),
             window::close_requests().map(Msg::CloseAsked),
         ];
         // Conversations whose pull request was merged or closed are looked for now and then.
@@ -844,7 +888,7 @@ impl App {
         written
     }
 
-    fn reload_sessions(&mut self) {
+    pub(crate) fn reload_sessions(&mut self) {
         self.sessions = match &self.home {
             Some(home) => list_sessions(home, &self.cwd),
             None => Vec::new(),
@@ -956,6 +1000,11 @@ impl App {
     }
 
     pub fn update(&mut self, msg: Msg) -> Task<Msg> {
+        // Esc puts a menu away first.
+        if self.menu.is_some() && matches!(msg, Msg::Stop | Msg::Escaped) {
+            self.menu = None;
+            return Task::none();
+        }
         // Over the window, Esc puts away what is drawn there; it never stops a run.
         if self.overlay.is_some() && matches!(msg, Msg::Stop | Msg::FocusInput | Msg::Escaped) {
             self.overlay = None;
@@ -1443,7 +1492,15 @@ impl App {
                     .names
                     .get(&s.id)
                     .is_some_and(|n| n.to_lowercase().contains(&needle))
-                || self.bodies.get(&s.path).is_some_and(|(_, body)| body.contains(&needle)))
+                || self.bodies.get(&s.path).is_some_and(|(_, body)| body.contains(&needle))
+                // Its model, the branch it was started on, and that branch's pull request: `#12`.
+                || s.model.as_deref().is_some_and(|m| m.to_lowercase().contains(&needle))
+                || self
+                    .prefs
+                    .branches
+                    .get(&s.id)
+                    .is_some_and(|b| b.to_lowercase().contains(&needle))
+                || self.pr_of(&s.id).is_some_and(|(n, _)| format!("#{n}") == needle))
     }
 
     /// What is said in the conversations that have not been read for the search, or changed since,
@@ -1919,6 +1976,14 @@ pub(crate) fn shortcut(key: &Key, modifiers: keyboard::Modifiers) -> Option<Msg>
         return Some(Msg::CommandEnter {
             shift: modifiers.shift(),
         });
+    }
+    // ⌘Z, which no setting takes: a change of the list taken back, while no field has the keyboard.
+    if let Key::Character(c) = key.as_ref()
+        && c.eq_ignore_ascii_case("z")
+        && !modifiers.shift()
+        && !modifiers.alt()
+    {
+        return Some(Msg::UndoKey);
     }
     // The others as bound: by default, or as the settings say.
     let chord = crate::keys::Chord::of(key, modifiers)?;

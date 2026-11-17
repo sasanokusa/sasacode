@@ -7,6 +7,7 @@
 mod chords;
 mod dock;
 mod inspector;
+mod menu;
 mod overlay;
 mod sidebar;
 mod split;
@@ -118,6 +119,11 @@ pub fn window(app: &App) -> El<'_> {
         );
     }
     let window = container(column![panes, hline(t), status_bar(app)]).style(t.fill(t.bg));
+    // A menu a right click opened lies over all of it.
+    let window: El<'_> = match menu::layer(app) {
+        Some(menu) => stack![window, menu].into(),
+        None => window.into(),
+    };
     overlay::over(app, chords::chords(window))
 }
 
@@ -521,6 +527,24 @@ fn status_bar(app: &App) -> El<'_> {
                 tooltip::Position::Top,
             ))
         };
+    }
+    // A change of the list just made, taken back from here.
+    if app.toast.is_some() && app.toast == app.undo_toast && !app.undo.is_empty() {
+        let w = s.w();
+        rest += 8.0 + prose_width(w.undo) + 24.0;
+        right = right.push(
+            button(
+                row![
+                    icon(Icon::Undo, 11.0, t.accent),
+                    item(w.undo.to_owned()).color(t.accent)
+                ]
+                .spacing(4)
+                .align_y(Alignment::Center),
+            )
+            .padding([1, 6])
+            .style(t.ghost(t.accent, false))
+            .on_press(Msg::Undo),
+        );
     }
     let cwd = app.cwd.to_string_lossy();
     let shown = clip_start(&cwd, folder_cells(app.width, rest));

@@ -23,6 +23,7 @@ mod list;
 mod outline;
 mod overlay;
 mod review;
+mod rows;
 mod runner;
 mod scope;
 mod scripts;

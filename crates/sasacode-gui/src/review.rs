@@ -111,6 +111,10 @@ impl App {
             Msg::PrRefresh => self.refresh_pr(),
             Msg::PrLoaded(pr) => {
                 self.pr = pr.map(|pr| *pr);
+                // Kept by branch, for the conversations started on it.
+                if let (Some(pr), Some(branch)) = (&self.pr, &self.git.branch) {
+                    self.prs.insert(branch.clone(), (pr.number, pr.state.clone()));
+                }
                 self.pr_loading = false;
                 Task::none()
             }
