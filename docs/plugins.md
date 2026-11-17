@@ -219,7 +219,7 @@ description: Write release notes from the commits since the last tag.
 
 ### free-search
 
-キー不要でローカルで動くWeb検索のMCPサーバー（複数の検索エンジン、ページの取得、文書の読み取り）。有効にすると、`uvx free-search-mcp`を`free-search`という名前のstdioのMCPサーバーとしてつなぐ。ツールは`mcp__free-search__<tool>`になり、ほかのMCPのツールと同じ権限確認を通る。[uv](https://docs.astral.sh/uv/)が入っていないと接続できない。設定はない。
+キー不要でローカルで動くWeb検索のMCPサーバー（複数の検索エンジン、ページの取得、文書の読み取り）。有効にすると、`uvx free-search-mcp`を`free-search`という名前のstdioのMCPサーバーとしてつなぐ。ツールは`mcp__free-search__<tool>`になり、ほかのMCPのツールと同じ権限確認を通る。[uv](https://docs.astral.sh/uv/)が入っていないと接続できない。`/mcp`とステータス行には、`mcpServers`のサーバーと並んで出る（`mcpServers`に同じ名前があれば、そちらを使う）。`mcp`プラグインを無効にしても、free-searchだけで動く。設定はない。
 
 ```json
 { "plugins": { "enabled": ["free-search"] } }

@@ -612,13 +612,19 @@ impl Harness {
                     .get("enabled")
                     .and_then(Value::as_bool)
                     .unwrap_or(false);
+                let mcp_off = disabled.iter().any(|d| d == "mcp");
+                let mut free_search = false;
                 for p in sasacode_bundled::PLUGINS {
                     if p.name == "openai-codex" {
                         continue;
                     }
                     let on = sasacode_bundled::wanted(p, &enabled, &disabled)
                         || (p.name == "jev-guard" && jev_on && !disabled.iter().any(|d| d == "jev-guard"));
-                    if on {
+                    if on && p.name == "free-search" && !mcp_off {
+                        // Its server joins the mcp plugin's below, under one `/mcp`.
+                        self.host.load(p.name, sasacode_bundled::free_search::joined).await;
+                        free_search = true;
+                    } else if on {
                         self.host.load(p.name, p.plugin).await;
                     }
                 }
@@ -634,11 +640,16 @@ impl Harness {
                         .load("skills", sasacode_skills::create_skills_plugin(dirs, opts))
                         .await;
                 }
-                if !disabled.iter().any(|d| d == "mcp") {
+                if !mcp_off {
                     // Project MCP servers are only in `config` when the project is trusted.
-                    let servers = sasacode_mcp::McpServerConfig::servers_from_json(
+                    let mut servers = sasacode_mcp::McpServerConfig::servers_from_json(
                         self.config.get("mcpServers").unwrap_or(&Value::Null),
                     );
+                    if free_search {
+                        for (name, server) in sasacode_bundled::free_search::servers() {
+                            servers.entry(name).or_insert(server);
+                        }
+                    }
                     self.host.load("mcp", sasacode_mcp::create_mcp_plugin(servers)).await;
                 }
                 self.start_session(self.opts.resume.is_some()).await;

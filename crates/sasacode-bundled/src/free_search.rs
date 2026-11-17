@@ -17,6 +17,14 @@ pub fn servers() -> McpServers {
     servers
 }
 
+/// On its own (the `mcp` plugin disabled): connects the server with a `/mcp` of its own. With the
+/// `mcp` plugin, setup loads [`joined`] instead and adds [`servers`] to that plugin's, so one `/mcp`
+/// and one status line cover every server.
 pub fn plugin(api: PluginApi) -> BoxFuture<'static, anyhow::Result<()>> {
     Box::pin(mcp_plugin(api, servers()))
+}
+
+/// free-search while the `mcp` plugin runs its server: nothing to register here.
+pub fn joined(_api: PluginApi) -> BoxFuture<'static, anyhow::Result<()>> {
+    Box::pin(async { Ok(()) })
 }

@@ -118,6 +118,56 @@ async fn jev_guards_own_enabled_setting_turns_it_on_as_it_did_when_jev_guard_was
     assert!(!has(&plugins(&*loaded(&t, false).await), "jev-guard"));
 }
 
+/// The names `/mcp` completes: its servers, after "reconnect".
+async fn mcp_names(h: &Harness) -> (Vec<String>, Vec<String>) {
+    let mcp: Vec<_> = h
+        .host
+        .commands()
+        .into_iter()
+        .filter(|c| c.command.name == "mcp")
+        .collect();
+    let owners = mcp.iter().map(|c| c.owner.clone()).collect();
+    let complete = mcp
+        .last()
+        .and_then(|c| c.command.complete.clone())
+        .expect("/mcp completes");
+    (
+        owners,
+        complete(String::new()).await.into_iter().map(|o| o.value).collect(),
+    )
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn free_search_joins_the_mcp_plugins_servers_under_one_mcp_command() {
+    // PATH holds only the keychain stub, so uvx is not found and nothing is downloaded.
+    let Some(t) = child() else { return };
+    configure(
+        &t,
+        json!({ "plugins": { "enabled": ["free-search"] }, "mcpServers": { "mine": { "command": "no-such-server" } } }),
+    );
+    let h = loaded(&t, false).await;
+    assert!(has(&plugins(&h), "free-search"), "{:?}", plugins(&h));
+    let (owners, names) = mcp_names(&h).await;
+    assert_eq!(owners, ["mcp"]);
+    assert_eq!(names, ["reconnect", "mine", "free-search"]);
+    // A server the user named free-search is theirs.
+    configure(
+        &t,
+        json!({ "plugins": { "enabled": ["free-search"] }, "mcpServers": { "free-search": { "command": "mine" } } }),
+    );
+    let h = loaded(&t, false).await;
+    assert_eq!(mcp_names(&h).await.1, ["reconnect", "free-search"]);
+    // Without the mcp plugin, free-search connects its server and `/mcp` on its own.
+    configure(
+        &t,
+        json!({ "plugins": { "enabled": ["free-search"], "disabled": ["mcp"] } }),
+    );
+    let h = loaded(&t, false).await;
+    let (owners, names) = mcp_names(&h).await;
+    assert_eq!(owners, ["free-search"]);
+    assert_eq!(names, ["reconnect", "free-search"]);
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn plugins_enabled_in_an_untrusted_project_config_is_ignored() {
     let Some(t) = child() else { return };
