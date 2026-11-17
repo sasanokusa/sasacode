@@ -45,12 +45,14 @@ pub enum Act {
     Model,
     Effort,
     Permission,
+    OpenFolder,
 }
 
 /// Every shortcut, in the order the list of keys shows them.
-pub const ACTS: [Act; 34] = [
+pub const ACTS: [Act; 35] = [
     Act::New,
     Act::Window,
+    Act::OpenFolder,
     Act::Back,
     Act::Forward,
     Act::Rename,
@@ -200,6 +202,7 @@ impl Act {
             Act::Model => "model".into(),
             Act::Effort => "effort".into(),
             Act::Permission => "permission".into(),
+            Act::OpenFolder => "open-folder".into(),
         }
     }
 
@@ -234,6 +237,7 @@ impl Act {
             Act::Model => Chord::new(true, "m"),
             Act::Effort => Chord::new(true, "t"),
             Act::Permission => Chord::new(true, "l"),
+            Act::OpenFolder => Chord::new(false, "o"),
         }
     }
 
@@ -275,6 +279,7 @@ impl Act {
             Act::Model => Msg::FocusModel,
             Act::Effort => Msg::CycleEffort,
             Act::Permission => Msg::CyclePermission,
+            Act::OpenFolder => Msg::Command(Command::OpenFolder),
         }
     }
 
@@ -315,6 +320,7 @@ impl Act {
             Act::Model => s.w().k_model,
             Act::Effort => s.w().k_effort,
             Act::Permission => s.w().k_permission,
+            Act::OpenFolder => s.w().c_open_folder,
         }
     }
 }

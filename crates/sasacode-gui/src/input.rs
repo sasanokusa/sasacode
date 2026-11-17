@@ -43,6 +43,7 @@ pub enum Command {
     Split,
     Tui,
     Usage,
+    OpenFolder,
 }
 
 impl Command {
@@ -72,6 +73,7 @@ impl Command {
         ("split", Command::Split),
         ("tui", Command::Tui),
         ("usage", Command::Usage),
+        ("open", Command::OpenFolder),
     ];
 
     pub fn what(self, s: &Strings) -> &'static str {
@@ -103,6 +105,7 @@ impl Command {
             Command::Split => s.w().c_split,
             Command::Tui => s.w().c_tui,
             Command::Usage => s.w().c_usage,
+            Command::OpenFolder => s.w().c_open_folder,
         }
     }
 
@@ -408,6 +411,19 @@ impl App {
             Command::Settings => self.overlay = Some(Overlay::Settings),
             Command::Keys => self.overlay = Some(Overlay::Keys),
             Command::Usage => return self.update(Msg::UsagePart(crate::usage::Part::All)),
+            Command::OpenFolder => {
+                let from = self.cwd.parent().unwrap_or(&self.cwd).to_path_buf();
+                return Task::perform(
+                    async move {
+                        rfd::AsyncFileDialog::new()
+                            .set_directory(from)
+                            .pick_folder()
+                            .await
+                            .map(|f| f.path().to_path_buf())
+                    },
+                    Msg::FolderPicked,
+                );
+            }
             Command::Attention => return self.attention(),
             Command::Tui => {
                 let Some(id) = session else {

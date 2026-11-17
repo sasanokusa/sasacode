@@ -14,6 +14,8 @@ serde_json.workspace = true
 iced = { version = "0.14", features = ["markdown", "tokio", "advanced", "svg", "highlighter", "image"] }
 # Days in the local time zone, as /usage counts them.
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+# The system's own folder picker (⌘O): on Linux through the desktop portal, no GTK to build against.
+rfd = { version = "0.18", default-features = false, features = ["xdg-portal"] }
 tokio = { version = "1", features = ["process", "io-util", "sync", "rt", "macros", "time"] }
 # Math (KaTeX's layout, with its fonts in the program) and Mermaid diagrams in replies, drawn as SVG.
 ratex-parser = { version = "0.1.16", default-features = false }

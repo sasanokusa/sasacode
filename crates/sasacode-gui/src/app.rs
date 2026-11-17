@@ -750,6 +750,8 @@ pub enum Msg {
     FindInClose,
     /// Another folder sasacode was used in, in a window of its own.
     OpenProject(PathBuf),
+    /// The folder chosen in the system's picker (⌘O), none when it was closed: a window of its own.
+    FolderPicked(Option<PathBuf>),
     /// Another window on a folder, open on a conversation if given, where this one is if known.
     NewWindow(PathBuf, Option<String>, Option<iced::Point>),
     /// What is said in conversations, read for the search: by log, as of when it was changed.

@@ -143,6 +143,7 @@ words! {
     mark_unread: "この会話を未読にする", "Mark this conversation unread";
     mark_read: "この会話を既読にする", "Mark this conversation read";
     copy_folder: "フォルダのパスをコピー", "Copy the folder's path";
+    c_open_folder: "フォルダを開く…", "Open a folder…";
     copy_link: "この会話を開くリンクをコピー", "Copy a link that opens this conversation";
     copy_log: "会話のログのパスをコピー", "Copy the conversation log's path";
     exported: "{path}に書き出しました", "Written to {path}";

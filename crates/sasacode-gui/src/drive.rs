@@ -247,6 +247,12 @@ fn no_bare_key_is_a_shortcut() {
     assert!(matches!(chord("2"), Some(Msg::Tab(Tab::Plan))));
     assert!(matches!(chord("3"), Some(Msg::Tab(Tab::Commands))));
     assert!(matches!(chord("4"), Some(Msg::Tab(Tab::Usage))));
+    // ⌘O: the system's folder picker; what is chosen opens in a window of its own, the folder
+    // shown or nothing chosen in none.
+    assert!(matches!(
+        chord("o"),
+        Some(Msg::Command(crate::input::Command::OpenFolder))
+    ));
     // Esc stops whatever else is held with it.
     assert!(matches!(
         shortcut(&Key::Named(Named::Escape), Modifiers::COMMAND),

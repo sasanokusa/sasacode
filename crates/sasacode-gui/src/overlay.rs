@@ -174,6 +174,11 @@ impl App {
             entry(s.tab_git, key(Act::Tab(5)), Msg::Tab(Tab::Git)),
             entry(s.w().tab_files, key(Act::Tab(6)), Msg::Tab(Tab::Files)),
             entry(s.c_window, key(Act::Window), Msg::Command(Command::Window)),
+            entry(
+                s.w().c_open_folder,
+                key(Act::OpenFolder),
+                Msg::Command(Command::OpenFolder),
+            ),
             entry(s.c_folder, None, Msg::Command(Command::Folder)),
             entry(s.c_terminal, None, Msg::Command(Command::Terminal)),
             entry(s.c_editor, None, Msg::Command(Command::Editor)),
@@ -468,6 +473,10 @@ impl App {
                 Task::none()
             }
             Msg::OpenProject(path) => self.new_window(path, None),
+            Msg::FolderPicked(path) => match path.filter(|p| p.is_dir()) {
+                Some(path) if path != self.cwd => self.new_window(path, None),
+                _ => Task::none(),
+            },
             Msg::NewWindow(cwd, session, at) => {
                 // A little below and to the right of this one, so it is seen to open.
                 let at = at.map(|at| iced::Point::new(at.x + CASCADE, at.y + CASCADE));
