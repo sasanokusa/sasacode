@@ -47,6 +47,7 @@ pub enum Command {
     Worktrees,
     Automations,
     Gist,
+    Jobs,
 }
 
 impl Command {
@@ -79,6 +80,7 @@ impl Command {
         ("open", Command::OpenFolder),
         ("worktrees", Command::Worktrees),
         ("automations", Command::Automations),
+        ("jobs", Command::Jobs),
         ("gist", Command::Gist),
     ];
 
@@ -114,6 +116,7 @@ impl Command {
             Command::OpenFolder => s.w().c_open_folder,
             Command::Worktrees => s.w().c_worktrees,
             Command::Automations => s.w().c_automations,
+            Command::Jobs => s.w().c_jobs,
             Command::Gist => s.w().c_gist,
         }
     }
@@ -428,6 +431,10 @@ impl App {
                 return self.update(Msg::Show(Some(Overlay::picker(crate::overlay::Pick::Worktrees))));
             }
             Command::Automations => return self.show_automations(),
+            Command::Jobs => {
+                self.overlay = Some(crate::overlay::Overlay::Jobs);
+                return self.list_jobs();
+            }
             Command::Gist => return self.update(Msg::GistAsk),
             Command::Settings => self.overlay = Some(Overlay::Settings),
             Command::Keys => self.overlay = Some(Overlay::Keys),

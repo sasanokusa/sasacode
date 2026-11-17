@@ -8,6 +8,7 @@ mod automations;
 mod chords;
 pub(crate) mod dock;
 mod inspector;
+mod jobs;
 mod menu;
 pub(crate) use timeline::has;
 pub(crate) mod overlay;

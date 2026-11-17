@@ -258,6 +258,10 @@ pub struct App {
     pub(crate) checking_update: bool,
     /// The other folders sasacode was used in, the most recently used first.
     pub(crate) others: Vec<PathBuf>,
+    /// The background jobs, as last read; the one whose output is shown; the one asked to stop.
+    pub(crate) jobs: Vec<crate::jobs::Job>,
+    pub(crate) job_open: Option<String>,
+    pub(crate) job_stopping: Option<String>,
     /// The next side question, as it is typed.
     pub(crate) side_typed: String,
     /// Conversations whose title the model is writing.
@@ -813,6 +817,12 @@ pub enum Msg {
     Others(Vec<PathBuf>),
     /// The other folders, listed under the conversations or not.
     FoldFolders,
+    /// The background jobs read; read again; one's output shown or not; one stopped, on the
+    /// second press.
+    Jobs(Vec<crate::jobs::Job>),
+    JobsRefresh,
+    JobOpen(String),
+    JobStop(String),
     /// A worktree made (and readied, or what failed readying it), or why not.
     WorktreeMade(Result<(PathBuf, Option<String>), String>),
     /// The worktrees made here, read for the list; one to remove, and how that went.
@@ -1038,6 +1048,9 @@ impl App {
             update_said: None,
             checking_update: false,
             others: Vec::new(),
+            jobs: Vec::new(),
+            job_open: None,
+            job_stopping: None,
             side_typed: String::new(),
             titling: Default::default(),
             back: Vec::new(),

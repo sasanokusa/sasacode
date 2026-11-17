@@ -23,6 +23,7 @@ mod helper;
 mod i18n;
 mod icons;
 mod input;
+mod jobs;
 mod keys;
 mod layout;
 mod link;

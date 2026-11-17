@@ -2588,6 +2588,45 @@ fn the_other_folders_are_listed_under_the_conversations_and_open_in_their_own_wi
     assert!(!says(&app, "billing-web"));
 }
 
+/// The background jobs: listed with their state and when they started, a job's output shown on a
+/// click, and one still running stopped only on the second press.
+#[test]
+fn the_background_jobs_are_listed_and_a_running_one_is_stopped_on_the_second_press() {
+    use crate::jobs::Job;
+    let mut app = window("ja");
+    let _ = app.update(Msg::Command(Command::Jobs));
+    assert_eq!(app.overlay, Some(crate::overlay::Overlay::Jobs));
+    assert!(says(&app, "バックグラウンドジョブ") && says(&app, "まだありません"));
+    let made = |id: &str, command: &str, running: bool, exit_code: Option<i64>| Job {
+        id: id.into(),
+        command: command.into(),
+        cwd: "/Users/me/src/orders-api".into(),
+        pid: 0,
+        started_at: 1_794_900_000_000,
+        exit_code,
+        killed: None,
+        dir: std::env::temp_dir().join("sasacode-no-such-job"),
+        running,
+        tail: "test result: ok".into(),
+    };
+    let _ = app.update(Msg::Jobs(vec![
+        made("bg-2", "cargo test --workspace", true, None),
+        made("bg-1", "npm run build", false, Some(1)),
+    ]));
+    assert!(says(&app, "cargo test --workspace") && says(&app, "実行中"));
+    assert!(says(&app, "npm run build") && says(&app, "終了（1）"));
+    assert!(!says(&app, "test result: ok"));
+    let _ = app.update(Msg::JobOpen("bg-1".into()));
+    assert!(says(&app, "test result: ok"));
+    if cfg!(unix) {
+        let _ = app.update(Msg::JobStop("bg-2".into()));
+        assert!(says(&app, "もう一度押すと止めます") && app.toast.is_none());
+        // The second press: the job is gone from where it was kept, and nothing is signalled.
+        let _ = app.update(Msg::JobStop("bg-2".into()));
+        assert_eq!(app.toast.as_deref(), Some("もう終わっていました"));
+    }
+}
+
 /// "Check for updates" asks the CLI on a click and says its line; a check not made says why.
 #[test]
 fn updates_are_checked_on_a_click_and_what_the_cli_said_is_shown() {

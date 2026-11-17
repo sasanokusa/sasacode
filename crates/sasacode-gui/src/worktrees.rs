@@ -242,7 +242,7 @@ impl App {
                 let key = self.folder_key();
                 self.set(|p| p.more.folders.entry(key).or_default().setup = command)
             }
-            other => return Err(other),
+            other => return self.update_jobs(other),
         };
         Ok(task)
     }

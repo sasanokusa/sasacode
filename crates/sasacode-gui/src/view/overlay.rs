@@ -37,6 +37,7 @@ pub fn over<'a>(app: &'a App, base: El<'a>) -> El<'a> {
         Overlay::Quit(id) => (quit(app, *id), 460.0, 120.0),
         Overlay::ConfirmAuto => (confirm_auto(app), 480.0, 120.0),
         Overlay::Automations => (super::automations::automations(app), 680.0, 50.0),
+        Overlay::Jobs => (super::jobs::jobs(app), 720.0, 50.0),
         Overlay::ConfirmGist => (confirm_gist(app), 520.0, 120.0),
         Overlay::Quote => (quote(app), 720.0, 50.0),
         Overlay::Args => (args(app), 640.0, 60.0),

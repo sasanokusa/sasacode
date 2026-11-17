@@ -46,6 +46,8 @@ pub enum Overlay {
     Automations,
     /// The conversation asked to be shared as a secret gist.
     ConfirmGist,
+    /// The background jobs the background-sessions plugin started.
+    Jobs,
     /// A reply whose text is being chosen to quote, `App::quoting`.
     Quote,
     /// The waiting call's arguments being edited, `App::editing_args`.
@@ -200,6 +202,7 @@ impl App {
                 Some("/automations".into()),
                 Msg::Command(Command::Automations),
             ),
+            entry(s.w().c_jobs, Some("/jobs".into()), Msg::Command(Command::Jobs)),
             entry(s.settings, key(Act::Settings), Msg::Show(Some(Overlay::Settings))),
             entry(s.c_keys, key(Act::Keys), Msg::Show(Some(Overlay::Keys))),
             entry(s.c_zoom_in, key(Act::ZoomIn), Msg::Zoom(1)),
