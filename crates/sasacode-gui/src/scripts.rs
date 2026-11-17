@@ -279,15 +279,21 @@ mod tests {
     async fn a_script_runs_in_the_folder_and_says_its_lines_and_its_code() {
         use iced::futures::StreamExt;
         let dir = std::env::temp_dir();
-        let said: Vec<ScriptUpdate> = run("echo one; echo two >&2; exit 3".into(), dir).collect().await;
+        // Each shell as it is written: `cmd` on Windows.
+        let command = if cfg!(windows) {
+            "echo one& echo two 1>&2& exit 3"
+        } else {
+            "echo one; echo two >&2; exit 3"
+        };
+        let said: Vec<ScriptUpdate> = run(command.into(), dir).collect().await;
         let lines: Vec<&str> = said
             .iter()
             .filter_map(|u| match u {
-                ScriptUpdate::Line(l) => Some(l.as_str()),
+                ScriptUpdate::Line(l) => Some(l.as_str().trim_end()),
                 _ => None,
             })
             .collect();
-        assert!(lines.contains(&"one") && lines.contains(&"two"));
+        assert!(lines.contains(&"one") && lines.contains(&"two"), "{lines:?}");
         assert!(matches!(said.last(), Some(ScriptUpdate::Exited(Some(3)))));
     }
 }

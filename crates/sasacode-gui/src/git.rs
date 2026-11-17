@@ -1061,7 +1061,8 @@ mod tests {
         apply(&dir, &hunk(HunkAct::Unstage, 0, &staged_head), None).unwrap();
         assert!(!status(&dir).files[0].staged());
         apply(&dir, &hunk(HunkAct::Discard, 0, &heads[0]), None).unwrap();
-        let now = std::fs::read_to_string(dir.join("a.txt")).unwrap();
+        // Git on Windows writes the lines back with CRLF.
+        let now = std::fs::read_to_string(dir.join("a.txt")).unwrap().replace("\r\n", "\n");
         assert!(now.contains("line 2\n") && !now.contains("line 28\n"));
         std::fs::remove_dir_all(dir).unwrap();
     }
