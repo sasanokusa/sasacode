@@ -688,7 +688,8 @@ fn tool_row<'a>(app: &'a App, i: usize, j: usize, tool: &'a Tool) -> El<'a> {
     let press = details.is_some().then_some((Msg::Open(i, j), open));
     let mut head = line(t, (symbol, color), parts, meta, press);
     // A call that runs long can be stopped alone: its result is an error, and the run goes on.
-    if running && app.running() {
+    // Not one a subagent's tool made: the CLI cannot stop those alone.
+    if running && app.running() && app.chat.newer && tool.parent.is_none() {
         head = iced::widget::row![
             container(head).width(Length::Fill),
             super::tip(

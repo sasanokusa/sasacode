@@ -98,11 +98,14 @@ impl App {
                     self.overlay = None;
                     return Ok(Task::none());
                 }
+                let asked = self.chat.transcript.pending_approval().map(|a| a.args.clone());
                 match serde_json::from_str::<Value>(&content.text()) {
                     Ok(args @ Value::Object(_)) => {
                         self.editing_args = None;
                         self.overlay = None;
-                        let task = self.answer_with(Decision::Allow, Some(args));
+                        // Unchanged, it is a plain allow.
+                        let edited = (Some(&args) != asked.as_ref()).then_some(args);
+                        let task = self.answer_with(Decision::Allow, edited);
                         Task::batch([task, operation::focus(crate::app::INPUT)])
                     }
                     Ok(_) => {

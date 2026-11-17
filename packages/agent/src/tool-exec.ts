@@ -1,5 +1,6 @@
 // Everything between "the model asked for tools" and "results go back": repair, lookup,
 // validation, plugin decisions, permission, parallel execution.
+import { isDeepStrictEqual } from "node:util";
 import type { AssistantMessage, ToolCall, ToolResultMessage } from "@sasacode/ai";
 import { errorResult as err, type ToolDefinition, type ToolResult, type VerdictSource } from "@sasacode/plugin-api";
 import type { ApprovalAnswer, ApprovalRequest } from "./agent.ts";
@@ -308,7 +309,8 @@ async function authorize(
   // Arguments the user edited are checked as the model's are: plugins see them again (a checkpoint of the files they
   // name, the guards), and their denials and the deny rules still hold (softDeny asks: it was asked).
   let edited: PermissionCheck | undefined;
-  if (answer.args) {
+  // Sent back unchanged it is a plain allow: seen twice, the loop guard would take it for a repeat.
+  if (answer.args && !isDeepStrictEqual(answer.args, args)) {
     let next = answer.args;
     let refused: string | undefined;
     await ctx.hooks.run("tool_call", { call, tool, args: next }, (r, ev) => {

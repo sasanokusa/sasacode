@@ -478,3 +478,16 @@ test("edited arguments go past the plugins again: they see them, may refuse them
   expect(() => readFileSync(join(dir, "refused.txt"))).toThrow();
   expect(JSON.stringify(provider.requests[2]!.messages.at(-1))).toContain("edited arguments were refused (not there)");
 });
+
+test("arguments sent back unchanged are a plain allow: the plugins see the call once", async () => {
+  let seen = 0;
+  const { agent } = setup([reply([call("1", "write", { path: "same.txt", content: "s" })]), reply([say("ok")])], {
+    permissions: new PermissionPolicy("ask"),
+    approve: async (r) => ({ decision: "allow", args: { content: "s", path: "same.txt" } }),
+  });
+  agent.hooks.on("tool_call", () => void seen++);
+  await agent.prompt("go");
+  expect(seen).toBe(1);
+  expect(readFileSync(join(dir, "same.txt"), "utf8")).toBe("s");
+  expect(JSON.stringify(agent.messages)).not.toContain("the user edited the arguments");
+});

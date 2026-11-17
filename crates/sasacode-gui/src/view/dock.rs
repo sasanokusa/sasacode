@@ -572,7 +572,7 @@ fn approval_card<'a>(app: &'a App, approval: &'a Approval) -> El<'a> {
     .align_y(Alignment::Center)
     .wrap();
     let label = |said: &'a str| text(said).size(13).wrapping(text::Wrapping::None);
-    let buttons = row![
+    let mut buttons = row![
         button(label(s.allow))
             .padding([6, 16])
             .style(t.primary())
@@ -585,14 +585,18 @@ fn approval_card<'a>(app: &'a App, approval: &'a Approval) -> El<'a> {
             .padding([6, 12])
             .style(t.outline(t.err))
             .on_press(Msg::Answer(Decision::Deny)),
-        button(label(s.w().args_edit))
-            .padding([6, 12])
-            .style(t.ghost(t.fg_2, false))
-            .on_press(Msg::ArgsOpen),
     ]
     .spacing(8)
-    .align_y(Alignment::Center)
-    .wrap();
+    .align_y(Alignment::Center);
+    if app.chat.newer {
+        buttons = buttons.push(
+            button(label(s.w().args_edit))
+                .padding([6, 12])
+                .style(t.ghost(t.fg_2, false))
+                .on_press(Msg::ArgsOpen),
+        );
+    }
+    let buttons = buttons.wrap();
 
     container(
         column![

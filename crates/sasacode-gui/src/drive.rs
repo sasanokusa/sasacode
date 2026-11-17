@@ -1984,6 +1984,9 @@ fn what_the_plugins_say_shows_and_a_judged_call_says_so() {
 #[test]
 fn a_call_can_be_allowed_with_its_arguments_edited_and_stopped_alone() {
     let (mut app, mut written, id) = waiting();
+    // Only for a CLI that reads them: an older one would run the call as the model asked it.
+    assert!(!says(&app, crate::words::JA.args_edit));
+    told(&mut app, serde_json::json!({"type": "commands", "commands": []}));
     act(&mut app, |ui| {
         ui.click(crate::words::JA.args_edit).expect("the button is there");
     });
@@ -2006,6 +2009,20 @@ fn a_call_can_be_allowed_with_its_arguments_edited_and_stopped_alone() {
     assert_eq!(answer_of(&app, &id), Some(Answer::Allowed));
     assert!(app.overlay.is_none());
 
+    // Sent back as it was asked, it is a plain allow.
+    let (mut app, mut written, id) = waiting();
+    app.chat.newer = true;
+    let _ = app.update(Msg::ArgsOpen);
+    let _ = app.update(Msg::ArgsSend);
+    assert_eq!(
+        written.try_recv().ok(),
+        Some(ControlMessage::Approval {
+            id,
+            decision: Decision::Allow,
+            feedback: None,
+            args: None
+        })
+    );
     let _ = app.update(Msg::StopCall("call-9".into()));
     assert_eq!(
         written.try_recv().ok(),

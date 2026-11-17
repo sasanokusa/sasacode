@@ -331,6 +331,9 @@ pub(crate) struct Chat {
     pub(crate) whole: HashSet<usize>,
     /// Messages sent while it ran, each to start a run of its own after it, in order.
     pub(crate) follow: Vec<String>,
+    /// The run is of a CLI that reads edited arguments and stops one call (it listed the plugins'
+    /// commands, as one since 0.8 does at its start); an older one would take them for others.
+    pub(crate) newer: bool,
 }
 
 impl Chat {
@@ -350,6 +353,7 @@ impl Chat {
             comments: Vec::new(),
             whole: HashSet::new(),
             follow: Vec::new(),
+            newer: false,
         }
     }
 
@@ -1842,6 +1846,7 @@ impl App {
             return Task::none();
         };
         chat.transcript.send(&prompt, now);
+        chat.newer = false;
         chat.loaded = false;
         spec.prompt = prompt;
         spec.resume = chat.session.clone();
@@ -1938,6 +1943,7 @@ impl App {
                 if shown {
                     notice = effect.notice.map(|(_, text)| text);
                 }
+                chat.newer |= effect.commands.is_some();
                 commands = effect.commands;
                 // A new conversation's log is there once its first message is: the list shows it.
                 relist = matches!(*event, sasacode_protocol::Event::MessageEnd { .. }) && chat.session.is_some();

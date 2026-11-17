@@ -666,6 +666,8 @@ impl Transcript {
                 effect.approval = Some(id.clone());
             }
             Event::ApprovalCancelled { id } => self.answer_approval(id, Answer::Cancelled),
+            // A call stopped just as it ended: nothing went wrong.
+            Event::ControlError { error } if error.starts_with("no running tool call") => {}
             Event::ControlError { error } => self.note(Note::Error(format!("control: {error}"))),
             Event::UiRequest { id, ask, title } => {
                 let (chosen, typed) = match ask {

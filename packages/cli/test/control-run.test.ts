@@ -130,6 +130,15 @@ test("edited args: the call runs with them, the model is told, and the approval_
   expect(toolResult(provider)).toContain('[the user edited the arguments; the call ran with {\\"command\\":\\"touch edited\\"}]');
 });
 
+test("args sent back unchanged run the call as asked: the loop guard does not take it for a repeat", async () => {
+  const { code, provider } = await drive([bash("c1", "touch original"), text("done")], (e, ch) => {
+    if (e.type === "approval_request") ch.send({ type: "approval", id: e.id, decision: "allow", args: e.args });
+  });
+  expect(code).toBe(0);
+  expect(existsSync(join(proj, "original"))).toBe(true);
+  expect(toolResult(provider)).not.toContain("the user edited the arguments");
+});
+
 test("edited args that do not fit the tool, or that a deny rule matches, are a denial with the reason", async () => {
   config({ permissions: { mode: "ask", deny: ["bash(rm *)"] } });
   const answers = [{ command: 5 }, { command: "rm -rf original" }];
