@@ -2,8 +2,8 @@
 //!
 //! The last TS test set SASACODE_HOME and a variable of its own in the process environment. Setting
 //! one needs `unsafe` in edition 2024, so the hidden variable is CARGO_PKG_NAME (which cargo sets
-//! for the test run), and the part about long output saved under SASACODE_HOME is left out: it
-//! would write to the real ~/.sasacode.
+//! for the test run), and the part about long output saved under SASACODE_HOME runs again in a
+//! child test process whose SASACODE_HOME is a sandbox.
 
 mod support_core;
 
@@ -213,6 +213,55 @@ async fn timeout_kills_descendants_even_when_the_shell_catches_term_and_exits_ze
     assert_eq!(detail(&result, "killedBy"), json!("timeout"));
     tokio::time::sleep(Duration::from_millis(1100)).await;
     assert!(!marker.exists());
+}
+
+/// True in a child test process with SASACODE_HOME in a sandbox: run the body there. In this process,
+/// start that child for `test` and check that it passed.
+fn in_sandboxed_home(test: &str) -> bool {
+    if std::env::var_os("SASACODE_CHECKS_TEST_HOME").is_some() {
+        return true;
+    }
+    let home = temp_dir("project-checks-home-");
+    let child = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([test, "--exact", "--nocapture", "--test-threads=1"])
+        .env("SASACODE_CHECKS_TEST_HOME", "1")
+        .env("SASACODE_HOME", home.path().join(".home"))
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&child.stdout);
+    assert!(
+        child.status.success() && stdout.contains("1 passed"),
+        "{test} in its sandbox:\n{stdout}{}",
+        String::from_utf8_lossy(&child.stderr)
+    );
+    false
+}
+
+#[tokio::test]
+async fn long_output_is_bounded_and_saved() {
+    if !in_sandboxed_home("long_output_is_bounded_and_saved") {
+        return;
+    }
+    let root = temp_dir("project-checks-");
+    let result = bash(
+        "printf '%040000d' 0",
+        2.0,
+        context(root.path(), CancellationToken::new()),
+    )
+    .await;
+    let text = content(&result);
+    assert!(text.contains("truncated"), "{text}");
+    assert!(text.len() < 31_000, "{}", text.len());
+    // The path as the text says it (the JSON above escapes a Windows path's backslashes).
+    let shown = serde_json::to_value(&result.content).unwrap()[0]["text"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let at = shown.find("saved to ").unwrap() + "saved to ".len();
+    let file = &shown[at..at + shown[at..].find(']').unwrap()];
+    let home = std::path::PathBuf::from(std::env::var_os("SASACODE_HOME").unwrap());
+    assert!(Path::new(file).starts_with(home.join("tmp")), "{file}");
+    assert_eq!(std::fs::read_to_string(file).unwrap().len(), 40_000);
 }
 
 #[tokio::test]

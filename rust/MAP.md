@@ -25,8 +25,8 @@ State: `open`, `claimed by <who> <date>`, `done (<evidence>)`.
 | 1 | agent: agent, events, tool-exec, permission, plugins host, tool-search, system-prompt | done; permission globs = Bun.Glob on 2,303 recorded pairs (79b82b6); all TS tests ported (ecdb8eb) |
 | 2 | headless vertical slice: cli main/config/headless/control + builtin tools, e2e green | done: e2e 17/17 Rust, 17/18 TS (the 18th is ADR-002), app cases 34/34 (ae4d9bc) |
 | 3 | bundled table and ADR-011 switch (`sasacode-bundled/src/lib.rs`) | done by coordinator |
-| 3 | bundled: web-fetch, web-search, rustxng, browsr, openai-codex, usage, background-sessions, auto-reconnect, goal, gui, image-attach, image-slim, free-search | done: 83 net tests, all TS tests ported (37b7a35) |
-| 3 | bundled: tool-repair, repair, text-tool-calls, guards, agents-md, compaction, diagnostics, subagent, todo, progress-notes, permission-presets, agent-judge, checkpoints, official plugins, jev-guard | done: all TS tests ported (4eff22d); compaction checks the history still begins with what it summarized (the TS compared array identity) |
+| 3 | bundled: web-fetch, web-search, rustxng, browsr, openai-codex, usage, background-sessions, auto-reconnect, goal, gui, image-attach, image-slim, free-search | done: 83 net tests (37b7a35). The gui test of running under bun is dropped (no such branch in Rust); browsr v2, the installer, the gui scripts and the DST case are unix-only |
+| 3 | bundled: tool-repair, repair, text-tool-calls, guards, agents-md, compaction, diagnostics, subagent, todo, progress-notes, permission-presets, agent-judge, checkpoints, official plugins, jev-guard | done: all TS tests ported (4eff22d; the long-output half of project-checks' last test runs in a child test process with its own SASACODE_HOME); compaction checks the history still begins with what it summarized (the TS compared array identity) |
 | 3 | tui | done: 133 tests, every TS test ported (b976fae); `sasacode` opens it through `TuiHost` (5 CLI tests, pty smoke runs) |
 | 3 | cli: setup, catalog, endpoints, detect, env, keys, list-models, trust, update, stdin (loader: ADR-002) | done (1ed76bb, ae4d9bc) |
 | 4 | xtask (build, checks, improve), CI and release workflows, install scripts | done (170c981); release.yml not run yet, its first run is the PR |
@@ -47,10 +47,43 @@ Dropped:
   is rewritten for MCP and Skills in wave 4.
 - plugin-api v19/v110: the asserts that check runtime argument types (Rust checks them at compile time).
 
+Changed from the TS (the assertion is kept, the means differ):
+- jev-guard's plugin test runs a stand-in bash (the TS really ran `rm -rf ~/proj/build` in the home); its
+  abort test expects "aborted" (a `CancellationToken` carries no reason).
+- compaction #88 checks a cut emoji arrives as U+FFFD (Rust strings are always valid UTF-8).
+- loop-guard's parallel subagents wait for all five (up to 2 s); a TUI paste split in two is sent whole
+  (crossterm delivers a bracketed paste whole).
+
 Still to port (owner: coordinator):
 - ~~agent tests~~: done (ecdb8eb). Three symlink tests are `#[cfg(unix)]`; the TS ran one on Windows with a junction.
 - ~~cli tests~~: done (4eff22d).
 - npm-launcher on Windows: the TS used a `bun build --compile` stand-in; needs a Windows CI job.
+
+## Behaviour differences from the TS
+
+Each is small and was judged harmless or unavoidable by the unit that ported it; ADRs cover the
+deliberate ones (ADR-002, ADR-011, ADR-013).
+
+- Error texts: Node's fs and execFile wording is kept (`sasacode_tools::util::fs_error`); JSON parse errors
+  and HTTP errors are serde's and reqwest's.
+- repair: keys from the JS prototype (PY_LITERALS) are not special; integer-like keys keep insertion order;
+  a lone surrogate reads as U+FFFD; a string cut at 40 units shows U+FFFD for a cut pair.
+- checkpoints: times are formatted per language with chrono, not `toLocaleTimeString`; a broken session
+  record is skipped.
+- diagnostics: the response URL and statusText are not kept; the 1 MiB line limit counts bytes.
+- jev-guard: `Retry-After` dates are read as RFC 2822 / 3339 only; globs use globset (`bun_glob_syntax`).
+- web: Ref positions count bytes; goal's locale is en-US; is_online sends no-cache headers.
+- gui: signal names differ, there is no bun case, the window gets `--sasacode <exe>`.
+- background-sessions: jobs are listed with `ps`; image-slim resizes with CatmullRom.
+- usage: the terminal width comes from crossterm; session-log lines without `api` are skipped (sasacode always
+  wrote it).
+- openai-codex: an empty model list falls back to the default list.
+- TUI: see the TUI unit's report in the PR; word movement is UAX#29 (not ICU), markdown is pulldown-cmark
+  (not marked, LaTeX shown as source), NO_COLOR is honoured.
+
+Contract requests from the units, as settled: `save_output_in` was not added (the test runs in a child
+process instead); `messages_generation` was replaced by compaction's prefix check; validate's JS helpers
+are public and repair re-exports them; `net_util` keeps its own `to_fixed` (sasacode-ai's stays private).
 
 ## Open checks (block the TS removal)
 
