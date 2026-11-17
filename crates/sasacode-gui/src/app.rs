@@ -295,6 +295,13 @@ pub struct App {
     pub(crate) key_note: Option<String>,
     /// The file the files tab shows, and what is typed to find one.
     pub(crate) viewing: Option<crate::files::Viewing>,
+    /// The file of the tab, being edited; or shown as it reads, when it is Markdown.
+    pub(crate) file_edit: Option<crate::edit::FileEdit>,
+    pub(crate) file_preview: Option<crate::transcript::Markdown>,
+    /// The tab searches what files hold; what the last search found, and one going on.
+    pub(crate) file_grep: bool,
+    pub(crate) grep_hits: Option<Vec<crate::edit::Hit>>,
+    pub(crate) grep_busy: bool,
     pub(crate) file_query: String,
     /// The conversation a second click deletes.
     pub(crate) confirm_delete: Option<String>,
@@ -526,6 +533,17 @@ pub enum Msg {
     FileRead(Box<crate::files::Viewing>),
     CloseFile,
     FileQuery(String),
+    /// The file read in the tab, edited and saved, or left as it was.
+    FileEditStart,
+    FileEditAction(text_editor::Action),
+    FileSave,
+    FileEditCancel,
+    /// The Markdown file read in the tab, shown as it reads, or as written.
+    FilePreview(bool),
+    /// The files tab finds files by what they hold, not their names; the search, and what it found.
+    FileGrepMode(bool),
+    FileGrep,
+    Grepped(String, Result<Vec<crate::edit::Hit>, String>),
     /// A script of the folder run, by its place in the list; what its run said; stopped; and its
     /// output put in the input for the agent to look at.
     RunScript(usize),
@@ -909,6 +927,11 @@ impl App {
             confirm_merge: false,
             confirm_delete: None,
             viewing: None,
+            file_edit: None,
+            file_preview: None,
+            file_grep: false,
+            grep_hits: None,
+            grep_busy: false,
             file_query: String::new(),
             key_capture: None,
             key_note: None,

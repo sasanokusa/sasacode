@@ -40,6 +40,8 @@ pub struct Viewing {
     pub total: usize,
     /// Why it is not shown: too large, not text, or not readable.
     pub error: Option<String>,
+    /// A picture, shown as one.
+    pub image: bool,
     /// The line to bring into view, if one was asked for.
     pub line: Option<usize>,
 }
@@ -102,8 +104,13 @@ pub fn read(path: PathBuf, line: Option<usize>) -> Viewing {
         dark: Vec::new(),
         total: 0,
         error: None,
+        image: false,
         line,
     };
+    if is_picture(&viewing.path) {
+        viewing.image = true;
+        return viewing;
+    }
     let bytes = match std::fs::metadata(&viewing.path) {
         Ok(m) if m.len() > READ_MAX => Err(format!("{} MB", m.len() / 1024 / 1024)),
         Ok(_) => std::fs::read(&viewing.path).map_err(|e| e.to_string()),
@@ -149,7 +156,6 @@ fn token_of(path: &Path) -> String {
 /// The picture a Markdown image names, when it is a file here: a path, absolute or from the
 /// folder, or a `file://` URL. Nothing is fetched from the network.
 pub fn local_image(url: &str, cwd: &Path) -> Option<PathBuf> {
-    const PICTURES: [&str; 7] = ["png", "jpg", "jpeg", "gif", "webp", "bmp", "ico"];
     if url.contains("://") && !url.starts_with("file://") {
         return None;
     }
@@ -160,11 +166,15 @@ pub fn local_image(url: &str, cwd: &Path) -> Option<PathBuf> {
     } else {
         cwd.join(path)
     };
-    let picture = path
-        .extension()
+    (is_picture(&path) && path.is_file()).then_some(path)
+}
+
+/// Whether `path` names a picture the window can draw.
+pub fn is_picture(path: &Path) -> bool {
+    const PICTURES: [&str; 7] = ["png", "jpg", "jpeg", "gif", "webp", "bmp", "ico"];
+    path.extension()
         .and_then(|e| e.to_str())
-        .is_some_and(|e| PICTURES.contains(&e.to_ascii_lowercase().as_str()));
-    (picture && path.is_file()).then_some(path)
+        .is_some_and(|e| PICTURES.contains(&e.to_ascii_lowercase().as_str()))
 }
 
 pub fn linked_file(uri: &str, cwd: &Path) -> Option<(PathBuf, Option<usize>)> {
@@ -191,6 +201,11 @@ impl App {
     pub(crate) fn update_files(&mut self, msg: Msg) -> Result<Task<Msg>, Msg> {
         let task = match msg {
             Msg::ViewFile(path, line) => {
+                // What is typed in a file is not left unsaved by opening another.
+                if self.file_edit.as_ref().is_some_and(|e| e.changed() && e.path != path) {
+                    self.toast = Some(self.s.w().edit_unsaved.to_owned());
+                    return Ok(Task::none());
+                }
                 self.tab = Tab::Files;
                 self.insp = true;
                 if let Some(v) = &mut self.viewing
@@ -215,6 +230,8 @@ impl App {
             }
             Msg::FileRead(viewing) => {
                 let at = viewing.line.map(|n| at_line(n, viewing.lines.len()));
+                self.file_preview = None;
+                self.file_edit = None;
                 self.viewing = Some(*viewing);
                 match at {
                     Some(y) => operation::snap_to(INSPECTOR, operation::RelativeOffset { x: 0.0, y }),
@@ -222,14 +239,25 @@ impl App {
                 }
             }
             Msg::CloseFile => {
+                if self.file_edit.as_ref().is_some_and(crate::edit::FileEdit::changed) {
+                    self.toast = Some(self.s.w().edit_unsaved.to_owned());
+                    return Ok(Task::none());
+                }
                 self.viewing = None;
+                self.file_preview = None;
+                self.file_edit = None;
                 operation::focus(FILES_FIELD)
             }
             Msg::FileQuery(query) => {
                 self.file_query = query;
+                // What was found was for what was typed before.
+                if self.file_grep {
+                    self.grep_hits = None;
+                    self.grep_busy = false;
+                }
                 Task::none()
             }
-            other => return self.update_scripts(other),
+            other => return self.update_edit(other),
         };
         Ok(task)
     }

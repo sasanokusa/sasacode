@@ -9,6 +9,7 @@ mod composer;
 mod diff;
 #[cfg(test)]
 mod drive;
+mod edit;
 mod export;
 mod extras;
 mod figure;

@@ -1026,12 +1026,31 @@ fn files_tab(app: &App) -> El<'_> {
     let (t, s) = (app.t, app.s);
     let w = s.w();
     let Some(v) = &app.viewing else {
-        let field = iced::widget::text_input(w.files_ph, &app.file_query)
+        let mode = |label: &'static str, on: bool, msg: Msg| -> El<'_> {
+            let b = button(text(label).size(12).wrapping(text::Wrapping::None))
+                .padding([3, 10])
+                .on_press(msg);
+            if on {
+                b.style(t.primary()).into()
+            } else {
+                b.style(t.ghost(t.fg_2, false)).into()
+            }
+        };
+        let modes = row![
+            mode(w.grep_names, !app.file_grep, Msg::FileGrepMode(false)),
+            mode(w.grep_text, app.file_grep, Msg::FileGrepMode(true)),
+        ]
+        .spacing(4);
+        let field = iced::widget::text_input(if app.file_grep { w.grep_ph } else { w.files_ph }, &app.file_query)
             .id(crate::files::FILES_FIELD)
             .on_input(Msg::FileQuery)
+            .on_submit_maybe(app.file_grep.then_some(Msg::FileGrep))
             .size(13)
             .padding([6, 10])
             .style(t.input());
+        if app.file_grep {
+            return column![modes, field, grep_list(app)].spacing(10).into();
+        }
         let mut list = column![].spacing(1);
         if app.files.is_empty() {
             list = list.push(text(w.files_listing).size(12.5).color(t.fg_3));
@@ -1062,7 +1081,7 @@ fn files_tab(app: &App) -> El<'_> {
                     .color(t.fg_3),
             );
         }
-        return column![field, list].spacing(10).into();
+        return column![modes, field, list].spacing(10).into();
     };
     let shown = short_path(&v.path.to_string_lossy(), &app.cwd);
     let small = |label: &'static str, msg: Msg| {
@@ -1085,6 +1104,7 @@ fn files_tab(app: &App) -> El<'_> {
             .style(t.ghost(t.fg_2, false))
             .on_press(Msg::CloseFile),
             Space::new().width(Length::Fill),
+            edit_buttons(app, v),
             small(s.open_editor, Msg::Editor(v.path.clone())),
             small(s.reveal, Msg::Reveal(v.path.clone())),
         ]
@@ -1101,6 +1121,65 @@ fn files_tab(app: &App) -> El<'_> {
         return column![head, text(fill(w.files_unreadable, "why", why)).size(12.5).color(t.err)]
             .spacing(10)
             .into();
+    }
+    if v.image {
+        return column![
+            head,
+            container(iced::widget::image(v.path.as_path()).content_fit(iced::ContentFit::ScaleDown))
+                .width(Length::Fill)
+                .padding(8)
+                .style(t.boxed(t.raised, t.line, RADIUS)),
+        ]
+        .spacing(8)
+        .into();
+    }
+    if let Some(edit) = app.file_edit.as_ref().filter(|e| e.path == v.path) {
+        let token = v
+            .path
+            .extension()
+            .or_else(|| v.path.file_name())
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let editor = iced::widget::text_editor(&edit.content)
+            .on_action(Msg::FileEditAction)
+            .font(MONO)
+            .size(12.5)
+            .padding(8)
+            .height(Length::Shrink)
+            .highlight(
+                &token,
+                if t.dark {
+                    iced::highlighter::Theme::Base16Ocean
+                } else {
+                    iced::highlighter::Theme::InspiredGitHub
+                },
+            )
+            .key_binding(|press| {
+                let save = matches!(&press.key, iced::keyboard::Key::Character(c) if c.as_str() == "s");
+                if save && press.modifiers.command() {
+                    Some(iced::widget::text_editor::Binding::Custom(Msg::FileSave))
+                } else {
+                    iced::widget::text_editor::Binding::from_key_press(press)
+                }
+            });
+        return column![
+            head,
+            text(fill(w.edit_hint, "mod", super::MOD)).size(11.5).color(t.fg_3),
+            editor
+        ]
+        .spacing(8)
+        .into();
+    }
+    if let Some(md) = &app.file_preview {
+        return column![
+            head,
+            container(super::timeline::reply(app, md, true))
+                .width(Length::Fill)
+                .padding(12)
+                .style(t.boxed(t.raised, t.line, RADIUS)),
+        ]
+        .spacing(8)
+        .into();
     }
     let mut notes = column![text(w.files_hint).size(11.5).color(t.fg_3)].spacing(2);
     if v.total > v.lines.len() {
@@ -1169,6 +1248,86 @@ fn files_tab(app: &App) -> El<'_> {
     ]
     .spacing(8)
     .into()
+}
+
+/// The buttons that edit the file read, or save it, and show a Markdown one as it reads.
+fn edit_buttons<'a>(app: &'a App, v: &'a crate::files::Viewing) -> El<'a> {
+    let (t, w) = (app.t, app.s.w());
+    let small = |label: &'static str, msg: Option<Msg>, strong: bool| -> El<'a> {
+        let b = button(text(label).size(11.5).wrapping(text::Wrapping::None))
+            .padding([3, 8])
+            .on_press_maybe(msg);
+        if strong {
+            b.style(t.primary()).into()
+        } else {
+            b.style(t.ghost(t.fg_2, false)).into()
+        }
+    };
+    if v.error.is_some() || v.image {
+        return Space::new().into();
+    }
+    if let Some(edit) = app.file_edit.as_ref().filter(|e| e.path == v.path) {
+        return row![
+            small(w.edit_cancel, Some(Msg::FileEditCancel), false),
+            small(w.edit_save, edit.changed().then_some(Msg::FileSave), true),
+        ]
+        .spacing(4)
+        .into();
+    }
+    let mut buttons = row![].spacing(4);
+    if crate::edit::is_markdown(&v.path) {
+        let previewing = app.file_preview.is_some();
+        buttons = buttons.push(small(
+            if previewing { w.preview_off } else { w.preview_on },
+            Some(Msg::FilePreview(!previewing)),
+            false,
+        ));
+    }
+    buttons
+        .push(small(w.edit_start, Some(Msg::FileEditStart), false))
+        .into()
+}
+
+/// What a search of the files' contents found, each line to open at.
+fn grep_list(app: &App) -> El<'_> {
+    let (t, w) = (app.t, app.s.w());
+    if app.grep_busy {
+        return text(w.grep_busy).size(12.5).color(t.fg_3).into();
+    }
+    let Some(hits) = &app.grep_hits else {
+        return Space::new().into();
+    };
+    if hits.is_empty() {
+        return text(w.grep_none).size(12.5).color(t.fg_3).into();
+    }
+    let mut list = column![].spacing(1);
+    for hit in hits {
+        list = list.push(
+            button(
+                column![
+                    text(format!("{}:{}", clip_start(&hit.path, cells(app, 40.0)), hit.line))
+                        .size(11.5)
+                        .font(MONO)
+                        .color(t.fg_3)
+                        .wrapping(text::Wrapping::None),
+                    text(hit.text.as_str())
+                        .size(12)
+                        .font(MONO)
+                        .color(t.fg)
+                        .wrapping(text::Wrapping::None),
+                ]
+                .spacing(1),
+            )
+            .width(Length::Fill)
+            .padding([3, 8])
+            .style(t.ghost(t.fg, false))
+            .on_press(Msg::ViewFile(app.cwd.join(&hit.path), Some(hit.line))),
+        );
+    }
+    if hits.len() >= crate::edit::HITS {
+        list = list.push(text(fill(w.grep_more, "n", crate::edit::HITS)).size(12).color(t.fg_3));
+    }
+    list.into()
 }
 
 /// A comment kept under the line it was made on, with the way to take it back.

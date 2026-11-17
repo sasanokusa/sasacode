@@ -2483,3 +2483,76 @@ fn a_scratch_conversation_is_not_listed_and_its_log_goes_once_it_is_left() {
     assert!(!app.parked.iter().any(|c| c.scratch));
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn a_file_is_edited_and_saved_in_the_files_tab_a_markdown_one_previewed_and_a_picture_shown() {
+    use text_editor::{Action, Edit, Motion};
+    let mut app = window("ja");
+    let dir = std::env::temp_dir().join(format!("sasacode-gui-edit-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    app.cwd = dir.clone();
+    let readme = dir.join("README.md");
+    std::fs::write(&readme, "# 見出しの行\n本文\n").unwrap();
+    let w = crate::words::JA;
+    app.tab = Tab::Files;
+    app.insp = true;
+    let _ = app.update(Msg::FileRead(Box::new(crate::files::read(readme.clone(), None))));
+    // As it reads.
+    let _ = app.update(Msg::FilePreview(true));
+    assert!(app.file_preview.is_some() && says(&app, w.preview_off));
+    let _ = app.update(Msg::FilePreview(false));
+    // Edited and saved, its last line's end kept.
+    let _ = app.update(Msg::FileEditStart);
+    assert!(says(&app, w.edit_cancel) && says(&app, w.edit_save));
+    let _ = app.update(Msg::FileEditAction(Action::Move(Motion::DocumentEnd)));
+    for c in "追記".chars() {
+        let _ = app.update(Msg::FileEditAction(Action::Edit(Edit::Insert(c))));
+    }
+    // Another file is not opened over what is typed.
+    let _ = app.update(Msg::ViewFile(dir.join("other.txt"), None));
+    assert_eq!(app.toast.as_deref(), Some(w.edit_unsaved));
+    let _ = app.update(Msg::FileSave);
+    assert_eq!(std::fs::read_to_string(&readme).unwrap(), "# 見出しの行\n本文\n追記\n");
+    assert!(app.file_edit.is_none());
+    // Written by another since it was read: not written over.
+    let _ = app.update(Msg::FileEditStart);
+    let _ = app.update(Msg::FileEditAction(Action::Edit(Edit::Insert('x'))));
+    std::fs::write(&readme, "他の誰か\n").unwrap();
+    let _ = app.update(Msg::FileSave);
+    assert_eq!(app.toast.as_deref(), Some(w.edit_changed));
+    assert_eq!(std::fs::read_to_string(&readme).unwrap(), "他の誰か\n");
+    let _ = app.update(Msg::FileEditCancel);
+    // A picture is shown as one, not as a file that is not text.
+    let picture = dir.join("p.png");
+    std::fs::write(&picture, [0x89, b'P', b'N', b'G', 0, 0]).unwrap();
+    let _ = app.update(Msg::FileRead(Box::new(crate::files::read(picture, None))));
+    let v = app.viewing.as_ref().unwrap();
+    assert!(v.image && v.error.is_none());
+    assert!(!says(&app, w.edit_start));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn the_files_tab_finds_files_by_what_they_hold_and_opens_one_at_its_line() {
+    let mut app = window("ja");
+    app.tab = Tab::Files;
+    app.insp = true;
+    let w = crate::words::JA;
+    let _ = app.update(Msg::FileGrepMode(true));
+    assert!(says(&app, w.grep_ph));
+    let _ = app.update(Msg::FileQuery("retry".into()));
+    let _ = app.update(Msg::FileGrep);
+    assert!(app.grep_busy && says(&app, w.grep_busy));
+    let hits = vec![crate::edit::Hit {
+        path: "src/retry.rs".into(),
+        line: 42,
+        text: "fn retry_with_backoff()".into(),
+    }];
+    // An answer for what was typed before is not shown.
+    let _ = app.update(Msg::Grepped("old".into(), Ok(Vec::new())));
+    assert!(app.grep_busy);
+    let _ = app.update(Msg::Grepped("retry".into(), Ok(hits)));
+    assert!(says(&app, "src/retry.rs:42") && says(&app, "fn retry_with_backoff()"));
+    let _ = app.update(Msg::Grepped("retry".into(), Ok(Vec::new())));
+    assert!(says(&app, w.grep_none));
+}
