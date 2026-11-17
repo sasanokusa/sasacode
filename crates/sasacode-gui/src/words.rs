@@ -232,6 +232,9 @@ words! {
     scope_changes: "変更", "Changes";
     scope_branch: "ブランチ全体", "Whole branch";
     scope_commit: "コミットを選ぶ", "Pick a commit";
+    scope_turn: "直前のターン", "Last turn";
+    scope_turn_base: "この会話の直前のターンが変えたもの（始まりと終わりの作業ツリーの比較）", "What this conversation's last turn changed (the working tree as it began and ended)";
+    scope_no_turn: "この会話は、このウィンドウでまだターンを走らせていません", "No turn of this conversation has run in this window yet";
     scope_base: "{base}との比較", "Compared with {base}";
     scope_loading: "読んでいます…", "Reading…";
     scope_empty: "違いはありません", "No differences";

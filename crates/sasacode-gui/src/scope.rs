@@ -16,6 +16,9 @@ pub enum Scope {
     Branch,
     /// One commit, by its short hash.
     Commit(String),
+    /// What the shown conversation's last turn changed, as the working tree was taken when it
+    /// began and when it ended.
+    Turn,
 }
 
 /// A file's diff as it was viewed: its path and a hash of its lines, so that a change to it shows
@@ -36,6 +39,8 @@ impl App {
         let cwd = self.cwd.clone();
         let whitespace = !self.prefs.more.hide_whitespace;
         let scope = self.git_scope.clone();
+        let turn = (self.chat.turn_from.clone(), self.chat.turn_to.clone());
+        let no_turn = self.s.w().scope_no_turn;
         if scope == Scope::Changes {
             self.scoped = None;
             return Task::none();
@@ -47,6 +52,10 @@ impl App {
                     let commits = crate::git::commits(&cwd);
                     let scoped = match &scope {
                         Scope::Commit(sha) => crate::git::commit_diff(&cwd, sha, whitespace),
+                        Scope::Turn => match &turn {
+                            (Some(from), to) => crate::git::turn_diff(&cwd, from, to.as_deref(), whitespace),
+                            (None, _) => Err(no_turn.to_owned()),
+                        },
                         _ => crate::git::branch_diff(&cwd, whitespace),
                     };
                     (scope, commits, scoped)
@@ -73,6 +82,20 @@ impl App {
             Msg::GitScope(scope) => {
                 self.git_scope = scope;
                 self.load_scope()
+            }
+            Msg::TurnTree(key, start, tree) => {
+                if let Some(chat) = self.chat_mut(key) {
+                    if start {
+                        chat.turn_from = tree;
+                    } else {
+                        chat.turn_to = tree;
+                    }
+                }
+                // The last turn shown is read again as it ends.
+                if !start && key == self.chat.key && self.git_scope == Scope::Turn {
+                    return Ok(self.load_scope());
+                }
+                Task::none()
             }
             Msg::Scoped(scope, commits, scoped) => {
                 self.scope_loading = false;

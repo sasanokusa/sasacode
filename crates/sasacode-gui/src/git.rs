@@ -135,8 +135,6 @@ fn run(cwd: &Path, program: &str, args: &[&str]) -> Result<String, String> {
     run_within(cwd, program, args, None)
 }
 
-/// Runs `program` in `cwd` with nothing to read from, so that nothing it asks waits for an answer:
-/// git and gh are told not to ask on the terminal, and with `wait`, what takes longer is stopped.
 /// Creates a secret gist of `markdown`, named `file`, with `program` (`gh`); says its URL. Never
 /// public: `gh gist create` makes a secret one unless told otherwise, and is not told.
 pub fn gist(cwd: &Path, program: &str, file: &str, description: &str, markdown: &str) -> Result<String, String> {
@@ -162,6 +160,8 @@ pub fn gist(cwd: &Path, program: &str, file: &str, description: &str, markdown: 
         .ok_or_else(|| out.trim().to_owned())
 }
 
+/// Runs `program` in `cwd` with nothing to read from, so that nothing it asks waits for an answer:
+/// git and gh are told not to ask on the terminal, and with `wait`, what takes longer is stopped.
 fn run_within(cwd: &Path, program: &str, args: &[&str], wait: Option<Duration>) -> Result<String, String> {
     exec(cwd, program, args, wait, None).map(|out| out.trim().to_owned())
 }
@@ -922,6 +922,53 @@ pub fn commit_diff(cwd: &Path, sha: &str, whitespace: bool) -> Result<Scoped, St
     })
 }
 
+/// The working tree as a tree object, with the files git does not ignore that it does not track
+/// yet: written through an index of its own, so the repository's index and files are left as they
+/// are (the files' contents are kept as objects, as `git add` keeps them). A turn's start and end
+/// are compared with these. None outside a repository.
+pub fn snapshot(cwd: &Path) -> Option<String> {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static N: AtomicU64 = AtomicU64::new(0);
+    let top = top(cwd)?;
+    let index = top.join(git(&top, &["rev-parse", "--git-path", "index"]).ok()?);
+    let own = std::env::temp_dir().join(format!(
+        "sasacode-turn-{}-{}.index",
+        std::process::id(),
+        N.fetch_add(1, Ordering::Relaxed)
+    ));
+    // Begun from the repository's, git does not read again the files it already knows unchanged.
+    if index.is_file() && std::fs::copy(&index, &own).is_err() {
+        return None;
+    }
+    let env = [("GIT_INDEX_FILE", own.to_str()?)];
+    let tree = exec_with(&top, "git", &["add", "-A", "."], None, None, &env)
+        .and_then(|_| exec_with(&top, "git", &["write-tree"], None, None, &env));
+    let _ = std::fs::remove_file(&own);
+    tree.ok().map(|t| t.trim().to_owned()).filter(|t| !t.is_empty())
+}
+
+/// What a turn changed: from the tree taken as it began to the one taken as it ended, or to the
+/// working tree as it is now while it runs.
+pub fn turn_diff(cwd: &Path, from: &str, to: Option<&str>, whitespace: bool) -> Result<Scoped, String> {
+    let top = top(cwd).ok_or_else(|| "not a git repository".to_owned())?;
+    let now;
+    let to = match to {
+        Some(to) => to,
+        None => {
+            now = snapshot(&top).ok_or_else(|| "git write-tree".to_owned())?;
+            now.as_str()
+        }
+    };
+    let mut args = vec!["diff", "--no-color", "--no-ext-diff", from, to];
+    if !whitespace {
+        args.push("-w");
+    }
+    Ok(Scoped {
+        files: split_diff(&git(&top, &args)?),
+        base: String::new(),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -939,6 +986,36 @@ mod tests {
             git(&dir, args).unwrap();
         }
         dir
+    }
+
+    #[test]
+    fn a_turn_is_what_changed_between_two_snapshots_and_the_index_is_left_alone() {
+        let dir = repo("turn");
+        std::fs::write(dir.join("a.txt"), "one\n").unwrap();
+        std::fs::write(dir.join(".gitignore"), "build/\n").unwrap();
+        git(&dir, &["add", "-A"]).unwrap();
+        git(&dir, &["commit", "-q", "-m", "first"]).unwrap();
+        // Staged before the turn: still staged after, and not part of what the turn changed.
+        std::fs::write(dir.join("a.txt"), "one\ntwo\n").unwrap();
+        git(&dir, &["add", "a.txt"]).unwrap();
+        let from = snapshot(&dir).unwrap();
+        // The turn: a file changed, one made (not tracked), one made where git ignores.
+        std::fs::write(dir.join("a.txt"), "one\ntwo\nthree\n").unwrap();
+        std::fs::write(dir.join("new.txt"), "made\n").unwrap();
+        std::fs::create_dir_all(dir.join("build")).unwrap();
+        std::fs::write(dir.join("build/out"), "x").unwrap();
+        let to = snapshot(&dir).unwrap();
+        let turn = turn_diff(&dir, &from, Some(&to), true).unwrap();
+        let files: Vec<&str> = turn.files.iter().map(|(p, _)| p.as_str()).collect();
+        assert_eq!(files, ["a.txt", "new.txt"]);
+        assert_eq!(turn.files[0].1.added, 1, "only the turn's line");
+        // While it runs, to the working tree as it is.
+        assert_eq!(turn_diff(&dir, &from, None, true).unwrap(), turn);
+        // The index is as it was: a.txt staged as before, new.txt not tracked.
+        let status = git(&dir, &["status", "--porcelain"]).unwrap();
+        assert!(status.contains("MM a.txt") && status.contains("?? new.txt"), "{status}");
+        assert!(snapshot(&std::env::temp_dir().join("no-such-repo-here")).is_none());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

@@ -701,6 +701,11 @@ fn scope_bar(app: &App) -> El<'_> {
             app.git_scope == Scope::Branch,
             Msg::GitScope(Scope::Branch)
         ),
+        pick(
+            w.scope_turn.to_owned(),
+            app.git_scope == Scope::Turn,
+            Msg::GitScope(Scope::Turn)
+        ),
         iced::widget::pick_list(choices, commit, |picked: String| {
             Msg::GitScope(Scope::Commit(picked.split(' ').next().unwrap_or_default().to_owned()))
         })
@@ -757,7 +762,13 @@ fn scoped_files(app: &App) -> El<'_> {
     let seen = keys.iter().filter(|k| app.viewed(k)).count();
     col = col.push(
         row![
-            text(fill(w.scope_base, "base", &scoped.base)).size(11.5).color(t.fg_3),
+            text(if app.git_scope == crate::scope::Scope::Turn {
+                w.scope_turn_base.to_owned()
+            } else {
+                fill(w.scope_base, "base", &scoped.base)
+            })
+            .size(11.5)
+            .color(t.fg_3),
             Space::new().width(Length::Fill),
             text(fill(&fill(w.viewed_n, "n", seen), "all", keys.len()))
                 .size(11.5)

@@ -1674,6 +1674,49 @@ fn the_git_tab_shows_the_branch_or_a_commit_side_by_side_with_files_marked_viewe
 }
 
 #[test]
+fn the_git_tab_shows_what_the_shown_conversations_last_turn_changed() {
+    use crate::diff::Diff;
+    use crate::scope::Scope;
+    let mut app = window("ja");
+    let w = crate::words::JA;
+    app.tab = Tab::Git;
+    app.insp = true;
+    app.git = crate::git::Status {
+        repo: true,
+        branch: Some("topic".into()),
+        ..Default::default()
+    };
+    // The working tree as the turn began and as it ended.
+    let key = app.chat.key;
+    let _ = app.update(Msg::TurnTree(key, true, Some("a1".into())));
+    let _ = app.update(Msg::TurnTree(key, false, Some("b2".into())));
+    assert_eq!(
+        (app.chat.turn_from.as_deref(), app.chat.turn_to.as_deref()),
+        (Some("a1"), Some("b2"))
+    );
+    assert!(says(&app, w.scope_turn));
+    let _ = app.update(Msg::GitScope(Scope::Turn));
+    assert!(app.scope_loading);
+    let scoped = crate::git::Scoped {
+        base: String::new(),
+        files: vec![(
+            "src/retry.ts".into(),
+            Diff::parse("@@ -1 +1 @@\n-const WAIT = 100\n+const WAIT = 200\n"),
+        )],
+    };
+    let _ = app.update(Msg::Scoped(Scope::Turn, Vec::new(), Ok(Box::new(scoped))));
+    assert!(says(&app, w.scope_turn_base) && says(&app, "src/") && says(&app, "const WAIT = 200"));
+    // Sent again: the next turn's trees are taken anew.
+    app.set_input("もう一度");
+    let _ = app.update(Msg::Send);
+    assert!(app.chat.turn_from.is_none() && app.chat.turn_to.is_none());
+    // Another conversation shown: its last turn is not this one's, so back to the changes.
+    let _ = app.update(Msg::NewSession);
+    assert_eq!(app.git_scope, Scope::Changes);
+    assert!(app.scoped.is_none());
+}
+
+#[test]
 fn unwrapped_diff_lines_are_as_wide_as_the_longest_at_least_the_panel() {
     use crate::view::unwrapped_width;
     assert_eq!(unwrapped_width(["a"].into_iter(), 300.0), 300.0);

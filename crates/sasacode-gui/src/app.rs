@@ -408,6 +408,10 @@ pub(crate) struct Chat {
     pub(crate) model: Option<String>,
     /// Its last run, in plan mode, ended with a plan: to go ahead with.
     pub(crate) planned: bool,
+    /// The working tree as a tree object when the last turn began, and when it ended: what the git
+    /// tab's last-turn scope compares.
+    pub(crate) turn_from: Option<String>,
+    pub(crate) turn_to: Option<String>,
     /// The permission mode its next run uses, over the window's, once: an automation's. What is
     /// sent after in the conversation goes in the mode the window shows.
     pub(crate) mode: Option<&'static str>,
@@ -437,6 +441,8 @@ impl Chat {
             log_seen: None,
             model: None,
             planned: false,
+            turn_from: None,
+            turn_to: None,
             mode: None,
             automation: None,
         }
@@ -690,6 +696,8 @@ pub enum Msg {
     SetWhitespace(bool),
     /// Diff lines of the git tab kept whole, scrolled sideways, or wrapped.
     SetDiffNowrap(bool),
+    /// The working tree taken as conversation `key`'s turn began (`true`) or ended.
+    TurnTree(u64, bool, Option<String>),
     /// A file marked as viewed, or not, by its key.
     Viewed(String),
     /// A menu opened by a right click, where the pointer is; put away; or one of its items chosen.
@@ -1824,6 +1832,11 @@ impl App {
             self.split = None;
         }
         let last = chat.session.clone().filter(|_| !chat.scratch);
+        // The last turn the git tab showed was the conversation left's: back to the changes.
+        if self.git_scope == crate::scope::Scope::Turn {
+            self.git_scope = crate::scope::Scope::Changes;
+            self.scoped = None;
+        }
         let left = std::mem::replace(&mut self.chat, chat);
         self.keep_last(last);
         // A scratch conversation left is gone, once its run is over.
@@ -1842,7 +1855,7 @@ impl App {
     }
 
     /// The conversation with `key`, shown or kept, or the side question.
-    fn chat_mut(&mut self, key: u64) -> Option<&mut Chat> {
+    pub(crate) fn chat_mut(&mut self, key: u64) -> Option<&mut Chat> {
         if self.chat.key == key {
             return Some(&mut self.chat);
         }
@@ -2220,6 +2233,7 @@ impl App {
         if self.suggestion.as_ref().is_some_and(|(k, _)| *k == key) {
             self.suggestion = None;
         }
+        let (repo, cwd) = (self.git.repo, self.cwd.clone());
         let Some(chat) = self.chat_mut(key) else {
             return Task::none();
         };
@@ -2230,7 +2244,24 @@ impl App {
         spec.prompt = prompt;
         spec.resume = chat.session.clone();
         chat.planned = false;
+        chat.turn_from = None;
+        chat.turn_to = None;
         let (task, handle) = Task::run(runner::run(spec), move |update| Msg::Run(key, update)).abortable();
+        // The working tree is taken before the run can change it, for the git tab's last turn.
+        let task = if key != SIDE && repo {
+            Task::perform(
+                async move {
+                    tokio::task::spawn_blocking(move || crate::git::snapshot(&cwd))
+                        .await
+                        .ok()
+                        .flatten()
+                },
+                move |tree| Msg::TurnTree(key, true, tree),
+            )
+            .chain(task)
+        } else {
+            task
+        };
         chat.run = Some(Run {
             control: None,
             _handle: Some(handle.abort_on_drop()),
@@ -2474,9 +2505,22 @@ impl App {
         }
         self.hold_awake();
         let mut tasks = Vec::new();
-        // The branch, the git tab's count and its files, as the run left them.
+        // The branch, the git tab's count and its files, as the run left them; and the working
+        // tree taken as the turn ended, for the git tab's last turn.
         if git {
             tasks.push(self.refresh_git());
+            if key != SIDE && self.git.repo {
+                let cwd = self.cwd.clone();
+                tasks.push(Task::perform(
+                    async move {
+                        tokio::task::spawn_blocking(move || crate::git::snapshot(&cwd))
+                            .await
+                            .ok()
+                            .flatten()
+                    },
+                    move |tree| Msg::TurnTree(key, false, tree),
+                ));
+            }
         }
         let again = next.is_some();
         if let Some(prompt) = next {
