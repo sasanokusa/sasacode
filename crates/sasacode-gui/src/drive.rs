@@ -3211,6 +3211,56 @@ fn a_file_is_edited_and_saved_in_the_files_tab_a_markdown_one_previewed_and_a_pi
 }
 
 #[test]
+fn a_file_shown_is_read_again_when_another_writes_it_but_not_while_it_is_edited() {
+    let mut app = window("ja");
+    let dir = std::env::temp_dir().join(format!("sasacode-gui-look-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("notes.md");
+    std::fs::write(&file, "# 前\n").unwrap();
+    app.cwd = dir.clone();
+    let _ = app.update(Msg::ViewFile(file.clone(), None));
+    let _ = app.update(Msg::FileRead(Box::new(crate::files::read(file.clone(), None))));
+    let shown = |app: &App| app.viewing.as_ref().map(|v| v.lines.join("\n")).unwrap_or_default();
+    assert!(app.watches_file());
+    assert_eq!(shown(&app), "# 前");
+    assert_eq!(app.viewing.as_ref().unwrap().stamp, crate::files::stamp(&file));
+    // Another writes it: what is shown is the file as it is now, and so is its preview.
+    let _ = app.update(Msg::FilePreview(true));
+    std::fs::write(&file, "# 後\n本文\n").unwrap();
+    let later = std::time::SystemTime::now() + std::time::Duration::from_secs(5);
+    std::fs::File::options()
+        .write(true)
+        .open(&file)
+        .unwrap()
+        .set_modified(later)
+        .unwrap();
+    assert_ne!(app.viewing.as_ref().unwrap().stamp, crate::files::stamp(&file));
+    let _ = app.update(Msg::FileLook);
+    let _ = app.update(Msg::FileReread(Some(Box::new(crate::files::read(file.clone(), None)))));
+    assert_eq!(shown(&app), "# 後\n本文");
+    assert_eq!(app.viewing.as_ref().unwrap().stamp, crate::files::stamp(&file));
+    assert!(app.file_preview.is_some());
+    // Being edited, it is not looked at, and a read that arrives then is not shown over it.
+    let _ = app.update(Msg::FilePreview(false));
+    let _ = app.update(Msg::FileEditStart);
+    assert!(app.file_edit.is_some() && !app.watches_file());
+    std::fs::write(&file, "# 別\n").unwrap();
+    let _ = app.update(Msg::FileReread(Some(Box::new(crate::files::read(file.clone(), None)))));
+    assert_eq!(shown(&app), "# 後\n本文");
+    assert!(app.file_edit.is_some());
+    // Nor is another file's read shown, nor a picture looked at.
+    let _ = app.update(Msg::FileEditCancel);
+    let other = dir.join("other.md");
+    std::fs::write(&other, "ほか\n").unwrap();
+    let _ = app.update(Msg::FileReread(Some(Box::new(crate::files::read(other, None)))));
+    assert_eq!(shown(&app), "# 後\n本文");
+    app.viewing.as_mut().unwrap().image = true;
+    assert!(!app.watches_file());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn with_autosave_what_is_typed_is_written_a_moment_after_the_last_key_and_kept_open() {
     use std::time::{Duration, Instant};
     use text_editor::{Action, Edit, Motion};

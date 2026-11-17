@@ -648,6 +648,9 @@ pub enum Msg {
     /// list of files, which is found by what is typed.
     ViewFile(PathBuf, Option<usize>),
     FileRead(Box<crate::files::Viewing>),
+    /// The file shown looked at, to be read again when another wrote it; and as read again.
+    FileLook,
+    FileReread(Option<Box<crate::files::Viewing>>),
     CloseFile,
     FileQuery(String),
     /// A folder of the files tab's tree opened or shut, and one of the git tab's folded or not.
@@ -1312,6 +1315,10 @@ impl App {
         // The clock only moves what is shown while something runs.
         if self.running() {
             all.push(iced::time::every(Duration::from_secs(1)).map(Msg::Tick));
+        }
+        // The file shown in the files tab, read again when another writes it.
+        if self.watches_file() {
+            all.push(iced::time::every(crate::files::LOOK_EVERY).map(|_| Msg::FileLook));
         }
         // What is typed in the files tab, saved a moment after the last key.
         if self.prefs.more.autosave && self.file_edit.as_ref().is_some_and(|e| e.typed_at.is_some()) {

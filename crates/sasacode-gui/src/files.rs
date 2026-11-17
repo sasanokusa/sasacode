@@ -101,7 +101,21 @@ pub struct Viewing {
     pub image: bool,
     /// The line to bring into view, if one was asked for.
     pub line: Option<usize>,
+    /// When it was last written and how long it was, as read: to tell that another wrote it.
+    pub stamp: Option<Stamp>,
 }
+
+/// When a file was last written, and its length.
+pub type Stamp = (std::time::SystemTime, u64);
+
+/// `path`'s [`Stamp`], none when it cannot be read.
+pub fn stamp(path: &Path) -> Option<Stamp> {
+    let meta = std::fs::metadata(path).ok()?;
+    Some((meta.modified().ok()?, meta.len()))
+}
+
+/// How often the file shown is looked at, to be read again when another wrote it.
+pub const LOOK_EVERY: std::time::Duration = std::time::Duration::from_secs(2);
 
 /// `lines` colored as the syntax of `token` (a file's extension, or a language's name) says,
 /// for a dark ground or a light one.
@@ -163,7 +177,10 @@ pub fn read(path: PathBuf, line: Option<usize>) -> Viewing {
         error: None,
         image: false,
         line,
+        stamp: None,
     };
+    // Taken before it is read: a write while it is read is seen at the next look.
+    viewing.stamp = stamp(&viewing.path);
     if is_picture(&viewing.path) {
         viewing.image = true;
         return viewing;
@@ -254,6 +271,15 @@ pub fn linked_file(uri: &str, cwd: &Path) -> Option<(PathBuf, Option<usize>)> {
 }
 
 impl App {
+    /// Whether the file shown is looked at for another's writes: a text shown in the files tab
+    /// and not being edited.
+    pub(crate) fn watches_file(&self) -> bool {
+        self.insp
+            && self.tab == Tab::Files
+            && self.file_edit.is_none()
+            && self.viewing.as_ref().is_some_and(|v| !v.image)
+    }
+
     /// The files tab's messages; any other comes back.
     pub(crate) fn update_files(&mut self, msg: Msg) -> Result<Task<Msg>, Msg> {
         let task = match msg {
@@ -301,6 +327,42 @@ impl App {
                     Some(y) => operation::snap_to(INSPECTOR, operation::RelativeOffset { x: 0.0, y }),
                     None => operation::snap_to(INSPECTOR, operation::RelativeOffset::START),
                 }
+            }
+            // Another wrote the file shown: read again, where it was read to, unless it is being
+            // edited (what is saved over another's write is refused there).
+            Msg::FileLook => {
+                let Some(v) = self.viewing.as_ref().filter(|_| self.watches_file()) else {
+                    return Ok(Task::none());
+                };
+                if stamp(&v.path) == v.stamp {
+                    return Ok(Task::none());
+                }
+                let (path, line) = (v.path.clone(), v.line);
+                Task::perform(
+                    async move {
+                        tokio::task::spawn_blocking(move || read(path, line))
+                            .await
+                            .ok()
+                            .map(Box::new)
+                    },
+                    Msg::FileReread,
+                )
+            }
+            Msg::FileReread(now) => {
+                let Some(now) = now else {
+                    return Ok(Task::none());
+                };
+                if self.file_edit.is_some() || self.viewing.as_ref().is_none_or(|v| v.path != now.path) {
+                    return Ok(Task::none());
+                }
+                // A Markdown file shown as it reads is shown as it reads now.
+                if self.file_preview.is_some() {
+                    self.file_preview = std::fs::read_to_string(&now.path)
+                        .ok()
+                        .map(|text| crate::transcript::Markdown::new(&text));
+                }
+                self.viewing = Some(*now);
+                Task::none()
             }
             Msg::CloseFile => {
                 let flushed = if self.prefs.more.autosave {
