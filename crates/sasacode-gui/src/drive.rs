@@ -3068,6 +3068,39 @@ fn a_scratch_conversation_with_no_folder_runs_in_an_empty_one_and_its_log_goes_f
 }
 
 #[test]
+fn what_the_search_inside_the_conversation_finds_is_marked_in_the_words_themselves() {
+    use iced::advanced::text::{Highlight, Span};
+    let mark = Highlight {
+        background: iced::Color::BLACK.into(),
+        border: iced::Border::default(),
+    };
+    let spans: Vec<Span<'static, ()>> = vec![Span::new("Retry the REquest"), Span::new("再試行を見る")];
+    let pieces = |needle: &str| -> Vec<(String, bool)> {
+        crate::view::timeline::found_marked(&spans, needle, mark)
+            .into_iter()
+            .map(|s| (s.text.to_string(), s.highlight.is_some()))
+            .collect()
+    };
+    let own = |all: &[(&str, bool)]| all.iter().map(|(t, m)| ((*t).to_owned(), *m)).collect::<Vec<_>>();
+    assert_eq!(
+        pieces("re"),
+        own(&[("Re", true), ("try the ", false), ("RE", true), ("quest", false), ("再試行を見る", false)])
+    );
+    assert_eq!(
+        pieces("試行"),
+        own(&[("Retry the REquest", false), ("再", false), ("試行", true), ("を見る", false)])
+    );
+    // Nothing looked for: as it was.
+    assert_eq!(pieces("").len(), 2);
+    // The search's words, lower case; none while nothing is typed.
+    let mut app = window("ja");
+    app.find_in = Some("  ReTry ".into());
+    assert_eq!(app.find_needle().as_deref(), Some("retry"));
+    app.find_in = Some("   ".into());
+    assert!(app.find_needle().is_none());
+}
+
+#[test]
 fn a_file_is_edited_and_saved_in_the_files_tab_a_markdown_one_previewed_and_a_picture_shown() {
     use text_editor::{Action, Edit, Motion};
     let mut app = window("ja");

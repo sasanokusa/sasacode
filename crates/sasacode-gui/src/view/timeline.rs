@@ -176,6 +176,72 @@ pub(crate) fn bubble<'a>(t: Tokens, prompt: &'a str) -> El<'a> {
     .into()
 }
 
+/// What the user said, with what the search inside the conversation found marked in it.
+fn bubble_found<'a>(t: Tokens, prompt: &str, needle: &str) -> El<'a> {
+    let said: Vec<iced::advanced::text::Span<'static, ()>> = vec![iced::advanced::text::Span::new(prompt.to_owned())];
+    container(
+        container(
+            iced::widget::rich_text(found_marked(&said, needle, found_mark(t)))
+                .size(14)
+                .color(t.fg),
+        )
+        .padding([8, 14])
+        .max_width(560)
+        .style(t.boxed(t.raised, t.line, BUBBLE)),
+    )
+    .align_right(Length::Fill)
+    .into()
+}
+
+/// How what the search found is marked.
+fn found_mark(t: Tokens) -> iced::advanced::text::Highlight {
+    iced::advanced::text::Highlight {
+        background: t.warn_wash.into(),
+        border: border::rounded(3.0).color(t.warn).width(1.0),
+    }
+}
+
+/// `spans` with each place that says `needle` (lower case) made a span of its own, `mark`ed. A
+/// span whose lower case is not as long as it is (so that places in one are not places in the
+/// other) is left as it is.
+pub(crate) fn found_marked<Link: Clone>(
+    spans: &[iced::advanced::text::Span<'static, Link>],
+    needle: &str,
+    mark: iced::advanced::text::Highlight,
+) -> Vec<iced::advanced::text::Span<'static, Link>> {
+    let mut out = Vec::new();
+    for span in spans {
+        let whole: &str = span.text.as_ref();
+        let lower = whole.to_lowercase();
+        if needle.is_empty() || lower.len() != whole.len() || !lower.contains(needle) {
+            out.push(span.clone());
+            continue;
+        }
+        let mut at = 0;
+        for (start, _) in lower.match_indices(needle) {
+            if start < at || !whole.is_char_boundary(start) || !whole.is_char_boundary(start + needle.len()) {
+                continue;
+            }
+            if start > at {
+                let mut before = span.clone();
+                before.text = whole[at..start].to_owned().into();
+                out.push(before);
+            }
+            let mut found = span.clone();
+            found.text = whole[start..start + needle.len()].to_owned().into();
+            found.highlight = Some(mark);
+            out.push(found);
+            at = start + needle.len();
+        }
+        if at < whole.len() {
+            let mut after = span.clone();
+            after.text = whole[at..].to_owned().into();
+            out.push(after);
+        }
+    }
+    out
+}
+
 fn exchange<'a>(app: &'a App, i: usize, ex: &'a Exchange) -> El<'a> {
     let t = app.t;
     let last = i + 1 == app.chat.transcript.exchanges.len();
@@ -208,7 +274,11 @@ fn exchange<'a>(app: &'a App, i: usize, ex: &'a Exchange) -> El<'a> {
                 ]
                 .spacing(3)
             }
-            None => column![bubble(t, &ex.prompt)].spacing(3),
+            // What the search found in it is marked.
+            None => match app.find_needle() {
+                Some(needle) => column![bubble_found(t, &ex.prompt, &needle)].spacing(3),
+                None => column![bubble(t, &ex.prompt)].spacing(3),
+            },
         };
         // The images it named, small, each opened by a click.
         let images = crate::composer::image_refs(&ex.prompt, &app.cwd);
@@ -1009,6 +1079,20 @@ struct Reply<'b> {
 impl<'a> markdown::Viewer<'a, Msg> for Reply<'a> {
     fn on_link_click(url: markdown::Uri) -> Msg {
         Msg::Link(url)
+    }
+
+    /// As iced draws one, with what the search inside the conversation found marked.
+    fn paragraph(&self, settings: markdown::Settings, text: &markdown::Text) -> El<'a> {
+        match self.app.find_needle() {
+            Some(needle) => {
+                let spans = text.spans(settings.style);
+                iced::widget::rich_text(found_marked(&spans, &needle, found_mark(self.app.t)))
+                    .size(settings.text_size)
+                    .on_link_click(Self::on_link_click)
+                    .into()
+            }
+            None => markdown::paragraph(settings, text, Self::on_link_click),
+        }
     }
 
     /// A picture that is a file here, shown, and larger on a click; any other, its words.

@@ -14,7 +14,7 @@ pub(crate) use timeline::has;
 pub(crate) mod overlay;
 mod sidebar;
 mod split;
-mod timeline;
+pub(crate) mod timeline;
 mod usage;
 
 use std::path::Path;

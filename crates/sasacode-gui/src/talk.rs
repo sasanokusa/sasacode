@@ -31,6 +31,15 @@ impl App {
             .collect()
     }
 
+    /// What the search inside the conversation looks for, lower case; none while nothing is typed.
+    pub(crate) fn find_needle(&self) -> Option<String> {
+        self.find_in
+            .as_deref()
+            .map(str::trim)
+            .filter(|n| !n.is_empty())
+            .map(str::to_lowercase)
+    }
+
     /// The exchange in view of those the search finds.
     pub(crate) fn find_current(&self) -> Option<usize> {
         let found = self.found_in();
