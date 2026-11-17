@@ -163,14 +163,14 @@ pub fn image_refs(text: &str, cwd: &Path) -> Vec<(PathBuf, String)> {
     while let Some(at) = rest.find('@') {
         let after = &rest[at + 1..];
         let before_ok = at == 0 || rest[..at].ends_with(char::is_whitespace);
-        if let Some(quoted) = after.strip_prefix('"') {
-            if let Some(end) = quoted.find('"') {
-                if before_ok {
-                    put(&quoted[..end], &rest[at..at + end + 3]);
-                }
-                rest = &quoted[end + 1..];
-                continue;
+        if let Some(quoted) = after.strip_prefix('"')
+            && let Some(end) = quoted.find('"')
+        {
+            if before_ok {
+                put(&quoted[..end], &rest[at..at + end + 3]);
             }
+            rest = &quoted[end + 1..];
+            continue;
         }
         let end = after.find(char::is_whitespace).unwrap_or(after.len());
         if before_ok && end > 0 {
