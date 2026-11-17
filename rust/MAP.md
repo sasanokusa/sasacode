@@ -28,7 +28,7 @@ State: `open`, `claimed by <who> <date>`, `done (<evidence>)`.
 | 3 | bundled: tool-repair, repair, text-tool-calls, guards, agents-md, compaction, diagnostics, subagent, todo, progress-notes, permission-presets, agent-judge, checkpoints, official plugins, jev-guard | claimed by subagent K 2026-11-18 |
 | 3 | tui | claimed by subagent T 2026-11-18 |
 | 3 | cli: setup, catalog, endpoints, detect, env, keys, list-models, trust, update, stdin (loader: ADR-002) | done (1ed76bb, ae4d9bc); TUI entry waits for T |
-| 4 | xtask (build, checks, improve), CI and release workflows, install scripts | claimed by subagent X 2026-11-18 |
+| 4 | xtask (build, checks, improve), CI and release workflows, install scripts | done (170c981); release.yml not run yet, its first run is the PR |
 | 4 | docs (READMEs, docs/*.md) | claimed by subagent D 2026-11-18 |
 | 4 | app record/replay (`rust/app-cases`, rust-anything) | done: 34 cases from TS 0.15.2 (61cd088) |
 | 4 | TS removal; GUI and protocol tests read TS sources and move to the Rust ones | open (coordinator, last) |
