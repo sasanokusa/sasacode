@@ -27,7 +27,9 @@ fn assistant(t: i64, model: &str) -> String {
 }
 
 fn write_log(root: &Path, name: &str, lines: &[String]) -> PathBuf {
-    let path = root.join(name);
+    // Joined part by part, as Node's join writes `a/one.jsonl` on Windows (`a\one.jsonl`): the
+    // index is keyed by the path the listing finds.
+    let path = name.split('/').fold(root.to_path_buf(), |p, part| p.join(part));
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(&path, format!("{}\n", lines.join("\n"))).unwrap();
     path

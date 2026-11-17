@@ -8,6 +8,7 @@ pub mod host;
 pub mod settings;
 pub mod tool;
 pub mod validate;
+pub mod win32_path;
 
 pub use api::*;
 pub use hooks::*;

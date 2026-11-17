@@ -1002,9 +1002,16 @@ fn summaries_match_targets_and_paths() {
         Some("ls")
     );
     assert_eq!(BashTool.summary(&a(json!({ "command": "ls" }))).as_deref(), Some("ls"));
+    // On Windows `/w` is on the working directory's drive.
+    let written = if cfg!(windows) {
+        let here = std::env::current_dir().unwrap().display().to_string();
+        format!("{}\\w\\b\\c", &here[..2])
+    } else {
+        "/w/b/c".to_string()
+    };
     assert_eq!(
         WriteTool.paths(&a(json!({ "path": "a/../b/./c/" })), cwd),
-        Some(vec!["/w/b/c".to_string()])
+        Some(vec![written])
     );
     assert_eq!(EditTool.summary(&a(json!({ "path": "x.rs" }))).as_deref(), Some("x.rs"));
     assert!(ReadTool.paths(&a(json!({ "path": "/abs" })), cwd).is_some());
@@ -1172,12 +1179,23 @@ async fn bom_and_killed_commands_as_the_ts_wrote_them() {
     assert_eq!(std::fs::read(dir.join("b.txt")).unwrap(), b"\xef\xbb\xbfx\nY\n");
     let r = run(&BashTool, dir, json!({ "command": "printf '\\357\\273\\277x'" })).await;
     assert_eq!(out(&r), format!("{bom}x\n[exit code 0]"));
-    // Killed commands: the whole result.
+    // Killed commands: the whole result. Windows has no signals: taskkill /F ends the tree, which
+    // reads as exit code 1 (as in the TS).
     let json_of = |r: &ToolResult| serde_json::to_string(r).unwrap();
+    let killed = |text: &str, signal: &str, by: &str| {
+        let (note, code) = if cfg!(windows) {
+            ("[exit code 1]".to_string(), "1")
+        } else {
+            (format!("[terminated by {signal}]"), "null")
+        };
+        format!(
+            r#"{{"content":[{{"type":"text","text":"{text}{note}"}}],"isError":true,"details":{{"exitCode":{code},"killedBy":"{by}"}}}}"#
+        )
+    };
     let r = run(&BashTool, dir, json!({ "command": "sleep 5", "timeout": 0.3 })).await;
     assert_eq!(
         json_of(&r),
-        r#"{"content":[{"type":"text","text":"[Command timed out after 0.3s and was killed]\n[terminated by SIGTERM]"}],"isError":true,"details":{"exitCode":null,"killedBy":"timeout"}}"#
+        killed(r"[Command timed out after 0.3s and was killed]\n", "SIGTERM", "timeout")
     );
     // SIGTERM ignored: SIGKILL 2 s later.
     let r = run(
@@ -1188,7 +1206,11 @@ async fn bom_and_killed_commands_as_the_ts_wrote_them() {
     .await;
     assert_eq!(
         json_of(&r),
-        r#"{"content":[{"type":"text","text":"started\n[Command timed out after 0.3s and was killed]\n[terminated by SIGKILL]"}],"isError":true,"details":{"exitCode":null,"killedBy":"timeout"}}"#
+        killed(
+            r"started\n[Command timed out after 0.3s and was killed]\n",
+            "SIGKILL",
+            "timeout"
+        )
     );
     let c = ctx(dir);
     let signal = c.signal.clone();
@@ -1205,7 +1227,7 @@ async fn bom_and_killed_commands_as_the_ts_wrote_them() {
         .unwrap();
     assert_eq!(
         json_of(&r),
-        r#"{"content":[{"type":"text","text":"before\n[Command was interrupted by the user]\n[terminated by SIGTERM]"}],"isError":true,"details":{"exitCode":null,"killedBy":"abort"}}"#
+        killed(r"before\n[Command was interrupted by the user]\n", "SIGTERM", "abort")
     );
     let c = ctx(dir);
     c.signal.cancel();

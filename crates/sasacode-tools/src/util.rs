@@ -19,6 +19,9 @@ pub fn resolve_path(p: &str, cwd: &Path) -> String {
     if Path::new(&p).has_root() {
         return p;
     }
+    if cfg!(windows) {
+        return sasacode_plugin_api::win32_path::win32_resolve_here(&[&cwd.to_string_lossy(), &p]);
+    }
     let base = if cwd.has_root() {
         cwd.to_path_buf()
     } else {
@@ -159,6 +162,10 @@ pub(crate) fn truthy_arg(a: &JsonObject, key: &str) -> bool {
 /// A file-system error worded as Node/Bun word it (`EACCES: permission denied, open '/x'`): the
 /// text becomes "Tool failed: ..." for the model.
 pub fn fs_error(e: &std::io::Error, syscall: &str, path: &str) -> anyhow::Error {
+    // Windows refuses to open a folder as a file with "access denied"; libuv and Bun say EISDIR.
+    if cfg!(windows) && e.kind() == std::io::ErrorKind::PermissionDenied && Path::new(path).is_dir() {
+        return anyhow::anyhow!("EISDIR: illegal operation on a directory, {syscall} '{path}'");
+    }
     match errno_text(e) {
         Some((code, desc)) => anyhow::anyhow!("{code}: {desc}, {syscall} '{path}'"),
         None => anyhow::anyhow!("{e}"),
@@ -210,15 +217,24 @@ mod tests {
     #[test]
     fn resolves_like_node() {
         let cwd = Path::new("/w/p");
-        assert_eq!(resolve_path("a/../b/./c/", cwd), "/w/p/b/c");
-        assert_eq!(resolve_path("../../../x", cwd), "/x");
-        assert_eq!(resolve_path("", cwd), "/w/p");
+        // On Windows `/w/p` is on the working directory's drive, and the separator is `\`.
+        let native = |p: &str| {
+            if cfg!(windows) {
+                let here = std::env::current_dir().unwrap().display().to_string();
+                format!("{}{}", &here[..2], p.replace('/', "\\"))
+            } else {
+                p.to_string()
+            }
+        };
+        assert_eq!(resolve_path("a/../b/./c/", cwd), native("/w/p/b/c"));
+        assert_eq!(resolve_path("../../../x", cwd), native("/x"));
+        assert_eq!(resolve_path("", cwd), native("/w/p"));
         // Absolute paths and ~ expansions are taken as they are, `..` and all.
         assert_eq!(resolve_path("/a/../b", cwd), "/a/../b");
         let home = sasacode_plugin_api::home_dir().display().to_string();
         assert_eq!(resolve_path("~/x/../y", cwd), format!("{home}/x/../y"));
         assert_eq!(resolve_path("~", cwd), home);
-        assert_eq!(resolve_path("~x", cwd), "/w/p/~x");
+        assert_eq!(resolve_path("~x", cwd), native("/w/p/~x"));
     }
 
     #[test]

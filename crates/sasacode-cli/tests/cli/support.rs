@@ -147,8 +147,12 @@ impl Bin {
             .unwrap_or_default()
     }
 
-    /// The project folder as the run sees it (`process.cwd()`: symbolic links resolved).
+    /// The project folder as the run sees it (`process.cwd()`): with symbolic links resolved
+    /// (/var is /private/var on macOS); Windows keeps the path it was given (no `\\?\` form).
     pub fn cwd(&self) -> PathBuf {
+        if cfg!(windows) {
+            return self.sb.project.clone();
+        }
         self.sb.project.canonicalize().expect("the project folder")
     }
 

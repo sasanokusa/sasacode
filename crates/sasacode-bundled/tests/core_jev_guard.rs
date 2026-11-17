@@ -246,7 +246,13 @@ async fn state_targets_resolved_placed_and_described_by_git_the_users_request_in
         .tempdir_in(root.path())
         .unwrap();
     let outside = path_str(outside.path());
-    let command = format!("rm -rf build && rm src/a.ts notes.txt {outside}");
+    // Quoted on Windows, as a shell needs a path with `\` in it to be.
+    let arg = if cfg!(windows) {
+        format!("'{outside}'")
+    } else {
+        outside.clone()
+    };
+    let command = format!("rm -rf build && rm src/a.ts notes.txt {arg}");
     let s = state(&command, &cwd, Some("clean the build"), &home).await;
     assert_eq!(s["call"], json!({ "tool": "bash", "command": command }));
     assert!(s.get("steps").is_none()); // the command is already there; repeating it only distracts

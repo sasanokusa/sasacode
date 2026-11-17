@@ -106,6 +106,8 @@ mod tests {
         let here = std::env::current_dir().unwrap();
         assert_eq!(resolve("."), here);
         assert_eq!(resolve("a/./b/../c"), here.join("a/c"));
-        assert_eq!(resolve("/x/../../y"), std::path::PathBuf::from("/y"));
+        // On Windows `/y` is on the working directory's drive.
+        let root: std::path::PathBuf = here.components().take(if cfg!(windows) { 2 } else { 1 }).collect();
+        assert_eq!(resolve("/x/../../y"), root.join("y"));
     }
 }
