@@ -784,10 +784,16 @@ impl App {
                 // Another branch has another pull request, if any.
                 let moved = self.git.branch != status.branch;
                 self.git = *status;
+                // The message this worktree's window was opened to send, now its tree is known.
+                let handed = if std::mem::take(&mut self.send_handoff) {
+                    self.send()
+                } else {
+                    Task::none()
+                };
                 if moved && self.tab == Tab::Git {
-                    return Ok(self.refresh_pr());
+                    return Ok(Task::batch([self.refresh_pr(), handed]));
                 }
-                Task::none()
+                handed
             }
             Msg::CommitText(text) => {
                 self.commit_msg = text;

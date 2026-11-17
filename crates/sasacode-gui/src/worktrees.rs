@@ -305,11 +305,11 @@ impl App {
                     .file_name()
                     .map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned());
                 let made = crate::i18n::fill(s.worktree_made, "path", name);
-                // The message it was made for, left for its window to take.
-                if let Some(text) = self.handoff.take() {
-                    let left = self.home.as_deref().map(|home| leave_handoff(home, &path, &text));
+                // The message it was made for, left for its window to send.
+                if let Some(handoff) = self.handoff.take() {
+                    let left = self.home.as_deref().map(|home| leave_handoff(home, &path, &handoff));
                     if left.is_none_or(|left| left.is_err()) {
-                        let _ = self.put_in_input(&text);
+                        let _ = self.put_in_input(&handoff.text);
                     }
                 }
                 // Readied or not, it opens: what failed is said, to be done by hand there.
@@ -323,7 +323,7 @@ impl App {
                 self.toast = Some(crate::i18n::fill(s.worktree_failed, "error", error));
                 // Not made: the message it was for is back in the input.
                 match self.handoff.take() {
-                    Some(text) => self.put_in_input(&text),
+                    Some(handoff) => self.put_in_input(&handoff.text),
                     None => Task::none(),
                 }
             }
@@ -424,6 +424,40 @@ impl App {
         };
         Ok(task)
     }
+
+    /// A worktree made for a message: its window takes the message and the model, permission and
+    /// effort it was sent with, and sends it once git is read (for the last turn's diff). Running
+    /// everything without asking is not taken over: it is chosen in each window.
+    pub(crate) fn take_handoff_here(&mut self) {
+        let Some(handoff) = self.home.as_deref().and_then(|home| take_handoff(home, &self.cwd)) else {
+            return;
+        };
+        self.model = handoff.model;
+        self.permission = handoff
+            .permission
+            .as_deref()
+            .filter(|p| *p != "auto")
+            .and_then(|p| crate::app::PERMISSIONS.iter().copied().find(|x| *x == p));
+        self.effort = handoff
+            .effort
+            .as_deref()
+            .and_then(|e| crate::app::EFFORTS.iter().copied().find(|x| *x == e));
+        self.chat.editor = iced::widget::text_editor::Content::with_text(&handoff.text);
+        self.send_handoff = true;
+        self.toast = Some(self.s.w().worktree_handoff.to_owned());
+    }
+}
+
+/// A message a new worktree is made for, and what was chosen for it in the window it was typed in.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct Handoff {
+    pub text: String,
+    #[serde(default)]
+    pub model: String,
+    #[serde(default)]
+    pub permission: Option<String>,
+    #[serde(default)]
+    pub effort: Option<String>,
 }
 
 /// Where a message to start a new worktree with waits for that worktree's window: one file for
@@ -438,21 +472,26 @@ pub(crate) fn handoff_file(home: &Path, folder: &Path) -> PathBuf {
         .join(format!("{:016x}.md", hash.finish()))
 }
 
-/// `text` left for the window opened on `folder`.
-pub(crate) fn leave_handoff(home: &Path, folder: &Path, text: &str) -> std::io::Result<()> {
+/// `handoff` left for the window opened on `folder`.
+pub(crate) fn leave_handoff(home: &Path, folder: &Path, handoff: &Handoff) -> std::io::Result<()> {
     let file = handoff_file(home, folder);
     if let Some(dir) = file.parent() {
         std::fs::create_dir_all(dir)?;
     }
-    std::fs::write(file, text)
+    std::fs::write(file, serde_json::to_string(handoff)?)
 }
 
-/// The message left for a window on `folder`, taken: read once, and gone.
-pub(crate) fn take_handoff(home: &Path, folder: &Path) -> Option<String> {
+/// The message left for a window on `folder`, taken: read once, and gone. A file that is not
+/// what [`leave_handoff`] writes is the message alone.
+pub(crate) fn take_handoff(home: &Path, folder: &Path) -> Option<Handoff> {
     let file = handoff_file(home, folder);
-    let text = std::fs::read_to_string(&file).ok()?;
+    let read = std::fs::read_to_string(&file).ok()?;
     let _ = std::fs::remove_file(&file);
-    (!text.trim().is_empty()).then_some(text)
+    let handoff = serde_json::from_str::<Handoff>(&read).unwrap_or(Handoff {
+        text: read,
+        ..Handoff::default()
+    });
+    (!handoff.text.trim().is_empty()).then_some(handoff)
 }
 
 #[cfg(test)]

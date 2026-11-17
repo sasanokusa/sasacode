@@ -3767,13 +3767,16 @@ fn what_a_review_asked_for_finds_is_shown_on_the_lines_of_the_diff_until_put_awa
 }
 
 #[test]
-fn a_new_conversations_message_can_start_in_a_new_worktree_whose_window_finds_it_in_its_input() {
+fn a_new_conversations_message_can_start_in_a_new_worktree_whose_window_sends_it() {
     let mut app = window("ja");
     let w = crate::words::JA;
     let home = std::env::temp_dir().join(format!("sasacode-gui-handoff-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&home);
     app.home = Some(home.clone());
     changed_repo(&mut app);
+    app.model = "fake/m".into();
+    app.permission = Some("agent");
+    app.effort = Some("high");
     // Offered for a new conversation in a repository: here until switched.
     assert!(app.offers_worktree() && says(&app, w.where_here));
     let _ = app.update(Msg::ToWorktree(true));
@@ -3782,18 +3785,53 @@ fn a_new_conversations_message_can_start_in_a_new_worktree_whose_window_finds_it
     let _ = app.update(Msg::Send);
     // Nothing is sent here: the worktree is being made, the message kept for it.
     assert!(app.chat.transcript.exchanges.is_empty() && typed(&app).is_empty());
-    assert_eq!(app.handoff.as_deref(), Some("ログインの画面を作って"));
+    assert_eq!(
+        app.handoff.as_ref().map(|h| h.text.as_str()),
+        Some("ログインの画面を作って")
+    );
     assert!(!app.to_worktree);
-    // Made: the message waits for its window, which takes it once.
+    // Made: the message waits for its window, which takes it once, with what was chosen here.
     let tree = home.join("worktrees").join("orders-api-1");
     std::fs::create_dir_all(&tree).unwrap();
     let _ = app.update(Msg::WorktreeMade(Ok((tree.clone(), None))));
     assert!(app.handoff.is_none());
-    assert_eq!(
-        crate::worktrees::take_handoff(&home, &tree).as_deref(),
-        Some("ログインの画面を作って")
-    );
+    let mut there = window("ja");
+    there.home = Some(home.clone());
+    there.cwd = tree.clone();
+    there.take_handoff_here();
     assert_eq!(crate::worktrees::take_handoff(&home, &tree), None);
+    assert_eq!(typed(&there), "ログインの画面を作って");
+    assert_eq!(
+        (there.model.as_str(), there.permission, there.effort),
+        ("fake/m", Some("agent"), Some("high"))
+    );
+    assert!(there.send_handoff && there.toast.as_deref() == Some(w.worktree_handoff));
+    // Sent there once git is read, and only once.
+    assert!(there.chat.transcript.exchanges.is_empty());
+    let _ = there.update(Msg::GitStatus(Box::default()));
+    assert_eq!(there.chat.transcript.exchanges.len(), 1);
+    assert!(typed(&there).is_empty() && !there.send_handoff);
+    let _ = there.update(Msg::GitStatus(Box::default()));
+    assert_eq!(there.chat.transcript.exchanges.len(), 1);
+    // Running everything without asking is chosen in each window, not handed over.
+    let auto = crate::worktrees::Handoff {
+        text: "続き".into(),
+        permission: Some("auto".into()),
+        ..Default::default()
+    };
+    crate::worktrees::leave_handoff(&home, &tree, &auto).unwrap();
+    let mut again = window("ja");
+    again.home = Some(home.clone());
+    again.cwd = tree.clone();
+    again.permission = Some("ask");
+    again.take_handoff_here();
+    assert_eq!((typed(&again).as_str(), again.permission), ("続き", None));
+    // A file holding the message alone is the message.
+    std::fs::write(crate::worktrees::handoff_file(&home, &tree), "それだけ").unwrap();
+    assert_eq!(
+        crate::worktrees::take_handoff(&home, &tree).map(|h| h.text),
+        Some("それだけ".to_owned())
+    );
     // Not made: the message is back in the input.
     let _ = app.update(Msg::ToWorktree(true));
     app.set_input("もう一度");

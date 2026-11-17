@@ -257,7 +257,9 @@ pub struct App {
     /// The next message of a new conversation starts in a new worktree.
     pub(crate) to_worktree: bool,
     /// The message to start the worktree being made with, until its window is opened.
-    pub(crate) handoff: Option<String>,
+    pub(crate) handoff: Option<crate::worktrees::Handoff>,
+    /// A message handed over by the window that made this worktree, sent once git is read.
+    pub(crate) send_handoff: bool,
     /// The permission mode before plan mode was chosen.
     pub(crate) before_plan: Option<&'static str>,
     /// The automation being written.
@@ -1045,18 +1047,7 @@ impl App {
             );
         }
         app.restore_folder(asked);
-        // A worktree made for a message: the message waits in the input, sent by the user here.
-        if let Some(text) = app
-            .home
-            .as_deref()
-            .and_then(|home| crate::worktrees::take_handoff(home, &app.cwd))
-        {
-            app.chat.editor = text_editor::Content::with_text(&text);
-            app.chat
-                .editor
-                .perform(text_editor::Action::Move(text_editor::Motion::DocumentEnd));
-            app.toast = Some(app.s.w().worktree_handoff.to_owned());
-        }
+        app.take_handoff_here();
         let screen = window::oldest().and_then(|id| window::monitor_size(id).map(move |size| Msg::Screen(id, size)));
         // In front when it opens: a window another one started is not brought there by the system.
         let front = window::oldest().and_then(window::gain_focus);
@@ -1165,6 +1156,7 @@ impl App {
             worktree_bases: Vec::new(),
             to_worktree: false,
             handoff: None,
+            send_handoff: false,
             before_plan: None,
             auto_form: crate::automations::Form::default(),
             gisting: false,
@@ -2205,7 +2197,7 @@ impl App {
         }
     }
 
-    fn send(&mut self) -> Task<Msg> {
+    pub(crate) fn send(&mut self) -> Task<Msg> {
         // A command of the window runs here; it is never sent.
         if let Some(task) = self.as_command() {
             return task;
@@ -2247,13 +2239,18 @@ impl App {
             return self.start_run(self.chat.key, text, true);
         }
         // A new conversation's first message, to start in a new worktree: made, and opened in a
-        // window of its own with the message in its input.
+        // window of its own that sends it with what was chosen here.
         if self.to_worktree && self.offers_worktree() {
             let Some(text) = self.take_input() else {
                 return Task::none();
             };
             self.to_worktree = false;
-            self.handoff = Some(text);
+            self.handoff = Some(crate::worktrees::Handoff {
+                text,
+                model: self.model.trim().to_owned(),
+                permission: self.permission.map(str::to_owned),
+                effort: self.effort.map(str::to_owned),
+            });
             return self.worktree(None);
         }
         if self.running() {
