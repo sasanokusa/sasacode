@@ -2901,7 +2901,8 @@ fn an_automation_runs_when_due_in_a_conversation_of_its_own_and_in_its_own_mode(
     let chat = app.parked.last().unwrap();
     assert_eq!(
         (chat.mode, chat.automation.as_deref()),
-        (Some("ask"), Some(id.as_str()))
+        (None, Some(id.as_str())),
+        "its mode is for its own run"
     );
     assert!(chat.running());
     assert_eq!(app.chat.key, shown, "the conversation shown stays");
@@ -2927,6 +2928,48 @@ fn an_automation_runs_when_due_in_a_conversation_of_its_own_and_in_its_own_mode(
     assert!(!app.watches_automations() && says(&app, "止めています"));
     let _ = app.update(auto(AutoMsg::Delete(id)));
     assert!(app.automations_here().is_empty());
+}
+
+/// Two windows of a folder (⌘⇧N opens one): an automation stopped or deleted in one is neither
+/// run by the other, which still had it as it was, nor written back by it.
+#[test]
+fn an_automation_stopped_or_deleted_in_another_window_is_not_run_or_written_back() {
+    use crate::automations::{AutoMsg, Automation, Every};
+    let dir = std::env::temp_dir().join(format!("sasacode-gui-two-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join(crate::layout::FILE);
+    let (mut one, mut two) = (window("ja"), window("ja"));
+    one.layout_file = Some(file.clone());
+    two.layout_file = Some(file.clone());
+    let now = chrono::Local::now().timestamp();
+    let made = Automation {
+        name: "依存の確認".into(),
+        folder: one.folder_key(),
+        prompt: "古くなった依存を調べて".into(),
+        every: Every::Hours { hours: 1 },
+        since: now - 7200,
+        ..Automation::default()
+    };
+    let _ = one.set(|p| {
+        p.more.automations.insert("a1".into(), made.clone());
+        p.more.automations.insert("a2".into(), made);
+    });
+    two.read_others();
+    assert!(two.prefs.more.automations["a1"].on && two.prefs.more.automations["a2"].on);
+    let parked = two.parked.len();
+
+    // Stopped in one and deleted in one: the other, which had both on and due, runs neither.
+    let _ = one.update(Msg::Auto(AutoMsg::Toggle("a1".into())));
+    let _ = one.update(Msg::Auto(AutoMsg::Delete("a2".into())));
+    assert!(two.automations_here().iter().all(|(_, a)| a.on && a.due(now)));
+    let _ = two.look_at_automations(now);
+    assert_eq!(two.parked.len(), parked);
+    // Nor does it write back what it had, when it writes again.
+    let _ = two.set(|p| p.notify = false);
+    let held = crate::layout::Prefs::read(&file).more.automations;
+    assert_eq!(held.keys().collect::<Vec<_>>(), ["a1"]);
+    assert!(!held["a1"].on);
+    std::fs::remove_dir_all(&dir).unwrap();
 }
 
 /// An automation in plan mode runs as a plan run does: asked, with what writes denied.
@@ -2966,6 +3009,10 @@ fn an_automation_in_plan_mode_has_its_writes_denied() {
     ));
     // The window's own mode is not changed by it.
     assert_eq!(app.permission, None);
+    assert!(app.parked.last().unwrap().plan_run());
+    // What the user sends after in that conversation goes in the mode the window shows.
+    let _ = app.start_run(key, "では直して".into(), false);
+    assert!(!app.parked.iter().find(|c| c.key == key).unwrap().plan_run());
 }
 
 /// Sharing as a secret gist is asked each time, saying where it goes and that its URL is enough

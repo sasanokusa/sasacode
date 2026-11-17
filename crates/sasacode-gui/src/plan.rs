@@ -34,17 +34,12 @@ pub fn denies(tool: &str) -> bool {
     matches!(tool, "write" | "edit")
 }
 
-/// `spec` as a plan run: asked under `ask`, reads allowed, the prompt added from `file`. What
-/// "always" allowed earlier is kept, but for what could write: those calls are asked, and denied.
+/// `spec` as a plan run: asked under `ask`, reads allowed and nothing else, the prompt added from
+/// `file`. What "always" allowed in the conversation's earlier runs is not passed: a command once
+/// allowed, `git *` say, could change something, and in plan mode each command is asked.
 pub fn shape(spec: &mut RunSpec, file: Option<PathBuf>) {
     spec.permission = Some("ask".into());
-    spec.allow.retain(|rule| {
-        let tool = rule.split('(').next().unwrap_or_default().trim();
-        !tool.contains('*') && !denies(tool)
-    });
-    if !spec.allow.iter().any(|r| r == "read") {
-        spec.allow.push("read".into());
-    }
+    spec.allow = vec!["read".into()];
     spec.system_file = file;
 }
 
@@ -81,7 +76,7 @@ mod tests {
     }
 
     #[test]
-    fn a_plan_run_is_asked_with_reads_allowed_and_nothing_that_writes() {
+    fn a_plan_run_is_asked_with_reads_allowed_and_nothing_else() {
         let mut spec = RunSpec {
             program: "sasacode".into(),
             cwd: PathBuf::from("/tmp"),
@@ -104,7 +99,7 @@ mod tests {
         };
         shape(&mut spec, Some(PathBuf::from("/home/gui/plan-mode.md")));
         assert_eq!(spec.permission.as_deref(), Some("ask"));
-        assert_eq!(spec.allow, ["bash(npm test)", "read"]);
+        assert_eq!(spec.allow, ["read"]);
         let args = spec.args();
         assert!(args.windows(2).any(|w| w == ["--permission", "ask"]));
         assert!(args.windows(2).any(|w| w == ["--allow", "read"]));

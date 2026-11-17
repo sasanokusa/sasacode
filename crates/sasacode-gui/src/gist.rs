@@ -108,7 +108,8 @@ mod tests {
         let script = if ok {
             "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$(dirname \"$0\")/args\"\ncat > \"$(dirname \"$0\")/stdin\"\necho '- Creating gist sasacode-0a1b2c3d.md' >&2\necho 'https://gist.github.com/someone/0123abcd'\n"
         } else {
-            "#!/bin/sh\ncat > /dev/null\necho 'To get started with GitHub CLI, please run:  gh auth login' >&2\nexit 4\n"
+            // As gh 2 says it, signed in nowhere.
+            "#!/bin/sh\ncat > /dev/null\necho 'To get started with GitHub CLI, please run:  gh auth login' >&2\necho 'Alternatively, populate the GH_TOKEN environment variable with a GitHub API authentication token.' >&2\nexit 4\n"
         };
         std::fs::write(&path, script).unwrap();
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();

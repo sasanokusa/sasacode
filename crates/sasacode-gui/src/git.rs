@@ -147,12 +147,12 @@ pub fn gist(cwd: &Path, program: &str, file: &str, description: &str, markdown: 
         Some(REMOTE_WAIT),
         Some(markdown),
     )
+    // gh says what is wrong first, and how else to go about it after ("Alternatively, …").
     .map_err(|e| {
         e.lines()
-            .rev()
-            .find(|l| !l.trim().is_empty())
+            .map(str::trim)
+            .find(|l| !l.is_empty())
             .unwrap_or_default()
-            .trim()
             .to_owned()
     })?;
     out.lines()

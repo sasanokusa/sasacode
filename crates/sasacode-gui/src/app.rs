@@ -394,7 +394,8 @@ pub(crate) struct Chat {
     pub(crate) model: Option<String>,
     /// Its last run, in plan mode, ended with a plan: to go ahead with.
     pub(crate) planned: bool,
-    /// The permission mode its runs use, over the window's: an automation's.
+    /// The permission mode its next run uses, over the window's, once: an automation's. What is
+    /// sent after in the conversation goes in the mode the window shows.
     pub(crate) mode: Option<&'static str>,
     /// The automation it was started by, by id.
     pub(crate) automation: Option<String>,
@@ -469,6 +470,14 @@ struct Run {
     ended: bool,
     /// In plan mode: its writes and edits are denied.
     plan: bool,
+}
+
+impl Chat {
+    /// Whether its run goes on in plan mode.
+    #[cfg(test)]
+    pub(crate) fn plan_run(&self) -> bool {
+        self.run.as_ref().is_some_and(|r| r.plan)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -1613,6 +1622,8 @@ impl App {
         self.prefs.branches = held.branches;
         self.prefs.groups = held.groups;
         self.prefs.scripts = held.scripts;
+        // An automation another window of the folder ran, changed, stopped or deleted.
+        self.prefs.more.automations = held.more.automations;
         self.kept_prefs = self.prefs.clone();
     }
 
@@ -2071,19 +2082,17 @@ impl App {
     /// Starts a run of conversation `key` on `prompt`; with `slash`, a slash command it runs.
     pub(crate) fn start_run(&mut self, key: u64, prompt: String, slash: bool) -> Task<Msg> {
         let now = Instant::now();
+        // An automation's run goes in its own mode, and is not the user's choice either; what is
+        // sent after it in that conversation is.
+        let own_mode = self.chat_mut(key).and_then(|c| c.mode.take());
+        let automated = own_mode.is_some();
+        let mode = own_mode.or(self.permission);
         // One of several the message went to keeps its own model.
         let own = std::iter::once(&self.chat)
             .chain(&self.parked)
             .find(|c| c.key == key)
             .and_then(|c| c.model.clone());
         let model = own.as_deref().unwrap_or(self.model.trim());
-        // An automation's conversation runs in its own mode; it is not the user's choice either.
-        let (mode, automated) = std::iter::once(&self.chat)
-            .chain(&self.parked)
-            .find(|c| c.key == key)
-            .map_or((self.permission, false), |c| {
-                (c.mode.or(self.permission), c.automation.is_some())
-            });
         let mut spec = RunSpec {
             program: self.program.clone(),
             cwd: self.cwd.clone(),

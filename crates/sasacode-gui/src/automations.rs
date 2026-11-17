@@ -244,28 +244,18 @@ impl App {
     }
 
     /// Starts each automation due at `now` that is not running already. Another window of the
-    /// folder may have run one: what the file says is read first.
+    /// folder may have run one, or changed, stopped or deleted it: what the file says is read
+    /// first.
     pub(crate) fn look_at_automations(&mut self, now: i64) -> Task<Msg> {
+        if !self.automations_here().iter().any(|(_, a)| a.due(now)) {
+            return Task::none();
+        }
+        self.read_others();
         let due: Vec<String> = self
             .automations_here()
             .into_iter()
             .filter(|(id, a)| a.due(now) && !self.automation_running(id))
             .map(|(id, _)| id.clone())
-            .collect();
-        if due.is_empty() {
-            return Task::none();
-        }
-        if let Some(file) = &self.layout_file {
-            let held = crate::layout::Prefs::read(file).more.automations;
-            for (id, mine) in self.prefs.more.automations.iter_mut() {
-                if let Some(last) = held.get(id).and_then(|a| a.last) {
-                    mine.last = Some(mine.last.map_or(last, |l| l.max(last)));
-                }
-            }
-        }
-        let due: Vec<String> = due
-            .into_iter()
-            .filter(|id| self.prefs.more.automations.get(id).is_some_and(|a| a.due(now)))
             .collect();
         Task::batch(due.iter().map(|id| self.run_automation(id, now)).collect::<Vec<_>>())
     }
@@ -296,6 +286,13 @@ impl App {
             return self.update_worktrees(msg);
         };
         let w = self.s.w();
+        // What another window of the folder did to the automations, before this one acts on them.
+        if matches!(
+            msg,
+            AutoMsg::Edit(_) | AutoMsg::Save | AutoMsg::Toggle(_) | AutoMsg::RunNow(_) | AutoMsg::Delete(_)
+        ) {
+            self.read_others();
+        }
         let form = &mut self.auto_form;
         match msg {
             AutoMsg::Name(name) => form.name = name,
