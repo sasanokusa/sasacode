@@ -229,7 +229,10 @@ mod tests {
         let schema = json!({
             "type": "object",
             "additionalProperties": {
-                "anyOf": [{ "const": false }, { "type": "string", "minLength": 2, "maxLength": 8, "pattern": "^[a-z]+$" }]
+                "anyOf": [
+                    { "const": false },
+                    { "type": "string", "minLength": 2, "maxLength": 8, "pattern": "^[a-z]+$" }
+                ]
             }
         });
         let good = json!({ "a": false, "b": "good" });

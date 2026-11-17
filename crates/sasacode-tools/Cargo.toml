@@ -17,7 +17,6 @@ tokio-util.workspace = true
 futures.workspace = true
 async-trait.workspace = true
 anyhow.workspace = true
-similar.workspace = true
 encoding_rs.workspace = true
 which.workspace = true
 libc.workspace = true

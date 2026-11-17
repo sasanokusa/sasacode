@@ -439,12 +439,18 @@ fn to_responses_input(messages: &[Message], model: &ModelInfo) -> anyhow::Result
                                 out.push(crate::sse::parse_json(sig)?);
                             }
                         }
-                        AssistantContent::ToolCall(t) => out.push(json!({
-                            "type": "function_call",
-                            "call_id": t.id,
-                            "name": t.name,
-                            "arguments": t.raw_input.clone().unwrap_or_else(|| js_stringify(&Value::Object(t.input.clone()))),
-                        })),
+                        AssistantContent::ToolCall(t) => {
+                            let arguments = t
+                                .raw_input
+                                .clone()
+                                .unwrap_or_else(|| js_stringify(&Value::Object(t.input.clone())));
+                            out.push(json!({
+                                "type": "function_call",
+                                "call_id": t.id,
+                                "name": t.name,
+                                "arguments": arguments,
+                            }))
+                        }
                     }
                 }
             }

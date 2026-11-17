@@ -79,7 +79,8 @@ Status: accepted (2026-11-18)
 Decision: tokio (multi-thread) as the async runtime; reqwest (rustls) with a hand-written SSE
 parser for the model APIs (no SDKs: see `research/llm-sdks.md` for what the SDKs did implicitly);
 `async-trait` for object-safe async traits; `tokio-util` `CancellationToken` for AbortSignal;
-ratatui + crossterm for the TUI; clap for arguments; serde_json with `preserve_order`; anyhow for
+ratatui + crossterm for the TUI; arguments by a port of Node's `parseArgs` (`sasacode_cli::args`), not
+clap, so the flags and their error texts stay Bun's (ADR-003); serde_json with `preserve_order`; anyhow for
 errors that only become messages. MCP: see `research/mcp.md`.
 Consequences: Hook handlers and tools are `Send + Sync` and run on the tokio runtime; the agent's
 state sits behind a mutex that is never held across an await.

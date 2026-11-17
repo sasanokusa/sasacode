@@ -24,7 +24,6 @@ tokio-util.workspace = true
 futures.workspace = true
 async-trait.workspace = true
 anyhow.workspace = true
-clap.workspace = true
 reqwest.workspace = true
 url.workspace = true
 dirs.workspace = true

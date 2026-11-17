@@ -148,7 +148,8 @@ impl PermissionPolicy {
             .map(|p| try_real_path(&p).unwrap_or(p))
             .collect();
         let inside_cwd = real.iter().all(|p| is_inside(p, &cwd));
-        // Edits under .git (hooks, config) or .sasacode (plugins, rules) run code at the next git command or start (#127).
+        // Edits under .git (hooks, config) or .sasacode (plugins, rules) run code at the next git command
+        // or start (#127).
         let has_paths = c.tool.paths(&c.args, std::path::Path::new(&c.cwd)).is_some();
         let runs_code = real.iter().any(|p| runs_code_re().is_match(&paths::relative(&cwd, p)));
         let kind = c.tool.kind();

@@ -601,9 +601,12 @@ fn to_chat_messages(messages: &[Message], model: &ModelInfo, has_tools: bool) ->
                     let calls = tools
                         .iter()
                         .map(|t| {
-                            let arguments =
-                                t.raw_input.clone().unwrap_or_else(|| js_stringify(&Value::Object(t.input.clone())));
-                            json!({ "id": t.id, "type": "function", "function": { "name": t.name, "arguments": arguments } })
+                            let arguments = t
+                                .raw_input
+                                .clone()
+                                .unwrap_or_else(|| js_stringify(&Value::Object(t.input.clone())));
+                            let function = json!({ "name": t.name, "arguments": arguments });
+                            json!({ "id": t.id, "type": "function", "function": function })
                         })
                         .collect();
                     msg.insert("tool_calls".into(), Value::Array(calls));
