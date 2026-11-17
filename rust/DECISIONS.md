@@ -22,7 +22,10 @@ Decision: The TS plugin loader, `@sasacode/plugin-api` (npm), `sasacode plugin s
 update/publish` and loading `~/.sasacode/plugins` are removed. The plugin interface lives on as a
 Rust-internal API (`sasacode-plugin-api`): bundled plugins register tools, commands, providers and
 hooks through it exactly as before, and `plugins.disabled`, `tools.disabled`, `plugins.settings` and
-same-name replacement keep working. Outside extension is MCP and Skills only. The official plugins
+same-name replacement keep working. Same-name replacement means a later registration of a tool or
+command replaces an earlier one (a bundled plugin's, or an MCP server's tool with `toolNames: "plain"`);
+a plugin on disk taking the place of the bundled plugin of the same name is gone with the loader.
+Outside extension is MCP and Skills only. The official plugins
 (ask-user, git-context, project-checks, workflows) and jev-guard become bundled, disabled by
 default. Of the user's personal plugins only free-search is ported (bundled, disabled by default).
 Consequences: Requirements P2/P3 are read as "no privileged path inside the binary". The plugin-api
