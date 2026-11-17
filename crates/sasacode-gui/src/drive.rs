@@ -2679,6 +2679,58 @@ fn the_settings_choose_the_notifications_their_sound_and_the_editor() {
     assert!(!says(&app, w.editors_found));
 }
 
+#[test]
+fn the_choices_made_now_become_the_defaults_of_a_folder_never_run_in() {
+    let w = crate::words::JA;
+    let mut app = window("ja");
+    let _ = app.update(Msg::Show(Some(crate::app::Overlay::Settings)));
+    assert!(says(&app, w.defaults_none) && !says(&app, w.defaults_forget));
+    app.model = "local/gemma4".into();
+    app.permission = Some("edits");
+    app.effort = Some("high");
+    // Below where the settings are scrolled to: pressed by its message.
+    assert!(says(&app, w.defaults_keep));
+    let _ = app.update(Msg::KeepDefaults(true));
+    let defaults = app.prefs.more.defaults.clone().unwrap();
+    assert_eq!(
+        (
+            defaults.model.as_str(),
+            defaults.permission.as_deref(),
+            defaults.effort.as_deref()
+        ),
+        ("local/gemma4", Some("edits"), Some("high"))
+    );
+    assert!(says(&app, "モデル local/gemma4・権限 edits・推論の深さ high"));
+
+    // A folder with none of its own starts with them; one with its own keeps those.
+    let mut fresh = window("ja");
+    fresh.prefs.more.defaults = Some(defaults.clone());
+    fresh.restore_folder(true);
+    assert_eq!(
+        (fresh.model.as_str(), fresh.permission, fresh.effort),
+        ("local/gemma4", Some("edits"), Some("high"))
+    );
+    let mut own = window("ja");
+    own.prefs.more.defaults = Some(defaults);
+    own.prefs.more.folders.insert(
+        own.folder_key(),
+        crate::layout::Folder {
+            model: "fable".into(),
+            permission: Some("ask".into()),
+            ..Default::default()
+        },
+    );
+    own.restore_folder(true);
+    assert_eq!(
+        (own.model.as_str(), own.permission, own.effort),
+        ("fable", Some("ask"), Some("high"))
+    );
+
+    // Forgotten: none.
+    let _ = app.update(Msg::KeepDefaults(false));
+    assert!(app.prefs.more.defaults.is_none() && says(&app, w.defaults_none));
+}
+
 /// sasacode's colour is chosen by name or as #RRGGBB and shows at once, in light and in dark; the
 /// fonts are named, for the windows opened after.
 #[test]

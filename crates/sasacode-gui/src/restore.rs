@@ -15,13 +15,21 @@ impl App {
     /// conversation was `asked` for, the one last shown, with what was typed in it. Running
     /// everything without asking is not taken up again: it is chosen each time.
     pub(crate) fn restore_folder(&mut self, asked: bool) {
-        let folder = self
+        let mut folder = self
             .prefs
             .more
             .folders
             .get(&self.folder_key())
             .cloned()
             .unwrap_or_default();
+        // What the folder has not, from the settings' defaults.
+        if let Some(defaults) = &self.prefs.more.defaults {
+            if folder.model.trim().is_empty() {
+                folder.model = defaults.model.clone();
+            }
+            folder.permission = folder.permission.or_else(|| defaults.permission.clone());
+            folder.effort = folder.effort.or_else(|| defaults.effort.clone());
+        }
         self.model = folder.model;
         self.permission = folder
             .permission

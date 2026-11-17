@@ -228,6 +228,9 @@ pub struct More {
     /// Conversations whose run was stopped by closing the window, by session id: offered to go on
     /// when shown again.
     pub cut: BTreeSet<String>,
+    /// The model, permission and effort a folder starts with where it has none of its own: one
+    /// never run in, or whose last run left it unset. Of `Folder`, those three only.
+    pub defaults: Option<Folder>,
     /// The sasacode the window runs, over `sasacode` on PATH; empty, that one (or $SASACODE_BIN).
     pub program: String,
     /// What each folder's last run used, and the conversation last shown there, by its path.
@@ -746,6 +749,11 @@ mod tests {
                 autosave: true,
                 auto_fix: true,
                 cut: BTreeSet::from(["s9".into()]),
+                defaults: Some(Folder {
+                    model: "local/gemma4".into(),
+                    effort: Some("high".into()),
+                    ..Folder::default()
+                }),
                 program: "/opt/sasacode/bin/sasacode".into(),
                 folders: BTreeMap::from([(
                     "/w".into(),

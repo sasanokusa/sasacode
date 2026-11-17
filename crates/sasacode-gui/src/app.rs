@@ -79,8 +79,6 @@ const FOLD_PAST: f32 = 60.0;
 const SWEEP_EVERY: Duration = Duration::from_secs(600);
 /// How long the window's size is left alone before it is kept: a resize is many sizes in a row.
 const RESIZE_REST: Duration = Duration::from_millis(500);
-/// Where a window kept on a screen that is gone is put: near the main screen's top left corner.
-const ON_SCREEN: Point = Point::new(80.0, 80.0);
 
 /// The inner edge of a side panel, which a drag moves.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -780,6 +778,9 @@ pub enum Msg {
     SetAutosave(bool),
     /// Failed checks fixed by a conversation started by itself; their logs, read for it.
     SetAutoFix(bool),
+    /// The model, permission and effort chosen now become the defaults of folders without theirs;
+    /// `false` forgets the defaults.
+    KeepDefaults(bool),
     AutoFixReady(String),
     FileAutosave,
     /// The sasacode executable the window runs; empty, the one on PATH.
@@ -1677,12 +1678,7 @@ impl App {
                     return window::resize(id, size);
                 }
             }
-            // On no screen: kept where a screen was that is gone now. Brought back to the main one.
-            Msg::Screen(id, None) => {
-                if self.at.is_some() {
-                    return window::move_to(id, ON_SCREEN);
-                }
-            }
+            Msg::Screen(_, None) => {}
             // Handled by `update_more`.
             _ => {}
         }

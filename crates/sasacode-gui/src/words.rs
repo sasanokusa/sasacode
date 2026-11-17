@@ -56,6 +56,12 @@ words! {
     check_skipped: "飛ばした", "skipped";
     fix_checks: "失敗したチェックを直させる", "Have the agent fix the failing checks";
     fix_reading: "失敗したログを読み込み中…", "Reading the failed logs…";
+    defaults_head: "新しいフォルダの既定", "Defaults of a new folder";
+    defaults_note: "まだ実行していないフォルダで、モデル・権限モード・推論の深さに使います。実行したフォルダでは、最後に使ったものが先です。", "Used for the model, permission mode and effort in a folder not run in yet. In a folder run in, what it last used comes first.";
+    defaults_now: "モデル {model}・権限 {permission}・推論の深さ {effort}", "Model {model} · permission {permission} · effort {effort}";
+    defaults_none: "既定はありません", "No defaults";
+    defaults_keep: "今の選択を既定にする", "Make the current choices the defaults";
+    defaults_forget: "既定を消す", "Forget the defaults";
     set_auto_fix: "PRのチェックが失敗したら、ログを渡して直す会話を自動で始める（このウィンドウが開いている間、1つのPRに3回まで。autoでは走らせない）", "When a pull request's checks fail, start a conversation given their logs to fix them (while this window is open, three times a pull request at most, never in auto)";
     cut_short: "この会話の実行は、窓を閉じたときに途中で止まりました", "This conversation's run stopped partway when the window was closed";
     cut_go_on: "続ける", "Continue";

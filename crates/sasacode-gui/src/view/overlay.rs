@@ -501,6 +501,48 @@ fn settings(app: &App) -> El<'_> {
             .style(t.input()),
     ]
     .spacing(6);
+    // The defaults of folders without choices of their own, taken from those chosen now.
+    let unset = |v: &str| {
+        if v.trim().is_empty() {
+            "—".to_owned()
+        } else {
+            v.to_owned()
+        }
+    };
+    let now = match &p.more.defaults {
+        Some(d) => fill(
+            &fill(
+                &fill(w.defaults_now, "model", &unset(&d.model)),
+                "permission",
+                &unset(d.permission.as_deref().unwrap_or("")),
+            ),
+            "effort",
+            &unset(d.effort.as_deref().unwrap_or("")),
+        ),
+        None => w.defaults_none.to_owned(),
+    };
+    let mut keep = row![
+        button(text(w.defaults_keep).size(12))
+            .padding([3, 10])
+            .style(t.outline(t.fg))
+            .on_press(Msg::KeepDefaults(true))
+    ]
+    .spacing(8);
+    if p.more.defaults.is_some() {
+        keep = keep.push(
+            button(text(w.defaults_forget).size(12))
+                .padding([3, 10])
+                .style(t.outline(t.fg_2))
+                .on_press(Msg::KeepDefaults(false)),
+        );
+    }
+    let defaults = column![
+        heading(w.defaults_head),
+        text(now).size(12.5).color(t.fg_2),
+        keep,
+        text(w.defaults_note).size(11.5).color(t.fg_3),
+    ]
+    .spacing(6);
     let setup = app
         .prefs
         .more
@@ -540,6 +582,7 @@ fn settings(app: &App) -> El<'_> {
         idle,
         width,
         lang,
+        defaults,
         editor,
         program,
         setup,

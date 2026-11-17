@@ -149,7 +149,7 @@ fn main() -> iced::Result {
             size: iced::Size::new(layout.size.width / zoom, layout.size.height / zoom),
             min_size: Some(layout::MIN_SIZE),
             // Where this launch said, else where the window was last, while a screen shows it: the
-            // system's own place the first time. One on no screen is brought back (`Msg::Screen`).
+            // system's own place the first time. macOS brings a window on no screen back itself.
             position: at
                 .or(layout.at.filter(|&kept| on_a_screen(kept, layout.size)))
                 .map_or(iced::window::Position::Default, iced::window::Position::Specific),

@@ -132,6 +132,15 @@ impl App {
             Msg::SetNotifyAlways(on) => self.set(|p| p.more.notify_always = on),
             Msg::SetAutosave(on) => self.set(|p| p.more.autosave = on),
             Msg::SetAutoFix(on) => self.set(|p| p.more.auto_fix = on),
+            Msg::KeepDefaults(keep) => {
+                let now = keep.then(|| crate::layout::Folder {
+                    model: self.model.trim().to_owned(),
+                    permission: self.permission.map(str::to_owned),
+                    effort: self.effort.map(str::to_owned),
+                    ..crate::layout::Folder::default()
+                });
+                self.set(|p| p.more.defaults = now)
+            }
             Msg::SetProgram(path) => {
                 self.program = crate::app::program_of(&path);
                 let task = self.set(|p| p.more.program = path);
