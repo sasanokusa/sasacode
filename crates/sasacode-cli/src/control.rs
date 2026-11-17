@@ -235,3 +235,7 @@ fn handle(agent: &Agent, pending: &Pending, emit: &Emit, line: &str) {
     };
     let _ = tx.send(ApprovalAnswer { decision, feedback });
 }
+
+#[cfg(test)]
+#[path = "control_tests.rs"]
+mod tests;
