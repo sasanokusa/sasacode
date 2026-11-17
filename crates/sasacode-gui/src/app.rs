@@ -580,6 +580,10 @@ pub enum Msg {
     /// An image named in the input, taken out of it as it is written there.
     Unattach(String),
     Editor(PathBuf),
+    /// A file in the editor, at a line.
+    EditorAt(PathBuf, usize),
+    /// The request for an AGENTS.md put in the input.
+    WriteInstructions,
     /// A conversation kept at the top of the list, or let go; taken out of it, or put back.
     Pin(String),
     Archive(String),

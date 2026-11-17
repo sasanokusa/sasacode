@@ -471,6 +471,8 @@ words! {
     instr_head: "指示ファイル（AGENTS.md）", "Instructions (AGENTS.md)";
     instr_none: "このフォルダで読まれる指示ファイルはありません", "No instruction file applies to this folder";
     instr_make: "このフォルダに作る", "Make one here";
+    instr_write: "エージェントに書いてもらう", "Have the agent write it";
+    instr_prompt: "このプロジェクトのAGENTS.mdを書いてください。構成、ビルドとテストの方法、コードの書き方の決まり、気をつけることを、実際のファイルを読んで確かめてから短くまとめてください。", "Write an AGENTS.md for this project: its layout, how to build and test it, the code conventions and what to watch out for, each checked against the actual files, kept short.";
     instr_global: "全体の指示を開く", "Open the global one";
     k_back: "前に見ていた会話へ戻る", "Back to the conversation left";
     k_forward: "戻る前の会話へ進む", "Forward again";

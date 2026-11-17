@@ -2627,6 +2627,22 @@ fn the_background_jobs_are_listed_and_a_running_one_is_stopped_on_the_second_pre
     }
 }
 
+/// With no AGENTS.md here, the agent can be asked to write one: the request goes to the input.
+#[test]
+fn the_agent_is_asked_to_write_an_agents_md_from_the_extensions() {
+    let mut app = window("ja");
+    let dir = std::env::temp_dir().join(format!("sasacode-gui-write-instr-{}", std::process::id()));
+    std::fs::create_dir_all(dir.join(".git")).unwrap();
+    app.cwd = dir.clone();
+    app.listing = listed();
+    let _ = app.update(Msg::Show(Some(crate::app::Overlay::Extensions)));
+    assert!(says(&app, "エージェントに書いてもらう"));
+    let _ = app.update(Msg::WriteInstructions);
+    assert_eq!(app.overlay, None);
+    assert!(app.chat.editor.text().contains("AGENTS.mdを書いてください"));
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 /// The list shows the conversations done too; the settings name the sasacode run, empty for the
 /// one on PATH, and whether to notify with the window in front.
 #[test]

@@ -745,6 +745,13 @@ fn extensions(app: &App) -> El<'_> {
                 .style(t.outline(t.fg))
                 .on_press(Msg::OpenInstructions(mine)),
         );
+        // Written by the agent: the request put in the input, to read and send.
+        make = make.push(
+            button(text(w.instr_write).size(12.5))
+                .padding([4, 10])
+                .style(t.outline(t.fg))
+                .on_press(Msg::WriteInstructions),
+        );
     }
     if let Some(home) = &app.home
         && !files.contains(&home.join("AGENTS.md"))

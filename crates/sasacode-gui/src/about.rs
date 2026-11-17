@@ -79,6 +79,11 @@ impl App {
                 system::editor_with(&path, &self.prefs.more.editor);
                 Task::none()
             }
+            Msg::WriteInstructions => {
+                self.overlay = None;
+                let prompt = self.s.w().instr_prompt.to_owned();
+                self.put_in_input(&prompt)
+            }
             Msg::OpenHome => {
                 if let Some(home) = &self.home {
                     let _ = std::fs::create_dir_all(home);

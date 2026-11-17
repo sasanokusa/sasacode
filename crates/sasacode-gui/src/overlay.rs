@@ -499,6 +499,10 @@ impl App {
                 system::editor_with(&path, &self.prefs.more.editor);
                 Task::none()
             }
+            Msg::EditorAt(path, line) => {
+                system::editor_at(&path, line, &self.prefs.more.editor);
+                Task::none()
+            }
             Msg::OpenProject(path) => self.new_window(path, None),
             Msg::Others(mut found) => {
                 found.retain(|p| *p != self.cwd);

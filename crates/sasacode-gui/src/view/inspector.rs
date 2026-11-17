@@ -1189,7 +1189,13 @@ fn files_tab(app: &App) -> El<'_> {
             .style(t.ghost(t.fg_2, false))
             .on_press(Msg::CloseFile),
             Space::new().width(Length::Fill),
-            small(s.open_editor, Msg::Editor(v.path.clone())),
+            small(
+                s.open_editor,
+                match v.line {
+                    Some(line) => Msg::EditorAt(v.path.clone(), line),
+                    None => Msg::Editor(v.path.clone()),
+                }
+            ),
             small(s.reveal, Msg::Reveal(v.path.clone())),
         ]
         .align_y(Alignment::Center),

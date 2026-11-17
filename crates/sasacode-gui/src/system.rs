@@ -139,6 +139,43 @@ pub fn resume_in_terminal(dir: &Path, program: &Path, id: &str) -> bool {
 
 /// `path` in the editor the settings name (a command, with its arguments), else as [`editor`]
 /// opens it.
+/// What opens `path` at `line` in `program`, as editors take it: `-g path:line` for VS Code and
+/// its kin, `path:line` for Zed and Sublime Text, `--line n path` for JetBrains' launchers; none for
+/// an editor whose way is not known.
+pub fn at_line(program: &str, path: &Path, line: usize) -> Option<Vec<std::ffi::OsString>> {
+    let name = Path::new(program)
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
+    let mut joined = path.as_os_str().to_owned();
+    joined.push(format!(":{line}"));
+    match name.as_str() {
+        "code" | "code-insiders" | "cursor" | "codium" | "windsurf" => Some(vec!["-g".into(), joined]),
+        "zed" | "subl" | "sublime_text" => Some(vec![joined]),
+        "idea" | "webstorm" | "pycharm" | "goland" | "clion" | "rustrover" | "phpstorm" | "rider" => Some(vec![
+            "--line".into(),
+            line.to_string().into(),
+            path.as_os_str().to_owned(),
+        ]),
+        _ => None,
+    }
+}
+
+/// `path` in the editor the settings name (or VS Code, else the system's), at `line` where the
+/// editor takes one.
+pub fn editor_at(path: &Path, line: usize, chosen: &str) -> bool {
+    let mut words = chosen.split_whitespace();
+    let program = words.next().unwrap_or(if cfg!(windows) { "code.cmd" } else { "code" });
+    if let Some(args) = at_line(program, path, line) {
+        let mut c = command(program);
+        c.args(words).args(args);
+        if spawn(c) {
+            return true;
+        }
+    }
+    editor_with(path, chosen)
+}
+
 pub fn editor_with(path: &Path, chosen: &str) -> bool {
     let mut words = chosen.split_whitespace();
     if let Some(program) = words.next() {
@@ -411,12 +448,54 @@ pub fn make_worktree(cwd: &Path, home: &Path, base: Option<&str>) -> Result<Path
         args.push(base.as_ref());
     }
     git(&args)?;
+    copy_included(&top, &dir);
     // The same folder inside it, where the window was opened on a folder inside the repository.
     let inside = cwd.canonicalize().ok().and_then(|c| {
         let top = top.canonicalize().ok()?;
         c.strip_prefix(top).ok().map(Path::to_path_buf)
     });
     Ok(inside.map(|rel| dir.join(rel)).filter(|d| d.is_dir()).unwrap_or(dir))
+}
+
+/// What `.worktreeinclude` at the top of the repository names, copied into the worktree `dir` as
+/// it lies there: files git ignores, such as `.env`, that a new worktree lacks. One path per line,
+/// a file or a folder, `#` for a comment; none out of the repository, and none over what the
+/// worktree has. Says what was copied.
+pub fn copy_included(top: &Path, dir: &Path) -> Vec<String> {
+    fn copy_all(from: &Path, to: &Path) -> std::io::Result<()> {
+        if from.is_dir() {
+            std::fs::create_dir_all(to)?;
+            for entry in std::fs::read_dir(from)? {
+                let entry = entry?;
+                copy_all(&entry.path(), &to.join(entry.file_name()))?;
+            }
+            Ok(())
+        } else {
+            if let Some(parent) = to.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::copy(from, to).map(|_| ())
+        }
+    }
+    let Ok(list) = std::fs::read_to_string(top.join(".worktreeinclude")) else {
+        return Vec::new();
+    };
+    let mut copied = Vec::new();
+    for line in list
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+    {
+        let rel = Path::new(line.trim_start_matches('/').trim_end_matches('/'));
+        if rel.as_os_str().is_empty() || rel.components().any(|c| !matches!(c, std::path::Component::Normal(_))) {
+            continue;
+        }
+        let (from, to) = (top.join(rel), dir.join(rel));
+        if from.exists() && !to.exists() && copy_all(&from, &to).is_ok() {
+            copied.push(line.to_owned());
+        }
+    }
+    copied
 }
 
 /// `20261117-093012`, in UTC: a name that sorts by when it was made.
@@ -482,6 +561,42 @@ pub fn projects(home: &Path) -> Vec<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn what_worktreeinclude_names_is_copied_into_a_new_worktree_and_nothing_outside() {
+        let root = std::env::temp_dir().join(format!("sasacode-include-{}", std::process::id()));
+        let (top, dir) = (root.join("repo"), root.join("wt"));
+        std::fs::create_dir_all(top.join("config/keys")).unwrap();
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(top.join(".env"), "TOKEN=x").unwrap();
+        std::fs::write(top.join("config/keys/a.pem"), "k").unwrap();
+        std::fs::write(top.join("README.md"), "repo's").unwrap();
+        std::fs::write(dir.join("README.md"), "worktree's").unwrap();
+        std::fs::write(root.join("outside"), "no").unwrap();
+        std::fs::write(
+            top.join(".worktreeinclude"),
+            "# what a worktree needs\n.env\nconfig/keys/\nREADME.md\n../outside\nmissing.txt\n",
+        )
+        .unwrap();
+        assert_eq!(copy_included(&top, &dir), [".env", "config/keys/"]);
+        assert_eq!(std::fs::read_to_string(dir.join(".env")).unwrap(), "TOKEN=x");
+        assert!(dir.join("config/keys/a.pem").is_file());
+        assert_eq!(std::fs::read_to_string(dir.join("README.md")).unwrap(), "worktree's");
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn an_editor_is_told_the_line_in_its_own_way() {
+        let p = Path::new("/w/src/app.rs");
+        let said = |program: &str| {
+            at_line(program, p, 42).map(|a| a.iter().map(|s| s.to_string_lossy().into_owned()).collect::<Vec<_>>())
+        };
+        assert_eq!(said("code").unwrap(), ["-g", "/w/src/app.rs:42"]);
+        assert_eq!(said("/usr/local/bin/cursor").unwrap(), ["-g", "/w/src/app.rs:42"]);
+        assert_eq!(said("zed").unwrap(), ["/w/src/app.rs:42"]);
+        assert_eq!(said("idea").unwrap(), ["--line", "42", "/w/src/app.rs"]);
+        assert_eq!(said("emacs"), None);
+    }
 
     #[test]
     fn a_stamp_is_the_date_and_time_in_utc() {
