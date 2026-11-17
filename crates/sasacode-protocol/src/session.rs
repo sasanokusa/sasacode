@@ -52,6 +52,11 @@ pub enum SessionEntry {
         usage: Usage,
         #[serde(default)]
         source: String,
+        /// When, in milliseconds since 1970, and `provider/model`.
+        #[serde(default)]
+        t: f64,
+        #[serde(default)]
+        model: String,
     },
     /// A plugin's own entry: not part of the conversation, so not read here.
     #[serde(other)]

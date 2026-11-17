@@ -40,6 +40,8 @@ pub fn over<'a>(app: &'a App, base: El<'a>) -> El<'a> {
         Overlay::Args => (args(app), 640.0, 60.0),
         Overlay::Extensions => (extensions(app), 640.0, 50.0),
         Overlay::About => (about(app), 680.0, 50.0),
+        Overlay::Usage => (super::usage::usage(app), 820.0, 40.0),
+        Overlay::Compare => (super::usage::compare(app), 560.0, 70.0),
         Overlay::Image(path) => (picture(app, path), (app.width - 80.0).clamp(360.0, 1200.0), 30.0),
     };
     let shade = Color {
@@ -70,7 +72,7 @@ pub fn over<'a>(app: &'a App, base: El<'a>) -> El<'a> {
     iced::widget::stack![base, backdrop, mouse_area(panel)].into()
 }
 
-fn title<'a>(app: &App, label: &'a str) -> El<'a> {
+pub(super) fn title<'a>(app: &App, label: &'a str) -> El<'a> {
     let t = app.t;
     row![
         text(label).size(15).font(BOLD).color(t.fg),

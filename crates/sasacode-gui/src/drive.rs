@@ -2556,3 +2556,92 @@ fn the_files_tab_finds_files_by_what_they_hold_and_opens_one_at_its_line() {
     let _ = app.update(Msg::Grepped("retry".into(), Ok(Vec::new())));
     assert!(says(&app, w.grep_none));
 }
+
+#[test]
+fn a_conversation_continued_elsewhere_is_read_again_when_its_log_grows() {
+    let mut app = window("ja");
+    let dir = real_logs(&mut app, "watch");
+    let a = app.sessions[1].clone();
+    assert!(app.open_session(&a.path));
+    assert!(app.watches_log());
+    let _ = app.update(Msg::WatchLog);
+    assert_eq!(app.chat.transcript.exchanges.len(), 1);
+    // The TUI sends another message in it.
+    let more = serde_json::json!({"type":"message","message":{"role":"user","content":[{"type":"text","text":"TUIから続けた"}],"timestamp":2}});
+    let mut log = std::fs::read_to_string(&a.path).unwrap();
+    log.push_str(&format!("{more}\n"));
+    std::fs::write(&a.path, log).unwrap();
+    let _ = app.update(Msg::WatchLog);
+    assert_eq!(app.chat.transcript.exchanges.len(), 2);
+    assert!(says(&app, "TUIから続けた"));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn the_usage_screen_shows_the_spans_the_graph_the_days_and_the_models() {
+    let mut app = window("ja");
+    let today = chrono::Local::now().date_naive();
+    let used = crate::usage::Sum {
+        tokens: 120_000,
+        output: 8_000,
+        requests: 12,
+        cost: 0.42,
+    };
+    let mut report = crate::usage::Report {
+        today,
+        ..Default::default()
+    };
+    report.spans = [used; 4];
+    report.days.insert(today, used);
+    report.models.push(crate::usage::ModelUse {
+        model: "local/gemma4".into(),
+        sum: used,
+        last: today,
+    });
+    let _ = app.update(Msg::Usage(false));
+    assert_eq!(app.overlay, Some(crate::app::Overlay::Usage));
+    let w = crate::words::JA;
+    assert!(says(&app, w.usage_reading));
+    // An answer for the other scope is not shown.
+    let _ = app.update(Msg::UsageRead(true, Box::new(report.clone())));
+    assert!(app.usage.is_none());
+    let _ = app.update(Msg::UsageRead(false, Box::new(report)));
+    assert!(says(&app, w.usage_today) && says(&app, w.usage_models) && says(&app, "local/gemma4"));
+    assert!(says(&app, "120.0kトークン（出力8.0k）· 12回 · $0.420"));
+    assert!(says(
+        &app,
+        &crate::i18n::fill(w.usage_streak, "current", 1).replace("{longest}", "1")
+    ));
+}
+
+#[test]
+fn a_message_goes_to_several_models_each_in_a_conversation_of_its_own() {
+    let mut app = window("ja");
+    app.listing = listed();
+    let _ = app.update(Msg::Show(Some(crate::app::Overlay::Compare)));
+    let w = crate::words::JA;
+    assert!(says(&app, w.compare_title) && says(&app, "local/gemma4") && says(&app, w.compare_empty));
+    let _ = app.update(Msg::CompareToggle("local/gemma4".into()));
+    let _ = app.update(Msg::CompareType("cloud/other".into()));
+    let _ = app.update(Msg::CompareAdd);
+    app.set_input("同じ質問");
+    let _ = app.update(Msg::CompareSend);
+    assert!(app.overlay.is_none() && app.chat.editor.text().trim().is_empty());
+    let all: Vec<&crate::app::Chat> = std::iter::once(&app.chat)
+        .chain(&app.parked)
+        .filter(|c| c.model.is_some())
+        .collect();
+    assert_eq!(all.len(), 2);
+    assert!(all.iter().all(|c| c.busy() && c.transcript.title() == Some("同じ質問")));
+    // Named by its model once its run names it.
+    let key = app.chat.key;
+    let model = app.chat.model.clone().unwrap();
+    let event =
+        sasacode_protocol::parse_event(&serde_json::json!({"type":"session","id":"cmp-1"}).to_string()).unwrap();
+    let _ = app.update(Msg::Run(key, crate::runner::RunUpdate::Event(Box::new(event))));
+    let short = model.rsplit('/').next().unwrap();
+    assert_eq!(
+        app.prefs.names.get("cmp-1").map(String::as_str),
+        Some(format!("同じ質問 · {short}").as_str())
+    );
+}

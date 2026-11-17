@@ -279,7 +279,7 @@ fn a_session_log_keeps_the_repairs_and_the_usage_outside_the_conversation() {
     let outside: Vec<(&str, u64)> = entries
         .iter()
         .filter_map(|e| match e {
-            SessionEntry::Usage { usage, source } => Some((source.as_str(), usage.input)),
+            SessionEntry::Usage { usage, source, .. } => Some((source.as_str(), usage.input)),
             _ => None,
         })
         .collect();

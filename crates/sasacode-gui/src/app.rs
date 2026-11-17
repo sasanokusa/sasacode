@@ -231,6 +231,12 @@ pub struct App {
     pub(crate) image_actual: bool,
     /// What the runs wrote on stderr, the newest last, as many as `LOG_LINES`.
     pub(crate) log: std::collections::VecDeque<String>,
+    /// The models the next message is sent to at once, and one being typed.
+    pub(crate) compare: std::collections::BTreeSet<String>,
+    pub(crate) compare_typed: String,
+    /// What the conversations used, once read: of every folder, or of this one.
+    pub(crate) usage: Option<crate::usage::Report>,
+    pub(crate) usage_here: bool,
     /// The next side question, as it is typed.
     pub(crate) side_typed: String,
     /// Conversations whose title the model is writing.
@@ -366,6 +372,10 @@ pub(crate) struct Chat {
     pub(crate) newer: bool,
     /// A scratch conversation: its log goes into the trash once it is left and its run is over.
     pub(crate) scratch: bool,
+    /// How its log was when last looked at, while no run here wrote it.
+    pub(crate) log_seen: Option<crate::watch::Seen>,
+    /// The model its runs use, over the window's: one of several a message was sent to.
+    pub(crate) model: Option<String>,
 }
 
 impl Chat {
@@ -387,6 +397,8 @@ impl Chat {
             follow: Vec::new(),
             newer: false,
             scratch: false,
+            log_seen: None,
+            model: None,
         }
     }
 
@@ -682,6 +694,16 @@ pub enum Msg {
     AskReview,
     /// A new conversation whose log goes once it is left.
     NewScratch,
+    /// The log of the conversation shown is looked at, in case another wrote it.
+    WatchLog,
+    /// What the conversations used, of every folder or (true) this one: asked, and read.
+    Usage(bool),
+    UsageRead(bool, Box<crate::usage::Report>),
+    /// The models the next message goes to at once: one chosen or not, one typed, added; sent.
+    CompareToggle(String),
+    CompareType(String),
+    CompareAdd,
+    CompareSend,
     /// A file of instructions opened in the editor, made empty first when it is not there.
     OpenInstructions(PathBuf),
     /// The sasacode home folder, shown in the file manager.
@@ -909,6 +931,10 @@ impl App {
             compact_at: None,
             image_actual: false,
             log: Default::default(),
+            compare: Default::default(),
+            compare_typed: String::new(),
+            usage: None,
+            usage_here: false,
             side_typed: String::new(),
             titling: Default::default(),
             back: Vec::new(),
@@ -1026,6 +1052,10 @@ impl App {
         // Conversations whose pull request was merged or closed are looked for now and then.
         if self.prefs.auto_archive {
             all.push(iced::time::every(SWEEP_EVERY).map(|_| Msg::Sweep));
+        }
+        // The conversation shown is read again when another continues it.
+        if self.watches_log() {
+            all.push(iced::time::every(Duration::from_secs(2)).map(|_| Msg::WatchLog));
         }
         // The clock only moves what is shown while something runs.
         if self.running() {
@@ -1235,6 +1265,10 @@ impl App {
                 return Task::batch([focus_input(), self.back_to_newest()]);
             }
             Msg::OpenSession(path) => {
+                // Opened from the usage screen: the conversation is what is wanted now.
+                if self.overlay == Some(Overlay::Usage) {
+                    self.overlay = None;
+                }
                 if self.open_session(&path) {
                     return Task::batch([focus_input(), self.back_to_newest()]);
                 }
@@ -1958,7 +1992,12 @@ impl App {
     /// Starts a run of conversation `key` on `prompt`; with `slash`, a slash command it runs.
     pub(crate) fn start_run(&mut self, key: u64, prompt: String, slash: bool) -> Task<Msg> {
         let now = Instant::now();
-        let model = self.model.trim();
+        // One of several the message went to keeps its own model.
+        let own = std::iter::once(&self.chat)
+            .chain(&self.parked)
+            .find(|c| c.key == key)
+            .and_then(|c| c.model.clone());
+        let model = own.as_deref().unwrap_or(self.model.trim());
         let mut spec = RunSpec {
             program: self.program.clone(),
             cwd: self.cwd.clone(),
@@ -2002,6 +2041,7 @@ impl App {
         };
         chat.transcript.send(&prompt, now);
         chat.newer = false;
+        chat.log_seen = None;
         chat.loaded = false;
         spec.prompt = prompt;
         spec.resume = chat.session.clone();
@@ -2050,6 +2090,8 @@ impl App {
         let mut compacted: Option<String> = None;
         // A stderr line, for the window's log.
         let mut logged: Option<String> = None;
+        // The model and the message of one of several a message went to, once it has an id.
+        let mut named_by: Option<(String, String)> = None;
         match update {
             RunUpdate::Started(control) => run.control = Some(control),
             RunUpdate::Event(event) => {
@@ -2057,6 +2099,7 @@ impl App {
                 if let Some(id) = effect.session_id {
                     chat.session = Some(id.clone());
                     named = Some(id);
+                    named_by = chat.model.clone().zip(chat.transcript.title().map(str::to_owned));
                 }
                 if let Some(cause) = effect.ended {
                     run.ended = true;
@@ -2196,6 +2239,18 @@ impl App {
         }
         if let Some(commands) = commands {
             self.plugin_commands = commands;
+        }
+        if let (Some(id), Some((model, prompt))) = (&named, named_by)
+            && !self.prefs.names.contains_key(id)
+        {
+            // Named by its model, so the list tells the several apart.
+            let short = model.rsplit('/').next().unwrap_or(&model).to_owned();
+            let first: String = prompt.lines().next().unwrap_or("").chars().take(40).collect();
+            let name = format!("{first} · {short}");
+            let id = id.clone();
+            let _ = self.set(|p| {
+                p.names.insert(id, name);
+            });
         }
         if let Some(id) = named
             && key != SIDE

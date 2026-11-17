@@ -5,6 +5,7 @@
 mod about;
 mod app;
 mod cli;
+mod compare;
 mod composer;
 mod diff;
 #[cfg(test)]
@@ -41,7 +42,9 @@ mod system;
 mod talk;
 mod theme;
 mod transcript;
+mod usage;
 mod view;
+mod watch;
 mod words;
 
 use std::path::PathBuf;

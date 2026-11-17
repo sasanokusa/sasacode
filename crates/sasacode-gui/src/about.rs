@@ -86,7 +86,7 @@ impl App {
                 }
                 Task::none()
             }
-            other => return Err(other),
+            other => return self.update_compare(other),
         };
         Ok(task)
     }

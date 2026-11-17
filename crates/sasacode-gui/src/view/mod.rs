@@ -13,6 +13,7 @@ pub(crate) mod overlay;
 mod sidebar;
 mod split;
 mod timeline;
+mod usage;
 
 use std::path::Path;
 
