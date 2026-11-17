@@ -7,7 +7,9 @@ use iced::widget::{
 use iced::{Alignment, Length};
 use sasacode_protocol::Decision;
 
-use super::{BOLD, El, MOD, MONO, clip_start, col_w, diff_view, plus_minus, room, short_path, tag, tip};
+use super::{
+    BOLD, El, MOD, MONO, clip, clip_start, col_w, diff_view, first_line, plus_minus, room, short_path, tag, tip,
+};
 use crate::app::{App, EFFORTS, INPUT, MODEL, Msg, PERMISSIONS, shortcut};
 use crate::i18n::fill;
 use crate::icons::{Icon, icon};
@@ -51,6 +53,12 @@ pub fn dock(app: &App) -> El<'_> {
     if let Some(next) = suggested(app) {
         col = col.push(Above::Suggestion, next);
     }
+    if let Some(moved) = branch_moved(app) {
+        col = col.push(Above::Branch, moved);
+    }
+    if !app.chat.follow.is_empty() {
+        col = col.push(Above::Follow, follow_ups(app));
+    }
     col = col.push(Above::Input, composer(app)).push(Above::Hints, hints(app));
     container(container(col).max_width(col_w(app)))
         .center_x(Length::Fill)
@@ -72,6 +80,8 @@ enum Above {
     Comments,
     Images,
     Suggestion,
+    Branch,
+    Follow,
     Input,
     Hints,
 }
@@ -115,6 +125,84 @@ fn suggested(app: &App) -> Option<El<'_>> {
         .align_y(Alignment::Center)
         .into(),
     )
+}
+
+/// The branch the conversation was started on, when another is checked out now.
+fn branch_moved(app: &App) -> Option<El<'_>> {
+    let (t, w) = (app.t, app.s.w());
+    let (was, now) = app.branch_moved()?;
+    let id = app.chat.session.clone()?;
+    Some(
+        container(
+            row![
+                icon(Icon::Branch, 13.0, t.warn),
+                text(fill(fill(w.branch_moved, "was", was).as_str(), "now", now))
+                    .size(12.5)
+                    .color(t.fg)
+                    .width(Length::Fill),
+                button(text(fill(w.branch_back, "branch", was)).size(12))
+                    .padding([3, 10])
+                    .style(t.outline(t.fg))
+                    .on_press_maybe((!app.git_busy).then(|| Msg::BackToBranch(was.to_owned()))),
+                button(icon(Icon::Close, 11.0, t.fg_3))
+                    .padding(4)
+                    .style(t.ghost(t.fg_3, false))
+                    .on_press(Msg::BranchSeen(id)),
+            ]
+            .spacing(8)
+            .align_y(Alignment::Center),
+        )
+        .padding([6, 10])
+        .style(t.boxed(t.warn_wash, t.warn_line, crate::theme::RADIUS))
+        .into(),
+    )
+}
+
+/// The messages that wait for the run to end, each for a run of its own: taken back, sent to the
+/// run now, moved up, or dropped.
+fn follow_ups(app: &App) -> El<'_> {
+    let (t, w) = (app.t, app.s.w());
+    let mut list = column![text(w.follow_head).size(11.5).color(t.fg_3)].spacing(4);
+    for (i, said) in app.chat.follow.iter().enumerate() {
+        let small = |label: &'static str, msg: Msg| {
+            button(text(label).size(11.5).color(t.fg_2).wrapping(text::Wrapping::None))
+                .padding([2, 8])
+                .style(t.ghost(t.fg_2, false))
+                .on_press(msg)
+        };
+        let mut line = row![
+            text(clip(first_line(said), 70))
+                .size(12.5)
+                .color(t.fg)
+                .wrapping(text::Wrapping::None)
+                .width(Length::Fill)
+        ]
+        .spacing(2)
+        .align_y(Alignment::Center);
+        if i > 0 {
+            line = line.push(
+                button(icon(Icon::ChevronUp, 11.0, t.fg_3))
+                    .padding(4)
+                    .style(t.ghost(t.fg_3, false))
+                    .on_press(Msg::FollowUp(i)),
+            );
+        }
+        line = line
+            .push(small(w.follow_now, Msg::FollowNow(i)))
+            .push(small(w.follow_edit, Msg::FollowEdit(i)))
+            .push(
+                button(icon(Icon::Close, 11.0, t.fg_3))
+                    .padding(4)
+                    .style(t.ghost(t.fg_3, false))
+                    .on_press(Msg::FollowDrop(i)),
+            );
+        list = list.push(line);
+    }
+    container(list)
+        .width(Length::Fill)
+        .padding([6, 10])
+        .style(t.boxed(t.raised, t.line, crate::theme::RADIUS))
+        .into()
 }
 
 /// The images the input names, each small, with the way to take it out of the input.

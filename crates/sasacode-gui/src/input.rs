@@ -236,7 +236,7 @@ impl App {
     }
 
     /// Puts `text` in place of what the input has.
-    fn set_input(&mut self, text: &str) {
+    pub(crate) fn set_input(&mut self, text: &str) {
         self.chat.editor = text_editor::Content::with_text(text);
         self.chat.editor.perform(Action::Move(text_editor::Motion::DocumentEnd));
     }

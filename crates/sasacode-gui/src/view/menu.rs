@@ -55,6 +55,15 @@ fn row_items(app: &App, id: &str) -> Vec<Item> {
         Msg::RowTui(id.to_owned()),
         false,
     )));
+    // Its Markdown, named in the input as context for the conversation shown.
+    if !current {
+        items.push(Some((
+            Icon::File,
+            w.attach_conversation.to_owned(),
+            Msg::AttachConversation(id.to_owned()),
+            false,
+        )));
+    }
     items.push(None);
     items.push(Some((
         Icon::Dot,

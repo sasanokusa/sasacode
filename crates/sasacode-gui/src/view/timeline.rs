@@ -329,6 +329,21 @@ fn exchange<'a>(app: &'a App, i: usize, ex: &'a Exchange) -> El<'a> {
                 iced::widget::tooltip::Position::Bottom,
             ));
         }
+        // Part of it chosen and quoted into the input.
+        foot = foot.push(super::tip(
+            t,
+            button(
+                text(app.s.w().quote)
+                    .size(11.5)
+                    .color(t.fg_3)
+                    .wrapping(text::Wrapping::None),
+            )
+            .padding([2, 8])
+            .style(t.ghost(t.fg_2, false))
+            .on_press(Msg::QuoteOpen(i)),
+            app.s.w().quote_part_hint.to_owned(),
+            iced::widget::tooltip::Position::Bottom,
+        ));
         foot.push(copy_button(app, Clip::Reply(i), app.s.copy)).into()
     });
     match (&ex.end, copy) {

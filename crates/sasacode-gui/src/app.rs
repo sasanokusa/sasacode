@@ -211,6 +211,10 @@ pub struct App {
     pub(crate) find_in: Option<String>,
     /// Which of what the search in the conversation finds is in view: an index into those found.
     pub(crate) find_at: usize,
+    /// A reply whose text is being chosen to quote: its exchange, and its text, read only.
+    pub(crate) quoting: Option<(usize, text_editor::Content)>,
+    /// Conversations whose notice that the branch changed was put away.
+    pub(crate) branch_seen: HashSet<String>,
     /// That search's field was the last to take the keyboard: an Esc there puts it away.
     pub(crate) find_held: bool,
     /// The list shows the conversations taken out of it, instead of the others.
@@ -321,6 +325,8 @@ pub(crate) struct Chat {
     pub(crate) comments: Vec<crate::review::Comment>,
     /// Long messages opened whole, by exchange.
     pub(crate) whole: HashSet<usize>,
+    /// Messages sent while it ran, each to start a run of its own after it, in order.
+    pub(crate) follow: Vec<String>,
 }
 
 impl Chat {
@@ -339,6 +345,7 @@ impl Chat {
             unread: false,
             comments: Vec::new(),
             whole: HashSet::new(),
+            follow: Vec::new(),
         }
     }
 
@@ -368,7 +375,7 @@ impl Chat {
         self.session.is_none() && !self.busy() && self.transcript.is_empty()
     }
 
-    fn control(&self, message: ControlMessage) {
+    pub(crate) fn control(&self, message: ControlMessage) {
         if let Some(tx) = self.run.as_ref().and_then(|r| r.control.as_ref()) {
             let _ = tx.send(message);
         }
@@ -574,6 +581,24 @@ pub enum Msg {
     Undo,
     UndoKey,
     UndoKeyHeld(bool),
+    /// A follow-up waiting for the run: taken back into the input, sent to the run now, moved up
+    /// a place, or dropped.
+    FollowEdit(usize),
+    FollowNow(usize),
+    FollowUp(usize),
+    FollowDrop(usize),
+    /// Messages sent while a run works wait for it to end, each for a run of its own.
+    SetQueue(bool),
+    /// Another conversation put in the input as context: its Markdown, written to a file, named.
+    AttachConversation(String),
+    /// A reply opened where its text can be chosen, and the choice quoted into the input.
+    QuoteOpen(usize),
+    QuoteEdit(text_editor::Action),
+    QuoteTake,
+    /// Back to the branch the conversation was started on.
+    BackToBranch(String),
+    /// The notice that the branch changed, put away for this conversation.
+    BranchSeen(String),
     /// A new conversation that holds the one shown through exchange `i`'s reply.
     ForkAfter(usize),
     /// To the next, or the last, of what the search in the conversation finds.
@@ -764,6 +789,8 @@ impl App {
             awake: None,
             find_in: None,
             find_at: 0,
+            quoting: None,
+            branch_seen: HashSet::new(),
             find_held: false,
             show_archived: false,
             row_hover: None,
@@ -1007,7 +1034,7 @@ impl App {
         }
     }
 
-    fn control(&self, message: ControlMessage) {
+    pub(crate) fn control(&self, message: ControlMessage) {
         self.chat.control(message);
     }
 
@@ -1583,7 +1610,7 @@ impl App {
     }
 
     /// Back to the newest, held by the end again.
-    fn back_to_newest(&mut self) -> Task<Msg> {
+    pub(crate) fn back_to_newest(&mut self) -> Task<Msg> {
         self.reading = false;
         self.scroll_timeline(0.0)
     }
@@ -1610,7 +1637,7 @@ impl App {
     }
 
     /// What was typed, taken out of the input and remembered with what was sent before.
-    fn take_input(&mut self) -> Option<String> {
+    pub(crate) fn take_input(&mut self) -> Option<String> {
         let typed = self.chat.editor.text().trim().to_owned();
         if typed.is_empty() && self.chat.comments.is_empty() {
             return None;
@@ -1659,14 +1686,33 @@ impl App {
             self.chat.transcript.answer_approval(&id, Answer::Denied(text));
             return Task::none();
         }
+        // `!command`: run in the folder's shell, its output in the commands tab.
+        if let Some(command) = self
+            .chat
+            .editor
+            .text()
+            .trim()
+            .strip_prefix('!')
+            .map(str::trim)
+            .map(str::to_owned)
+            && !command.is_empty()
+        {
+            let _ = self.take_input();
+            return self.run_command(format!("!{command}"), command);
+        }
         if self.running() {
-            // Like typing while the TUI is busy: it reaches the model at its next turn.
-            if let Some(text) = self.take_input() {
-                self.chat.transcript.queue(&text);
-                self.control(ControlMessage::Message { text });
-                return self.back_to_newest();
+            let Some(text) = self.take_input() else {
+                return Task::none();
+            };
+            // Kept for a run of its own after this one, as the settings say.
+            if self.prefs.more.queue {
+                self.chat.follow.push(text);
+                return Task::none();
             }
-            return Task::none();
+            // Like typing while the TUI is busy: it reaches the model at its next turn.
+            self.chat.transcript.queue(&text);
+            self.control(ControlMessage::Message { text });
+            return self.back_to_newest();
         }
         if self.busy() {
             self.queue_next();
@@ -1858,6 +1904,16 @@ impl App {
                 waiting.extend(chat.next.take());
                 if !waiting.is_empty() {
                     next = Some(waiting.join("\n\n"));
+                } else if !chat.follow.is_empty()
+                    && chat
+                        .transcript
+                        .exchanges
+                        .last()
+                        .and_then(|ex| ex.end.as_ref())
+                        .is_some_and(|end| end.cause == StopCause::Done)
+                {
+                    // Then the follow-ups, one run each; not after a run that was stopped or failed.
+                    next = Some(chat.follow.remove(0));
                 }
                 self.reload_sessions();
                 // What the run made or removed is offered after `@` from now on, and shown in the
@@ -2123,6 +2179,62 @@ mod tests {
 
     fn type_in(app: &mut App, text: &str) {
         app.chat.editor = text_editor::Content::with_text(text);
+    }
+
+    #[test]
+    fn messages_sent_while_it_runs_wait_their_turn_when_the_settings_say_so() {
+        let (mut app, home) = window_with("follow", &["aaaa0000", "bbbb0000"]);
+        assert!(app.open_named("aaaa0000"));
+        let _ = app.update(Msg::SetQueue(true));
+        let mut written = app.pretend_running();
+        let key = app.chat.key;
+        let _ = app.update(Msg::Run(key, event(r#"{"type":"agent_start"}"#)));
+        type_in(&mut app, "一つ目");
+        let _ = app.update(Msg::Send);
+        type_in(&mut app, "二つ目");
+        let _ = app.update(Msg::Send);
+        assert_eq!(app.chat.follow, vec!["一つ目", "二つ目"]);
+        assert!(written.try_recv().is_err(), "nothing reached the run");
+        let _ = app.update(Msg::FollowUp(1));
+        assert_eq!(app.chat.follow, vec!["二つ目", "一つ目"]);
+        let _ = app.update(Msg::FollowDrop(1));
+        assert_eq!(app.chat.follow, vec!["二つ目"]);
+
+        // It ends well: the next starts, as a run of its own.
+        let before = app.chat.transcript.exchanges.len();
+        let _ = app.update(Msg::Run(key, event(r#"{"type":"agent_end","cause":"done"}"#)));
+        let _ = app.update(Msg::Run(key, RunUpdate::Exited(Some(0))));
+        assert!(app.chat.follow.is_empty() && app.busy());
+        assert_eq!(app.chat.transcript.exchanges.len(), before + 1);
+        assert_eq!(app.chat.transcript.exchanges.last().unwrap().prompt, "二つ目");
+
+        // Stopped, it starts none; and "send now" reaches the run at its next turn.
+        let mut written = app.pretend_running();
+        type_in(&mut app, "三つ目");
+        let _ = app.update(Msg::Send);
+        let _ = app.update(Msg::FollowNow(0));
+        assert!(matches!(written.try_recv(), Ok(ControlMessage::Message { text }) if text == "三つ目"));
+        type_in(&mut app, "四つ目");
+        let _ = app.update(Msg::Send);
+        let _ = app.update(Msg::Run(key, event(r#"{"type":"agent_end","cause":"aborted"}"#)));
+        let _ = app.update(Msg::Run(key, RunUpdate::Exited(Some(0))));
+        assert_eq!(app.chat.follow, vec!["四つ目"]);
+
+        // `!command` runs in the folder's shell, not as a message.
+        let runs = app.script_runs.len();
+        type_in(&mut app, "!echo hi");
+        let _ = app.update(Msg::Send);
+        assert_eq!(app.script_runs.len(), runs + 1);
+        assert_eq!(app.script_runs[0].name, "!echo hi");
+        assert!(app.chat.editor.text().trim().is_empty());
+
+        // Another conversation goes in the input as context, written as Markdown.
+        let _ = app.update(Msg::AttachConversation("bbbb0000".into()));
+        let typed = app.chat.editor.text();
+        let file = home.join("context").join("bbbb0000.md");
+        assert!(file.is_file() && typed.contains("bbbb0000.md"), "{typed}");
+        assert!(std::fs::read_to_string(&file).unwrap().contains("## "));
+        std::fs::remove_dir_all(home).unwrap();
     }
 
     #[test]

@@ -185,6 +185,9 @@ pub struct More {
     pub failed_only: bool,
     /// What the model thought is left out of the steps.
     pub hide_thinking: bool,
+    /// Messages sent while a run works wait for it to end, each for a run of its own, rather than
+    /// reaching the model at its next turn.
+    pub queue: bool,
 }
 
 impl More {
@@ -648,6 +651,7 @@ mod tests {
                 kept: ["eeee".to_owned()].into(),
                 failed_only: true,
                 hide_thinking: true,
+                queue: true,
             },
         };
         write(&file, &Layout::default(), &prefs).unwrap();

@@ -136,6 +136,41 @@ impl App {
             .unwrap_or_default()
     }
 
+    /// Runs `command` in the folder's shell, listed in the commands tab under `name`.
+    pub(crate) fn run_command(&mut self, name: String, command: String) -> Task<Msg> {
+        self.script_runs_made += 1;
+        let id = self.script_runs_made;
+        let (task, handle) = Task::run(run(command.clone(), self.cwd.clone()), move |u| {
+            Msg::ScriptUpdate(id, u)
+        })
+        .abortable();
+        self.script_runs.insert(
+            0,
+            ScriptRun {
+                id,
+                name,
+                command,
+                output: String::new(),
+                started: Instant::now(),
+                took: None,
+                ended: None,
+                handle: Some(handle.abort_on_drop()),
+            },
+        );
+        // The oldest that ended go; one that runs stays.
+        while self.script_runs.len() > KEPT_RUNS {
+            match self.script_runs.iter().rposition(|r| !r.running()) {
+                Some(i) => {
+                    self.script_runs.remove(i);
+                }
+                None => break,
+            }
+        }
+        self.tab = Tab::Commands;
+        self.insp = true;
+        task
+    }
+
     /// The scripts' messages; any other comes back.
     pub(crate) fn update_scripts(&mut self, msg: Msg) -> Result<Task<Msg>, Msg> {
         let key = self.cwd.to_string_lossy().into_owned();
@@ -147,37 +182,7 @@ impl App {
                 if script.command.trim().is_empty() {
                     return Ok(Task::none());
                 }
-                self.script_runs_made += 1;
-                let id = self.script_runs_made;
-                let (task, handle) = Task::run(run(script.command.clone(), self.cwd.clone()), move |u| {
-                    Msg::ScriptUpdate(id, u)
-                })
-                .abortable();
-                self.script_runs.insert(
-                    0,
-                    ScriptRun {
-                        id,
-                        name: script.name.clone(),
-                        command: script.command,
-                        output: String::new(),
-                        started: Instant::now(),
-                        took: None,
-                        ended: None,
-                        handle: Some(handle.abort_on_drop()),
-                    },
-                );
-                // The oldest that ended go; one that runs stays.
-                while self.script_runs.len() > KEPT_RUNS {
-                    match self.script_runs.iter().rposition(|r| !r.running()) {
-                        Some(i) => {
-                            self.script_runs.remove(i);
-                        }
-                        None => break,
-                    }
-                }
-                self.tab = Tab::Commands;
-                self.insp = true;
-                task
+                self.run_command(script.name, script.command)
             }
             Msg::ScriptUpdate(id, update) => {
                 if let Some(run) = self.script_runs.iter_mut().find(|r| r.id == id) {

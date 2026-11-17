@@ -36,6 +36,7 @@ pub fn over<'a>(app: &'a App, base: El<'a>) -> El<'a> {
         Overlay::Pr => (pr(app), 640.0, 60.0),
         Overlay::Quit(id) => (quit(app, *id), 460.0, 120.0),
         Overlay::ConfirmAuto => (confirm_auto(app), 480.0, 120.0),
+        Overlay::Quote => (quote(app), 720.0, 50.0),
     };
     let shade = Color {
         a: if t.dark { 0.45 } else { 0.25 },
@@ -366,6 +367,16 @@ fn settings(app: &App) -> El<'_> {
         ));
     }
     let idle = column![heading(w.set_archive_after), idle].spacing(6);
+    let follow = column![
+        heading(w.set_follow),
+        row![
+            choice(w.follow_steer.to_owned(), !p.more.queue, Msg::SetQueue(false)),
+            choice(w.follow_queue.to_owned(), p.more.queue, Msg::SetQueue(true)),
+        ]
+        .spacing(8)
+        .wrap(),
+    ]
+    .spacing(6);
     let switch = |label: &'static str, on: bool, msg: fn(bool) -> Msg| {
         toggler(on)
             .label(label)
@@ -377,6 +388,7 @@ fn settings(app: &App) -> El<'_> {
     let body = column![
         title(app, s.settings),
         enter,
+        follow,
         theme,
         zoom,
         switch(s.set_notify, p.notify, Msg::SetNotify),
@@ -398,6 +410,41 @@ fn settings(app: &App) -> El<'_> {
     container(scrollable(body.padding(iced::Padding::ZERO.right(12))).style(t.scroll()))
         .max_height(640)
         .into()
+}
+
+/// A reply's text as it was written, to choose part of and quote into the input.
+fn quote(app: &App) -> El<'_> {
+    let (t, w) = (app.t, app.s.w());
+    let Some((_, content)) = &app.quoting else {
+        return Space::new().into();
+    };
+    let chosen = content.selection().is_some_and(|c| !c.trim().is_empty());
+    column![
+        title(app, w.quote_title),
+        text(w.quote_how).size(12).color(t.fg_3),
+        iced::widget::text_editor(content)
+            .id(crate::talk::QUOTE)
+            .on_action(Msg::QuoteEdit)
+            .font(MONO)
+            .size(13)
+            .height(Length::Fixed(380.0))
+            .padding(10)
+            .style(t.editor()),
+        row![
+            Space::new().width(Length::Fill),
+            button(text(w.cancel).size(13))
+                .padding([6, 14])
+                .style(t.outline(t.fg))
+                .on_press(Msg::Show(None)),
+            button(text(w.quote_take).size(13))
+                .padding([6, 14])
+                .style(t.primary())
+                .on_press_maybe(chosen.then_some(Msg::QuoteTake)),
+        ]
+        .spacing(8),
+    ]
+    .spacing(10)
+    .into()
 }
 
 fn rename<'a>(app: &'a App, name: &'a str) -> El<'a> {

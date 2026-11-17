@@ -3,9 +3,10 @@
 //! wrote.
 
 use iced::Task;
-use iced::widget::operation;
+use iced::widget::{operation, text_editor};
+use sasacode_protocol::ControlMessage;
 
-use crate::app::{App, Msg};
+use crate::app::{App, Msg, Overlay};
 use crate::i18n::fill;
 
 impl App {
@@ -34,6 +35,42 @@ impl App {
     pub(crate) fn find_current(&self) -> Option<usize> {
         let found = self.found_in();
         found.get(self.find_at.min(found.len().saturating_sub(1))).copied()
+    }
+
+    /// The branch the conversation shown was started on, when HEAD is now another one and the
+    /// notice of it was not put away: then, and now.
+    pub(crate) fn branch_moved(&self) -> Option<(&str, &str)> {
+        let id = self.chat.session.as_deref()?;
+        let was = self.prefs.branches.get(id)?;
+        let now = self.git.branch.as_deref()?;
+        (was != now && !self.branch_seen.contains(id)).then_some((was.as_str(), now))
+    }
+
+    /// Another conversation as context: written as Markdown under the sasacode folder, and named
+    /// in the input with `@`, as a file is.
+    fn attach_conversation(&mut self, id: &str) -> Task<Msg> {
+        let w = self.s.w();
+        let Some(session) = self.sessions.iter().find(|s| s.id == id) else {
+            return Task::none();
+        };
+        let entries = match sasacode_protocol::read_entries(&session.path) {
+            Ok(entries) => entries,
+            Err(e) => {
+                self.toast = Some(format!("{}: {e}", session.path.display()));
+                return Task::none();
+            }
+        };
+        let transcript = crate::transcript::Transcript::from_entries(&entries);
+        let name = self.prefs.names.get(id).map(String::as_str);
+        let text = crate::export::markdown(name, &transcript, self.s);
+        let dir = self.home.clone().unwrap_or_else(std::env::temp_dir).join("context");
+        let path = dir.join(format!("{id}.md"));
+        if let Err(e) = std::fs::create_dir_all(&dir).and_then(|()| std::fs::write(&path, text)) {
+            self.toast = Some(format!("{}: {e}", path.display()));
+            return Task::none();
+        }
+        self.toast = Some(w.attached_conversation.to_owned());
+        self.dropped(&path)
     }
 
     /// A new conversation holding the one shown through exchange `i`'s reply, shown with nothing
@@ -90,6 +127,90 @@ impl App {
                     Task::none()
                 }
             },
+            Msg::FollowEdit(i) => {
+                if i < self.chat.follow.len() {
+                    let text = self.chat.follow.remove(i);
+                    let typed = self.chat.editor.text();
+                    let typed = typed.trim();
+                    self.set_input(&if typed.is_empty() {
+                        text
+                    } else {
+                        format!("{text}\n\n{typed}")
+                    });
+                }
+                operation::focus(crate::app::INPUT)
+            }
+            Msg::FollowNow(i) => {
+                if i >= self.chat.follow.len() {
+                    return Ok(Task::none());
+                }
+                let text = self.chat.follow.remove(i);
+                if self.running() {
+                    // To the run, at the model's next turn, as one sent while it works is.
+                    self.chat.transcript.queue(&text);
+                    self.control(ControlMessage::Message { text });
+                    self.back_to_newest()
+                } else if self.busy() {
+                    self.chat.next = Some(text);
+                    Task::none()
+                } else {
+                    self.start(self.chat.key, text)
+                }
+            }
+            Msg::FollowUp(i) => {
+                if i > 0 && i < self.chat.follow.len() {
+                    self.chat.follow.swap(i, i - 1);
+                }
+                Task::none()
+            }
+            Msg::FollowDrop(i) => {
+                if i < self.chat.follow.len() {
+                    self.chat.follow.remove(i);
+                }
+                Task::none()
+            }
+            Msg::SetQueue(on) => self.set(|p| p.more.queue = on),
+            Msg::AttachConversation(id) => self.attach_conversation(&id),
+            Msg::QuoteOpen(i) => {
+                let Some(raw) = self.copy_text(&crate::app::Clip::Reply(i)) else {
+                    return Ok(Task::none());
+                };
+                self.quoting = Some((i, text_editor::Content::with_text(&raw)));
+                self.overlay = Some(Overlay::Quote);
+                operation::focus(QUOTE)
+            }
+            Msg::QuoteEdit(action) => {
+                // Read only: the text is chosen, never changed.
+                if let Some((_, content)) = &mut self.quoting
+                    && !action.is_edit()
+                {
+                    content.perform(action);
+                }
+                Task::none()
+            }
+            Msg::QuoteTake => {
+                let chosen = self.quoting.as_ref().and_then(|(_, c)| c.selection());
+                let Some(chosen) = chosen.filter(|c| !c.trim().is_empty()) else {
+                    self.toast = Some(self.s.w().quote_none.to_owned());
+                    return Ok(Task::none());
+                };
+                self.quoting = None;
+                self.overlay = None;
+                let quoted: String = chosen.trim_end().lines().map(|l| format!("> {l}\n")).collect();
+                let typed = self.chat.editor.text();
+                let typed = typed.trim_end();
+                self.set_input(&if typed.is_empty() {
+                    format!("{quoted}\n")
+                } else {
+                    format!("{typed}\n\n{quoted}\n")
+                });
+                operation::focus(crate::app::INPUT)
+            }
+            Msg::BackToBranch(branch) => return Ok(self.update(Msg::GitDo(crate::git::Op::Switch(branch)))),
+            Msg::BranchSeen(id) => {
+                self.branch_seen.insert(id);
+                Task::none()
+            }
             Msg::SetFailedOnly(on) => self.set(|p| p.more.failed_only = on),
             Msg::SetHideThinking(hide) => self.set(|p| p.more.hide_thinking = hide),
             other => return Err(other),
@@ -97,6 +218,9 @@ impl App {
         Ok(task)
     }
 }
+
+/// The read-only text of a reply being chosen to quote.
+pub const QUOTE: &str = "quote";
 
 /// Files named with their line in a program's output: where each is in `line`, and the name as a
 /// link takes it, `path:line`. Only a name with a line and a dot or slash in it, as compilers and

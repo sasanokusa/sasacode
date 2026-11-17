@@ -241,6 +241,23 @@ words! {
     alert_important: "重要", "Important";
     alert_warning: "注意", "Warning";
     alert_caution: "警告", "Caution";
+    // Follow-ups, `!command`, quoting, another conversation as context, the branch.
+    set_follow: "実行中に送ったメッセージ", "Messages sent while it runs";
+    follow_steer: "すぐ伝える（次のターンで読む）", "Steer (read at its next turn)";
+    follow_queue: "終わってから順に送る", "Queue (sent after it ends)";
+    follow_head: "実行が終わってから送るメッセージ", "Sent after the run ends";
+    follow_now: "今伝える", "Send now";
+    follow_edit: "入力欄に戻す", "Edit";
+    quote: "選んで引用", "Quote part";
+    quote_part_hint: "返事の一部を選んで、入力欄に引用します", "Choose part of the reply and quote it in the input";
+    quote_title: "引用する部分を選ぶ", "Choose what to quote";
+    quote_how: "ドラッグか⇧と矢印キーで選び、「引用する」を押します", "Select with the mouse or ⇧ and the arrows, then press Quote";
+    quote_take: "引用する", "Quote";
+    quote_none: "まだ何も選んでいません", "Nothing is chosen yet";
+    attach_conversation: "この会話を入力欄に添える", "Attach to the input";
+    attached_conversation: "会話をMarkdownにして入力欄に添えました", "Attached the conversation as Markdown";
+    branch_moved: "この会話は{was}で始めましたが、今は{now}です", "This conversation started on {was}; {now} is checked out now";
+    branch_back: "{branch}に戻る", "Back to {branch}";
 }
 
 #[cfg(test)]

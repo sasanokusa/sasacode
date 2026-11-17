@@ -1785,3 +1785,44 @@ fn a_github_alert_is_drawn_under_its_name_and_a_reply_can_be_branched_from() {
     let _ = app.update(Msg::OpenRef("src/nope.rs:3".into()));
     assert!(app.toast.as_deref().is_some_and(|t| t.contains("src/nope.rs:3")));
 }
+
+#[test]
+fn part_of_a_reply_is_chosen_and_quoted_and_the_text_cannot_be_changed_there() {
+    let mut app = window("ja");
+    crate::snapshots::markdown_reply(&mut app);
+    let quote = crate::words::JA.quote;
+    act(&mut app, |ui| {
+        let _ = ui.click(quote).expect("a reply offers to quote part of it");
+    });
+    assert_eq!(app.overlay, Some(crate::app::Overlay::Quote));
+    let _ = app.update(Msg::QuoteEdit(text_editor::Action::Edit(text_editor::Edit::Insert(
+        'x',
+    ))));
+    assert!(app.quoting.as_ref().unwrap().1.text().starts_with("## 変更点"));
+    // Nothing chosen yet: nothing is quoted.
+    let _ = app.update(Msg::QuoteTake);
+    assert!(app.overlay.is_some());
+    let _ = app.update(Msg::QuoteEdit(text_editor::Action::SelectLine));
+    let _ = app.update(Msg::QuoteTake);
+    assert!(app.overlay.is_none());
+    let quoted = typed(&app);
+    assert!(
+        quoted.starts_with("> ## 変更点") && !quoted.contains("待ち時間"),
+        "{quoted}"
+    );
+}
+
+#[test]
+fn the_conversation_says_when_its_branch_is_no_longer_checked_out() {
+    let mut app = window("ja");
+    let id = "0a1b2c3d-0".to_owned();
+    app.chat.session = Some(id.clone());
+    let _ = app.set(|p| {
+        p.branches.insert(id.clone(), "fix/retry".into());
+    });
+    app.git.branch = Some("main".into());
+    assert!(says(&app, "この会話はfix/retryで始めましたが、今はmainです"));
+    assert!(says(&app, "fix/retryに戻る"));
+    let _ = app.update(Msg::BranchSeen(id));
+    assert!(!says(&app, "fix/retryに戻る"));
+}

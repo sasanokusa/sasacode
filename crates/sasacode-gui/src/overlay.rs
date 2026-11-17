@@ -42,6 +42,8 @@ pub enum Overlay {
     Quit(iced::window::Id),
     /// `auto` asked for the first time.
     ConfirmAuto,
+    /// A reply whose text is being chosen to quote, `App::quoting`.
+    Quote,
 }
 
 /// What a palette picks from.
