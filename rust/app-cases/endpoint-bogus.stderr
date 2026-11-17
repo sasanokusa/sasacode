@@ -1,0 +1,1 @@
+usage: sasacode endpoint <add <name> <url> [--key-env VAR]|remove <name>|list> [--project]

@@ -15,3 +15,4 @@ bench/
 
 # Rust
 /target/
+rust/app-cases/replay-report.md
