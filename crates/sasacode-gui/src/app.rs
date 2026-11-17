@@ -49,6 +49,9 @@ pub const LOG_LINES: usize = 400;
 const COPIED_FOR: Duration = Duration::from_millis(1600);
 
 /// `--permission`, as the pickers list them. The first entry of each list is "what the config says".
+/// How often a pull request's running checks are looked at again.
+const CHECKS_EVERY: Duration = Duration::from_secs(45);
+
 pub const PERMISSIONS: [&str; 4] = ["edits", "ask", "agent", "auto"];
 /// `--thinking`.
 pub const EFFORTS: [&str; 6] = ["off", "low", "medium", "high", "xhigh", "max"];
@@ -1064,6 +1067,10 @@ impl App {
         // The conversation shown is read again when another continues it.
         if self.watches_log() {
             all.push(iced::time::every(Duration::from_secs(2)).map(|_| Msg::WatchLog));
+        }
+        // A pull request's checks, while they run.
+        if self.watches_checks() {
+            all.push(iced::time::every(CHECKS_EVERY).map(|_| Msg::PrRefresh));
         }
         // The clock only moves what is shown while something runs.
         if self.running() {

@@ -1065,6 +1065,48 @@ fn a_hunk_is_discarded_and_a_pull_request_merged_only_on_the_second_press() {
 }
 
 #[test]
+fn a_pull_requests_running_checks_are_watched_and_their_end_is_told() {
+    let mut app = window("ja");
+    app.prefs.notify = false;
+    let pr = |state: crate::git::CheckState| crate::git::Pr {
+        number: 7,
+        title: "再試行".into(),
+        state: "OPEN".into(),
+        checks: vec![crate::git::Check {
+            name: "rust".into(),
+            state,
+            url: String::new(),
+        }],
+        ..Default::default()
+    };
+    use crate::git::CheckState::{Failed, Passed, Pending};
+    app.pr = Some(pr(Pending));
+    assert!(app.watches_checks());
+    let _ = app.update(Msg::PrLoaded(Some(Box::new(pr(Pending)))));
+    assert!(app.toast.is_none(), "still running: nothing to say");
+    let _ = app.update(Msg::PrLoaded(Some(Box::new(pr(Passed)))));
+    assert_eq!(app.toast.as_deref(), Some(app.s.w().checks_passed));
+    assert!(!app.watches_checks(), "finished: no longer looked at");
+    // Run again (a push), and failed.
+    app.toast = None;
+    let _ = app.update(Msg::PrLoaded(Some(Box::new(pr(Pending)))));
+    let _ = app.update(Msg::PrLoaded(Some(Box::new(pr(Failed)))));
+    assert_eq!(
+        app.toast.as_deref(),
+        Some(crate::i18n::fill(app.s.w().checks_failed, "n", 1).as_str())
+    );
+    // Another pull request read in its place says nothing of the first's checks.
+    app.toast = None;
+    app.pr = Some(pr(Pending));
+    let other = crate::git::Pr {
+        number: 8,
+        ..pr(Passed)
+    };
+    let _ = app.update(Msg::PrLoaded(Some(Box::new(other))));
+    assert!(app.toast.is_none());
+}
+
+#[test]
 fn the_branch_list_checks_out_what_is_found_and_makes_a_new_one_only_by_its_whole_name() {
     let mut app = window("ja");
     changed_repo(&mut app);

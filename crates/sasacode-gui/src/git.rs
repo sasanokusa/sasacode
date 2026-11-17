@@ -493,6 +493,19 @@ impl Pr {
     pub fn failing(&self) -> impl Iterator<Item = &Check> {
         self.checks.iter().filter(|c| c.state == CheckState::Failed)
     }
+
+    /// Whether a check of it, still open, has not finished.
+    pub fn pending(&self) -> bool {
+        self.state == "OPEN" && self.checks.iter().any(|c| c.state == CheckState::Pending)
+    }
+}
+
+/// What finished between two reads of a pull request: none while its checks run, or when it is
+/// another one; otherwise how many failed.
+pub fn checks_finished(before: Option<&Pr>, now: Option<&Pr>) -> Option<usize> {
+    let (before, now) = (before?, now?);
+    (before.number == now.number && before.pending() && !now.pending() && !now.checks.is_empty())
+        .then(|| now.failing().count())
 }
 
 /// A check of `statusCheckRollup` as `gh pr view --json` gives it: a check run or a status.

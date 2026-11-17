@@ -110,7 +110,11 @@ impl App {
             }
             Msg::PrRefresh => self.refresh_pr(),
             Msg::PrLoaded(pr) => {
-                self.pr = pr.map(|pr| *pr);
+                let before = std::mem::replace(&mut self.pr, pr.map(|pr| *pr));
+                // Its checks finished while they were watched: said, as a run that ends is.
+                if let Some(failed) = git::checks_finished(before.as_ref(), self.pr.as_ref()) {
+                    self.tell_checks(failed);
+                }
                 // Kept by branch, for the conversations started on it.
                 if let (Some(pr), Some(branch)) = (&self.pr, &self.git.branch) {
                     self.prs.insert(branch.clone(), (pr.number, pr.state.clone()));
@@ -250,6 +254,30 @@ impl App {
             .perform(text_editor::Action::Move(text_editor::Motion::DocumentEnd));
         self.dismissed = true;
         operation::focus(crate::app::INPUT)
+    }
+
+    /// Whether the branch's pull request has checks still running: read again now and then
+    /// until they finish.
+    pub(crate) fn watches_checks(&self) -> bool {
+        !self.pr_loading && self.pr.as_ref().is_some_and(git::Pr::pending)
+    }
+
+    /// Says that the pull request's checks finished, how, and toasts it in the window too.
+    fn tell_checks(&mut self, failed: usize) {
+        let w = self.s.w();
+        let what = if failed == 0 {
+            w.checks_passed.to_owned()
+        } else {
+            crate::i18n::fill(w.checks_failed, "n", failed)
+        };
+        self.toast = Some(what.clone());
+        if self.prefs.notify && !self.prefs.more.quiet_done {
+            let title = self
+                .pr
+                .as_ref()
+                .map_or_else(|| "sasacode".to_owned(), |pr| format!("#{} {}", pr.number, pr.title));
+            crate::system::notify(&title, &what, self.prefs.more.sound);
+        }
     }
 
     /// The branch's pull request read again, away from the window.
