@@ -23,10 +23,11 @@ pub enum Part {
     Graph,
     History,
     Models,
+    Folders,
 }
 
 impl Part {
-    pub const ALL: [Part; 4] = [Part::All, Part::Graph, Part::History, Part::Models];
+    pub const ALL: [Part; 5] = [Part::All, Part::Graph, Part::History, Part::Models, Part::Folders];
 
     /// The part `/usage` followed by `word` asks for; all of it for none, or one it does not know.
     pub fn named(word: &str) -> Part {
@@ -34,6 +35,7 @@ impl Part {
             "graph" | "グラフ" => Part::Graph,
             "history" | "days" | "日別" => Part::History,
             "models" | "model" | "モデル" | "モデル別" => Part::Models,
+            "folders" | "folder" | "projects" | "フォルダ" | "フォルダ別" => Part::Folders,
             _ => Part::All,
         }
     }
@@ -74,6 +76,13 @@ pub struct ConversationUse {
     pub sum: Sum,
 }
 
+/// A folder conversations ran in, and what they used there.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FolderUse {
+    pub folder: String,
+    pub sum: Sum,
+}
+
 /// What the logs used.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Report {
@@ -84,6 +93,8 @@ pub struct Report {
     pub days: BTreeMap<NaiveDate, Sum>,
     /// The most used first.
     pub models: Vec<ModelUse>,
+    /// The most used first.
+    pub folders: Vec<FolderUse>,
     pub top: Vec<ConversationUse>,
 }
 
@@ -94,6 +105,7 @@ impl Default for Report {
             spans: [Sum::default(); 4],
             days: BTreeMap::new(),
             models: Vec::new(),
+            folders: Vec::new(),
             top: Vec::new(),
         }
     }
@@ -111,11 +123,13 @@ pub fn report(logs: &[PathBuf], today: NaiveDate) -> Report {
         ..Report::default()
     };
     let mut models: BTreeMap<String, ModelUse> = BTreeMap::new();
+    let mut folders: BTreeMap<String, Sum> = BTreeMap::new();
     let starts = [today, today - Duration::days(6), today - Duration::days(29)];
     for log in logs {
         let Ok(entries) = sasacode_protocol::read_entries(log) else {
             continue;
         };
+        let mut folder = String::new();
         let mut this = ConversationUse {
             id: String::new(),
             first: String::new(),
@@ -124,8 +138,9 @@ pub fn report(logs: &[PathBuf], today: NaiveDate) -> Report {
         };
         // Only messages: a compaction lists earlier ones again.
         let records = entries.iter().filter_map(|e| match e {
-            SessionEntry::Session { id, .. } => {
+            SessionEntry::Session { id, cwd, .. } => {
                 this.id = id.clone();
+                folder = cwd.clone();
                 None
             }
             SessionEntry::Message {
@@ -175,11 +190,22 @@ pub fn report(logs: &[PathBuf], today: NaiveDate) -> Report {
             m.last = m.last.max(day);
         }
         if this.sum.requests > 0 {
+            let used = folders.entry(folder).or_default();
+            used.tokens += this.sum.tokens;
+            used.output += this.sum.output;
+            used.requests += this.sum.requests;
+            used.cost += this.sum.cost;
             r.top.push(this);
         }
     }
     r.models = models.into_values().filter(|m| !m.model.is_empty()).collect();
     r.models.sort_by_key(|m| std::cmp::Reverse(m.sum.tokens));
+    r.folders = folders
+        .into_iter()
+        .filter(|(folder, _)| !folder.is_empty())
+        .map(|(folder, sum)| FolderUse { folder, sum })
+        .collect();
+    r.folders.sort_by_key(|f| std::cmp::Reverse(f.sum.tokens));
     r.top.sort_by_key(|c| std::cmp::Reverse(c.sum.tokens));
     r.top.truncate(TOP);
     r
@@ -377,12 +403,13 @@ mod tests {
             std::fs::write(&path, lines.iter().map(|l| format!("{l}\n")).collect::<String>()).unwrap();
             path
         };
-        let head = |id: &str| serde_json::json!({"type":"session","version":1,"id":id,"cwd":"/w","createdAt":"x"});
+        let head =
+            |id: &str, cwd: &str| serde_json::json!({"type":"session","version":1,"id":id,"cwd":cwd,"createdAt":"x"});
         let ask = |text: &str| serde_json::json!({"type":"message","message":{"role":"user","content":[{"type":"text","text":text}],"timestamp":1}});
         let a = write(
             "a.jsonl",
             vec![
-                head("a"),
+                head("a", "/w"),
                 ask("直して"),
                 reply("big", 100, 0.5, at(0)),
                 reply("small", 50, 0.0, at(10)),
@@ -391,7 +418,7 @@ mod tests {
         let b = write(
             "b.jsonl",
             vec![
-                head("b"),
+                head("b", "/v"),
                 ask("調べて"),
                 reply("small", 10, 0.0, at(40)),
                 serde_json::json!({"type":"usage","t":at(0),"model":"p/side","usage":{"input":5,"cost":0.25},"source":"subagent"}),
@@ -407,6 +434,11 @@ mod tests {
         assert_eq!(r.models[0].model, "p/big");
         assert_eq!(r.days[&today].requests, 2);
         assert_eq!((r.top[0].id.as_str(), r.top[0].first.as_str()), ("a", "直して"));
+        // Each folder, the most used first, all of it shared out among them.
+        let folders: Vec<&str> = r.folders.iter().map(|f| f.folder.as_str()).collect();
+        assert_eq!(folders, ["/w", "/v"]);
+        assert_eq!(r.folders.iter().map(|f| f.sum.tokens).sum::<u64>(), 195);
+        assert_eq!(r.folders[1].sum.requests, 2);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

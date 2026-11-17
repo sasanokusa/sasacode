@@ -2936,6 +2936,10 @@ fn the_usage_screen_shows_the_spans_the_graph_the_days_and_the_models() {
         sum: used,
         last: today,
     });
+    report.folders.push(crate::usage::FolderUse {
+        folder: "/srv/billing-web".into(),
+        sum: used,
+    });
     let _ = app.update(Msg::Usage(false));
     assert_eq!(app.overlay, Some(crate::app::Overlay::Usage));
     let w = crate::words::JA;
@@ -2962,6 +2966,12 @@ fn the_usage_screen_shows_the_spans_the_graph_the_days_and_the_models() {
     let _ = app.update(Msg::UsagePart(crate::usage::Part::Models));
     assert!(app.usage.is_some(), "not read again");
     assert!(says(&app, w.usage_models) && !says(&app, &streak));
+    // Each folder: with all of them read, under all too.
+    let _ = app.update(Msg::UsagePart(crate::usage::Part::Folders));
+    assert!(says(&app, w.usage_folders) && says(&app, "billing-web") && !says(&app, w.usage_models));
+    let _ = app.update(Msg::UsagePart(crate::usage::Part::All));
+    assert!(says(&app, w.usage_folders));
+    let _ = app.update(Msg::UsagePart(crate::usage::Part::Models));
     // The conversation's usage tab leads to it too.
     app.overlay = None;
     app.tab = Tab::Usage;

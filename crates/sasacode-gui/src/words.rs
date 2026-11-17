@@ -404,7 +404,7 @@ words! {
     c_usage: "使用量（グラフ・日別・モデル別）", "Usage (graph, days, models)";
     c_compare: "複数のモデルに送る…", "Send to several models…";
     usage_title: "使用量", "Usage";
-    usage_parts: "すべて,グラフ,日別,モデル別", "All,Graph,Days,Models";
+    usage_parts: "すべて,グラフ,日別,モデル別,フォルダ別", "All,Graph,Days,Models,Folders";
     usage_open: "使用量の画面（グラフ・日別・モデル別）", "The usage screen (graph, days, models)";
     usage_all: "すべてのフォルダ", "Every folder";
     usage_here: "このフォルダ", "This folder";
@@ -423,6 +423,7 @@ words! {
     usage_history: "直近{n}日", "Last {n} days";
     usage_day_rest: "出力{output} · {n}回", "{output} output · {n} requests";
     usage_models: "モデル別（全期間）", "By model (all time)";
+    usage_folders: "フォルダ別（全期間）", "By folder (all time)";
     usage_top: "多く使った会話", "Conversations that used the most";
     usage_none: "記録がありません", "No records";
     usage_times: "{n}回", "{n} requests";

@@ -103,6 +103,10 @@ pub(crate) fn usage(app: &App) -> El<'_> {
     if matches!(part, Part::All | Part::Models) {
         body = body.push(heading(w.usage_models.to_owned())).push(models(app, r));
     }
+    // Of one folder, only that one would be listed: shown when all are read, or asked for.
+    if (part == Part::All && !app.usage_here) || part == Part::Folders {
+        body = body.push(heading(w.usage_folders.to_owned())).push(folders(app, r));
+    }
     if part == Part::All {
         body = body.push(heading(w.usage_top.to_owned())).push(top(app, r));
     }
@@ -346,6 +350,57 @@ fn models<'a>(app: &'a App, r: &'a Report) -> El<'a> {
             .spacing(8)
             .align_y(Alignment::Center),
         );
+    }
+    list.into()
+}
+
+/// Each folder conversations ran in: its share of all, how often and what it cost. One other than
+/// this window's opens in a window of its own.
+fn folders<'a>(app: &'a App, r: &'a Report) -> El<'a> {
+    let (t, w) = (app.t, app.s.w());
+    if r.folders.is_empty() {
+        return text(w.usage_none).size(12.5).color(t.fg_3).into();
+    }
+    let all = r.folders.iter().map(|f| f.sum.tokens).sum::<u64>().max(1);
+    let mut list = column![].spacing(2);
+    for f in &r.folders {
+        let share = f.sum.tokens as f64 / all as f64;
+        let path = std::path::Path::new(&f.folder);
+        let name = path
+            .file_name()
+            .map_or_else(|| f.folder.clone(), |n| n.to_string_lossy().into_owned());
+        let rest = format!(
+            "{}% · {}{}",
+            (share * 100.0).round(),
+            fill(w.usage_times, "n", f.sum.requests),
+            cost(f.sum.cost)
+        );
+        let line = row![
+            column![
+                text(name).size(12.5).color(t.fg).wrapping(text::Wrapping::None),
+                text(super::clip_start(&f.folder, 48))
+                    .size(11)
+                    .color(t.fg_3)
+                    .wrapping(text::Wrapping::None),
+            ]
+            .width(Length::FillPortion(2)),
+            bar(app, share, 100.0),
+            text(compact(f.sum.tokens)).size(12).font(mono()).color(t.fg).width(56),
+            text(rest).size(11.5).color(t.fg_3).width(Length::FillPortion(3)),
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center);
+        let here = crate::system::same_dir(path, &app.cwd);
+        list = list.push(if here || !path.is_dir() {
+            El::from(container(line).padding([3, 6]))
+        } else {
+            button(line)
+                .width(Length::Fill)
+                .padding([3, 6])
+                .style(t.ghost(t.fg, false))
+                .on_press(Msg::OpenProject(path.to_path_buf()))
+                .into()
+        });
     }
     list.into()
 }
