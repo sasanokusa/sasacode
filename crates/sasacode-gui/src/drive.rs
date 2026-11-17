@@ -2967,3 +2967,38 @@ fn an_automation_in_plan_mode_has_its_writes_denied() {
     // The window's own mode is not changed by it.
     assert_eq!(app.permission, None);
 }
+
+/// Sharing as a secret gist is asked each time, saying where it goes and that its URL is enough
+/// to read it; made, its URL is said and copied. Nothing said yet, there is nothing to share.
+#[test]
+fn a_secret_gist_is_asked_for_each_time_and_its_url_is_said() {
+    let mut app = window("ja");
+    let _ = app.update(Msg::Command(Command::Gist));
+    assert_eq!(app.overlay, None);
+    assert_eq!(app.toast.as_deref(), Some("共有する会話がありません"));
+
+    markdown_reply(&mut app);
+    let _ = app.update(Msg::Command(Command::Gist));
+    assert_eq!(app.overlay, Some(crate::overlay::Overlay::ConfirmGist));
+    assert!(says(&app, "secret gistで共有") && says(&app, "secret gistを作る"));
+    let gist = app.gist().unwrap();
+    assert_eq!(gist.file, "sasacode-0a1b2c3d.md");
+    assert!(gist.markdown.contains("指数バックオフ"));
+    // Put away, nothing is made.
+    let _ = app.update(Msg::Show(None));
+    assert!(!app.gisting);
+
+    let _ = app.update(Msg::GistAsk);
+    let _ = app.update(Msg::GistCreate);
+    assert_eq!(app.overlay, None);
+    assert!(app.gisting);
+    assert_eq!(app.toast.as_deref(), Some("gistを作っています…"));
+    let _ = app.update(Msg::GistMade(Ok("https://gist.github.com/someone/0123abcd".into())));
+    assert!(!app.gisting);
+    assert_eq!(
+        app.toast.as_deref(),
+        Some("secret gistを作り、URLをコピーしました：https://gist.github.com/someone/0123abcd")
+    );
+    let _ = app.update(Msg::GistMade(Err("gh auth login".into())));
+    assert_eq!(app.toast.as_deref(), Some("gistを作れませんでした：gh auth login"));
+}

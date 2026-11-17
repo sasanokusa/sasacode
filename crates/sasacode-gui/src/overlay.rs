@@ -44,6 +44,8 @@ pub enum Overlay {
     ConfirmAuto,
     /// The automations of the folder, and the form one is written in.
     Automations,
+    /// The conversation asked to be shared as a secret gist.
+    ConfirmGist,
     /// A reply whose text is being chosen to quote, `App::quoting`.
     Quote,
     /// The waiting call's arguments being edited, `App::editing_args`.
@@ -192,6 +194,7 @@ impl App {
                 Some("/worktrees".into()),
                 Msg::Command(Command::Worktrees),
             ),
+            entry(s.w().c_gist, Some("/gist".into()), Msg::GistAsk),
             entry(
                 s.w().c_automations,
                 Some("/automations".into()),

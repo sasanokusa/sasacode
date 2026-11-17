@@ -37,6 +37,7 @@ pub fn over<'a>(app: &'a App, base: El<'a>) -> El<'a> {
         Overlay::Quit(id) => (quit(app, *id), 460.0, 120.0),
         Overlay::ConfirmAuto => (confirm_auto(app), 480.0, 120.0),
         Overlay::Automations => (super::automations::automations(app), 680.0, 50.0),
+        Overlay::ConfirmGist => (confirm_gist(app), 520.0, 120.0),
         Overlay::Quote => (quote(app), 720.0, 50.0),
         Overlay::Args => (args(app), 640.0, 60.0),
         Overlay::Extensions => (extensions(app), 640.0, 50.0),
@@ -1041,6 +1042,14 @@ fn quit(app: &App, id: iced::window::Id) -> El<'_> {
         w.quit_yes,
         Msg::Quit(id),
     )
+}
+
+/// What sharing the conversation as a secret gist does, asked each time.
+fn confirm_gist(app: &App) -> El<'_> {
+    let w = app.s.w();
+    let size = app.gist().map_or(0, |g| g.markdown.chars().count());
+    let body = format!("{}\n\n{}", w.gist_body, fill(w.gist_size, "n", size));
+    ask(app, w.gist_title, body, w.gist_yes, Msg::GistCreate)
 }
 
 fn confirm_auto(app: &App) -> El<'_> {

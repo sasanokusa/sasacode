@@ -157,6 +157,15 @@ words! {
     setup_ph: "作った後に走らせるコマンド（例: npm install）", "A command run in a new worktree (e.g. npm install)";
     c_open_folder: "フォルダを開く…", "Open a folder…";
     c_automations: "自動実行", "Automations";
+    c_gist: "secret gistで共有…", "Share as a secret gist…";
+    gist_title: "secret gistで共有", "Share as a secret gist";
+    gist_body: "この会話をMarkdownにして、ghでログインしているGitHubアカウントにsecret gistとして上げます。secret gistは一覧には出ませんが、URLを知っている人は誰でも読めます。会話に出てきたファイルの中身やコマンドの出力も上がります。", "The conversation, as Markdown, goes to the GitHub account gh is logged in to, as a secret gist. A secret gist is not listed, but anyone with its URL can read it. The files and command output the conversation shows go with it.";
+    gist_size: "{n}文字のMarkdown", "{n} characters of Markdown";
+    gist_yes: "secret gistを作る", "Create the secret gist";
+    gist_making: "gistを作っています…", "Creating the gist…";
+    gist_made: "secret gistを作り、URLをコピーしました：{url}", "Created the secret gist and copied its URL: {url}";
+    gist_failed: "gistを作れませんでした：{why}", "Could not create the gist: {why}";
+    gist_empty: "共有する会話がありません", "There is no conversation to share";
     am_how: "このフォルダの窓が開いている間、決めた時刻に新しい会話でメッセージを送ります。窓を閉じていた間の分は、次に開いたときに一度だけ走ります。", "While a window of this folder is open, each sends its message at its times, in a new conversation. One missed while no window was open runs once when one opens.";
     am_none: "まだありません", "None yet";
     am_new: "新しい自動実行", "New automation";

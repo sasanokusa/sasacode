@@ -251,6 +251,8 @@ pub struct App {
     pub(crate) before_plan: Option<&'static str>,
     /// The automation being written.
     pub(crate) auto_form: crate::automations::Form,
+    /// A gist is being made.
+    pub(crate) gisting: bool,
     /// The next side question, as it is typed.
     pub(crate) side_typed: String,
     /// Conversations whose title the model is writing.
@@ -730,6 +732,10 @@ pub enum Msg {
     UsagePart(crate::usage::Part),
     /// The automations' screen, and their clock.
     Auto(crate::automations::AutoMsg),
+    /// The conversation shared as a secret gist: asked, made, and its URL or why not.
+    GistAsk,
+    GistCreate,
+    GistMade(Result<String, String>),
     /// The models the next message goes to at once: one chosen or not, one typed, added; sent.
     CompareToggle(String),
     CompareType(String),
@@ -980,6 +986,7 @@ impl App {
             worktree_list: None,
             before_plan: None,
             auto_form: crate::automations::Form::default(),
+            gisting: false,
             side_typed: String::new(),
             titling: Default::default(),
             back: Vec::new(),

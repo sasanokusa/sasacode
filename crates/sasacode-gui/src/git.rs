@@ -137,6 +137,31 @@ fn run(cwd: &Path, program: &str, args: &[&str]) -> Result<String, String> {
 
 /// Runs `program` in `cwd` with nothing to read from, so that nothing it asks waits for an answer:
 /// git and gh are told not to ask on the terminal, and with `wait`, what takes longer is stopped.
+/// Creates a secret gist of `markdown`, named `file`, with `program` (`gh`); says its URL. Never
+/// public: `gh gist create` makes a secret one unless told otherwise, and is not told.
+pub fn gist(cwd: &Path, program: &str, file: &str, description: &str, markdown: &str) -> Result<String, String> {
+    let out = exec(
+        cwd,
+        program,
+        &["gist", "create", "--filename", file, "--desc", description, "-"],
+        Some(REMOTE_WAIT),
+        Some(markdown),
+    )
+    .map_err(|e| {
+        e.lines()
+            .rev()
+            .find(|l| !l.trim().is_empty())
+            .unwrap_or_default()
+            .trim()
+            .to_owned()
+    })?;
+    out.lines()
+        .map(str::trim)
+        .rfind(|l| l.starts_with("https://"))
+        .map(str::to_owned)
+        .ok_or_else(|| out.trim().to_owned())
+}
+
 fn run_within(cwd: &Path, program: &str, args: &[&str], wait: Option<Duration>) -> Result<String, String> {
     exec(cwd, program, args, wait, None).map(|out| out.trim().to_owned())
 }

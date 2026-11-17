@@ -17,6 +17,7 @@ mod extras;
 mod figure;
 mod files;
 mod fork;
+mod gist;
 mod git;
 mod helper;
 mod i18n;

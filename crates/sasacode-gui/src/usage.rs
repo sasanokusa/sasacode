@@ -314,7 +314,7 @@ impl crate::app::App {
                 }
                 iced::Task::none()
             }
-            other => return self.update_automations(other),
+            other => return self.update_gist(other),
         };
         Ok(task)
     }
