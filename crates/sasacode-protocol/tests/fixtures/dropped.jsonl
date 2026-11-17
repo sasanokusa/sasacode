@@ -1,17 +1,17 @@
-{"type":"session","id":"c86148ff","path":"/var/folders/4n/9pdgw8nx7t18h088dwcj6n000000gn/T/sasacode-e2e-TqnBf8/home/sessions/vate-var-folders-4n-9pdgw8nx7t18h088dwcj6n000000gn-T-sasacode-e2e-TqnBf8-project-447a198f/2026-11-16T01-19-31-934Z_c86148ff.jsonl"}
-{"type":"message_end","message":{"role":"user","content":[{"type":"text","text":"こんにちは"}],"timestamp":1794791971963}}
+{"type":"session","id":"17cae3ae","path":"/tmp/sasacode-e2e-g5tXHm/home/sessions/private-tmp-sasacode-e2e-g5tXHm-project-b7b46bb7/2026-11-17T20-30-45-427Z_17cae3ae.jsonl"}
+{"type":"message_end","message":{"role":"user","content":[{"type":"text","text":"こんにちは"}],"timestamp":1794947445446}}
 {"type":"agent_start"}
 {"type":"turn_start","turn":1}
 {"type":"message_start"}
 {"type":"message_update","event":{"type":"text_delta","index":0,"delta":"途中まで"}}
 {"type":"message_update","event":{"type":"text_delta","index":0,"delta":"書いたと"}}
 {"type":"message_update","event":{"type":"text_delta","index":0,"delta":"ころで"}}
-{"type":"usage","t":1794791971966,"model":"fake/m","usage":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"cost":0},"source":"discarded"}
-{"type":"message_discarded","message":{"role":"assistant","content":[{"type":"text","text":"途中まで書いたところで"}],"api":"openai-chat","provider":"fake","model":"m","usage":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"cost":0},"stopReason":"error","timestamp":1794791971966,"replayScope":"31a12308d281dbdc25f7f17f49adcbf3ba7f8b37e8cbb3ae0c4dbb161d199977","errorMessage":"the stream ended before the reply was complete"}}
+{"type":"usage","t":1794947445447,"model":"fake/m","usage":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"cost":0},"source":"discarded"}
+{"type":"message_discarded","message":{"role":"assistant","content":[{"type":"text","text":"途中まで書いたところで"}],"api":"openai-chat","provider":"fake","model":"m","usage":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"cost":0},"stopReason":"error","timestamp":1794947445447,"replayScope":"912724aaae60c1bfc087b858902f5015981134b536842b3a9f834d71d7acea5e","errorMessage":"the stream ended before the reply was complete"}}
 {"type":"message_start"}
 {"type":"message_update","event":{"type":"text_delta","index":0,"delta":"**やり"}}
 {"type":"message_update","event":{"type":"text_delta","index":0,"delta":"直し**"}}
 {"type":"message_update","event":{"type":"text_delta","index":0,"delta":"ました。"}}
-{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"**やり直し**ました。"}],"api":"openai-chat","provider":"fake","model":"m","usage":{"input":100,"output":20,"cacheRead":0,"cacheWrite":0,"cost":0},"stopReason":"stop","timestamp":1794791972974,"replayScope":"31a12308d281dbdc25f7f17f49adcbf3ba7f8b37e8cbb3ae0c4dbb161d199977"}}
+{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"**やり直し**ました。"}],"api":"openai-chat","provider":"fake","model":"m","usage":{"input":100,"output":20,"cacheRead":0,"cacheWrite":0,"cost":0},"stopReason":"stop","timestamp":1794947446465,"replayScope":"912724aaae60c1bfc087b858902f5015981134b536842b3a9f834d71d7acea5e"}}
 {"type":"turn_end","turn":1}
 {"type":"agent_end","cause":"done"}

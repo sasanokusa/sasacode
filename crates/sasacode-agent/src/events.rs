@@ -86,6 +86,7 @@ pub enum AgentEvent {
     /// A response a plugin asked to regenerate (assistant_message → retry), or a cut reply asked
     /// for again; UIs should drop it.
     MessageDiscarded {
+        #[serde(serialize_with = "with_role")]
         message: AssistantMessage,
     },
     ToolRepaired {
@@ -141,6 +142,17 @@ impl AgentEvent {
             other => serde_json::to_value(other).unwrap_or(Value::Null),
         }
     }
+}
+
+/// `#[serde(serialize_with = "with_role")]`: an assistant message written as a message, `role`
+/// first, as the TS events carried it.
+fn with_role<S: serde::Serializer>(m: &AssistantMessage, s: S) -> Result<S::Ok, S::Error> {
+    #[derive(Serialize)]
+    #[serde(tag = "role", rename_all = "snake_case")]
+    enum Tagged<'a> {
+        Assistant(&'a AssistantMessage),
+    }
+    Tagged::Assistant(m).serialize(s)
 }
 
 pub type Listener = Arc<dyn Fn(&AgentEvent) + Send + Sync>;

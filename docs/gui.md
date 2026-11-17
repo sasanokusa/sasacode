@@ -36,7 +36,7 @@ GUIが使うのは、すでにあるヘッドレスの出力と制御だけ（[R
 - 実行中に送ったメッセージは、次のターンで新しいユーザーメッセージとしてモデルに渡る。中断のあとに渡るときは、先頭に`[The user interrupted the previous response.]`というテキストの部品が付く（ユーザーの言葉ではないので、画面には出さない）。
 - ハーネスがユーザーの代わりに送る注意（`[Reminder from sasacode, not from the user] `で始まる）と、サブエージェントの終了報告も、ユーザーのメッセージとして届く。吹き出しにはせず、注記として出す。
 
-TS側が正。`crates/sasacode-protocol/tests/fixtures` に実際の実行の出力とそのセッションログを置き、`cargo test` で読めるかを確かめる。テストはTSのソース（`events.ts`、`control.ts`、`session.ts`）も読み、Rust側の知らないイベントの種類が増えたら落ちる。出力やログの形を変えたら `bun crates/sasacode-protocol/tests/fixtures/generate.ts` でフィクスチャを作り直す。
+CLIのソースが正。`crates/sasacode-protocol/tests/fixtures`に実際の実行の出力とそのセッションログを置き、`cargo test`で読めるかを確かめる。テストはCLIのソース（`crates/sasacode-agent/src/events.rs`、`session.rs`、`crates/sasacode-cli/src/control.rs`、`headless.rs`）も読み、このクレートの知らないイベントの種類が増えたら落ちる。出力やログの形を変えたら`cargo build -p sasacode-cli`のあと`SASACODE_E2E_BIN=target/debug/sasacode cargo run -p sasacode-testing --example protocol-fixtures`でフィクスチャを作り直す（`crates/sasacode-testing/examples/protocol-fixtures.rs`）。
 
 ## 使い方
 

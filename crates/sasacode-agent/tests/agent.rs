@@ -735,6 +735,17 @@ async fn a_reply_whose_stream_was_cut_is_thrown_away_and_asked_for_again_not_tak
     assert_eq!(s.agent.prompt_text("q").await.unwrap(), StopCause::Done);
     assert_eq!(s.requests().len(), 2);
     assert_eq!(count(&s.events, "message_discarded"), 1);
+    // `--output jsonl` writes the thrown-away reply as a message, role and all, as the TS did.
+    let discarded = s
+        .events
+        .lock()
+        .unwrap()
+        .iter()
+        .find(|e| e.type_name() == "message_discarded")
+        .map(AgentEvent::to_jsonl)
+        .unwrap();
+    assert_eq!(discarded["message"]["role"], "assistant");
+    assert_eq!(discarded["message"]["stopReason"], "error");
     let answers: Vec<String> = s
         .agent
         .messages()

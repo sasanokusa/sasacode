@@ -1,5 +1,5 @@
-{"type":"session","id":"bdf45476","path":"/var/folders/4n/9pdgw8nx7t18h088dwcj6n000000gn/T/sasacode-e2e-yE9G93/home/sessions/vate-var-folders-4n-9pdgw8nx7t18h088dwcj6n000000gn-T-sasacode-e2e-yE9G93-project-a6041f9e/2026-11-16T01-19-31-682Z_bdf45476.jsonl"}
-{"type":"message_end","message":{"role":"user","content":[{"type":"text","text":"こんにちは"}],"timestamp":1794791971712}}
+{"type":"session","id":"17cae3ae","path":"/tmp/sasacode-e2e-At0YM2/home/sessions/private-tmp-sasacode-e2e-At0YM2-project-b2964318/2026-11-17T20-30-45-391Z_17cae3ae.jsonl"}
+{"type":"message_end","message":{"role":"user","content":[{"type":"text","text":"こんにちは"}],"timestamp":1794947445410}}
 {"type":"agent_start"}
 {"type":"turn_start","turn":1}
 {"type":"message_start"}

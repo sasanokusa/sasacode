@@ -353,20 +353,33 @@ impl Iterator for Live {
     type Item = Value;
 
     fn next(&mut self) -> Option<Value> {
-        loop {
-            match self.lines.recv_timeout(LINE_TIMEOUT) {
-                Ok(line) if line.trim().is_empty() => continue,
-                Ok(line) => return Some(parse_line(&line)),
-                Err(mpsc::RecvTimeoutError::Disconnected) => return None,
-                Err(mpsc::RecvTimeoutError::Timeout) => {
-                    panic!("no line from sasacode in {} s", LINE_TIMEOUT.as_secs())
-                }
-            }
-        }
+        self.next_within(LINE_TIMEOUT)
+            .unwrap_or_else(|TimedOut| panic!("no line from sasacode in {} s", LINE_TIMEOUT.as_secs()))
     }
 }
 
+/// No line came within the time [`Live::next_within`] was given.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TimedOut;
+
 impl Live {
+    /// The next stdout line, parsed, if one comes within `timeout`; `Ok(None)` once stdout has closed.
+    /// A line that comes later is not lost: the next call returns it.
+    pub fn next_within(&mut self, timeout: Duration) -> Result<Option<Value>, TimedOut> {
+        let deadline = Instant::now() + timeout;
+        loop {
+            match self
+                .lines
+                .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+            {
+                Ok(line) if line.trim().is_empty() => continue,
+                Ok(line) => return Ok(Some(parse_line(&line))),
+                Err(mpsc::RecvTimeoutError::Disconnected) => return Ok(None),
+                Err(mpsc::RecvTimeoutError::Timeout) => return Err(TimedOut),
+            }
+        }
+    }
+
     /// Lines up to and including the first of this type.
     pub fn until(&mut self, ty: &str) -> Vec<Value> {
         let mut seen = Vec::new();
