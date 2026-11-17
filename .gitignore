@@ -5,6 +5,8 @@ dist/
 .env
 .env.*
 !.env.example
+# The recorded CLI cases hold the .env template sasacode writes (no keys): it is part of what they check.
+!rust/app-cases/*.out/home/.env
 *.bun-build
 
 # local benchmark scripts and results
