@@ -14,7 +14,7 @@
 | `serde_json` | すべて | JSONの読み書き。`preserve_order`でキーの順をTS版の`JSON.stringify`と同じにし、`float_roundtrip`で保存した数値を読み戻したときに一致させる（ADR-003） | — |
 | `indexmap` | agent、mcp、skills、host、bundled、tui、cli | 入れた順を保つ表（`mcpServers`の順、Skillsの一覧、セッションの索引など） | — |
 | `reqwest` | ai、mcp、bundled、cli | モデルのAPI、MCPのStreamable HTTP、`web_fetch`、更新の取得。SSEはこの上に自前のパーサーで読む（ADR-010） | 各社のSDK：使わない。TS版でSDKが暗黙にしていた再試行・タイムアウト・ヘッダーは`rust/research/llm-sdks.md`で洗い出し、自前で同じにした |
-| `rustls` | ai、cli | TLS。Rustだけで持ち、OSのOpenSSLに依存しない（暗号は`ring`） | — |
+| `rustls` | ai | TLS。Rustだけで持ち、OSのOpenSSLに依存しない（暗号は`ring`） | — |
 | `hyper` | ai | 接続が切れたエラー（`hyper::Error`）を、ほかの本文のエラーと見分けるためだけ。reqwestがすでに使っている | — |
 | `bytes` | ai、bundled | ストリームで受け取る本文 | — |
 | `http` | bundled | `diagnostics`が観測した応答を、元のバイト列のまま組み立て直す | — |
@@ -25,7 +25,7 @@
 | `globset` | agent、bundled | 権限ルールのパス（`edit(src/**)`など）の照合と、jev-guardでのglobの展開（TS版の`Bun.Glob`の代わり） | — |
 | `sha2` | ai、agent、bundled、cli | セッションのフォルダ名のハッシュ（TS版と同じ名前にする）、信頼の指紋、ダウンロードしたファイルの検証など | — |
 | `uuid` | plugin-api、agent、bundled | セッションとツール呼び出しのID | — |
-| `chrono` | ai、agent、bundled | 日時 | — |
+| `chrono` | ai、agent、bundled、tui | 日時（tuiは`/resume`の日付） | — |
 | `base64` | tools、bundled、tui | 画像の読み込み、チェックポイント、ChatGPTプランの認証、端末へのコピー | — |
 | `encoding_rs` | tools、bundled | UTF-8でないファイル、コマンドの出力、ページの文字コード | — |
 | `unicode-normalization` | agent、bundled | 権限ルールの照合（NFC / NFD）、`web_fetch`と`web_search` | — |
