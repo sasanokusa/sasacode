@@ -170,6 +170,7 @@ words! {
     where_worktree: "新しいワークツリーで", "In a new worktree";
     where_hint: "押すと切り替え。新しいワークツリーにすると、送ったとき今のブランチからワークツリーを作って窓で開き、メッセージをその入力欄に入れます", "Click to switch. In a new worktree, sending makes one from the branch checked out, opens it in a window of its own, and puts the message in its input";
     worktree_handoff: "送ったメッセージを、このワークツリーで始めます", "Starting the message you sent in this worktree";
+    worktree_handoff_old: "このワークツリーのために送ったメッセージを入力欄に入れました（時間がたっていたので、まだ送っていません）", "The message sent for this worktree is in the input (not sent yet: it had waited too long)";
     worktree_from: "ブランチ{branch}から新しいワークツリー", "New worktree from {branch}";
     worktree_fetch_failed: "取ってこられなかったので、手元のもので作りました：{why}", "Could not fetch, so it was made from what is here: {why}";
     worktree_sweep: "{days}日より前に使った、変更のないワークツリーを片付ける", "Remove the worktrees last used {days} days ago or more, unless they hold changes";

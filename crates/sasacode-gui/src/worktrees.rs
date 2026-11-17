@@ -427,26 +427,44 @@ impl App {
 
     /// A worktree made for a message: its window takes the message and the model, permission and
     /// effort it was sent with, and sends it once git is read (for the last turn's diff). Running
-    /// everything without asking is not taken over: it is chosen in each window.
+    /// everything without asking is not taken over: it is chosen in each window. One left long
+    /// ago (its window never opened then) waits in the input instead: nobody asked for it now.
     pub(crate) fn take_handoff_here(&mut self) {
-        let Some(handoff) = self.home.as_deref().and_then(|home| take_handoff(home, &self.cwd)) else {
+        let Some((handoff, fresh)) = self.home.as_deref().and_then(|home| take_handoff(home, &self.cwd)) else {
             return;
         };
+        let mode = |p: Option<&str>| {
+            p.filter(|p| *p != "auto")
+                .and_then(|p| crate::app::PERMISSIONS.iter().copied().find(|x| *x == p))
+        };
         self.model = handoff.model;
-        self.permission = handoff
-            .permission
-            .as_deref()
-            .filter(|p| *p != "auto")
-            .and_then(|p| crate::app::PERMISSIONS.iter().copied().find(|x| *x == p));
+        self.permission = mode(handoff.permission.as_deref());
+        // Plan mode goes back, when its plan is gone ahead with, to what it was chosen over there.
+        self.before_plan = if self.permission == Some(crate::plan::MODE) {
+            mode(handoff.before_plan.as_deref()).filter(|p| *p != crate::plan::MODE)
+        } else {
+            None
+        };
         self.effort = handoff
             .effort
             .as_deref()
             .and_then(|e| crate::app::EFFORTS.iter().copied().find(|x| *x == e));
         self.chat.editor = iced::widget::text_editor::Content::with_text(&handoff.text);
-        self.send_handoff = true;
-        self.toast = Some(self.s.w().worktree_handoff.to_owned());
+        self.send_handoff = fresh;
+        let w = self.s.w();
+        self.toast = Some(
+            if fresh {
+                w.worktree_handoff
+            } else {
+                w.worktree_handoff_old
+            }
+            .to_owned(),
+        );
     }
 }
+
+/// How long a message left for a worktree's window is sent by it; after, it waits in the input.
+pub const HANDOFF_FRESH: std::time::Duration = std::time::Duration::from_secs(120);
 
 /// A message a new worktree is made for, and what was chosen for it in the window it was typed in.
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -456,6 +474,9 @@ pub(crate) struct Handoff {
     pub model: String,
     #[serde(default)]
     pub permission: Option<String>,
+    /// The mode plan mode was chosen over, when it was.
+    #[serde(default)]
+    pub before_plan: Option<String>,
     #[serde(default)]
     pub effort: Option<String>,
 }
@@ -481,17 +502,23 @@ pub(crate) fn leave_handoff(home: &Path, folder: &Path, handoff: &Handoff) -> st
     std::fs::write(file, serde_json::to_string(handoff)?)
 }
 
-/// The message left for a window on `folder`, taken: read once, and gone. A file that is not
-/// what [`leave_handoff`] writes is the message alone.
-pub(crate) fn take_handoff(home: &Path, folder: &Path) -> Option<Handoff> {
+/// The message left for a window on `folder`, taken: read once, and gone; with whether it was
+/// left within [`HANDOFF_FRESH`]. A file that is not what [`leave_handoff`] writes is the message
+/// alone.
+pub(crate) fn take_handoff(home: &Path, folder: &Path) -> Option<(Handoff, bool)> {
     let file = handoff_file(home, folder);
     let read = std::fs::read_to_string(&file).ok()?;
+    let fresh = std::fs::metadata(&file)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|at| at.elapsed().ok())
+        .is_some_and(|age| age < HANDOFF_FRESH);
     let _ = std::fs::remove_file(&file);
     let handoff = serde_json::from_str::<Handoff>(&read).unwrap_or(Handoff {
         text: read,
         ..Handoff::default()
     });
-    (!handoff.text.trim().is_empty()).then_some(handoff)
+    (!handoff.text.trim().is_empty()).then_some((handoff, fresh))
 }
 
 #[cfg(test)]

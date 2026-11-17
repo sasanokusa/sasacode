@@ -2249,6 +2249,7 @@ impl App {
                 text,
                 model: self.model.trim().to_owned(),
                 permission: self.permission.map(str::to_owned),
+                before_plan: self.before_plan.map(str::to_owned),
                 effort: self.effort.map(str::to_owned),
             });
             return self.worktree(None);

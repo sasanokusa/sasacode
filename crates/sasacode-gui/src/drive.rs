@@ -3826,11 +3826,45 @@ fn a_new_conversations_message_can_start_in_a_new_worktree_whose_window_sends_it
     again.permission = Some("ask");
     again.take_handoff_here();
     assert_eq!((typed(&again).as_str(), again.permission), ("続き", None));
+    // Plan mode is handed over with the mode it goes back to, but not to running everything.
+    let mut planned = crate::worktrees::Handoff {
+        text: "計画して".into(),
+        permission: Some("plan".into()),
+        before_plan: Some("agent".into()),
+        ..Default::default()
+    };
+    for (before, back) in [("agent", Some("agent")), ("auto", None)] {
+        planned.before_plan = Some(before.into());
+        crate::worktrees::leave_handoff(&home, &tree, &planned).unwrap();
+        let mut plan = window("ja");
+        plan.home = Some(home.clone());
+        plan.cwd = tree.clone();
+        plan.take_handoff_here();
+        assert_eq!((plan.permission, plan.before_plan), (Some("plan"), back));
+    }
+    // One left long ago, its window not opened then, waits in the input unsent.
+    crate::worktrees::leave_handoff(&home, &tree, &auto).unwrap();
+    let file = crate::worktrees::handoff_file(&home, &tree);
+    let long_ago = std::time::SystemTime::now() - crate::worktrees::HANDOFF_FRESH * 2;
+    std::fs::File::options()
+        .write(true)
+        .open(&file)
+        .unwrap()
+        .set_modified(long_ago)
+        .unwrap();
+    let mut late = window("ja");
+    late.home = Some(home.clone());
+    late.cwd = tree.clone();
+    late.take_handoff_here();
+    assert_eq!(typed(&late), "続き");
+    assert!(!late.send_handoff && late.toast.as_deref() == Some(w.worktree_handoff_old));
+    let _ = late.update(Msg::GitStatus(Box::default()));
+    assert!(late.chat.transcript.exchanges.is_empty() && typed(&late) == "続き");
     // A file holding the message alone is the message.
-    std::fs::write(crate::worktrees::handoff_file(&home, &tree), "それだけ").unwrap();
+    std::fs::write(&file, "それだけ").unwrap();
     assert_eq!(
-        crate::worktrees::take_handoff(&home, &tree).map(|h| h.text),
-        Some("それだけ".to_owned())
+        crate::worktrees::take_handoff(&home, &tree).map(|(h, fresh)| (h.text, fresh)),
+        Some(("それだけ".to_owned(), true))
     );
     // Not made: the message is back in the input.
     let _ = app.update(Msg::ToWorktree(true));
