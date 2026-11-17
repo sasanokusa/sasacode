@@ -24,8 +24,7 @@ words! {
     // The git tab: hunks, comments, branches.
     staged_head: "ステージ済み", "Staged";
     unstaged_head: "未ステージ", "Not staged";
-    quote_hint: "行をクリックするとコメントを書けます。コメントは次のメッセージに添えて送ります", "Click a line to comment on it. Comments go with the next message";
-    comment_ph: "この行へのコメント（↵で足す）", "A comment on this line (↵ adds it)";
+    comment_ph: "この行へのコメント。次のメッセージに添えて送ります（↵で足す）", "A comment on this line, sent with the next message (↵ adds it)";
     comment_add: "コメントを足す", "Add comment";
     comment_quote: "場所だけ入力欄へ", "Put the place in the input";
     cancel: "やめる", "Cancel";
@@ -41,7 +40,6 @@ words! {
 
     // The git tab: the pull request and its checks.
     pr_head: "プルリクエスト", "Pull request";
-    pr_none: "このブランチのプルリクエストはまだありません", "This branch has no pull request yet";
     pr_loading: "プルリクエストを読み込み中…", "Reading the pull request…";
     pr_open: "OPEN", "Open";
     pr_merged: "マージ済み", "Merged";
@@ -272,6 +270,7 @@ words! {
     diff_nowrap: "折り返さない", "No wrap";
     fold_all: "全部たたむ", "Fold all";
     open_all: "全部開く", "Open all";
+    diff_view: "表示", "View";
     viewed: "見た", "Viewed";
     viewed_n: "{n}/{all}件見た", "{n}/{all} viewed";
     default_sure: "{branch}に直接書き込みます。もう一度押すと続けます", "This goes straight to {branch}. Press again to go on";

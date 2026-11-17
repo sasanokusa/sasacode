@@ -43,6 +43,8 @@ pub enum MenuFor {
     Models,
     /// The links of a paragraph of a reply, as written.
     Links(Vec<String>),
+    /// How the git tab draws its diffs.
+    DiffView,
 }
 
 /// A menu opened by a right click, where the pointer was.

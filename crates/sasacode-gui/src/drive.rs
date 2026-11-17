@@ -958,6 +958,19 @@ fn a_file_is_staged_by_its_button_and_discarded_only_on_the_second_press() {
         ui.click(label).expect("the button is there");
         ui.into_messages().collect()
     };
+    // Away from the file, only its hunks are staged by a button.
+    let stage = pressed(&app, s.stage);
+    assert!(
+        matches!(&stage[..], [Msg::GitDo(crate::git::Op::Hunk { .. })]),
+        "{stage:?}"
+    );
+    // The pointer on its card: the whole file, in its head.
+    act(&mut app, |ui| {
+        let at = ui.find("a.txt").expect("the file is listed").bounds().center();
+        ui.point_at(at);
+        let _ = ui.simulate([iced::Event::Mouse(iced::mouse::Event::CursorMoved { position: at })]);
+    });
+    assert_eq!(app.file_hover.as_deref(), Some("a.txt"));
     let stage = pressed(&app, s.stage);
     assert!(
         matches!(&stage[..], [Msg::GitDo(crate::git::Op::Stage(p))] if p == "a.txt"),
@@ -969,6 +982,8 @@ fn a_file_is_staged_by_its_button_and_discarded_only_on_the_second_press() {
     }
     assert_eq!(app.confirm_discard.as_deref(), Some("a.txt"));
     assert!(!app.git_busy);
+    // Asked again, it stays in the head with the pointer gone.
+    let _ = app.update(Msg::FileHover("a.txt".into(), false));
     for msg in pressed(&app, s.discard_sure) {
         let _ = app.update(msg);
     }
@@ -1710,6 +1725,11 @@ fn the_git_tab_shows_the_branch_or_a_commit_side_by_side_with_files_marked_viewe
         default_branch: Some("main".into()),
         ..Default::default()
     };
+    // No upstream and no pull request yet: no pull, and a pull request to open.
+    let w = crate::words::JA;
+    assert!(says(&app, app.s.pr) && !says(&app, w.pull));
+    app.git.upstream = true;
+    assert!(says(&app, w.pull));
     let _ = app.update(Msg::GitScope(Scope::Branch));
     assert!(app.scope_loading);
     let scoped = crate::git::Scoped {
@@ -1734,7 +1754,17 @@ fn the_git_tab_shows_the_branch_or_a_commit_side_by_side_with_files_marked_viewe
     assert!(says(&app, "const WAIT = 100") && says(&app, "const WAIT = 200"));
     // Kept whole, the lines scroll sideways instead of wrapping, side by side or not.
     let _ = app.update(Msg::SetDiffNowrap(true));
-    assert!(app.prefs.more.diff_nowrap && says(&app, "折り返さない"));
+    assert!(app.prefs.more.diff_nowrap && !says(&app, "折り返さない"));
+    // How the diffs are drawn is in the menu of the view button, which turns it off again.
+    act(&mut app, |ui| {
+        let _ = ui.click(crate::words::JA.diff_view).expect("the view button");
+    });
+    assert!(matches!(&app.menu, Some(m) if m.what == crate::rows::MenuFor::DiffView));
+    act(&mut app, |ui| {
+        let _ = ui.click("折り返さない").expect("the menu offers it");
+    });
+    assert!(!app.prefs.more.diff_nowrap && app.menu.is_none());
+    let _ = app.update(Msg::SetDiffNowrap(true));
     assert!(says(&app, "const WAIT = 100") && says(&app, "const WAIT = 200"));
     let _ = app.update(Msg::SetSplitDiff(false));
     assert!(says(&app, "const WAIT = 200"));

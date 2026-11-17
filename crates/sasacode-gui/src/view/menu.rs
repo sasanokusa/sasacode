@@ -234,6 +234,36 @@ fn model_items(app: &App) -> Vec<Item> {
         .collect()
 }
 
+/// How the git tab draws its diffs, each way marked when it is on; and all of them folded or
+/// opened.
+fn diff_view_items(app: &App) -> Vec<Item> {
+    let (w, more) = (app.s.w(), &app.prefs.more);
+    let mark = |on: bool| if on { Icon::Check } else { Icon::Blank };
+    vec![
+        Some((
+            mark(more.split_diff),
+            w.split_diff.to_owned(),
+            Msg::SetSplitDiff(!more.split_diff),
+            false,
+        )),
+        Some((
+            mark(more.hide_whitespace),
+            w.hide_ws.to_owned(),
+            Msg::SetWhitespace(!more.hide_whitespace),
+            false,
+        )),
+        Some((
+            mark(more.diff_nowrap),
+            w.diff_nowrap.to_owned(),
+            Msg::SetDiffNowrap(!more.diff_nowrap),
+            false,
+        )),
+        None,
+        Some((Icon::ChevronRight, w.fold_all.to_owned(), Msg::FoldFiles(true), false)),
+        Some((Icon::ChevronDown, w.open_all.to_owned(), Msg::FoldFiles(false), false)),
+    ]
+}
+
 /// The menu over the window, if one is open.
 pub fn layer(app: &App) -> Option<El<'_>> {
     let menu = app.menu.as_ref()?;
@@ -243,6 +273,7 @@ pub fn layer(app: &App) -> Option<El<'_>> {
         MenuFor::File(path) => file_items(app, path),
         MenuFor::Models => model_items(app),
         MenuFor::Links(links) => link_items(app, links),
+        MenuFor::DiffView => diff_view_items(app),
     };
     if items.is_empty() {
         return None;

@@ -376,6 +376,8 @@ pub struct App {
     /// The reply under the pointer, which shows what can be done with it; the last one shows it
     /// always.
     pub(crate) reply_hover: Option<usize>,
+    /// The changed file under the pointer, whose head shows what can be done with it.
+    pub(crate) file_hover: Option<String>,
     /// What is said in each conversation, lower case, for the search, as of when its log changed;
     /// and whether it is being read.
     pub(crate) bodies: HashMap<PathBuf, (std::time::SystemTime, String)>,
@@ -991,6 +993,8 @@ pub enum Msg {
     /// The pointer onto a reply, or off it: off one only clears it while it is that one, as the
     /// next reply's way in may come first.
     ReplyHover(usize, bool),
+    /// The pointer onto a changed file's card, or off it, as for a reply.
+    FileHover(String, bool),
     /// What waits to be sent when the run ends, back into the input.
     Retract,
     /// Back to the newest of the conversation.
@@ -1233,6 +1237,7 @@ impl App {
             commenting: None,
             ex_hover: None,
             reply_hover: None,
+            file_hover: None,
             aside: None,
             toast: None,
             unreadable: Vec::new(),
@@ -1560,6 +1565,12 @@ impl App {
             Msg::ReplyHover(i, false) => {
                 if self.reply_hover == Some(i) {
                     self.reply_hover = None;
+                }
+            }
+            Msg::FileHover(key, true) => self.file_hover = Some(key),
+            Msg::FileHover(key, false) => {
+                if self.file_hover.as_ref() == Some(&key) {
+                    self.file_hover = None;
                 }
             }
             Msg::Retract => {

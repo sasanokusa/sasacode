@@ -207,65 +207,80 @@ fn changes_tab(app: &App) -> El<'_> {
         }
         head = head.push(plus_minus(t, change.diff.added, change.diff.removed));
         let file = app.cwd.join(&change.path);
-        col = col.push(card(
-            app,
+        if app.file_hover.as_deref() == Some(tool.id.as_str()) {
+            head = head.push(file_marks(app, file.clone()));
+        }
+        col = col.push(on_file(
+            file,
             &tool.id,
-            head.into(),
-            Some(
-                column![file_actions(app, file, None), diff_view(t, s, &change.diff, 200)]
-                    .spacing(6)
-                    .into(),
-            ),
+            card(app, &tool.id, head.into(), Some(diff_view(t, s, &change.diff, 200))),
         ));
     }
     col.into()
 }
 
-/// What can be done with a changed file: opened in an editor, shown in its folder, and in the git
-/// tab staged, unstaged or discarded.
-fn file_actions<'a>(app: &'a App, file: std::path::PathBuf, git: Option<&'a crate::git::File>) -> El<'a> {
+/// What git can do to a changed file as a whole: what of it is not staged, staged; what is,
+/// unstaged; and all of it discarded, on a second press. Opened, viewed or shown in its folder from
+/// its menu, as a right click opens it.
+fn git_actions<'a>(app: &'a App, f: &'a crate::git::File) -> El<'a> {
+    use crate::git::Op;
     let (t, s) = (app.t, app.s);
     let small = |label: &'a str, color: iced::Color, msg: Option<Msg>| {
         button(text(label).size(11.5).color(color).wrapping(text::Wrapping::None))
-            .padding([3, 8])
+            .padding([2, 7])
             .style(t.ghost(color, false))
             .on_press_maybe(msg)
     };
+    let busy = app.git_busy;
     let mut line = row![].spacing(2).align_y(Alignment::Center);
-    if let Some(f) = git {
-        use crate::git::Op;
-        let busy = app.git_busy;
-        // The whole file: what of it is not staged, staged; what is, unstaged.
-        if f.unstaged() || f.untracked() {
-            line = line.push(small(
-                s.stage,
-                t.fg_2,
-                (!busy).then(|| Msg::GitDo(Op::Stage(f.path.clone()))),
-            ));
-        }
-        if f.staged() {
-            line = line.push(small(
-                s.unstage,
-                t.fg_2,
-                (!busy).then(|| Msg::GitDo(Op::Unstage(f.path.clone()))),
-            ));
-        }
-        let sure = app.confirm_discard.as_ref() == Some(&f.path);
+    if f.unstaged() || f.untracked() {
         line = line.push(small(
-            if sure { s.discard_sure } else { s.discard },
-            t.err,
-            (!busy).then(|| Msg::GitDo(Op::Discard(f.path.clone()))),
+            s.stage,
+            t.fg_2,
+            (!busy).then(|| Msg::GitDo(Op::Stage(f.path.clone()))),
         ));
     }
+    if f.staged() {
+        line = line.push(small(
+            s.unstage,
+            t.fg_2,
+            (!busy).then(|| Msg::GitDo(Op::Unstage(f.path.clone()))),
+        ));
+    }
+    let sure = app.confirm_discard.as_ref() == Some(&f.path);
+    line = line.push(small(
+        if sure { s.discard_sure } else { s.discard },
+        t.err,
+        (!busy).then(|| Msg::GitDo(Op::Discard(f.path.clone()))),
+    ));
+    line.into()
+}
+
+/// A changed file viewed, opened in an editor or shown in its folder: marks in its head while the
+/// pointer is on it, each named by its tooltip.
+fn file_marks<'a>(app: &'a App, file: std::path::PathBuf) -> El<'a> {
+    let (t, s) = (app.t, app.s);
+    let mark = |which: Icon, hint: &'a str, msg: Msg| {
+        tip(
+            t,
+            button(icon(which, 12.0, t.fg_2))
+                .padding([3, 5])
+                .style(t.ghost(t.fg_2, false))
+                .on_press(msg),
+            hint.to_owned(),
+            tooltip::Position::Bottom,
+        )
+    };
+    let mut line = row![].spacing(0).align_y(Alignment::Center);
     if file.is_file() {
-        line = line.push(small(s.w().view, t.fg_2, Some(Msg::ViewFile(file.clone(), None))));
+        line = line.push(mark(Icon::File, s.w().view, Msg::ViewFile(file.clone(), None)));
     }
     if file.exists() {
         line = line
-            .push(small(s.open_editor, t.fg_2, Some(Msg::Editor(file.clone()))))
-            .push(small(s.reveal, t.fg_2, Some(Msg::Reveal(file))));
+            .push(mark(Icon::Pencil, s.open_editor, Msg::Editor(file.clone())))
+            .push(mark(Icon::Folder, s.reveal, Msg::Reveal(file)));
     }
-    line.wrap().into()
+    line.into()
 }
 
 /// The folder's repository: its branch, what is not committed with each file's diff, and the way to
@@ -324,24 +339,48 @@ fn git_tab(app: &App) -> El<'_> {
     if app.git_busy {
         head = head.push(text(s.git_busy).size(12).color(t.fg_3));
     }
-    head = head.push(
-        button(text(s.git_refresh).size(12).color(t.fg_2))
-            .padding([3, 8])
+    head = head.push(tip(
+        t,
+        button(icon(Icon::Refresh, 13.0, t.fg_2))
+            .padding(5)
             .style(t.ghost(t.fg_2, false))
             .on_press(Msg::GitRefresh),
-    );
+        s.git_refresh.to_owned(),
+        tooltip::Position::Bottom,
+    ));
     let mut col = column![head].spacing(10);
 
     let busy = app.git_busy;
     let drafting = app.drafting.contains(&Draft::Commit);
-    let commit = column![
+    // The message, which the model can write: the mark at its end.
+    let draft = tip(
+        t,
+        button(icon(Icon::Spark, 14.0, if drafting { t.accent } else { t.fg_2 }))
+            .padding([6, 7])
+            .style(t.ghost(t.fg_2, false))
+            .on_press_maybe((!busy && !drafting && !g.files.is_empty()).then_some(Msg::Draft(Draft::Commit))),
+        format!(
+            "{}\n{}",
+            if drafting { w.drafting } else { w.draft_commit },
+            w.draft_commit_hint
+        ),
+        tooltip::Position::Bottom,
+    );
+    let message = row![
         iced::widget::text_input(s.commit_ph, &app.commit_msg)
             .on_input(Msg::CommitText)
             .on_submit(Msg::GitDo(Op::Commit(app.commit_msg.clone())))
             .size(12.5)
             .padding([6, 8])
             .style(t.input()),
-        row![
+        draft,
+    ]
+    .spacing(4)
+    .align_y(Alignment::Center);
+    // Only what can be done here: no pull without an upstream, no new pull request beside one.
+    let mut buttons = row![
+        tip(
+            t,
             button(text(s.commit).size(12.5))
                 .padding([5, 12])
                 .style(t.primary())
@@ -349,39 +388,45 @@ fn git_tab(app: &App) -> El<'_> {
                     (!busy && !g.files.is_empty() && !app.commit_msg.trim().is_empty())
                         .then(|| Msg::GitDo(Op::Commit(app.commit_msg.clone())))
                 ),
-            button(text(s.push).size(12.5))
-                .padding([5, 12])
-                .style(t.outline(t.fg))
-                .on_press_maybe((!busy && g.branch.is_some()).then_some(Msg::GitDo(Op::Push))),
+            s.commit_hint.to_owned(),
+            tooltip::Position::Bottom,
+        ),
+        button(text(s.push).size(12.5))
+            .padding([5, 12])
+            .style(t.outline(t.fg))
+            .on_press_maybe((!busy && g.branch.is_some()).then_some(Msg::GitDo(Op::Push))),
+    ]
+    .spacing(6)
+    .align_y(Alignment::Center);
+    if g.upstream {
+        buttons = buttons.push(
             button(text(w.pull).size(12.5))
                 .padding([5, 12])
                 .style(t.outline(t.fg))
-                .on_press_maybe((!busy && g.upstream).then_some(Msg::GitDo(Op::Pull))),
+                .on_press_maybe((!busy).then_some(Msg::GitDo(Op::Pull))),
+        );
+    }
+    if app.pr.is_none() && !app.pr_loading {
+        buttons = buttons.push(
             button(text(s.pr).size(12.5))
                 .padding([5, 12])
                 .style(t.outline(t.fg))
-                .on_press_maybe((!busy && g.branch.is_some() && app.pr.is_none()).then_some(Msg::PrOpen)),
-            tip(
-                t,
-                button(text(if drafting { w.drafting } else { w.draft_commit }).size(12.5))
-                    .padding([5, 10])
-                    .style(t.ghost(t.fg_2, false))
-                    .on_press_maybe((!busy && !drafting && !g.files.is_empty()).then_some(Msg::Draft(Draft::Commit))),
-                w.draft_commit_hint.to_owned(),
-                tooltip::Position::Bottom,
-            ),
-            button(text(w.review_ask).size(12.5))
-                .padding([5, 10])
+                .on_press_maybe((!busy && g.branch.is_some()).then_some(Msg::PrOpen)),
+        );
+    }
+    if !g.files.is_empty() {
+        buttons = buttons.push(Space::new().width(Length::Fill)).push(
+            button(text(w.review_ask).size(12).color(t.fg_2).wrapping(text::Wrapping::None))
+                .padding([5, 8])
                 .style(t.ghost(t.fg_2, false))
-                .on_press_maybe((!g.files.is_empty()).then_some(Msg::AskReview)),
-        ]
-        .spacing(6)
-        .wrap(),
-        text(s.commit_hint).size(11).color(t.fg_3),
-    ]
-    .spacing(6);
+                .on_press(Msg::AskReview),
+        );
+    }
+    let commit = column![message, buttons].spacing(6);
     col = col.push(commit);
-    col = col.push(pr_part(app));
+    if let Some(pr) = pr_part(app) {
+        col = col.push(pr);
+    }
     col = col.push(scope_bar(app));
     if app.git_scope != crate::scope::Scope::Changes {
         return col.push(scoped_files(app)).into();
@@ -390,7 +435,6 @@ fn git_tab(app: &App) -> El<'_> {
     if g.files.is_empty() {
         return col.push(empty(app, Icon::Check, s.git_clean, "")).into();
     }
-    col = col.push(text(w.quote_hint).size(11.5).color(t.fg_3));
     if !app.chat.review.is_empty() {
         col = col.push(review_found(app));
     }
@@ -455,7 +499,10 @@ fn git_tab(app: &App) -> El<'_> {
         let (added, removed) = f.counts();
         head = head.push(plus_minus(t, added, removed));
         let file = g.top.join(&f.path);
-        let mut body = column![file_actions(app, file, Some(f))].spacing(6);
+        if app.file_hover.as_deref() == Some(f.path.as_str()) || app.confirm_discard.as_ref() == Some(&f.path) {
+            head = head.push(git_actions(app, f));
+        }
+        let mut body = column![].spacing(6);
         // What is staged and what is not, apart: each hunk is staged, unstaged or thrown away
         // by itself. A file git does not know yet is staged whole.
         let both = !f.staged_diff.is_empty() && !f.unstaged_diff.is_empty();
@@ -472,7 +519,7 @@ fn git_tab(app: &App) -> El<'_> {
             body = body.push(hunks(app, f, false));
         }
         col = col.push(on_file(
-            app,
+            file,
             &f.path,
             card(app, &f.path, head.into(), Some(body.into())),
         ));
@@ -481,21 +528,32 @@ fn git_tab(app: &App) -> El<'_> {
 }
 
 /// What a right click on a file of the folder opens: its menu.
-fn on_file<'a>(app: &App, path: &str, content: El<'a>) -> El<'a> {
+fn menu_on(file: std::path::PathBuf, content: El<'_>) -> El<'_> {
     iced::widget::mouse_area(content)
-        .on_right_press(Msg::OpenMenu(crate::rows::MenuFor::File(app.cwd.join(path))))
+        .on_right_press(Msg::OpenMenu(crate::rows::MenuFor::File(file)))
+        .into()
+}
+
+/// A changed file's card, under the pointer or not: a right click opens the file's menu, and
+/// the pointer on it shows what can be done with it in its head.
+fn on_file<'a>(file: std::path::PathBuf, key: &str, content: El<'a>) -> El<'a> {
+    iced::widget::mouse_area(content)
+        .on_right_press(Msg::OpenMenu(crate::rows::MenuFor::File(file)))
+        .on_enter(Msg::FileHover(key.to_owned(), true))
+        .on_exit(Msg::FileHover(key.to_owned(), false))
         .into()
 }
 
 /// The branch's pull request: its state, its checks, what its reviewers said, and what can be done
 /// about them. Nothing while it is not known whether there is one.
-fn pr_part(app: &App) -> El<'_> {
+fn pr_part(app: &App) -> Option<El<'_>> {
     use crate::git::{CheckState, Op};
     let (t, s) = (app.t, app.s);
     let w = s.w();
     let Some(pr) = &app.pr else {
-        let said = if app.pr_loading { w.pr_loading } else { w.pr_none };
-        return text(said).size(11.5).color(t.fg_3).into();
+        return app
+            .pr_loading
+            .then(|| text(w.pr_loading).size(11.5).color(t.fg_3).into());
     };
     let small = |label: &'static str, color: iced::Color, msg: Option<Msg>| {
         button(text(label).size(11.5).color(color).wrapping(text::Wrapping::None))
@@ -650,11 +708,13 @@ fn pr_part(app: &App) -> El<'_> {
         }
         col = col.push(said);
     }
-    container(col)
-        .width(Length::Fill)
-        .padding([8, 10])
-        .style(t.boxed(t.raised, t.line, RADIUS_L))
-        .into()
+    Some(
+        container(col)
+            .width(Length::Fill)
+            .padding([8, 10])
+            .style(t.boxed(t.raised, t.line, RADIUS_L))
+            .into(),
+    )
 }
 
 /// The merge method kept, as gh names it.
@@ -720,28 +780,28 @@ fn scope_bar(app: &App) -> El<'_> {
     ]
     .spacing(6)
     .align_y(Alignment::Center);
-    let more = app.prefs.more.clone();
-    let views = row![
-        pick(
-            w.split_diff.to_owned(),
-            more.split_diff,
-            Msg::SetSplitDiff(!more.split_diff)
-        ),
-        pick(
-            w.hide_ws.to_owned(),
-            more.hide_whitespace,
-            Msg::SetWhitespace(!more.hide_whitespace)
-        ),
-        pick(
-            w.diff_nowrap.to_owned(),
-            more.diff_nowrap,
-            Msg::SetDiffNowrap(!more.diff_nowrap)
-        ),
-        pick(w.fold_all.to_owned(), false, Msg::FoldFiles(true)),
-        pick(w.open_all.to_owned(), false, Msg::FoldFiles(false)),
-    ]
-    .spacing(6);
-    column![scopes.wrap(), views.wrap()].spacing(6).into()
+    // How the diffs are drawn: in a menu, each way marked while it is on.
+    let more = &app.prefs.more;
+    let changed = more.split_diff || more.hide_whitespace || more.diff_nowrap;
+    let view = button(
+        row![
+            icon(Icon::Sliders, 12.0, if changed { t.accent } else { t.fg_2 }),
+            text(w.diff_view)
+                .size(11.5)
+                .color(t.fg_2)
+                .wrapping(text::Wrapping::None),
+            icon(Icon::ChevronDown, 10.0, t.fg_3),
+        ]
+        .spacing(5)
+        .align_y(Alignment::Center),
+    )
+    .padding([3, 8])
+    .style(t.ghost(t.fg_2, false))
+    .on_press(Msg::OpenMenu(crate::rows::MenuFor::DiffView));
+    row![container(scopes.wrap()).width(Length::Fill), view]
+        .spacing(6)
+        .align_y(Alignment::Center)
+        .into()
 }
 
 /// The files of the branch or of a commit: by folder, each folded by its head, marked as viewed.
@@ -819,7 +879,7 @@ fn scoped_files(app: &App) -> El<'_> {
             super::diff_view_in(t, s, diff, 400, wide)
         };
         col = col.push(on_file(
-            app,
+            app.git.top.join(path),
             path,
             card(app, path, head.into(), (!viewed).then_some(body)),
         ));
@@ -1175,16 +1235,15 @@ fn files_tab(app: &App) -> El<'_> {
                 list = list.push(if r.folder {
                     b.into()
                 } else {
-                    on_file(app, &r.path, b.into())
+                    menu_on(app.cwd.join(&r.path), b.into())
                 });
             }
             return column![modes, field, list].spacing(10).into();
         }
         let found: Vec<&String> = app.found_files().collect();
         for f in found.iter().take(crate::files::LISTED) {
-            list = list.push(on_file(
-                app,
-                f,
+            list = list.push(menu_on(
+                app.cwd.join(f.as_str()),
                 button(
                     text(clip_start(f, cells(app, 40.0)))
                         .size(12)
