@@ -39,6 +39,7 @@ pub enum Command {
     Delete,
     Group,
     Scripts,
+    Outline,
 }
 
 impl Command {
@@ -64,6 +65,7 @@ impl Command {
         ("delete", Command::Delete),
         ("group", Command::Group),
         ("run", Command::Scripts),
+        ("outline", Command::Outline),
     ];
 
     pub fn what(self, s: &Strings) -> &'static str {
@@ -91,6 +93,7 @@ impl Command {
             Command::Delete => s.w().c_delete,
             Command::Group => s.w().c_group,
             Command::Scripts => s.w().c_scripts,
+            Command::Outline => s.w().c_outline,
         }
     }
 
@@ -378,6 +381,9 @@ impl App {
             Command::Settings => self.overlay = Some(Overlay::Settings),
             Command::Keys => self.overlay = Some(Overlay::Keys),
             Command::Attention => return self.attention(),
+            Command::Outline => {
+                return self.update(Msg::Show(Some(Overlay::picker(crate::overlay::Pick::Outline))));
+            }
             Command::Scripts => {
                 // None yet: the settings, where they are listed.
                 if self.scripts().is_empty() {

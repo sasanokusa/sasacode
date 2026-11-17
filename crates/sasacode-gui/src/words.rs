@@ -114,6 +114,9 @@ words! {
     key_taken: "{key}は「{other}」に使われています", "{key} is already “{other}”";
     keys_fixed: "決まっているキー", "Fixed keys";
     keys_yours: "変えられるキー", "Keys you can change";
+    // The outline.
+    c_outline: "会話の目次", "Conversation outline";
+    outline_ph: "メッセージや見出しを探して移動", "Find a message or a heading to go to";
 }
 
 #[cfg(test)]

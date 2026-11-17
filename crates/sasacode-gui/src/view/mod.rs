@@ -196,6 +196,18 @@ fn header(app: &App) -> El<'_> {
             }),
             tip(
                 t,
+                button(icon(Icon::Toc, 16.0, t.fg_2))
+                    .padding(6)
+                    .style(t.ghost(t.fg_2, false))
+                    .on_press_maybe(
+                        (!app.chat.transcript.exchanges.is_empty())
+                            .then_some(Msg::Command(crate::input::Command::Outline))
+                    ),
+                format!("{}  {}", s.w().c_outline, keys_for(crate::keys::Act::Outline)),
+                tooltip::Position::Bottom,
+            ),
+            tip(
+                t,
                 button(icon(
                     Icon::Play,
                     15.0,

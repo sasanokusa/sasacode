@@ -47,6 +47,8 @@ pub enum Pick {
     Branches,
     /// The folder's scripts, to run one.
     Scripts,
+    /// The conversation's messages and headings, to scroll to one.
+    Outline,
 }
 
 impl Overlay {
@@ -91,6 +93,7 @@ impl App {
             entry(s.c_attention, key(Act::Attention), Msg::Command(Command::Attention)),
             entry(s.c_btw, Some("/btw".into()), Msg::Command(Command::Btw)),
             entry(s.w().c_scripts, key(Act::Scripts), Msg::Command(Command::Scripts)),
+            entry(s.w().c_outline, key(Act::Outline), Msg::Command(Command::Outline)),
             entry(s.c_export, None, Msg::Copy(Clip::Conversation)),
             entry(s.c_steps, None, Msg::Command(Command::Steps)),
             entry(s.c_model, None, Msg::Command(Command::Model)),
@@ -202,6 +205,9 @@ impl App {
         };
         if *pick == Pick::Branches {
             return self.branch_entries(query);
+        }
+        if *pick == Pick::Outline {
+            return self.outline_entries(query);
         }
         if *pick == Pick::Scripts {
             let words: Vec<String> = query.split_whitespace().map(str::to_lowercase).collect();

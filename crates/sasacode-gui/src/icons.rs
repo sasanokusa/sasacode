@@ -41,6 +41,7 @@ pub enum Icon {
     Trash,
     Tag,
     Play,
+    Toc,
 }
 
 impl Icon {
@@ -94,6 +95,7 @@ impl Icon {
             Icon::Trash => r#"<path d="M2.5 4.5h11M6 4.5V3h4v1.5M4 4.5l.7 9h6.6l.7-9M6.8 7v4.5M9.2 7v4.5"/>"#,
             Icon::Tag => r#"<path d="M2.5 2.5h5.2l6 6-5.2 5.2-6-6zM5.3 5.3h.1"/>"#,
             Icon::Play => r#"<path d="M5 3.5v9l7-4.5z"/>"#,
+            Icon::Toc => r#"<path d="M6 4h7.5M6 8h7.5M8 12h5.5M2.5 4h.1M2.5 8h.1M4.5 12h.1"/>"#,
         }
     }
 

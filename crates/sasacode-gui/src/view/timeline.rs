@@ -37,7 +37,7 @@ pub fn timeline(app: &App) -> El<'_> {
         .map(str::to_lowercase);
     for (i, ex) in app.chat.transcript.exchanges.iter().enumerate() {
         if needle.as_deref().is_none_or(|n| has(ex, n)) {
-            col = col.push(exchange(app, i, ex));
+            col = col.push(container(exchange(app, i, ex)).id(crate::outline::exchange_id(i)));
         }
     }
     for queued in &app.chat.transcript.queued {

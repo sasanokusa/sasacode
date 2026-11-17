@@ -18,6 +18,7 @@ mod input;
 mod keys;
 mod layout;
 mod list;
+mod outline;
 mod overlay;
 mod review;
 mod runner;

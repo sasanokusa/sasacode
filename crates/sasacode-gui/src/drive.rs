@@ -1292,3 +1292,16 @@ fn an_image_named_in_the_input_is_shown_small_above_it_and_taken_out_by_its_cros
     assert_eq!(typed(&app).trim(), "これを見て");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn the_outline_lists_each_message_and_the_headings_of_its_replies_and_takes_one_to_go_to() {
+    let mut app = window("ja");
+    markdown_reply(&mut app);
+    let _ = app.update(shortcut(&Key::Character("o".into()), Modifiers::COMMAND | Modifiers::SHIFT).unwrap());
+    assert!(says(&app, "1. 何を変えた？") && says(&app, "    変更点"));
+    // Typed, it finds the heading; Enter goes there, held by its start.
+    let _ = app.update(Msg::OverlayText("変更".into()));
+    assert_eq!(app.found_entries().len(), 1);
+    let _ = app.update(Msg::PaletteRun(0));
+    assert!(app.overlay.is_none() && app.reading);
+}

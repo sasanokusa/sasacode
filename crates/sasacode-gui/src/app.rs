@@ -258,7 +258,7 @@ pub struct App {
     pub(crate) reading: bool,
     /// A scroll the window asked for has not been made yet: what the conversation reports until
     /// then was measured from the end it was held by before.
-    settling: bool,
+    pub(crate) settling: bool,
 }
 
 /// One conversation: what it says, what is typed for it, and its run.
@@ -464,6 +464,8 @@ pub enum Msg {
     KeyCapture(crate::keys::Act),
     KeyCaptured(Key, keyboard::Modifiers),
     KeyReset(Option<crate::keys::Act>),
+    /// The conversation scrolled to message `i`, from its outline.
+    JumpTo(usize),
     /// The pointer over a row of the list, or off it.
     RowHover(Option<String>),
     /// What the search inside the conversation looks for, and the search put away.

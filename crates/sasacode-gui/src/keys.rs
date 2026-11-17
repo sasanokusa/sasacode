@@ -24,6 +24,7 @@ pub enum Act {
     Next,
     Attention,
     Scripts,
+    Outline,
     Palette,
     Mention,
     FindIn,
@@ -38,7 +39,7 @@ pub enum Act {
 }
 
 /// Every shortcut, in the order the list of keys shows them.
-pub const ACTS: [Act; 24] = [
+pub const ACTS: [Act; 25] = [
     Act::New,
     Act::Window,
     Act::Find,
@@ -49,6 +50,7 @@ pub const ACTS: [Act; 24] = [
     Act::Next,
     Act::Attention,
     Act::Scripts,
+    Act::Outline,
     Act::FocusInput,
     Act::Side,
     Act::Inspector,
@@ -159,6 +161,7 @@ impl Act {
             Act::Next => "next".into(),
             Act::Attention => "attention".into(),
             Act::Scripts => "scripts".into(),
+            Act::Outline => "outline".into(),
             Act::Palette => "palette".into(),
             Act::Mention => "mention".into(),
             Act::FindIn => "find-in-conversation".into(),
@@ -183,6 +186,7 @@ impl Act {
             Act::Next => Chord::new(true, "]"),
             Act::Attention => Chord::new(true, "a"),
             Act::Scripts => Chord::new(true, "r"),
+            Act::Outline => Chord::new(true, "o"),
             Act::Palette => Chord::new(true, "p"),
             Act::Mention => Chord::new(false, "p"),
             Act::FindIn => Chord::new(false, "f"),
@@ -207,6 +211,7 @@ impl Act {
             Act::Next => Msg::Neighbour(1),
             Act::Attention => Msg::Command(Command::Attention),
             Act::Scripts => Msg::Command(Command::Scripts),
+            Act::Outline => Msg::Command(Command::Outline),
             Act::Palette => Msg::Show(Some(Overlay::palette())),
             Act::Mention => Msg::Command(Command::Mention),
             Act::FindIn => Msg::Command(Command::Find),
@@ -239,6 +244,7 @@ impl Act {
             Act::Next => s.c_next,
             Act::Attention => s.c_attention,
             Act::Scripts => s.w().c_scripts,
+            Act::Outline => s.w().c_outline,
             Act::Palette => s.c_palette,
             Act::Mention => s.c_mention,
             Act::FindIn => s.c_find,
@@ -391,7 +397,7 @@ impl crate::app::App {
                     None => p.keys.clear(),
                 });
             }
-            other => return Err(other),
+            other => return self.update_outline(other),
         }
         Ok(iced::Task::none())
     }
