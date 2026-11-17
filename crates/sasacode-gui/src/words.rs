@@ -164,6 +164,7 @@ words! {
     worktrees_loading: "ワークツリーを読んでいます…", "Reading the worktrees…";
     worktree_making: "ワークツリーを作っています…", "Making a worktree…";
     worktree_setup_failed: "準備のコマンドが失敗しました：{why}", "Its setup command failed: {why}";
+    mention_chat: "会話", "conversation";
     worktree_from: "ブランチ{branch}から新しいワークツリー", "New worktree from {branch}";
     worktree_fetch_failed: "取ってこられなかったので、手元のもので作りました：{why}", "Could not fetch, so it was made from what is here: {why}";
     worktree_sweep: "{days}日より前に使った、変更のないワークツリーを片付ける", "Remove the worktrees last used {days} days ago or more, unless they hold changes";

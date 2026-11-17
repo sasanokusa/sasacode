@@ -48,7 +48,7 @@ impl App {
 
     /// Another conversation as context: written as Markdown under the sasacode folder, and named
     /// in the input with `@`, as a file is.
-    fn attach_conversation(&mut self, id: &str) -> Task<Msg> {
+    pub(crate) fn attach_conversation(&mut self, id: &str) -> Task<Msg> {
         let w = self.s.w();
         let Some(session) = self.sessions.iter().find(|s| s.id == id) else {
             return Task::none();

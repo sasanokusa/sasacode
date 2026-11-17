@@ -404,14 +404,15 @@ fn offered(app: &App, offer: Offer) -> El<'_> {
     let mut list = column![].spacing(1);
     let pick = app.pick.min(offer.len().saturating_sub(1));
     match offer.kind {
-        OfferKind::Files(files) => {
-            if files.is_empty() {
+        OfferKind::Files(files, chats) => {
+            if files.is_empty() && chats.is_empty() {
                 // Nothing to say before the list has come.
                 if app.files.is_empty() {
                     return Space::new().into();
                 }
                 list = list.push(container(text(s.no_files).size(12.5).color(t.fg_3)).padding([5, 10]));
             }
+            let first = files.len();
             for (i, file) in files.into_iter().enumerate() {
                 let folder = file.ends_with('/');
                 list = list.push(
@@ -431,6 +432,24 @@ fn offered(app: &App, offer: Offer) -> El<'_> {
                     .padding([4, 10])
                     .style(t.ghost(t.fg, i == pick))
                     .on_press(Msg::Complete(Some(i))),
+                );
+            }
+            // After the files, in the order picked with ↑ and ↓.
+            for (i, (_, name)) in chats.into_iter().enumerate() {
+                list = list.push(
+                    button(
+                        row![
+                            icon(Icon::Bot, 13.0, t.fg_3),
+                            text(name).size(12.5).color(t.fg).wrapping(text::Wrapping::None),
+                            text(app.s.w().mention_chat).size(11.5).color(t.fg_3),
+                        ]
+                        .spacing(8)
+                        .align_y(Alignment::Center),
+                    )
+                    .width(Length::Fill)
+                    .padding([4, 10])
+                    .style(t.ghost(t.fg, first + i == pick))
+                    .on_press(Msg::Complete(Some(first + i))),
                 );
             }
         }

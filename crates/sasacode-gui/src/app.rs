@@ -2885,6 +2885,41 @@ mod tests {
     }
 
     #[test]
+    fn another_conversation_is_named_after_an_at_by_its_name() {
+        let (mut app, home) = window_with("mention", &["aaaa0000", "bbbb0000", "cccc0000"]);
+        assert!(app.open_named("aaaa0000"));
+        app.prefs.names.insert("bbbb0000".into(), "決済の再試行".into());
+        app.prefs.names.insert("cccc0000".into(), "決済画面の文言".into());
+        app.prefs.archived.insert("cccc0000".into());
+        app.set_input("前のを見て @決済");
+        // Offered below the files: by its name, not the one shown nor one archived.
+        let Some(crate::input::Offer {
+            kind: crate::input::OfferKind::Files(files, chats),
+            ..
+        }) = app.offer()
+        else {
+            panic!("nothing offered");
+        };
+        assert_eq!(chats, vec![("bbbb0000".to_owned(), "決済の再試行".to_owned())]);
+        // Taken: what was said in it, as a file named in place of the `@word`.
+        let _ = app.update(Msg::Complete(Some(files.len())));
+        let typed = app.chat.editor.text();
+        assert!(
+            typed.starts_with("前のを見て ") && typed.contains("bbbb0000.md") && !typed.contains("@決済"),
+            "{typed}"
+        );
+        assert!(home.join("context").join("bbbb0000.md").is_file());
+        // Nothing typed after the `@`: no conversation offered.
+        app.set_input("@");
+        app.dismissed = false;
+        assert!(matches!(
+            app.offer().map(|o| o.kind),
+            Some(crate::input::OfferKind::Files(_, chats)) if chats.is_empty()
+        ));
+        std::fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
     fn messages_sent_while_it_runs_wait_their_turn_when_the_settings_say_so() {
         let (mut app, home) = window_with("follow", &["aaaa0000", "bbbb0000"]);
         assert!(app.open_named("aaaa0000"));

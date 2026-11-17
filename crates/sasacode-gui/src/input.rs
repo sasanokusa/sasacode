@@ -9,6 +9,9 @@ use iced::widget::text_editor::{self, Action, Edit};
 
 use crate::app::{App, FIND_IN, MODEL, Msg, Overlay};
 use crate::composer::{self, SHOWN};
+
+/// How many conversations `@` offers below the files.
+const CHATS_SHOWN: usize = 5;
 use crate::i18n::Strings;
 use crate::system;
 
@@ -142,8 +145,9 @@ pub struct Offer {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum OfferKind {
-    /// Files and folders after `@`, best first.
-    Files(Vec<String>),
+    /// Files and folders after `@`, best first; then the conversations of this folder whose names
+    /// hold what was typed, by id and name.
+    Files(Vec<String>, Vec<(String, String)>),
     /// The window's commands after `/`, then the plugins' and the skills', which the CLI runs.
     Commands(Vec<(&'static str, Command)>, Vec<crate::cli::Command>),
 }
@@ -151,7 +155,7 @@ pub enum OfferKind {
 impl Offer {
     pub fn len(&self) -> usize {
         match &self.kind {
-            OfferKind::Files(files) => files.len(),
+            OfferKind::Files(files, chats) => files.len() + chats.len(),
             OfferKind::Commands(commands, plugins) => commands.len() + plugins.len(),
         }
     }
@@ -200,8 +204,32 @@ impl App {
             line: at.line,
             start,
             end: at.column,
-            kind: OfferKind::Files(files),
+            kind: OfferKind::Files(files, self.mentioned(query)),
         })
+    }
+
+    /// The conversations of this folder whose names hold `query`, the latest first: not the one
+    /// shown, nor those archived. None for nothing typed yet.
+    fn mentioned(&self, query: &str) -> Vec<(String, String)> {
+        let query = query.trim().to_lowercase();
+        if query.is_empty() {
+            return Vec::new();
+        }
+        self.sessions
+            .iter()
+            .filter(|s| Some(&s.id) != self.chat.session.as_ref() && !self.prefs.archived.contains(&s.id))
+            .map(|s| {
+                let name = self
+                    .prefs
+                    .names
+                    .get(&s.id)
+                    .cloned()
+                    .unwrap_or_else(|| s.first_prompt.clone());
+                (s.id.clone(), name.lines().next().unwrap_or_default().to_owned())
+            })
+            .filter(|(id, name)| name.to_lowercase().contains(&query) || id.starts_with(&query))
+            .take(CHATS_SHOWN)
+            .collect()
     }
 
     /// An action on the input. Typing ends going through what was sent before, and brings back
@@ -224,7 +252,7 @@ impl App {
             || !matches!(
                 self.offer(),
                 Some(Offer {
-                    kind: OfferKind::Files(_),
+                    kind: OfferKind::Files(..),
                     ..
                 })
             )
@@ -277,7 +305,12 @@ impl App {
         let at = which.unwrap_or(self.pick).min(offer.len().saturating_sub(1));
         self.pick = 0;
         match offer.kind {
-            OfferKind::Files(files) => {
+            OfferKind::Files(files, chats) => {
+                // A conversation goes in as a file of what was said in it, in place of the `@word`.
+                if let Some((id, _)) = at.checked_sub(files.len()).and_then(|i| chats.get(i)) {
+                    self.replace(offer.line, offer.start, offer.end, "");
+                    return self.attach_conversation(id);
+                }
                 let Some(file) = files.get(at) else {
                     return Task::none();
                 };
@@ -546,7 +579,10 @@ mod tests {
         let mut app = window();
         typed(&mut app, "これを見て @dock");
         let offer = app.offer().unwrap();
-        assert_eq!(offer.kind, OfferKind::Files(vec!["src/view/dock.rs".into()]));
+        assert_eq!(
+            offer.kind,
+            OfferKind::Files(vec!["src/view/dock.rs".into()], Vec::new())
+        );
         let _ = app.update(Msg::Complete(None));
         assert_eq!(app.chat.editor.text(), "これを見て @src/view/dock.rs ");
         assert!(app.offer().is_none());
@@ -562,7 +598,7 @@ mod tests {
         typed(&mut app, "d");
         assert_eq!(
             app.offer().unwrap().kind,
-            OfferKind::Files(vec!["src/view/dock.rs".into()])
+            OfferKind::Files(vec!["src/view/dock.rs".into()], Vec::new())
         );
     }
 
