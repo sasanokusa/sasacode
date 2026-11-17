@@ -1107,10 +1107,18 @@ fn rename<'a>(app: &'a App, name: &'a str) -> El<'a> {
 fn scripts(app: &App) -> El<'_> {
     let (t, s) = (app.t, app.s);
     let w = s.w();
-    let mut col = column![
-        text(w.set_scripts).size(12).color(t.fg_3),
-        text(w.set_scripts_hint).size(11.5).color(t.fg_3),
-    ]
+    // How they are run: the heading's tooltip.
+    let mut col = column![super::tip(
+        t,
+        row![
+            text(w.set_scripts).size(12).color(t.fg_3),
+            text("?").size(10.5).color(t.fg_3),
+        ]
+        .spacing(4)
+        .align_y(Alignment::Center),
+        w.set_scripts_hint.to_owned(),
+        iced::widget::tooltip::Position::Top,
+    )]
     .spacing(6);
     for (i, sc) in app.scripts().iter().enumerate() {
         col = col.push(

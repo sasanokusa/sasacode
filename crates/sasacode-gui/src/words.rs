@@ -95,7 +95,6 @@ words! {
     files_back: "ファイル一覧", "All files";
     files_cut: "先頭{shown}行だけ表示しています（全{n}行）", "Showing the first {shown} of {n} lines";
     files_unreadable: "表示できません: {why}", "Can't show it: {why}";
-    files_hint: "行をクリックするとコメントを書けます", "Click a line to comment on it";
     view: "表示", "View";
     // The folder's scripts.
     c_scripts: "スクリプトを実行", "Run a script";

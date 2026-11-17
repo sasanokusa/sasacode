@@ -336,6 +336,15 @@ fn git_tab(app: &App) -> El<'_> {
     if app.git_busy {
         head = head.push(text(s.git_busy).size(12).color(t.fg_3));
     }
+    // The agent asked to review what is not committed.
+    if !g.files.is_empty() {
+        head = head.push(
+            button(text(w.review_ask).size(12).color(t.fg_2).wrapping(text::Wrapping::None))
+                .padding([3, 8])
+                .style(t.ghost(t.fg_2, false))
+                .on_press(Msg::AskReview),
+        );
+    }
     head = head.push(tip(
         t,
         button(icon(Icon::Refresh, 13.0, t.fg_2))
@@ -411,15 +420,7 @@ fn git_tab(app: &App) -> El<'_> {
                 .on_press_maybe((!busy && g.branch.is_some()).then_some(Msg::PrOpen)),
         );
     }
-    if !g.files.is_empty() {
-        buttons = buttons.push(Space::new().width(Length::Fill)).push(
-            button(text(w.review_ask).size(12).color(t.fg_2).wrapping(text::Wrapping::None))
-                .padding([5, 8])
-                .style(t.ghost(t.fg_2, false))
-                .on_press(Msg::AskReview),
-        );
-    }
-    let commit = column![message, buttons].spacing(6);
+    let commit = column![message, buttons.wrap()].spacing(6);
     col = col.push(commit);
     if let Some(pr) = pr_part(app) {
         col = col.push(pr);
@@ -1369,7 +1370,8 @@ fn files_tab(app: &App) -> El<'_> {
         .spacing(8)
         .into();
     }
-    let mut notes = column![text(w.files_hint).size(11.5).color(t.fg_3)].spacing(2);
+    // The pointer over a line says it takes a comment; the box says what becomes of one.
+    let mut notes = column![].spacing(2);
     if v.total > v.lines.len() {
         notes = notes.push(
             text(fill(&fill(w.files_cut, "shown", v.lines.len()), "n", v.total))
