@@ -501,7 +501,7 @@ fn pr(app: &App) -> El<'_> {
             button(text(w.pr_fill).size(13))
                 .padding([6, 12])
                 .style(t.ghost(t.fg_2, false))
-                .on_press_maybe((!busy).then(|| Msg::GitDo(crate::git::Op::Pr(None)))),
+                .on_press_maybe((!busy).then_some(Msg::PrFill)),
             Space::new().width(Length::Fill),
             button(text(w.pr_create).size(13))
                 .padding([6, 14])

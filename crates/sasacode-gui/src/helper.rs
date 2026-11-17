@@ -331,6 +331,11 @@ impl App {
                 self.pr_draft = None;
                 return Ok(self.update(Msg::GitDo(Op::Pr(Some((title, body))))));
             }
+            Msg::PrFill => {
+                self.overlay = None;
+                self.pr_draft = None;
+                return Ok(self.update(Msg::GitDo(Op::Pr(None))));
+            }
             Msg::TakeSuggestion => {
                 let Some((key, next)) = self.suggestion.take() else {
                     return Ok(Task::none());

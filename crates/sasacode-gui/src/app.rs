@@ -493,6 +493,8 @@ pub enum Msg {
     PrTitle(String),
     PrBody(text_editor::Action),
     PrCreate,
+    /// The pull request left to `gh pr create --fill`.
+    PrFill,
     /// The next message guessed, put in the input or put away.
     TakeSuggestion,
     DropSuggestion,
@@ -955,8 +957,6 @@ impl App {
                 }
                 return Task::batch([focus_input(), self.back_to_newest()]);
             }
-            // With ⌘ held, beside the one shown.
-            Msg::OpenSession(path) if self.modifiers.command() => return self.update(Msg::Split(path)),
             Msg::OpenSession(path) => {
                 if self.open_session(&path) {
                     return Task::batch([focus_input(), self.back_to_newest()]);

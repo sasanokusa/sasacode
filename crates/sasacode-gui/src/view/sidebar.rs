@@ -225,7 +225,14 @@ fn row_of<'a>(app: &'a App, session: &'a SessionSummary, now: SystemTime, cells:
         .width(Length::Fill)
         .padding([6, 10])
         .style(t.ghost(t.fg, current || beside))
-        .on_press_maybe((!current).then(|| Msg::OpenSession(session.path.clone())));
+        .on_press_maybe((!current).then(|| {
+            // With ⌘ held, beside the one shown.
+            if app.modifiers.command() && !beside {
+                Msg::Split(session.path.clone())
+            } else {
+                Msg::OpenSession(session.path.clone())
+            }
+        }));
     // Pinned, named, grouped, archived or deleted from the row the pointer is on.
     let act = |mark: Icon, color, hint: &'static str, msg: Msg| {
         tip(

@@ -1323,13 +1323,15 @@ fn a_conversation_opened_beside_goes_on_there_and_is_taken_into_the_main_place_t
     };
     app.sessions[1].path = log("one.jsonl", "横で見る会話", "横の返事");
     app.sessions[2].path = log("two.jsonl", "二つ目の横", "二つ目の返事");
+    app.sessions[0].path = log("zero.jsonl", "メインの会話", "メインの返事");
+    app.sessions[3].path = log("three.jsonl", "四つ目", "四つ目の返事");
     let (main, one, two) = (
         app.sessions[0].id.clone(),
         app.sessions[1].id.clone(),
         app.sessions[2].id.clone(),
     );
-    app.chat.session = Some(main.clone());
-    app.chat.transcript.send("メインの会話", std::time::Instant::now());
+    let _ = app.update(Msg::OpenSession(app.sessions[0].path.clone()));
+    assert_eq!(app.chat.session.as_deref(), Some(main.as_str()));
 
     // From the palette's list: it is drawn beside, the one shown stays.
     let _ = app.command(Command::Split);
@@ -1349,8 +1351,14 @@ fn a_conversation_opened_beside_goes_on_there_and_is_taken_into_the_main_place_t
 
     // ⌘ held, a click in the list puts another there instead of opening it.
     let _ = app.update(Msg::Modifiers(Modifiers::COMMAND));
-    let _ = app.update(Msg::OpenSession(app.sessions[2].path.clone()));
+    act(&mut app, |ui| {
+        let _ = ui.click("1日前 · 12件のメッセージ");
+    });
+    // A shortcut held with ⌘ that opens a conversation opens it in the main place.
+    let _ = app.update(Msg::OpenSession(app.sessions[3].path.clone()));
     let _ = app.update(Msg::Modifiers(Modifiers::default()));
+    assert_eq!(app.chat.session.as_deref(), Some(app.sessions[3].id.as_str()));
+    let _ = app.update(Msg::OpenSession(app.sessions[0].path.clone()));
     assert_eq!(app.chat.session.as_deref(), Some(main.as_str()));
     assert_eq!(app.split.as_deref(), Some(two.as_str()));
     assert!(says(&app, "二つ目の横") && !says(&app, "横で見る会話"));
