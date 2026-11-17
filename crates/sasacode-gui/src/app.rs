@@ -646,6 +646,11 @@ pub enum Msg {
     WriteTitle(String),
     Titled(String, bool, Result<String, String>),
     SetAutoTitle(bool),
+    /// Which notifications are sent, with a sound or not; the editor files open in.
+    SetQuietDone(bool),
+    SetQuietWait(bool),
+    SetSound(bool),
+    SetEditor(String),
     /// To the conversation left, and forward again.
     Back,
     Forward,
@@ -778,6 +783,7 @@ impl App {
         app.archive_idle();
         // One that is not there is not an error: a conversation nobody has said anything in has an
         // id and no log yet. The window opens on a new one.
+        let asked = wanted.is_some();
         if let Some(wanted) = wanted
             && !app.open_named(&wanted)
         {
@@ -786,6 +792,7 @@ impl App {
                 app.cwd.display()
             );
         }
+        app.restore_folder(asked);
         let screen = window::oldest().and_then(|id| window::monitor_size(id).map(move |size| Msg::Screen(id, size)));
         // In front when it opens: a window another one started is not brought there by the system.
         let front = window::oldest().and_then(window::gain_focus);
@@ -1479,6 +1486,12 @@ impl App {
             ex.prompt = crate::transcript::as_typed(&ex.prompt, &self.cwd);
         }
         chat.loaded = true;
+        // What was typed in it and not sent, before a restart.
+        if let Some(draft) = chat.session.as_deref().and_then(|id| self.kept_draft(id)) {
+            chat.editor = text_editor::Content::with_text(draft);
+            chat.editor
+                .perform(text_editor::Action::Move(text_editor::Motion::DocumentEnd));
+        }
         self.bring(chat);
         true
     }
@@ -1561,7 +1574,10 @@ impl App {
         if chat.session.is_some() && chat.session == self.split {
             self.split = None;
         }
+        let last = chat.session.clone();
         let left = std::mem::replace(&mut self.chat, chat);
+        self.keep_draft(&left);
+        self.keep_last(last);
         if left.wanted() || (keep && left.session.is_some()) {
             self.parked.push(left);
         }
@@ -1920,6 +1936,12 @@ impl App {
         if key == SIDE {
             // A side question reads; what would change something is asked, and denied.
             spec.permission = Some("ask".into());
+        }
+        if key != SIDE {
+            self.keep_choices();
+            if let Some(draft) = self.draft_key_of(key) {
+                self.forget_draft(draft);
+            }
         }
         let shown = key == self.chat.key;
         if self.suggestion.as_ref().is_some_and(|(k, _)| *k == key) {

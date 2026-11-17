@@ -447,7 +447,7 @@ impl App {
                 Task::none()
             }
             Msg::Editor(path) => {
-                system::editor(&path);
+                system::editor_with(&path, &self.prefs.more.editor);
                 Task::none()
             }
             Msg::OpenProject(path) => self.new_window(path, None),
@@ -545,12 +545,17 @@ impl App {
         if !self.prefs.notify || key == SIDE {
             return;
         }
+        // As the settings choose: when a run ends, when it waits for an answer.
+        let waits = what == self.s.n_waiting;
+        if (waits && self.prefs.more.quiet_wait) || (!waits && self.prefs.more.quiet_done) {
+            return;
+        }
         let title = std::iter::once(&self.chat)
             .chain(&self.parked)
             .find(|c| c.key == key)
             .map(|c| self.chat_title(c))
             .unwrap_or_else(|| "sasacode".to_owned());
-        system::notify(&title, what);
+        system::notify(&title, what, self.prefs.more.sound);
     }
 
     /// The name the conversation shown was given in the list, if it was.

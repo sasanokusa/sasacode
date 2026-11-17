@@ -137,6 +137,20 @@ pub fn resume_in_terminal(dir: &Path, program: &Path, id: &str) -> bool {
     }
 }
 
+/// `path` in the editor the settings name (a command, with its arguments), else as [`editor`]
+/// opens it.
+pub fn editor_with(path: &Path, chosen: &str) -> bool {
+    let mut words = chosen.split_whitespace();
+    if let Some(program) = words.next() {
+        let mut c = command(program);
+        c.args(words);
+        if spawn_with(c, path) {
+            return true;
+        }
+    }
+    editor(path)
+}
+
 /// `path` in an editor: VS Code when it is on the PATH, else what the system opens text with.
 pub fn editor(path: &Path) -> bool {
     let mut code = command(if cfg!(windows) { "code.cmd" } else { "code" });
@@ -162,14 +176,15 @@ pub fn editor(path: &Path) -> bool {
 
 /// A notification from the system, for when the window is behind others. None on Windows, where
 /// the window asks for attention instead (its taskbar button flashes), as it does everywhere.
-pub fn notify(title: &str, body: &str) {
+pub fn notify(title: &str, body: &str, sound: bool) {
     if cfg!(target_os = "macos") {
         // AppleScript's strings take `\` and `"` escaped.
         let quote = |s: &str| s.replace('\\', "\\\\").replace('"', "\\\"");
         let script = format!(
-            "display notification \"{}\" with title \"{}\"",
+            "display notification \"{}\" with title \"{}\"{}",
             quote(body),
-            quote(title)
+            quote(title),
+            if sound { " sound name \"Glass\"" } else { "" }
         );
         let mut c = command("osascript");
         c.args(["-e", &script]);

@@ -388,6 +388,29 @@ fn settings(app: &App) -> El<'_> {
             .spacing(10)
             .on_toggle(msg)
     };
+    // Which ones, under the switch that sends them at all.
+    let indent = |e: El<'static>| -> El<'static> { container(e).padding(iced::Padding::ZERO.left(28)).into() };
+    let notices: El<'_> = if p.notify {
+        column![
+            indent(switch(w.set_notify_done, !p.more.quiet_done, |on| Msg::SetQuietDone(!on)).into()),
+            indent(switch(w.set_notify_wait, !p.more.quiet_wait, |on| Msg::SetQuietWait(!on)).into()),
+            indent(switch(w.set_sound, p.more.sound, Msg::SetSound).into()),
+        ]
+        .spacing(10)
+        .into()
+    } else {
+        Space::new().into()
+    };
+    let editor = column![
+        heading(w.set_editor),
+        text_input(w.editor_ph, &p.more.editor)
+            .on_input(Msg::SetEditor)
+            .size(13)
+            .font(MONO)
+            .padding([6, 10])
+            .style(t.input()),
+    ]
+    .spacing(6);
     let body = column![
         title(app, s.settings),
         enter,
@@ -395,6 +418,7 @@ fn settings(app: &App) -> El<'_> {
         theme,
         zoom,
         switch(s.set_notify, p.notify, Msg::SetNotify),
+        notices,
         switch(s.set_awake, p.awake, Msg::SetAwake),
         switch(s.set_steps, p.steps, Msg::SetSteps),
         switch(s.w().set_failed_only, p.more.failed_only, Msg::SetFailedOnly),
@@ -407,6 +431,7 @@ fn settings(app: &App) -> El<'_> {
         idle,
         width,
         lang,
+        editor,
         scripts(app),
         allowed(app),
         text(s.set_kept).size(11.5).color(t.fg_3),

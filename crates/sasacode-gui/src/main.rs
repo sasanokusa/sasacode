@@ -25,6 +25,7 @@ mod nav;
 mod outline;
 mod overlay;
 mod plugins;
+mod restore;
 mod review;
 mod rows;
 mod runner;

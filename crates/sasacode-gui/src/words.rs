@@ -301,6 +301,11 @@ words! {
     side_bring: "このやり取りを入力欄に引用する", "Quote this in the input";
     title_write: "モデルに題名を付けさせる", "Have the model title it";
     set_auto_title: "名前のない会話に、モデルが題名を付ける（最初の実行のあと）", "The model titles unnamed conversations (after their first run)";
+    set_notify_done: "実行が終わったとき", "When a run ends";
+    set_notify_wait: "答えを待っているとき", "When a run waits for an answer";
+    set_sound: "通知で音を鳴らす", "Play a sound with notifications";
+    set_editor: "ファイルを開くエディタ", "Editor files open in";
+    editor_ph: "空欄ならVS Codeか既定のアプリ（例: zed、subl）", "Empty: VS Code or the system's (e.g. zed, subl)";
     k_back: "前に見ていた会話へ戻る", "Back to the conversation left";
     k_forward: "戻る前の会話へ進む", "Forward again";
     k_pin: "ピン留めする・外す", "Pin or unpin";

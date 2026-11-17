@@ -2295,3 +2295,100 @@ fn back_and_forward_go_between_the_conversations_opened_and_keys_change_the_next
     ));
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Real logs for the window's second and third conversations, in a folder of `tag`'s.
+fn real_logs(app: &mut App, tag: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("sasacode-gui-{tag}-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    for (i, name) in ["a.jsonl", "b.jsonl"].into_iter().enumerate() {
+        let path = dir.join(name);
+        let lines = [
+            serde_json::json!({"type":"session","version":3,"id":name,"cwd":"/w","createdAt":"2026-01-01T00:00:00.000Z"}),
+            serde_json::json!({"type":"message","message":{"role":"user","content":[{"type":"text","text":name}],"timestamp":1}}),
+        ];
+        std::fs::write(&path, lines.iter().map(|l| format!("{l}\n")).collect::<String>()).unwrap();
+        app.sessions[i + 1].path = path;
+    }
+    dir
+}
+
+#[test]
+fn a_folders_window_opens_again_on_its_last_conversation_choices_and_drafts() {
+    let mut app = window("ja");
+    let dir = real_logs(&mut app, "restore");
+    let (a, b) = (app.sessions[1].clone(), app.sessions[2].clone());
+    // What a run used becomes the folder's.
+    app.model = "a/m".into();
+    app.permission = Some("agent");
+    app.effort = Some("high");
+    let key = app.chat.key;
+    let _ = app.start_run(key, "はじめ".into(), false);
+    let folder = &app.prefs.more.folders[&app.folder_key()];
+    assert_eq!(
+        (folder.model.as_str(), folder.permission.as_deref()),
+        ("a/m", Some("agent"))
+    );
+    // Typed and left: kept by the conversation's id; the last one shown is the folder's.
+    assert!(app.open_session(&a.path));
+    app.set_input("あとで送る");
+    assert!(app.open_session(&b.path));
+    assert_eq!(app.prefs.more.drafts.get(&a.id).map(String::as_str), Some("あとで送る"));
+    app.set_input("こちらも");
+    let _ = app.update(Msg::Quit(iced::window::Id::unique()));
+    assert_eq!(
+        app.prefs.more.folders[&app.folder_key()].last.as_deref(),
+        Some(b.id.as_str())
+    );
+    assert_eq!(app.prefs.more.drafts.get(&b.id).map(String::as_str), Some("こちらも"));
+
+    // A new window of the folder: as it was left, but never running everything without asking.
+    let mut prefs = app.prefs.clone();
+    prefs.more.folders.get_mut(&app.folder_key()).unwrap().permission = Some("auto".into());
+    let mut again = window("ja");
+    let _ = real_logs(&mut again, "restore");
+    again.prefs = prefs;
+    again.restore_folder(false);
+    assert_eq!(again.chat.session.as_deref(), Some(b.id.as_str()));
+    assert_eq!(again.chat.editor.text().trim_end(), "こちらも");
+    assert_eq!(
+        (again.model.as_str(), again.permission, again.effort),
+        ("a/m", None, Some("high"))
+    );
+    assert!(again.open_session(&a.path));
+    assert_eq!(again.chat.editor.text().trim_end(), "あとで送る");
+    // Sent, it is no longer kept.
+    let key = again.chat.key;
+    let _ = again.start_run(key, "あとで送る".into(), false);
+    assert!(!again.prefs.more.drafts.contains_key(&a.id));
+
+    // A new conversation's draft is the folder's, and comes back when the window opens on one.
+    let mut fresh = window("ja");
+    let _ = fresh.update(Msg::NewSession);
+    fresh.set_input("新しい話");
+    let _ = fresh.update(Msg::Quit(iced::window::Id::unique()));
+    let mut next = window("ja");
+    next.prefs = fresh.prefs.clone();
+    next.restore_folder(false);
+    assert!(next.chat.session.is_none());
+    assert_eq!(next.chat.editor.text().trim_end(), "新しい話");
+    // Asked for one, the window opens on it and not on the last.
+    let mut asked = window("ja");
+    asked.prefs = app.prefs.clone();
+    asked.restore_folder(true);
+    assert!(asked.chat.session.is_none());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn the_settings_choose_the_notifications_their_sound_and_the_editor() {
+    let mut app = window("ja");
+    let _ = app.update(Msg::Show(Some(crate::app::Overlay::Settings)));
+    let w = crate::words::JA;
+    // A switch's label is not text the simulator finds; the editor's heading is.
+    assert!(says(&app, w.set_editor) && says(&app, w.editor_ph));
+    let _ = app.update(Msg::SetQuietWait(true));
+    let _ = app.update(Msg::SetSound(true));
+    let _ = app.update(Msg::SetEditor("zed".into()));
+    assert!(app.prefs.more.quiet_wait && !app.prefs.more.quiet_done && app.prefs.more.sound);
+    assert_eq!(app.prefs.more.editor, "zed");
+}

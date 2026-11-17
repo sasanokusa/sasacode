@@ -395,7 +395,7 @@ impl App {
                 system::terminal(&self.cwd);
             }
             Command::Editor => {
-                system::editor(&self.cwd);
+                system::editor_with(&self.cwd, &self.prefs.more.editor);
             }
             Command::Worktree => return self.worktree(),
             Command::Settings => self.overlay = Some(Overlay::Settings),

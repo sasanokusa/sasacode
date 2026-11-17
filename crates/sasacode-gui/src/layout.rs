@@ -193,6 +193,28 @@ pub struct More {
     pub allowed: BTreeMap<String, Vec<String>>,
     /// A conversation the user has not named gets a title the model writes, after its first run.
     pub auto_title: bool,
+    /// The editor files are opened in: a command and its arguments; empty, VS Code or the
+    /// system's.
+    pub editor: String,
+    /// No notification when a run ends, or when one waits for an answer; a sound with those sent.
+    pub quiet_done: bool,
+    pub quiet_wait: bool,
+    pub sound: bool,
+    /// What each folder's last run used, and the conversation last shown there, by its path.
+    pub folders: BTreeMap<String, Folder>,
+    /// What was typed and not sent in each conversation, by its id, kept over a restart.
+    pub drafts: BTreeMap<String, String>,
+}
+
+/// What a folder's window starts with.
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct Folder {
+    pub model: String,
+    pub permission: Option<String>,
+    pub effort: Option<String>,
+    /// The conversation last shown.
+    pub last: Option<String>,
 }
 
 impl More {
@@ -208,9 +230,21 @@ impl More {
         let (mine, kept) = (object(self), object(kept));
         let mut all = object(disk);
         for (key, value) in mine {
-            if kept.get(&key) != Some(&value) {
-                all.insert(key, value);
+            let before = kept.get(&key);
+            if before == Some(&value) {
+                continue;
             }
+            // A map goes entry by entry, as the names do: two windows of two folders keep both.
+            let merged = match (&value, before, all.get(&key)) {
+                (Value::Object(m), Some(Value::Object(k)), Some(Value::Object(d))) => {
+                    let map = |o: &serde_json::Map<String, Value>| -> BTreeMap<String, Value> {
+                        o.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
+                    };
+                    Value::Object(merge_map(&map(m), &map(k), &map(d)).into_iter().collect())
+                }
+                _ => value,
+            };
+            all.insert(key, merged);
         }
         serde_json::from_value(Value::Object(all)).unwrap_or_else(|_| self.clone())
     }
@@ -659,6 +693,20 @@ mod tests {
                 queue: true,
                 allowed: BTreeMap::from([("s1".into(), vec!["bash(npm test)".into()])]),
                 auto_title: true,
+                editor: "zed -n".into(),
+                quiet_done: true,
+                quiet_wait: false,
+                sound: true,
+                folders: BTreeMap::from([(
+                    "/w".into(),
+                    Folder {
+                        model: "local/gemma4".into(),
+                        permission: Some("ask".into()),
+                        effort: None,
+                        last: Some("s1".into()),
+                    },
+                )]),
+                drafts: BTreeMap::from([("s1".into(), "途中".into())]),
             },
         };
         write(&file, &Layout::default(), &prefs).unwrap();
@@ -678,6 +726,34 @@ mod tests {
         assert_eq!(read.names.len(), 1);
         assert!(read.pinned.is_empty() && read.enter_sends && read.steps);
         std::fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn two_windows_keep_each_others_folders_and_drafts() {
+        let folder = |model: &str| Folder {
+            model: model.to_owned(),
+            ..Folder::default()
+        };
+        let kept = More::default();
+        // Another window, of another folder, wrote its own since this one read the file.
+        let mut disk = More::default();
+        disk.folders.insert("/b".into(), folder("b/m"));
+        disk.drafts.insert("s2".into(), "half".into());
+        disk.sound = true;
+        let mut mine = More::default();
+        mine.folders.insert("/a".into(), folder("a/m"));
+        let all = mine.over(&kept, &disk);
+        assert_eq!(all.folders.len(), 2);
+        assert_eq!(all.drafts.get("s2").map(String::as_str), Some("half"));
+        assert!(all.sound);
+        // An entry this window took away goes; one it changed is its.
+        let kept = all.clone();
+        let mut mine = all.clone();
+        mine.drafts.remove("s2");
+        mine.folders.insert("/b".into(), folder("b/n"));
+        let all = mine.over(&kept, &kept);
+        assert!(all.drafts.is_empty());
+        assert_eq!(all.folders["/b"].model, "b/n");
     }
 
     #[test]

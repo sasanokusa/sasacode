@@ -126,6 +126,10 @@ impl App {
             Msg::WriteTitle(id) => self.write_title(&id, true),
             Msg::Titled(id, asked, answer) => self.titled(id, asked, answer),
             Msg::SetAutoTitle(on) => self.set(|p| p.more.auto_title = on),
+            Msg::SetQuietDone(quiet) => self.set(|p| p.more.quiet_done = quiet),
+            Msg::SetQuietWait(quiet) => self.set(|p| p.more.quiet_wait = quiet),
+            Msg::SetSound(on) => self.set(|p| p.more.sound = on),
+            Msg::SetEditor(command) => self.set(|p| p.more.editor = command),
             Msg::SideType(typed) => {
                 self.side_typed = typed;
                 Task::none()

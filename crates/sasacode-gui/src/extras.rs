@@ -50,12 +50,16 @@ impl App {
         let task = match msg {
             Msg::CloseAsked(id) => {
                 if self.runs_going() == 0 {
+                    self.keep_all_drafts();
                     return Ok(window::close(id));
                 }
                 self.overlay = Some(Overlay::Quit(id));
                 Task::none()
             }
-            Msg::Quit(id) => window::close(id),
+            Msg::Quit(id) => {
+                self.keep_all_drafts();
+                window::close(id)
+            }
             Msg::AutoAgree => {
                 let _ = self.set(|p| p.more.auto_agreed = true);
                 self.overlay = None;
