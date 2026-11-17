@@ -223,7 +223,7 @@ test("--control needs stdio, -p and --output jsonl, and says so before anything 
     expect(r.stdout).toBe("");
   }
   expect(server.requests).toHaveLength(0);
-});
+}, 30_000); // each starts the CLI more than once: slow on Windows runners
 
 test("--append-system-prompt-file adds the file's text after the config's instructions", async () => {
   const { server, box } = setup([{ text: "ok" }, { text: "ok" }], { instructions: "FROM-CONFIG" });
@@ -241,7 +241,7 @@ test("--append-system-prompt-file adds the file's text after the config's instru
   writeFileSync(empty, "");
   expect((await box.run(["-p", "hi", "--append-system-prompt-file", empty])).code).toBe(0);
   expect(JSON.stringify(server.requests[1].messages[0])).not.toContain("FROM-FILE");
-});
+}, 30_000); // each starts the CLI more than once: slow on Windows runners
 
 test("--append-system-prompt-file with a file that cannot be read fails before the run", async () => {
   const { server, box } = setup([{ text: "never asked" }]);
@@ -251,7 +251,7 @@ test("--append-system-prompt-file with a file that cannot be read fails before t
     expect(r.stderr).toContain(`failed to read ${path}`);
   }
   expect(server.requests).toHaveLength(0);
-});
+}, 30_000); // each starts the CLI more than once: slow on Windows runners
 
 test("-m with a model the provider does not list fails before anything runs, naming close ones", async () => {
   server = fakeServer([{ text: "never asked" }, { text: "ok" }], [{ id: "m" }, { id: "big-model" }]);
