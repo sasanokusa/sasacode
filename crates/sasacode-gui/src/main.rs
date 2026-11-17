@@ -28,6 +28,7 @@ mod list;
 mod nav;
 mod outline;
 mod overlay;
+mod plan;
 mod plugins;
 mod restore;
 mod review;

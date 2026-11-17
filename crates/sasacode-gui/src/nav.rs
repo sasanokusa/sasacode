@@ -88,7 +88,13 @@ impl App {
                     Some(_) => None,
                 };
                 // auto is chosen with a click, where what it does is said first.
-                let next = if next == Some("auto") { None } else { next };
+                let next = match next {
+                    Some("auto") => PERMISSIONS.iter().copied().find(|p| *p == crate::plan::MODE),
+                    other => other,
+                };
+                if next == Some(crate::plan::MODE) {
+                    self.before_plan = self.permission;
+                }
                 self.permission = next;
                 self.toast = Some(format!(
                     "{}: {}",

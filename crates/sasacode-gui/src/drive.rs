@@ -2118,6 +2118,7 @@ fn what_always_allowed_is_kept_for_the_conversations_later_runs_and_can_be_taken
         allow: app.prefs.more.allowed["s-always"].clone(),
         trust_project: false,
         slash: false,
+        system_file: None,
     };
     assert!(spec.args().windows(2).any(|w| w == ["--allow", "bash(echo one)"]));
     let _ = app.update(Msg::ForgetAllowed("bash(echo one)".into()));
@@ -2336,7 +2337,10 @@ fn back_and_forward_go_between_the_conversations_opened_and_keys_change_the_next
     assert_eq!(app.effort, Some("low"));
     app.permission = Some("agent");
     tap(&mut app, "l", true);
-    assert_eq!(app.permission, None, "auto is never reached by the key");
+    assert_eq!(app.permission, Some("plan"), "auto is never reached by the key");
+    assert_eq!(app.before_plan, Some("agent"));
+    tap(&mut app, "l", true);
+    assert_eq!(app.permission, None);
     assert!(matches!(
         shortcut(&Key::Character("[".into()), Modifiers::COMMAND),
         Some(Msg::Back)
@@ -2777,4 +2781,77 @@ fn worktrees_are_readied_by_the_folders_command_listed_and_offered_to_remove_but
         Err("contains modified or untracked files".into()),
     ));
     assert!(app.toast.as_deref().is_some_and(|t| t.contains("modified")));
+}
+
+/// Plan mode: the run is asked under `ask` and told to plan; a write it asks for is denied by the
+/// window, a command is put to the user, and the plan, once written, is gone ahead with in the
+/// mode chosen before.
+#[test]
+fn plan_mode_denies_writes_asks_commands_and_goes_ahead_in_the_mode_chosen_before() {
+    let mut app = window("ja");
+    app.permission = Some("agent");
+    let _ = app.update(Msg::Permission("plan"));
+    assert_eq!((app.permission, app.before_plan), (Some("plan"), Some("agent")));
+    let key = app.chat.key;
+    let _ = app.start(key, "注文一覧のページングを直す計画を立てて".into());
+    let (tx, mut written) = tokio::sync::mpsc::unbounded_channel();
+    let _ = app.update(Msg::Run(key, crate::runner::RunUpdate::Started(tx)));
+    let prompt = app.home.as_ref().unwrap().join("gui").join("plan-mode.md");
+    assert!(std::fs::read_to_string(&prompt).unwrap().contains("# Plan mode"));
+
+    told(
+        &mut app,
+        serde_json::json!({"type": "approval_request", "id": "ap-1", "callId": "c-1", "tool": "edit",
+            "args": {"path": "src/orders.rs"}, "reason": "", "cwd": "/Users/me/src/orders-api"}),
+    );
+    let denied = "プランモードでは書き込みと編集をしません。計画を書いてください。";
+    assert_eq!(
+        written.try_recv().ok(),
+        Some(ControlMessage::Approval {
+            id: "ap-1".into(),
+            decision: Decision::Deny,
+            feedback: Some(denied.into()),
+            args: None,
+        })
+    );
+    assert_eq!(answer_of(&app, "ap-1"), Some(Answer::Denied(denied.into())));
+    assert!(app.chat.transcript.pending_approval().is_none());
+
+    // A command may only look: the user is asked.
+    told(
+        &mut app,
+        serde_json::json!({"type": "approval_request", "id": "ap-2", "callId": "c-2", "tool": "bash",
+            "args": {"command": "rg -n page src"}, "reason": "", "cwd": "/Users/me/src/orders-api"}),
+    );
+    assert!(written.try_recv().is_err());
+    assert_eq!(
+        app.chat.transcript.pending_approval().map(|a| a.id.as_str()),
+        Some("ap-2")
+    );
+    let _ = app.update(Msg::Answer(Decision::Allow));
+    let _ = written.try_recv();
+
+    told(&mut app, serde_json::json!({"type": "agent_end", "cause": "done"}));
+    let _ = app.update(Msg::Run(key, crate::runner::RunUpdate::Exited(Some(0))));
+    assert!(!app.busy());
+    assert!(says(&app, "計画ができました。読んで、よければ進めます"));
+    assert!(says(&app, "この計画で進める"));
+
+    let _ = app.update(Msg::PlanGo);
+    assert_eq!(app.permission, Some("agent"));
+    assert!(!app.chat.planned && app.running());
+    assert!(!says(&app, "この計画で進める"));
+    std::fs::remove_file(prompt).ok();
+}
+
+/// Plan mode is the window's: a folder opened again starts in the mode before it, as for auto.
+#[test]
+fn plan_mode_is_not_taken_up_again_when_the_folder_is_opened() {
+    let mut app = window("ja");
+    let _ = app.update(Msg::Permission("plan"));
+    let mut prefs = app.prefs.clone();
+    prefs.more.folders.entry(app.folder_key()).or_default().permission = Some("plan".into());
+    app.prefs = prefs;
+    app.restore_folder(true);
+    assert_eq!(app.permission, None);
 }

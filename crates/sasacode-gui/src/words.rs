@@ -156,6 +156,12 @@ words! {
     set_setup: "ワークツリーの準備（このフォルダ）", "Readying a worktree (this folder)";
     setup_ph: "作った後に走らせるコマンド（例: npm install）", "A command run in a new worktree (e.g. npm install)";
     c_open_folder: "フォルダを開く…", "Open a folder…";
+    mode_plan: "調べて計画を書きます。書き込みと編集は断り、コマンドは確認します", "Looks into it and writes a plan: writes and edits are denied, commands are asked";
+    plan_denied: "プランモードでは書き込みと編集をしません。計画を書いてください。", "Plan mode changes no files. Write the plan instead.";
+    plan_ready: "計画ができました。読んで、よければ進めます", "The plan is written. Read it, then go ahead if it is right";
+    plan_go: "この計画で進める", "Go ahead with it";
+    plan_go_mode: "{mode}で進めます", "Runs in {mode}";
+    plan_go_prompt: "計画どおりに進めてください。", "Go ahead with the plan.";
     copy_link: "この会話を開くリンクをコピー", "Copy a link that opens this conversation";
     copy_log: "会話のログのパスをコピー", "Copy the conversation log's path";
     exported: "{path}に書き出しました", "Written to {path}";

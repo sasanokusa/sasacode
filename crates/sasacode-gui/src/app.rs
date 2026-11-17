@@ -52,7 +52,9 @@ const COPIED_FOR: Duration = Duration::from_millis(1600);
 /// How often a pull request's running checks are looked at again.
 const CHECKS_EVERY: Duration = Duration::from_secs(45);
 
-pub const PERMISSIONS: [&str; 4] = ["edits", "ask", "agent", "auto"];
+/// The permission modes, as the CLI's, and plan mode, the window's: a run that reads and plans,
+/// asked under `ask` with reads allowed, whose writes and edits are denied ([`crate::plan`]).
+pub const PERMISSIONS: [&str; 5] = ["edits", "ask", "agent", "auto", "plan"];
 /// `--thinking`.
 pub const EFFORTS: [&str; 6] = ["off", "low", "medium", "high", "xhigh", "max"];
 
@@ -245,6 +247,8 @@ pub struct App {
     pub(crate) usage_part: crate::usage::Part,
     /// The worktrees made here, once read for their list.
     pub(crate) worktree_list: Option<Vec<crate::worktrees::Tree>>,
+    /// The permission mode before plan mode was chosen.
+    pub(crate) before_plan: Option<&'static str>,
     /// The next side question, as it is typed.
     pub(crate) side_typed: String,
     /// Conversations whose title the model is writing.
@@ -384,6 +388,8 @@ pub(crate) struct Chat {
     pub(crate) log_seen: Option<crate::watch::Seen>,
     /// The model its runs use, over the window's: one of several a message was sent to.
     pub(crate) model: Option<String>,
+    /// Its last run, in plan mode, ended with a plan: to go ahead with.
+    pub(crate) planned: bool,
 }
 
 impl Chat {
@@ -407,6 +413,7 @@ impl Chat {
             scratch: false,
             log_seen: None,
             model: None,
+            planned: false,
         }
     }
 
@@ -450,6 +457,8 @@ struct Run {
     stderr: Vec<String>,
     /// `agent_end` arrived: the run is over and its process is closing.
     ended: bool,
+    /// In plan mode: its writes and edits are denied.
+    plan: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -601,6 +610,8 @@ pub enum Msg {
     PrAsDraft(bool),
     /// The pull request left to `gh pr create --fill`.
     PrFill,
+    /// The plan written in plan mode, gone ahead with in the mode chosen before.
+    PlanGo,
     /// The next message guessed, put in the input or put away.
     TakeSuggestion,
     DropSuggestion,
@@ -957,6 +968,7 @@ impl App {
             usage_here: false,
             usage_part: crate::usage::Part::All,
             worktree_list: None,
+            before_plan: None,
             side_typed: String::new(),
             titling: Default::default(),
             back: Vec::new(),
@@ -1108,6 +1120,7 @@ impl App {
             _handle: None,
             stderr: Vec::new(),
             ended: false,
+            plan: false,
         });
         written
     }
@@ -1355,8 +1368,23 @@ impl App {
             Msg::Permission("auto") if !self.prefs.more.auto_agreed => {
                 self.overlay = Some(Overlay::ConfirmAuto);
             }
-            Msg::Permission(p) => self.permission = PERMISSIONS.contains(&p).then_some(p),
+            Msg::Permission(p) => {
+                // The mode plan mode is left for, when its plan is gone ahead with.
+                if p == crate::plan::MODE && self.permission != Some(crate::plan::MODE) {
+                    self.before_plan = self.permission;
+                }
+                self.permission = PERMISSIONS.contains(&p).then_some(p);
+            }
             Msg::Effort(e) => self.effort = EFFORTS.contains(&e).then_some(e),
+            Msg::PlanGo => {
+                if self.permission != Some(crate::plan::MODE) || self.busy() {
+                    return Task::none();
+                }
+                self.permission = self.before_plan.take();
+                self.chat.planned = false;
+                let said = self.s.w().plan_go_prompt.to_owned();
+                return self.start(self.chat.key, said);
+            }
             Msg::ToggleSide => {
                 self.side = !self.shows_side();
                 // In a narrow window the two side panels take turns.
@@ -2038,6 +2066,7 @@ impl App {
             allow: Vec::new(),
             trust_project: self.trust_once,
             slash,
+            system_file: None,
         };
         // What "always" allowed in its earlier runs.
         let session = std::iter::once(&self.chat)
@@ -2048,6 +2077,10 @@ impl App {
             && let Some(rules) = session.and_then(|id| self.prefs.more.allowed.get(id))
         {
             spec.allow = rules.clone();
+        }
+        let plan = key != SIDE && self.permission == Some(crate::plan::MODE);
+        if plan {
+            crate::plan::shape(&mut spec, self.plan_file());
         }
         if key == SIDE {
             // A side question reads; what would change something is asked, and denied.
@@ -2072,12 +2105,14 @@ impl App {
         chat.loaded = false;
         spec.prompt = prompt;
         spec.resume = chat.session.clone();
+        chat.planned = false;
         let (task, handle) = Task::run(runner::run(spec), move |update| Msg::Run(key, update)).abortable();
         chat.run = Some(Run {
             control: None,
             _handle: Some(handle.abort_on_drop()),
             stderr: Vec::new(),
             ended: false,
+            plan,
         });
         self.now = now;
         self.hold_awake();
@@ -2130,6 +2165,8 @@ impl App {
                 }
                 if let Some(cause) = effect.ended {
                     run.ended = true;
+                    // A plan written: offered to go ahead with.
+                    chat.planned = run.plan && cause == StopCause::Done;
                     chat.unread |= !shown;
                     news = Some(if cause == StopCause::Done {
                         s.n_done
@@ -2137,8 +2174,25 @@ impl App {
                         s.n_stopped
                     });
                 }
+                let plan_denies = effect.approval.as_ref().is_some_and(|id| {
+                    run.plan
+                        && chat
+                            .transcript
+                            .approval_by_id(id)
+                            .is_some_and(|a| crate::plan::denies(&a.tool))
+                });
                 if let Some(id) = effect.approval {
-                    if key == SIDE {
+                    if plan_denies {
+                        // Plan mode: nothing is written until the plan is gone ahead with.
+                        let said = s.w().plan_denied.to_owned();
+                        chat.control(ControlMessage::Approval {
+                            id: id.clone(),
+                            decision: Decision::Deny,
+                            feedback: Some(said.clone()),
+                            args: None,
+                        });
+                        chat.transcript.answer_approval(&id, Answer::Denied(said));
+                    } else if key == SIDE {
                         // Nothing a side question does is let change anything.
                         let feedback = Some(s.side_denied.to_owned());
                         chat.control(ControlMessage::Approval {

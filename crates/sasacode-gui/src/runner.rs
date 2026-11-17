@@ -35,6 +35,8 @@ pub struct RunSpec {
     pub trust_project: bool,
     /// The prompt is a plugin's slash command, run as one (`--slash`).
     pub slash: bool,
+    /// Added to the system prompt (`--append-system-prompt-file`): what plan mode asks.
+    pub system_file: Option<PathBuf>,
 }
 
 impl RunSpec {
@@ -65,6 +67,10 @@ impl RunSpec {
         }
         if self.slash {
             args.push("--slash".into());
+        }
+        if let Some(file) = &self.system_file {
+            args.push("--append-system-prompt-file".into());
+            args.push(file.to_string_lossy().into_owned());
         }
         for rule in &self.allow {
             args.push("--allow".into());

@@ -591,6 +591,11 @@ impl Transcript {
         self.approvals().find(|a| a.call_id == call_id)
     }
 
+    /// The approval asked as `id`.
+    pub fn approval_by_id(&self, id: &str) -> Option<&Approval> {
+        self.approvals().find(|a| a.id == id)
+    }
+
     /// The approval to answer next: the one that has waited longest.
     pub fn pending_approval(&self) -> Option<&Approval> {
         self.approvals().find(|a| a.answer.is_none())

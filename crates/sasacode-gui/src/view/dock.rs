@@ -66,6 +66,9 @@ pub fn dock(app: &App) -> El<'_> {
     if !app.chat.follow.is_empty() {
         col = col.push(Above::Follow, follow_ups(app));
     }
+    if let Some(planned) = planned(app) {
+        col = col.push(Above::Plan, planned);
+    }
     col = col.push(Above::Input, composer(app)).push(Above::Hints, hints(app));
     container(container(col).max_width(col_w(app)))
         .center_x(Length::Fill)
@@ -91,6 +94,7 @@ enum Above {
     Suggestion,
     Branch,
     Follow,
+    Plan,
     Input,
     Hints,
 }
@@ -132,6 +136,37 @@ fn suggested(app: &App) -> Option<El<'_>> {
         ]
         .spacing(4)
         .align_y(Alignment::Center)
+        .into(),
+    )
+}
+
+/// A plan run's plan, written: gone ahead with in the mode chosen before plan mode.
+fn planned(app: &App) -> Option<El<'_>> {
+    let (t, w) = (app.t, app.s.w());
+    if !app.chat.planned || app.busy() || app.permission != Some(crate::plan::MODE) {
+        return None;
+    }
+    let mode = app.before_plan.unwrap_or(app.s.default_tag);
+    Some(
+        container(
+            row![
+                icon(Icon::List, 13.0, t.accent),
+                text(w.plan_ready).size(12.5).color(t.fg).width(Length::Fill),
+                tip(
+                    t,
+                    button(text(w.plan_go).size(12))
+                        .padding([4, 12])
+                        .style(t.primary())
+                        .on_press(Msg::PlanGo),
+                    fill(w.plan_go_mode, "mode", mode),
+                    tooltip::Position::Top,
+                ),
+            ]
+            .spacing(8)
+            .align_y(Alignment::Center),
+        )
+        .padding([6, 10])
+        .style(t.boxed(t.accent_wash, t.accent, crate::theme::RADIUS))
         .into(),
     )
 }
@@ -815,6 +850,7 @@ fn composer(app: &App) -> El<'_> {
         Some("ask") => s.mode_ask,
         Some("agent") => s.mode_agent,
         Some("auto") => s.mode_auto,
+        Some(crate::plan::MODE) => s.w().mode_plan,
         _ => s.next_run,
     };
     let mode = tip(

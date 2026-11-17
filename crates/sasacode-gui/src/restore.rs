@@ -26,7 +26,7 @@ impl App {
         self.permission = folder
             .permission
             .as_deref()
-            .filter(|p| *p != "auto")
+            .filter(|p| *p != "auto" && *p != crate::plan::MODE)
             .and_then(|p| PERMISSIONS.iter().copied().find(|x| *x == p));
         self.effort = folder
             .effort
