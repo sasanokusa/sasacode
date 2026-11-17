@@ -18,12 +18,25 @@ pub struct KeyVariable {
 pub fn key_variables(providers: &IndexMap<String, ProviderConfig>) -> Vec<KeyVariable> {
     let mut seen: IndexMap<String, KeyVariable> = IndexMap::new();
     for (provider, p) in providers {
-        let (Some(env), Some(label)) = (&p.api_key_env, &p.label) else { continue };
+        let (Some(env), Some(label)) = (&p.api_key_env, &p.label) else {
+            continue;
+        };
         if env.is_empty() || label.is_empty() || seen.contains_key(env) {
             continue;
         }
-        let example = p.default_model.as_ref().filter(|m| !m.is_empty()).map(|m| format!("{provider}/{m}"));
-        seen.insert(env.clone(), KeyVariable { name: env.clone(), label: label.clone(), example });
+        let example = p
+            .default_model
+            .as_ref()
+            .filter(|m| !m.is_empty())
+            .map(|m| format!("{provider}/{m}"));
+        seen.insert(
+            env.clone(),
+            KeyVariable {
+                name: env.clone(),
+                label: label.clone(),
+                example,
+            },
+        );
     }
     seen.into_values().collect()
 }
@@ -35,9 +48,18 @@ pub fn ensure_env_file(path: &Path, providers: &IndexMap<String, ProviderConfig>
         return Ok(false);
     }
     let mut lines = vec![
-        format!("# {}", t!("sasacode API keys. Fill in the providers you use; blank entries are ignored.")),
-        format!("# {}", t!("Read on every start, from any directory. A project's ./.env is not read.")),
-        format!("# {}", t!("Commands the agent runs (bash, background jobs) do not see what is set here.")),
+        format!(
+            "# {}",
+            t!("sasacode API keys. Fill in the providers you use; blank entries are ignored.")
+        ),
+        format!(
+            "# {}",
+            t!("Read on every start, from any directory. A project's ./.env is not read.")
+        ),
+        format!(
+            "# {}",
+            t!("Commands the agent runs (bash, background jobs) do not see what is set here.")
+        ),
         String::new(),
     ];
     for k in key_variables(providers) {
@@ -49,7 +71,10 @@ pub fn ensure_env_file(path: &Path, providers: &IndexMap<String, ProviderConfig>
         lines.push(format!("{}=", k.name));
         lines.push(String::new());
     }
-    lines.push(format!("# {}", t!("Ollama (ollama/<model>) runs locally and needs no key.")));
+    lines.push(format!(
+        "# {}",
+        t!("Ollama (ollama/<model>) runs locally and needs no key.")
+    ));
     lines.push(String::new());
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
@@ -63,7 +88,9 @@ pub fn ensure_env_file(path: &Path, providers: &IndexMap<String, ProviderConfig>
 /// secrets (kept from child processes). The caller sets them (setting the environment is only
 /// sound before other threads run: see main).
 pub fn parse_env_file(path: &Path, is_set: impl Fn(&str) -> bool) -> Vec<(String, String)> {
-    let Ok(bytes) = std::fs::read(path) else { return Vec::new() };
+    let Ok(bytes) = std::fs::read(path) else {
+        return Vec::new();
+    };
     let text = String::from_utf8_lossy(&bytes);
     // INFALLIBLE: constant patterns.
     let line_re = Regex::new(r"^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$").unwrap();
@@ -118,10 +145,16 @@ mod tests {
         )
         .unwrap();
         let got = parse_env_file(&p, |n| n == "SET_KEY");
-        let want: Vec<(String, String)> = [("A_KEY", "one"), ("B_KEY", "two"), ("D_KEY", "three"), ("E_KEY", "\"q'"), ("F_KEY", "x")]
-            .iter()
-            .map(|(a, b)| (a.to_string(), b.to_string()))
-            .collect();
+        let want: Vec<(String, String)> = [
+            ("A_KEY", "one"),
+            ("B_KEY", "two"),
+            ("D_KEY", "three"),
+            ("E_KEY", "\"q'"),
+            ("F_KEY", "x"),
+        ]
+        .iter()
+        .map(|(a, b)| (a.to_string(), b.to_string()))
+        .collect();
         assert_eq!(got, want);
         assert!(parse_env_file(&dir.path().join("missing"), |_| false).is_empty());
     }
@@ -139,7 +172,12 @@ mod ts_tests {
         let providers = sasacode_host::builtin_providers();
         assert!(ensure_env_file(&path, providers).unwrap());
         let text = std::fs::read_to_string(&path).unwrap();
-        for name in ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY", "CMD_API_KEY"] {
+        for name in [
+            "ANTHROPIC_API_KEY",
+            "OPENAI_API_KEY",
+            "OPENROUTER_API_KEY",
+            "CMD_API_KEY",
+        ] {
             assert!(text.contains(&format!("\n{name}=\n")), "{name}");
         }
         assert_eq!(text.matches("OPENAI_API_KEY=").count(), 1); // openai and openai-chat share one key
@@ -151,14 +189,26 @@ mod ts_tests {
         std::fs::write(&path, "CMD_API_KEY=mine\n").unwrap();
         assert!(!ensure_env_file(&path, providers).unwrap()); // never overwritten
         let names: Vec<String> = key_variables(providers).into_iter().map(|k| k.name).collect();
-        assert_eq!(names, ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY", "CMD_API_KEY"]);
+        assert_eq!(
+            names,
+            [
+                "ANTHROPIC_API_KEY",
+                "OPENAI_API_KEY",
+                "OPENROUTER_API_KEY",
+                "CMD_API_KEY"
+            ]
+        );
     }
 
     #[test]
     fn blank_entries_mean_not_configured() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("blank.env");
-        std::fs::write(&path, "ANTHROPIC_API_KEY=\nOPENAI_API_KEY=\"\"\nCMD_API_KEY=abc\n# comment\n").unwrap();
+        std::fs::write(
+            &path,
+            "ANTHROPIC_API_KEY=\nOPENAI_API_KEY=\"\"\nCMD_API_KEY=abc\n# comment\n",
+        )
+        .unwrap();
         let providers = sasacode_host::builtin_providers();
         // e.g. from a project .env Bun loaded
         let env = |n: &str| (n == "OPENROUTER_API_KEY").then(|| "   ".to_string());
@@ -166,6 +216,9 @@ mod ts_tests {
         let set = parse_env_file(&path, |_| false);
         assert_eq!(set, [("CMD_API_KEY".to_string(), "abc".to_string())]);
         let vars = |n: &str| (n == "CMD_API_KEY").then(|| "abc".to_string());
-        assert_eq!(sasacode_host::default_model_for_env(providers, vars), "commandcode/deepseek/deepseek-v4-flash");
+        assert_eq!(
+            sasacode_host::default_model_for_env(providers, vars),
+            "commandcode/deepseek/deepseek-v4-flash"
+        );
     }
 }

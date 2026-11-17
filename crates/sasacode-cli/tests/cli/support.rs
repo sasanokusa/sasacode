@@ -284,6 +284,9 @@ pub fn isolated_with(env: &[(&str, &str)]) -> Role {
         .env("SASACODE_HOME", root.join("home"))
         .env("HOME", &root)
         .env("USERPROFILE", &root)
+        // The `ant auth login` profile is looked up here, never in the user's own config.
+        .env("ANTHROPIC_CONFIG_DIR", root.join("anthropic"))
+        .env_remove("ANTHROPIC_PROFILE")
         .env("SASACODE_LANG", "en")
         .env("NO_COLOR", "1")
         .env(KEY_VAR, KEY)

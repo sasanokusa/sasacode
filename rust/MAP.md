@@ -24,15 +24,16 @@ State: `open`, `claimed by <who> <date>`, `done (<evidence>)`.
 | 1 | agent: agent, events, tool-exec, permission, plugins host, tool-search, system-prompt | done; permission globs = Bun.Glob on 2,303 recorded pairs (79b82b6); all TS tests ported (ecdb8eb) |
 | 2 | headless vertical slice: cli main/config/headless/control + builtin tools, e2e green | done: e2e 17/17 Rust, 17/18 TS (the 18th is ADR-002), app cases 34/34 (ae4d9bc) |
 | 3 | bundled table and ADR-011 switch (`sasacode-bundled/src/lib.rs`) | done by coordinator |
-| 3 | bundled: web-fetch, web-search, rustxng, browsr, openai-codex, usage, background-sessions, auto-reconnect, goal, gui, image-attach, image-slim, free-search | claimed by subagent N 2026-11-18 |
-| 3 | bundled: tool-repair, repair, text-tool-calls, guards, agents-md, compaction, diagnostics, subagent, todo, progress-notes, permission-presets, agent-judge, checkpoints, official plugins, jev-guard | claimed by subagent K 2026-11-18 |
-| 3 | tui | claimed by subagent T 2026-11-18 |
+| 3 | bundled: web-fetch, web-search, rustxng, browsr, openai-codex, usage, background-sessions, auto-reconnect, goal, gui, image-attach, image-slim, free-search | done: 83 net tests, all TS tests ported (37b7a35) |
+| 3 | bundled: tool-repair, repair, text-tool-calls, guards, agents-md, compaction, diagnostics, subagent, todo, progress-notes, permission-presets, agent-judge, checkpoints, official plugins, jev-guard | done: all TS tests ported (4eff22d); compaction checks the history still begins with what it summarized (the TS compared array identity) |
+| 3 | tui | done: 133 tests, every TS test ported (b976fae); CLI entry (`TuiHost`) claimed by subagent T 2026-11-18 |
 | 3 | cli: setup, catalog, endpoints, detect, env, keys, list-models, trust, update, stdin (loader: ADR-002) | done (1ed76bb, ae4d9bc); TUI entry waits for T |
 | 4 | xtask (build, checks, improve), CI and release workflows, install scripts | done (170c981); release.yml not run yet, its first run is the PR |
 | 4 | docs (READMEs, docs/*.md, landing page, built-in skill) | done (dd61b5e); site/docs/index.html claimed by subagent S 2026-11-18 |
-| 4 | Anthropic `ant auth login` profile fallback (the SDK did it; README promised it) | claimed by subagent P 2026-11-18 |
+| 4 | Anthropic `ant auth login` profile fallback (the SDK did it; README promised it) | done: `user_oauth` profiles, refresh and write-back, 401 retry (21 tests); `oidc_federation` is not ported and fails with the SDK's unknown-type error |
 | 4 | app record/replay (`rust/app-cases`, rust-anything) | done: 34 cases from TS 0.15.2 (61cd088) |
-| 4 | TS removal; GUI and protocol tests read TS sources and move to the Rust ones | open (coordinator, last) |
+| 4 | GUI and protocol tests read the Rust sources | done (6afa42d); protocol fixtures generator → Rust claimed by subagent F 2026-11-18 |
+| 4 | TS removal | open (coordinator, last) |
 
 ## Tests
 
@@ -47,7 +48,7 @@ Dropped:
 
 Still to port (owner: coordinator):
 - ~~agent tests~~: done (ecdb8eb). Three symlink tests are `#[cfg(unix)]`; the TS ran one on Windows with a junction.
-- cli tests (control, context-refresh, commands, cli headless parts): claimed by subagent C 2026-11-18.
+- ~~cli tests~~: done (4eff22d).
 - npm-launcher on Windows: the TS used a `bun build --compile` stand-in; needs a Windows CI job.
 
 ## Open checks (block the TS removal)

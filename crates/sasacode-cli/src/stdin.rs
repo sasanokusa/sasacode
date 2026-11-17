@@ -22,7 +22,9 @@ fn source() -> Source {
     #[cfg(unix)]
     {
         use std::os::fd::AsFd;
-        let Ok(st) = nix::sys::stat::fstat(stdin.as_fd()) else { return Source::None };
+        let Ok(st) = nix::sys::stat::fstat(stdin.as_fd()) else {
+            return Source::None;
+        };
         let kind = nix::sys::stat::SFlag::from_bits_truncate(st.st_mode) & nix::sys::stat::SFlag::S_IFMT;
         if kind == nix::sys::stat::SFlag::S_IFCHR {
             return Source::None; // a terminal or /dev/null

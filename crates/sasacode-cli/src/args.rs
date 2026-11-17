@@ -18,11 +18,21 @@ pub struct OptionSpec {
 }
 
 pub const fn string(name: &'static str, short: Option<char>) -> OptionSpec {
-    OptionSpec { name, kind: Kind::String, short, default: None }
+    OptionSpec {
+        name,
+        kind: Kind::String,
+        short,
+        default: None,
+    }
 }
 
 pub const fn boolean(name: &'static str, short: Option<char>) -> OptionSpec {
-    OptionSpec { name, kind: Kind::Boolean, short, default: None }
+    OptionSpec {
+        name,
+        kind: Kind::Boolean,
+        short,
+        default: None,
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -122,7 +132,12 @@ pub fn parse_args(args: &[String], options: &[OptionSpec]) -> Result<Parsed, Str
                 (Some(Kind::String), Some(_)) => (rest.pop_front(), false),
                 _ => (None, false),
             };
-            tokens.push(Token { name, raw_name: arg, value, inline_value });
+            tokens.push(Token {
+                name,
+                raw_name: arg,
+                value,
+                inline_value,
+            });
             continue;
         }
         if starts_short(&u) {
@@ -164,7 +179,12 @@ pub fn parse_args(args: &[String], options: &[OptionSpec]) -> Result<Parsed, Str
                 Some(i) if i > 0 => {
                     let name = arg[2..2 + i].to_string();
                     let value = arg[2 + i + 1..].to_string();
-                    tokens.push(Token { raw_name: format!("--{name}"), name, value: Some(value), inline_value: true });
+                    tokens.push(Token {
+                        raw_name: format!("--{name}"),
+                        name,
+                        value: Some(value),
+                        inline_value: true,
+                    });
                 }
                 _ => {
                     let name = arg[2..].to_string();
@@ -172,7 +192,12 @@ pub fn parse_args(args: &[String], options: &[OptionSpec]) -> Result<Parsed, Str
                         (Some(Kind::String), Some(_)) => (rest.pop_front(), false),
                         _ => (None, false),
                     };
-                    tokens.push(Token { name, raw_name: arg, value, inline_value });
+                    tokens.push(Token {
+                        name,
+                        raw_name: arg,
+                        value,
+                        inline_value,
+                    });
                 }
             }
             continue;
@@ -234,7 +259,12 @@ mod tests {
 
     const OPTIONS: &[OptionSpec] = &[
         string("print", Some('p')),
-        OptionSpec { name: "output", kind: Kind::String, short: None, default: Some("text") },
+        OptionSpec {
+            name: "output",
+            kind: Kind::String,
+            short: None,
+            default: Some("text"),
+        },
         string("model", Some('m')),
         boolean("continue", Some('c')),
         boolean("no-session", None),
@@ -255,7 +285,11 @@ mod tests {
                         },
                     );
                 }
-                format!("=> {} {}", serde_json::Value::Object(v), serde_json::to_string(&p.positionals).unwrap())
+                format!(
+                    "=> {} {}",
+                    serde_json::Value::Object(v),
+                    serde_json::to_string(&p.positionals).unwrap()
+                )
             }
             Err(e) => format!("!! {e}"),
         }
@@ -266,29 +300,65 @@ mod tests {
     #[test]
     fn matches_bun() {
         let cases: &[(&[&str], &str)] = &[
-            (&["--foo"], "!! Unknown option '--foo'. To specify a positional argument starting with a '-', place it at the end of the command after '--', as in '-- \"--foo\""),
-            (&["-x"], "!! Unknown option '-x'. To specify a positional argument starting with a '-', place it at the end of the command after '--', as in '-- \"-x\""),
+            (
+                &["--foo"],
+                "!! Unknown option '--foo'. To specify a positional argument starting with a '-', place it at the end of the command after '--', as in '-- \"--foo\"",
+            ),
+            (
+                &["-x"],
+                "!! Unknown option '-x'. To specify a positional argument starting with a '-', place it at the end of the command after '--', as in '-- \"-x\"",
+            ),
             (&["-p"], "!! Option '-p, --print <value>' argument missing"),
-            (&["--model", "-x"], "!! Option '--model' argument is ambiguous.\nDid you forget to specify the option argument for '--model'?\nTo specify an option argument starting with a dash use '--model=-XYZ'."),
-            (&["-m", "-x"], "!! Option '-m' argument is ambiguous.\nDid you forget to specify the option argument for '-m'?\nTo specify an option argument starting with a dash use '--model=-XYZ' or '-m-XYZ'."),
-            (&["--continue=1"], "!! Option '-c, --continue' does not take an argument"),
-            (&["-cp", "hi"], r#"=> {"continue":true,"print":"hi","output":"text"} []"#),
+            (
+                &["--model", "-x"],
+                "!! Option '--model' argument is ambiguous.\nDid you forget to specify the option argument for '--model'?\nTo specify an option argument starting with a dash use '--model=-XYZ'.",
+            ),
+            (
+                &["-m", "-x"],
+                "!! Option '-m' argument is ambiguous.\nDid you forget to specify the option argument for '-m'?\nTo specify an option argument starting with a dash use '--model=-XYZ' or '-m-XYZ'.",
+            ),
+            (
+                &["--continue=1"],
+                "!! Option '-c, --continue' does not take an argument",
+            ),
+            (
+                &["-cp", "hi"],
+                r#"=> {"continue":true,"print":"hi","output":"text"} []"#,
+            ),
             (&["-pc"], r#"=> {"print":"c","output":"text"} []"#),
-            (&["-cm", "a/b", "rest"], r#"=> {"continue":true,"model":"a/b","output":"text"} ["rest"]"#),
+            (
+                &["-cm", "a/b", "rest"],
+                r#"=> {"continue":true,"model":"a/b","output":"text"} ["rest"]"#,
+            ),
             (&["--", "-p"], r#"=> {"output":"text"} ["-p"]"#),
             (&["a", "-p", "x", "b"], r#"=> {"print":"x","output":"text"} ["a","b"]"#),
             (&["--print=", "x"], r#"=> {"print":"","output":"text"} ["x"]"#),
-            (&["-p", "--"], "!! Option '-p' argument is ambiguous.\nDid you forget to specify the option argument for '-p'?\nTo specify an option argument starting with a dash use '--print=-XYZ' or '-p-XYZ'."),
+            (
+                &["-p", "--"],
+                "!! Option '-p' argument is ambiguous.\nDid you forget to specify the option argument for '-p'?\nTo specify an option argument starting with a dash use '--print=-XYZ' or '-p-XYZ'.",
+            ),
             (&["--model=-x"], r#"=> {"model":"-x","output":"text"} []"#),
             (&["-m-x"], r#"=> {"model":"-x","output":"text"} []"#),
             (&["-c", "-c"], r#"=> {"continue":true,"output":"text"} []"#),
-            (&["--no-session", "--output", "jsonl"], r#"=> {"no-session":true,"output":"jsonl"} []"#),
+            (
+                &["--no-session", "--output", "jsonl"],
+                r#"=> {"no-session":true,"output":"jsonl"} []"#,
+            ),
             (&["-"], r#"=> {"output":"text"} ["-"]"#),
-            (&["--print", "a", "--print", "b"], r#"=> {"print":"b","output":"text"} []"#),
+            (
+                &["--print", "a", "--print", "b"],
+                r#"=> {"print":"b","output":"text"} []"#,
+            ),
             (&["-hc"], r#"=> {"help":true,"continue":true,"output":"text"} []"#),
-            (&["--Print", "x"], "!! Unknown option '--Print'. To specify a positional argument starting with a '-', place it at the end of the command after '--', as in '-- \"--Print\""),
+            (
+                &["--Print", "x"],
+                "!! Unknown option '--Print'. To specify a positional argument starting with a '-', place it at the end of the command after '--', as in '-- \"--Print\"",
+            ),
             (&["-p", "-"], r#"=> {"print":"-","output":"text"} []"#),
-            (&["--no-session=1"], "!! Option '--no-session' does not take an argument"),
+            (
+                &["--no-session=1"],
+                "!! Option '--no-session' does not take an argument",
+            ),
             (&["--output"], "!! Option '--output <value>' argument missing"),
             (&["-p", "日本語"], r#"=> {"print":"日本語","output":"text"} []"#),
         ];

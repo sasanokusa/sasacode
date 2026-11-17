@@ -297,8 +297,24 @@ pub async fn list_models(
 ) -> anyhow::Result<Vec<ListedModel>> {
     let mut out: Vec<ListedModel> = Vec::new();
     if p.api == "anthropic" {
-        let base = sdk_base(p.base_url.as_deref(), "ANTHROPIC_BASE_URL", "https://api.anthropic.com");
+        let mut base = sdk_base(p.base_url.as_deref(), "ANTHROPIC_BASE_URL", "https://api.anthropic.com");
         let key = api_key.filter(|k| !k.is_empty());
+        // No host chosen and only the `ant auth login` profile to authenticate: the profile's host.
+        let chosen = p
+            .base_url
+            .as_deref()
+            .map_or(read_env("ANTHROPIC_BASE_URL").is_some(), |b| !b.is_empty());
+        let keyless = key.is_none()
+            && ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"]
+                .iter()
+                .all(|v| read_env(v).is_none());
+        if !chosen
+            && keyless
+            && let Some(profile_base) =
+                crate::anthropic_profile::listing_base_url(&crate::anthropic_profile::Env::process())
+        {
+            base = profile_base;
+        }
         let client = ApiClient::anthropic(key, &base, 1, p.headers.as_ref(), None);
         let mut path = "/v1/models?limit=100".to_string();
         loop {

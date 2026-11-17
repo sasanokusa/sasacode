@@ -194,7 +194,7 @@ fn map_stop(r: Option<&str>) -> StopReason {
 async fn run(req: Request, y: Yielder) -> anyhow::Result<()> {
     let model = &req.model;
     let base = model.base_url.as_deref().unwrap_or(OFFICIAL_BASE);
-    // Without a key, the environment's ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN (as the SDK did).
+    // Without a key, ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN, else an `ant auth login` profile (as the SDK did).
     let client = ApiClient::anthropic(
         req.api_key.as_deref(),
         base,

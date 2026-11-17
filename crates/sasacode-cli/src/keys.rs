@@ -27,20 +27,34 @@ pub async fn resolve_api_key(provider: &str, cfg: Option<&ProviderConfig>) -> Op
         return hit.clone();
     }
     let key = keychain(provider).await;
-    cache().lock().unwrap_or_else(|e| e.into_inner()).insert(provider.to_string(), key.clone());
+    cache()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(provider.to_string(), key.clone());
     key
 }
 
 async fn keychain(account: &str) -> Option<String> {
     let cmd: &[&str] = if cfg!(target_os = "macos") {
-        &["security", "find-generic-password", "-s", "sasacode", "-a", account, "-w"]
+        &[
+            "security",
+            "find-generic-password",
+            "-s",
+            "sasacode",
+            "-a",
+            account,
+            "-w",
+        ]
     } else if cfg!(target_os = "linux") {
         &["secret-tool", "lookup", "service", "sasacode", "account", account]
     } else {
         return None;
     };
     let mut c = tokio::process::Command::new(cmd[0]);
-    c.args(&cmd[1..]).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null());
+    c.args(&cmd[1..])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
     let out = c.output().await.ok()?;
     let text = String::from_utf8_lossy(&out.stdout).trim().to_string();
     (out.status.success() && !text.is_empty()).then_some(text)

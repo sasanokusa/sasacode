@@ -129,7 +129,10 @@ fn bound(errors: &mut Vec<String>, schema: &Map<String, Value>, path: &str, key:
     if let Some(limit) = schema.get(key).and_then(Value::as_f64)
         && (if smaller { actual < limit } else { actual > limit })
     {
-        errors.push(format!("{path} violates {key} {}", sasacode_ai::json::js_f64_string(limit)));
+        errors.push(format!(
+            "{path} violates {key} {}",
+            sasacode_ai::json::js_f64_string(limit)
+        ));
     }
 }
 

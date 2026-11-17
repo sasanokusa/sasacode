@@ -120,6 +120,8 @@ fn main() {
         };
     }
     hide_from_children(loaded.into_iter().map(|(n, _)| n));
+    // An Anthropic request without any key falls back on the `ant auth login` profile, as the SDK did.
+    sasacode_ai::transport::set_default_credentials(Some(sasacode_cli::anthropic_profile::credentials()));
     if created && std::io::stderr().is_terminal() {
         eprintln!(
             "{}",

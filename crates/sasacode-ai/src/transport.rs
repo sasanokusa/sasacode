@@ -6,11 +6,12 @@
 use std::collections::BTreeMap;
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::task::{Context, Poll};
 use std::time::Duration;
 
 use bytes::Bytes;
+use futures::future::BoxFuture;
 use futures::stream::{BoxStream, Stream, StreamExt};
 use serde_json::{Map, Value};
 use tokio_util::sync::CancellationToken;
@@ -353,6 +354,69 @@ fn read_env(name: &str) -> Option<String> {
         .filter(|v| !v.is_empty())
 }
 
+/// The `anthropic-beta` the SDK added to every request made with an OAuth token.
+pub const OAUTH_BETA: &str = "oauth-2025-04-20";
+
+/// An OAuth access token, and headers to add where the request has none (`anthropic-workspace-id`).
+/// No `Debug`: nothing should print the token.
+#[derive(Clone, Default)]
+pub struct Bearer {
+    pub token: String,
+    pub headers: Vec<(String, String)>,
+}
+
+impl Bearer {
+    /// `authHeaders` and `prepareRequest`: the token, the extra headers where unset, and the OAuth beta
+    /// added to the request's own `anthropic-beta`.
+    fn apply(&self, headers: &mut Vec<(String, String)>) {
+        set_header(headers, "authorization", &format!("Bearer {}", self.token));
+        for (n, v) in &self.headers {
+            if !headers.iter().any(|(h, _)| h.eq_ignore_ascii_case(n)) {
+                set_header(headers, n, v);
+            }
+        }
+        let beta = headers
+            .iter()
+            .find(|(n, _)| n == "anthropic-beta")
+            .map(|(_, v)| v.clone());
+        let mut parts: Vec<&str> = beta.iter().flat_map(|b| b.split(',').map(str::trim)).collect();
+        if !parts.contains(&OAUTH_BETA) {
+            parts.push(OAUTH_BETA);
+            set_header(headers, "anthropic-beta", &parts.join(","));
+        }
+    }
+}
+
+/// What an Anthropic client with neither key nor `ANTHROPIC_AUTH_TOKEN` falls back on (the SDK's
+/// credential chain): given the client's base URL and `force` (refresh even a token that looks fresh,
+/// after a 401), a token, or `None` when there are no credentials.
+pub type Credentials = Arc<dyn Fn(&str, bool) -> BoxFuture<'static, anyhow::Result<Option<Bearer>>> + Send + Sync>;
+
+static CREDENTIALS: RwLock<Option<Credentials>> = RwLock::new(None);
+
+/// Install the [`Credentials`] (the CLI: `ant auth login` profiles), or remove them.
+pub fn set_default_credentials(credentials: Option<Credentials>) {
+    *CREDENTIALS.write().unwrap_or_else(|e| e.into_inner()) = credentials;
+}
+
+fn no_auth() -> anyhow::Error {
+    anyhow::anyhow!(
+        "Could not resolve authentication method. Expected one of apiKey, authToken, credentials, config, or profile to be set. Or for one of the \"X-Api-Key\" or \"Authorization\" headers to be explicitly omitted"
+    )
+}
+
+fn header_map(headers: &[(String, String)]) -> anyhow::Result<reqwest::header::HeaderMap> {
+    let mut map = reqwest::header::HeaderMap::new();
+    for (n, v) in headers {
+        let name = reqwest::header::HeaderName::from_bytes(n.as_bytes())
+            .map_err(|_| anyhow::anyhow!("Invalid header name: \"{n}\""))?;
+        let value = reqwest::header::HeaderValue::from_str(v)
+            .map_err(|_| anyhow::anyhow!("Invalid header value for \"{n}\""))?;
+        map.insert(name, value);
+    }
+    Ok(map)
+}
+
 /// `ANTHROPIC_CUSTOM_HEADERS` / `OPENAI_CUSTOM_HEADERS`: `Name: value` lines.
 fn custom_headers(env: &str) -> Vec<(String, String)> {
     let Some(text) = read_env(env) else { return Vec::new() };
@@ -401,7 +465,8 @@ impl ApiClient {
     }
 
     /// `new Anthropic({ apiKey?, baseURL, maxRetries, defaultHeaders, fetch })`. Without a key the SDK
-    /// read `ANTHROPIC_API_KEY` (sent as `x-api-key`) and `ANTHROPIC_AUTH_TOKEN` (a bearer token).
+    /// read `ANTHROPIC_API_KEY` (sent as `x-api-key`) and `ANTHROPIC_AUTH_TOKEN` (a bearer token);
+    /// without either, each request asks the [`Credentials`].
     pub fn anthropic(
         api_key: Option<&str>,
         base_url: &str,
@@ -496,32 +561,37 @@ impl ApiClient {
         for (n, v) in extra {
             set_header(&mut headers, n, v);
         }
-        if self.flavor == Flavor::Anthropic
+        // Neither key nor token: the credential chain, asked again for every attempt.
+        let credentials = if self.flavor == Flavor::Anthropic
             && !headers
                 .iter()
                 .any(|(n, v)| (n == "x-api-key" || n == "authorization") && !v.is_empty())
         {
-            anyhow::bail!(
-                "Could not resolve authentication method. Expected one of apiKey, authToken, credentials, config, or profile to be set. Or for one of the \"X-Api-Key\" or \"Authorization\" headers to be explicitly omitted"
-            );
-        }
-        let mut header_map = reqwest::header::HeaderMap::new();
-        for (n, v) in &headers {
-            let name = reqwest::header::HeaderName::from_bytes(n.as_bytes())
-                .map_err(|_| anyhow::anyhow!("Invalid header name: \"{n}\""))?;
-            let value = reqwest::header::HeaderValue::from_str(v)
-                .map_err(|_| anyhow::anyhow!("Invalid header value for \"{n}\""))?;
-            header_map.insert(name, value);
-        }
+            let installed = CREDENTIALS.read().unwrap_or_else(|e| e.into_inner()).clone();
+            Some(installed.ok_or_else(no_auth)?)
+        } else {
+            None
+        };
 
         let max = self.max_retries;
         let mut remaining = max;
+        let (mut force, mut refreshed) = (false, false);
         loop {
             if signal.is_cancelled() {
                 return Err(ApiError::user_abort().into());
             }
+            let mut headers = headers.clone();
+            if let Some(get) = &credentials {
+                let asked = get(&self.base_url, std::mem::take(&mut force));
+                let bearer = tokio::select! {
+                    biased;
+                    _ = signal.cancelled() => return Err(ApiError::user_abort().into()),
+                    b = asked => b?,
+                };
+                bearer.ok_or_else(no_auth)?.apply(&mut headers);
+            }
             let mut req = reqwest::Request::new(method.clone(), url.clone());
-            *req.headers_mut() = header_map.clone();
+            *req.headers_mut() = header_map(&headers)?;
             req.headers_mut().insert(
                 "x-stainless-retry-count",
                 reqwest::header::HeaderValue::from(max - remaining),
@@ -562,7 +632,13 @@ impl ApiClient {
             if status.is_success() {
                 return Ok(resp);
             }
-            let retry = should_retry(&resp);
+            // A 401 on the chain's token: refresh it and try once more (`shouldRetry`).
+            let retry = if status == 401 && credentials.is_some() && !refreshed {
+                (force, refreshed) = (true, true);
+                true
+            } else {
+                should_retry(&resp)
+            };
             if remaining > 0 && retry {
                 let wait = self.retry_wait_ms(resp.headers(), remaining);
                 drop(resp);
