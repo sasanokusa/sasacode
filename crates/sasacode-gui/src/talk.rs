@@ -256,24 +256,6 @@ pub fn refs(line: &str) -> Vec<(std::ops::Range<usize>, String)> {
     out
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_file_named_with_its_line_is_found_in_what_a_compiler_wrote() {
-        let line = "  --> crates/a/src/lib.rs:12:5 and tests/x.test.ts:7, not http://h:80 or 10:30";
-        let found: Vec<String> = refs(line).into_iter().map(|(_, r)| r).collect();
-        assert_eq!(found, vec!["crates/a/src/lib.rs:12", "tests/x.test.ts:7"]);
-        let (range, _) = &refs(line)[0];
-        assert_eq!(&line[range.clone()], "crates/a/src/lib.rs:12");
-        assert!(refs("ok: 3 passed").is_empty());
-        assert!(refs("Error: foo.rs: no line").is_empty());
-        let (range, r) = &refs("FAILED src/日本.py:3: assert")[0];
-        assert_eq!((r.as_str(), range.start), ("src/日本.py:3", 7));
-    }
-}
-
 impl App {
     /// A title for conversation `id`, written by the model from how it began. `asked`: the user
     /// asked for it, and it replaces the name it has; otherwise only one with no name gets one,
@@ -350,5 +332,23 @@ impl App {
         self.set(|p| {
             p.names.insert(id, title);
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_file_named_with_its_line_is_found_in_what_a_compiler_wrote() {
+        let line = "  --> crates/a/src/lib.rs:12:5 and tests/x.test.ts:7, not http://h:80 or 10:30";
+        let found: Vec<String> = refs(line).into_iter().map(|(_, r)| r).collect();
+        assert_eq!(found, vec!["crates/a/src/lib.rs:12", "tests/x.test.ts:7"]);
+        let (range, _) = &refs(line)[0];
+        assert_eq!(&line[range.clone()], "crates/a/src/lib.rs:12");
+        assert!(refs("ok: 3 passed").is_empty());
+        assert!(refs("Error: foo.rs: no line").is_empty());
+        let (range, r) = &refs("FAILED src/日本.py:3: assert")[0];
+        assert_eq!((r.as_str(), range.start), ("src/日本.py:3", 7));
     }
 }

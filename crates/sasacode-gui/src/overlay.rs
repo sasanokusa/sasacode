@@ -599,7 +599,7 @@ impl App {
             .aside
             .as_ref()
             .filter(|a| !a.running() && self.overlay == Some(Overlay::Side))
-            .map(|a| side_context(a))
+            .map(side_context)
             .filter(|c| !c.is_empty());
         if earlier.is_none() {
             let mut side = Chat::new(SIDE);
