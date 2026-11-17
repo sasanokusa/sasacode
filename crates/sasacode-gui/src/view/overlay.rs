@@ -512,12 +512,12 @@ fn settings(app: &App) -> El<'_> {
     let now = match &p.more.defaults {
         Some(d) => fill(
             &fill(
-                &fill(w.defaults_now, "model", &unset(&d.model)),
+                &fill(w.defaults_now, "model", unset(&d.model)),
                 "permission",
-                &unset(d.permission.as_deref().unwrap_or("")),
+                unset(d.permission.as_deref().unwrap_or("")),
             ),
             "effort",
-            &unset(d.effort.as_deref().unwrap_or("")),
+            unset(d.effort.as_deref().unwrap_or("")),
         ),
         None => w.defaults_none.to_owned(),
     };
