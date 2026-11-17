@@ -48,6 +48,9 @@ pub fn dock(app: &App) -> El<'_> {
     if !images.is_empty() {
         col = col.push(Above::Images, attached(app, images));
     }
+    if let Some(next) = suggested(app) {
+        col = col.push(Above::Suggestion, next);
+    }
     col = col.push(Above::Input, composer(app)).push(Above::Hints, hints(app));
     container(container(col).max_width(COL_W))
         .center_x(Length::Fill)
@@ -68,12 +71,50 @@ enum Above {
     Drop,
     Comments,
     Images,
+    Suggestion,
     Input,
     Hints,
 }
 
 fn t_accent(app: &App) -> iced::Color {
     app.t.accent
+}
+
+/// What the user may say next, as the model guessed: put in the input by a click.
+fn suggested(app: &App) -> Option<El<'_>> {
+    let (t, w) = (app.t, app.s.w());
+    let (key, next) = app.suggestion.as_ref()?;
+    if *key != app.chat.key || app.busy() || !app.chat.editor.text().trim().is_empty() {
+        return None;
+    }
+    let chip = tip(
+        t,
+        button(
+            row![
+                text(w.suggest_label).size(11.5).color(t.accent),
+                text(next.as_str()).size(13).color(t.fg_2)
+            ]
+            .spacing(8)
+            .align_y(Alignment::Center),
+        )
+        .padding([5, 10])
+        .style(t.outline(t.line_2))
+        .on_press(Msg::TakeSuggestion),
+        w.suggest_take.to_owned(),
+        tooltip::Position::Top,
+    );
+    Some(
+        row![
+            chip,
+            button(icon(Icon::Close, 11.0, t.fg_3))
+                .padding(4)
+                .style(t.ghost(t.fg_3, false))
+                .on_press(Msg::DropSuggestion),
+        ]
+        .spacing(4)
+        .align_y(Alignment::Center)
+        .into(),
+    )
 }
 
 /// The images the input names, each small, with the way to take it out of the input.

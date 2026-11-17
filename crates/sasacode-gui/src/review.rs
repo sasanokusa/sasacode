@@ -158,6 +158,13 @@ impl App {
                 );
                 self.put_in_input(&prompt)
             }
+            Msg::SetSuggest(on) => {
+                let _ = self.set(|p| p.suggest = on);
+                if !on {
+                    self.suggestion = None;
+                }
+                Task::none()
+            }
             Msg::SetAutoArchive(on) => {
                 let _ = self.set(|p| p.auto_archive = on);
                 self.sweep()

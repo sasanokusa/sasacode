@@ -12,6 +12,7 @@ mod figure;
 mod files;
 mod fork;
 mod git;
+mod helper;
 mod i18n;
 mod icons;
 mod input;

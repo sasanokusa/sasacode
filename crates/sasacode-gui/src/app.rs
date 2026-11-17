@@ -33,6 +33,8 @@ pub const PALETTE: &str = "palette";
 pub const RENAME: &str = "rename";
 /// The field of a conversation's group.
 pub const GROUP: &str = "group";
+/// The title of the pull request being written.
+pub const PR_TITLE: &str = "pr-title";
 /// The search inside the conversation shown.
 pub const FIND_IN: &str = "find-in";
 /// The model's field.
@@ -223,6 +225,12 @@ pub struct App {
     /// The folder's scripts run from the window, the newest first, and how many were run.
     pub(crate) script_runs: Vec<crate::scripts::ScriptRun>,
     pub(crate) script_runs_made: u64,
+    /// What the model is being asked, apart from any conversation.
+    pub(crate) drafting: Vec<crate::helper::Draft>,
+    /// The pull request being written before it is made.
+    pub(crate) pr_draft: Option<crate::helper::PrDraft>,
+    /// What the user may say next in the conversation of this key, as the model guessed.
+    pub(crate) suggestion: Option<(u64, String)>,
     /// The conversation beside the one shown, by id: one of `parked`.
     pub(crate) split: Option<String>,
     /// The modifier keys held, for ⌘ and a click in the list.
@@ -476,6 +484,19 @@ pub enum Msg {
     SplitClose,
     /// The modifier keys held changed.
     Modifiers(keyboard::Modifiers),
+    /// The model asked for a commit message, a pull request's words, or the next message; its answer.
+    Draft(crate::helper::Draft),
+    Drafted(crate::helper::Draft, Result<String, String>),
+    /// The pull request written before it is made: what it is written from, its words, made.
+    PrOpen,
+    PrContext(Result<Box<crate::git::PrContext>, String>),
+    PrTitle(String),
+    PrBody(text_editor::Action),
+    PrCreate,
+    /// The next message guessed, put in the input or put away.
+    TakeSuggestion,
+    DropSuggestion,
+    SetSuggest(bool),
     /// The pointer over a row of the list, or off it.
     RowHover(Option<String>),
     /// What the search inside the conversation looks for, and the search put away.
@@ -665,6 +686,9 @@ impl App {
             file_query: String::new(),
             key_capture: None,
             key_note: None,
+            drafting: Vec::new(),
+            pr_draft: None,
+            suggestion: None,
             split: None,
             modifiers: keyboard::Modifiers::default(),
             script_runs: Vec::new(),
@@ -1570,6 +1594,9 @@ impl App {
             spec.permission = Some("ask".into());
         }
         let shown = key == self.chat.key;
+        if self.suggestion.as_ref().is_some_and(|(k, _)| *k == key) {
+            self.suggestion = None;
+        }
         let Some(chat) = self.chat_mut(key) else {
             return Task::none();
         };
@@ -1611,6 +1638,8 @@ impl App {
         // What the system is told when the window is behind others.
         let mut news: Option<&'static str> = None;
         let mut git = false;
+        // The run's process is gone: what the user may say next can be guessed.
+        let mut ended_now = false;
         // A conversation's id, once its run names it: the branch it was started on is kept.
         let mut named = None;
         match update {
@@ -1664,6 +1693,7 @@ impl App {
                 news = Some(s.n_stopped);
             }
             RunUpdate::Exited(code) => {
+                ended_now = true;
                 // A run that never got to its end says why only on stderr.
                 if !run.ended {
                     let code = code.map(|c| c.to_string()).unwrap_or_else(|| "?".into());
@@ -1719,9 +1749,13 @@ impl App {
         if git {
             tasks.push(self.refresh_git());
         }
+        let again = next.is_some();
         if let Some(prompt) = next {
             tasks.push(self.start(key, prompt));
-        } else if attention {
+        } else if ended_now {
+            tasks.push(self.guess_next(key));
+        }
+        if attention && !again {
             // The run waits for the user or ended: say so even when the window is behind others
             // (on Windows, where no notification is sent, the taskbar button flashes).
             tasks.push(

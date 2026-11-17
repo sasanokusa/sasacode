@@ -117,6 +117,22 @@ words! {
     // The outline.
     c_outline: "会話の目次", "Conversation outline";
     outline_ph: "メッセージや見出しを探して移動", "Find a message or a heading to go to";
+    // What the model is asked apart from any conversation.
+    draft_commit: "メッセージを書かせる", "Write it for me";
+    c_draft_commit: "コミットメッセージをモデルに書かせる", "Write the commit message with the model";
+    draft_commit_hint: "変更（ステージ済みならそれだけ）と最近のコミットからモデルが書きます", "The model writes it from the change (only what is staged, if anything is) and the recent commits";
+    drafting: "書いています…", "Writing…";
+    draft_failed: "書けませんでした: {error}", "Could not write it: {error}";
+    pr_title: "プルリクエストを作る", "Create a pull request";
+    pr_title_ph: "タイトル", "Title";
+    pr_body_ph: "説明（Markdown）", "Description (Markdown)";
+    pr_draft: "モデルに書かせる", "Write it with the model";
+    pr_fill: "gh に任せる (--fill)", "Let gh fill it (--fill)";
+    pr_create: "作成", "Create";
+    pr_base: "{base} へ · {n}件のコミット", "Into {base} · {n} commits";
+    suggest_label: "次に", "Next";
+    suggest_take: "入力欄に入れる", "Put it in the input";
+    set_suggest: "返答のあとに次の入力を提案する（モデルを1回呼びます）", "Suggest the next message after a reply (asks the model once)";
     // The conversation beside the one shown.
     c_split: "会話を横に開く", "Open a conversation beside";
     split_close: "横の会話を閉じる", "Close the conversation beside";

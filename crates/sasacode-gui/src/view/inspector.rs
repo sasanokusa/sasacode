@@ -10,6 +10,7 @@ use super::{
     BOLD, El, MONO, clip, clip_start, diff_view, first_line, hline, output_block, plus_minus, short_path, tag, tip,
 };
 use crate::app::{App, Msg, Tab};
+use crate::helper::Draft;
 use crate::i18n::{compact, fill};
 use crate::icons::{Icon, icon};
 use crate::theme::{RADIUS, RADIUS_L};
@@ -318,6 +319,7 @@ fn git_tab(app: &App) -> El<'_> {
     let mut col = column![head].spacing(10);
 
     let busy = app.git_busy;
+    let drafting = app.drafting.contains(&Draft::Commit);
     let commit = column![
         iced::widget::text_input(s.commit_ph, &app.commit_msg)
             .on_input(Msg::CommitText)
@@ -340,7 +342,16 @@ fn git_tab(app: &App) -> El<'_> {
             button(text(s.pr).size(12.5))
                 .padding([5, 12])
                 .style(t.outline(t.fg))
-                .on_press_maybe((!busy && g.branch.is_some() && app.pr.is_none()).then_some(Msg::GitDo(Op::Pr(None)))),
+                .on_press_maybe((!busy && g.branch.is_some() && app.pr.is_none()).then_some(Msg::PrOpen)),
+            tip(
+                t,
+                button(text(if drafting { w.drafting } else { w.draft_commit }).size(12.5))
+                    .padding([5, 10])
+                    .style(t.ghost(t.fg_2, false))
+                    .on_press_maybe((!busy && !drafting && !g.files.is_empty()).then_some(Msg::Draft(Draft::Commit))),
+                w.draft_commit_hint.to_owned(),
+                tooltip::Position::Bottom,
+            ),
         ]
         .spacing(6)
         .wrap(),

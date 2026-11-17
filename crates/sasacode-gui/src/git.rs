@@ -207,6 +207,92 @@ fn top(cwd: &Path) -> Option<std::path::PathBuf> {
     git(cwd, &["rev-parse", "--show-toplevel"]).ok().map(Into::into)
 }
 
+/// What a commit message is written from: the subjects of the repository's last commits, for
+/// their style, and the change to commit: what is staged, else all of it, new files named.
+pub fn commit_context(cwd: &Path) -> Result<(String, String), String> {
+    let top = top(cwd).ok_or_else(|| "not a git repository".to_owned())?;
+    let log = git(&top, &["log", "-10", "--format=%s"]).unwrap_or_default();
+    let staged = git(&top, &["diff", "--cached", "--quiet"]).is_err();
+    let mut change = if staged {
+        git(&top, &["diff", "--cached", "--no-color", "--no-ext-diff"])?
+    } else {
+        git(&top, &["diff", "HEAD", "--no-color", "--no-ext-diff"])
+            .or_else(|_| git(&top, &["diff", "--no-color", "--no-ext-diff"]))?
+    };
+    if !staged {
+        let new = git(&top, &["ls-files", "--others", "--exclude-standard"]).unwrap_or_default();
+        if !new.trim().is_empty() {
+            change.push_str("\n\nNew files:\n");
+            change.push_str(&new);
+        }
+    }
+    if change.trim().is_empty() {
+        return Err("nothing to commit".into());
+    }
+    Ok((log, change))
+}
+
+/// What a pull request of the branch is written from.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct PrContext {
+    /// The branch it goes into, as git names it: `origin/main`.
+    pub base: String,
+    /// The branch's commits, oldest first: subject and body.
+    pub commits: Vec<(String, String)>,
+    /// What the branch changes: by file, and the diff.
+    pub stat: String,
+    pub diff: String,
+}
+
+impl PrContext {
+    /// A title and a description as `gh pr create --fill` makes them: one commit's own, else the
+    /// branch's commits listed.
+    pub fn filled(&self, branch: &str) -> (String, String) {
+        match self.commits.as_slice() {
+            [(subject, body)] => (subject.clone(), body.trim().to_owned()),
+            commits => (
+                branch.to_owned(),
+                commits
+                    .iter()
+                    .map(|(s, _)| format!("- {s}"))
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            ),
+        }
+    }
+}
+
+pub fn pr_context(cwd: &Path) -> Result<PrContext, String> {
+    let top = top(cwd).ok_or_else(|| "not a git repository".to_owned())?;
+    let base = git(&top, &["rev-parse", "--abbrev-ref", "origin/HEAD"])
+        .ok()
+        .filter(|b| !b.is_empty() && b != "origin/HEAD")
+        .or_else(|| {
+            ["origin/main", "origin/master", "main", "master"]
+                .into_iter()
+                .find(|b| git(&top, &["rev-parse", "--verify", "--quiet", b]).is_ok())
+                .map(str::to_owned)
+        })
+        .ok_or_else(|| "no branch to compare with".to_owned())?;
+    let range = format!("{base}..HEAD");
+    let log = git(&top, &["log", "--reverse", "--format=%s%x1f%b%x1e", &range])?;
+    let commits = log
+        .split('\u{1e}')
+        .filter_map(|c| {
+            let (subject, body) = c.trim().split_once('\u{1f}')?;
+            Some((subject.trim().to_owned(), body.trim().to_owned()))
+        })
+        .filter(|(s, _)| !s.is_empty())
+        .collect();
+    let since = format!("{base}...HEAD");
+    Ok(PrContext {
+        stat: git(&top, &["diff", "--stat", "--no-color", &since]).unwrap_or_default(),
+        diff: git(&top, &["diff", "--no-color", "--no-ext-diff", &since]).unwrap_or_default(),
+        base,
+        commits,
+    })
+}
+
 /// The repository as it is now.
 pub fn status(cwd: &Path) -> Status {
     let Some(top) = top(cwd) else {
@@ -627,6 +713,40 @@ mod tests {
             git(&dir, args).unwrap();
         }
         dir
+    }
+
+    #[test]
+    fn a_commit_message_and_a_pull_request_are_written_from_the_change_and_the_branchs_commits() {
+        let dir = repo("context");
+        assert!(commit_context(&dir).is_err());
+        std::fs::write(dir.join("a.txt"), "one\n").unwrap();
+        // Before the first commit: the new file is named.
+        let (_, change) = commit_context(&dir).unwrap();
+        assert!(change.contains("a.txt"));
+        apply(&dir, &Op::Commit("feat: first".into()), None).unwrap();
+        std::fs::write(dir.join("a.txt"), "one\ntwo\n").unwrap();
+        std::fs::write(dir.join("b.txt"), "b\n").unwrap();
+        let (log, change) = commit_context(&dir).unwrap();
+        assert_eq!(log, "feat: first");
+        assert!(change.contains("+two") && change.contains("New files:\nb.txt"));
+        // What is staged, alone.
+        git(&dir, &["add", "b.txt"]).unwrap();
+        let (_, change) = commit_context(&dir).unwrap();
+        assert!(change.contains("+b") && !change.contains("+two"));
+
+        git(&dir, &["checkout", "-q", "-b", "topic"]).unwrap();
+        apply(&dir, &Op::Commit("fix: one\n\nwhy".into()), None).unwrap();
+        std::fs::write(dir.join("c.txt"), "c\n").unwrap();
+        apply(&dir, &Op::Commit("fix: two".into()), None).unwrap();
+        let pr = pr_context(&dir).unwrap();
+        assert_eq!(pr.base, "main");
+        assert_eq!(
+            pr.commits,
+            vec![("fix: one".into(), "why".into()), ("fix: two".into(), String::new())]
+        );
+        assert!(pr.stat.contains("c.txt") && pr.diff.contains("+c"));
+        assert_eq!(pr.filled("topic"), ("topic".into(), "- fix: one\n- fix: two".into()));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

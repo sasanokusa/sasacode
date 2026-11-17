@@ -79,7 +79,7 @@ impl App {
                 ]));
             }
             Msg::Modifiers(m) => self.modifiers = m,
-            other => return Err(other),
+            other => return self.update_helper(other),
         }
         Ok(Task::none())
     }

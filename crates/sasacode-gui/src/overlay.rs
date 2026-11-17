@@ -36,6 +36,8 @@ pub enum Overlay {
         id: String,
         name: String,
     },
+    /// The pull request being written, `App::pr_draft`.
+    Pr,
 }
 
 /// What a palette picks from.
@@ -105,6 +107,8 @@ impl App {
                 key(Act::Split),
                 Msg::Command(Command::Split),
             ),
+            entry(s.w().c_draft_commit, None, Msg::Draft(crate::helper::Draft::Commit)),
+            entry(s.w().pr_title, None, Msg::PrOpen),
             entry(s.c_export, None, Msg::Copy(Clip::Conversation)),
             entry(s.c_steps, None, Msg::Command(Command::Steps)),
             entry(s.c_model, None, Msg::Command(Command::Model)),

@@ -1371,3 +1371,65 @@ fn a_conversation_opened_beside_goes_on_there_and_is_taken_into_the_main_place_t
     assert!(!app.parked.iter().any(|c| c.session.as_deref() == Some(two.as_str())));
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn the_model_writes_the_commit_message_the_pull_request_and_the_next_message_when_asked() {
+    use crate::helper::Draft;
+    let mut app = window("ja");
+    // The commit message, into its field.
+    let _ = app.update(Msg::Draft(Draft::Commit));
+    assert!(app.drafting.contains(&Draft::Commit));
+    let _ = app.update(Msg::Drafted(Draft::Commit, Ok("fix: 再試行を直す".into())));
+    assert_eq!(app.commit_msg, "fix: 再試行を直す");
+    assert!(app.drafting.is_empty());
+    let _ = app.update(Msg::Drafted(Draft::Commit, Err("no key".into())));
+    assert!(app.toast.as_deref().is_some_and(|t| t.contains("no key")));
+
+    // The pull request: filled from the branch's commit, then written by the model, then made.
+    app.git.branch = Some("topic".into());
+    let context = crate::git::PrContext {
+        base: "origin/main".into(),
+        commits: vec![("fix: 再試行を直す".into(), "理由".into())],
+        ..Default::default()
+    };
+    let _ = app.update(Msg::PrContext(Ok(Box::new(context))));
+    assert!(matches!(app.overlay, Some(crate::app::Overlay::Pr)));
+    assert!(says(&app, "main へ · 1件のコミット"));
+    assert_eq!(
+        app.pr_draft.as_ref().map(|p| p.title.as_str()),
+        Some("fix: 再試行を直す")
+    );
+    act(&mut app, |ui| {
+        let _ = ui.click(crate::words::JA.pr_draft);
+    });
+    assert!(app.drafting.contains(&Draft::Pr));
+    let _ = app.update(Msg::Drafted(
+        Draft::Pr,
+        Ok("# 再試行を指数バックオフに\n\n## 変更\n- 待ち時間".into()),
+    ));
+    let pr = app.pr_draft.as_ref().unwrap();
+    assert_eq!(pr.title, "再試行を指数バックオフに");
+    assert_eq!(pr.body.text().trim(), "## 変更\n- 待ち時間");
+    let _ = app.update(Msg::PrCreate);
+    assert!(app.overlay.is_none() && app.pr_draft.is_none());
+
+    // The next message, guessed only when the settings say so, and taken by a click.
+    app.chat.transcript.send("直して", std::time::Instant::now());
+    let key = app.chat.key;
+    assert!(!app.prefs.suggest);
+    let _ = app.guess_next(key);
+    assert!(app.drafting.is_empty());
+    let _ = app.update(Msg::SetSuggest(true));
+    let _ = app.guess_next(key);
+    assert_eq!(app.drafting, vec![Draft::Next(key, 1)]);
+    let _ = app.update(Msg::Drafted(Draft::Next(key, 1), Ok("テストも足して".into())));
+    assert!(says(&app, "テストも足して"));
+    act(&mut app, |ui| {
+        let _ = ui.click("テストも足して");
+    });
+    assert_eq!(typed(&app).trim(), "テストも足して");
+    assert!(app.suggestion.is_none());
+    // A guess for a conversation that moved on is not shown.
+    let _ = app.update(Msg::Drafted(Draft::Next(key, 0), Ok("古い".into())));
+    assert!(app.suggestion.is_none());
+}

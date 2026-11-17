@@ -1,12 +1,14 @@
 //! What is drawn over the window: the command palette, the list of keys, the settings, a name for
 //! a conversation, and a side question with its answer. A click beside it puts it away, as Esc does.
 
-use iced::widget::{Space, button, column, container, mouse_area, row, scrollable, text, text_input, toggler};
+use iced::widget::{
+    Space, button, column, container, mouse_area, row, scrollable, text, text_editor, text_input, toggler,
+};
 use iced::{Alignment, Color, Length};
 
 use super::timeline::reply;
 use super::{BOLD, El, MOD, MONO};
-use crate::app::{App, GROUP, Msg, Overlay, PALETTE, RENAME};
+use crate::app::{App, GROUP, Msg, Overlay, PALETTE, PR_TITLE, RENAME};
 use crate::i18n::fill;
 use crate::icons::{Icon, icon};
 use crate::keys::Act;
@@ -31,6 +33,7 @@ pub fn over<'a>(app: &'a App, base: El<'a>) -> El<'a> {
         Overlay::Rename { name, .. } => (rename(app, name), 460.0, 120.0),
         Overlay::Side => (side(app), 680.0, 50.0),
         Overlay::Group { name, .. } => (group(app, name), 460.0, 120.0),
+        Overlay::Pr => (pr(app), 640.0, 60.0),
     };
     let shade = Color {
         a: if t.dark { 0.45 } else { 0.25 },
@@ -323,6 +326,7 @@ fn settings(app: &App) -> El<'_> {
         switch(s.set_awake, p.awake, Msg::SetAwake),
         switch(s.set_steps, p.steps, Msg::SetSteps),
         switch(s.w().set_auto_archive, p.auto_archive, Msg::SetAutoArchive),
+        switch(s.w().set_suggest, p.suggest, Msg::SetSuggest),
         scripts(app),
         text(s.set_kept).size(11.5).color(t.fg_3),
     ]
@@ -450,6 +454,62 @@ fn group<'a>(app: &'a App, name: &'a str) -> El<'a> {
                 .on_press(Msg::GroupSave),
         ]
         .spacing(8),
+    ]
+    .spacing(12)
+    .into()
+}
+
+/// The pull request written before it is made: its title and description, typed or written by
+/// the model, or left to gh.
+fn pr(app: &App) -> El<'_> {
+    let (t, s) = (app.t, app.s);
+    let w = s.w();
+    let Some(pr) = &app.pr_draft else {
+        return title(app, w.pr_title);
+    };
+    let drafting = app.drafting.contains(&crate::helper::Draft::Pr);
+    let busy = drafting || app.git_busy;
+    let base = fill(
+        &fill(w.pr_base, "base", pr.context.base.trim_start_matches("origin/")),
+        "n",
+        pr.context.commits.len(),
+    );
+    column![
+        title(app, w.pr_title),
+        text(base).size(12).color(t.fg_3),
+        text_input(w.pr_title_ph, &pr.title)
+            .id(PR_TITLE)
+            .on_input(Msg::PrTitle)
+            .size(14)
+            .padding([8, 10])
+            .style(t.input()),
+        container(
+            text_editor(&pr.body)
+                .placeholder(w.pr_body_ph)
+                .on_action(Msg::PrBody)
+                .size(13)
+                .padding([6, 8])
+                .height(260)
+                .style(t.editor()),
+        )
+        .style(t.boxed(t.inset, t.line, crate::theme::RADIUS)),
+        row![
+            button(text(if drafting { w.drafting } else { w.pr_draft }).size(13))
+                .padding([6, 12])
+                .style(t.outline(t.fg))
+                .on_press_maybe((!busy).then_some(Msg::Draft(crate::helper::Draft::Pr))),
+            button(text(w.pr_fill).size(13))
+                .padding([6, 12])
+                .style(t.ghost(t.fg_2, false))
+                .on_press_maybe((!busy).then(|| Msg::GitDo(crate::git::Op::Pr(None)))),
+            Space::new().width(Length::Fill),
+            button(text(w.pr_create).size(13))
+                .padding([6, 14])
+                .style(t.primary())
+                .on_press_maybe((!busy && !pr.title.trim().is_empty()).then_some(Msg::PrCreate)),
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center),
     ]
     .spacing(12)
     .into()
