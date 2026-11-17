@@ -686,6 +686,8 @@ pub enum Msg {
     FoldFiles(bool),
     SetSplitDiff(bool),
     SetWhitespace(bool),
+    /// Diff lines of the git tab kept whole, scrolled sideways, or wrapped.
+    SetDiffNowrap(bool),
     /// A file marked as viewed, or not, by its key.
     Viewed(String),
     /// A menu opened by a right click, where the pointer is; put away; or one of its items chosen.

@@ -237,6 +237,7 @@ words! {
     scope_empty: "違いはありません", "No differences";
     split_diff: "2列", "Side by side";
     hide_ws: "空白を無視", "Ignore white space";
+    diff_nowrap: "折り返さない", "No wrap";
     fold_all: "全部たたむ", "Fold all";
     open_all: "全部開く", "Open all";
     viewed: "見た", "Viewed";

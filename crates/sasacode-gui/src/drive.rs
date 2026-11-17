@@ -1641,6 +1641,13 @@ fn the_git_tab_shows_the_branch_or_a_commit_side_by_side_with_files_marked_viewe
     // Side by side, the removed line is drawn beside the added one.
     let _ = app.update(Msg::SetSplitDiff(true));
     assert!(says(&app, "const WAIT = 100") && says(&app, "const WAIT = 200"));
+    // Kept whole, the lines scroll sideways instead of wrapping, side by side or not.
+    let _ = app.update(Msg::SetDiffNowrap(true));
+    assert!(app.prefs.more.diff_nowrap && says(&app, "折り返さない"));
+    assert!(says(&app, "const WAIT = 100") && says(&app, "const WAIT = 200"));
+    let _ = app.update(Msg::SetSplitDiff(false));
+    assert!(says(&app, "const WAIT = 200"));
+    let _ = app.update(Msg::SetSplitDiff(true));
     // Viewed, a file folds away; changed, it is shown again.
     let key = crate::scope::viewed_key("src/retry.ts", &scoped.files[0].1);
     let _ = app.update(Msg::Viewed(key));
@@ -1662,6 +1669,20 @@ fn the_git_tab_shows_the_branch_or_a_commit_side_by_side_with_files_marked_viewe
     let _ = app.update(Msg::GitDo(crate::git::Op::Commit("x".into())));
     assert!(app.confirm_default && !app.git_busy);
     assert!(app.toast.as_deref().is_some_and(|t| t.contains("mainに直接")));
+    // The working tree's hunks are kept whole too.
+    assert!(app.prefs.more.diff_nowrap && says(&app, "a.txt") && says(&app, "b"));
+}
+
+#[test]
+fn unwrapped_diff_lines_are_as_wide_as_the_longest_at_least_the_panel() {
+    use crate::view::unwrapped_width;
+    assert_eq!(unwrapped_width(["a"].into_iter(), 300.0), 300.0);
+    let long = "x".repeat(100);
+    let wide = unwrapped_width(["a", long.as_str()].into_iter(), 300.0);
+    assert!(wide > 700.0, "{wide}");
+    // A wide character takes two cells.
+    let ja = "あ".repeat(50);
+    assert_eq!(unwrapped_width([ja.as_str()].into_iter(), 0.0), wide);
 }
 
 #[test]

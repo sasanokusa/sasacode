@@ -743,8 +743,53 @@ pub(crate) fn plus_minus<'a>(t: Tokens, added: usize, removed: usize) -> El<'a> 
     out.into()
 }
 
-/// The lines of a change, at most `max` of them.
+/// The lines of a change, at most `max` of them, wrapped to the box.
 pub(crate) fn diff_view<'a>(t: Tokens, s: Strings, diff: &'a Diff, max: usize) -> El<'a> {
+    diff_view_in(t, s, diff, max, None)
+}
+
+/// How wide diff lines are drawn when they are not wrapped: as the longest of them, at least
+/// `least`. A text widget does not say how wide it is, so it is reckoned from the characters.
+pub(crate) fn unwrapped_width<'a>(lines: impl Iterator<Item = &'a str>, least: f32) -> f32 {
+    let longest = lines
+        .map(|l| l.chars().map(|c| if c == '\t' { 4 } else { cells(c) }).sum::<usize>())
+        .max()
+        .unwrap_or(0);
+    (longest as f32 * 7.3 + 72.0).max(least)
+}
+
+/// The width of one line of a diff, and how its text is broken: each line kept whole and as wide
+/// as `wide` when given, else filling the box and wrapped.
+pub(crate) fn diff_line_width(wide: Option<f32>) -> (Length, text::Wrapping) {
+    match wide {
+        Some(w) => (Length::Fixed(w), text::Wrapping::None),
+        None => (Length::Fill, text::Wrapping::WordOrGlyph),
+    }
+}
+
+/// The box around a diff's lines, scrolled sideways when they are not wrapped.
+pub(crate) fn diff_box<'a>(t: Tokens, lines: iced::widget::Column<'a, Msg>, wide: Option<f32>) -> El<'a> {
+    let inner: El<'a> = if wide.is_some() {
+        iced::widget::scrollable(lines)
+            .direction(iced::widget::scrollable::Direction::Horizontal(
+                iced::widget::scrollable::Scrollbar::new().width(5).scroller_width(5),
+            ))
+            .style(t.scroll())
+            .into()
+    } else {
+        lines.into()
+    };
+    container(inner)
+        .width(Length::Fill)
+        .padding([4, 0])
+        .clip(true)
+        .style(t.boxed(t.raised, t.line, RADIUS))
+        .into()
+}
+
+/// [`diff_view`], its lines kept whole and the box scrolled sideways when `wide` is given.
+pub(crate) fn diff_view_in<'a>(t: Tokens, s: Strings, diff: &'a Diff, max: usize, wide: Option<f32>) -> El<'a> {
+    let (width, wrapping) = diff_line_width(wide);
     let mut lines = column![];
     for line in diff.lines.iter().take(max) {
         let (mark, color, fill) = match line.sign {
@@ -757,10 +802,10 @@ pub(crate) fn diff_view<'a>(t: Tokens, s: Strings, diff: &'a Diff, max: usize) -
             .size(12)
             .font(mono())
             .color(if line.sign == Sign::Hunk { t.fg_3 } else { t.fg })
-            .wrapping(text::Wrapping::WordOrGlyph);
+            .wrapping(wrapping);
         lines = lines.push(
             container(row![text(mark).size(12).font(mono()).color(color).width(14), body].spacing(2))
-                .width(Length::Fill)
+                .width(width)
                 .padding([1, 8])
                 .style(move |_| container::Style {
                     background: fill.map(Into::into),
@@ -772,12 +817,7 @@ pub(crate) fn diff_view<'a>(t: Tokens, s: Strings, diff: &'a Diff, max: usize) -
     if hidden > 0 {
         lines = lines.push(container(text(fill(s.more_lines, "n", hidden)).size(11.5).color(t.fg_3)).padding([3, 8]));
     }
-    container(lines)
-        .width(Length::Fill)
-        .padding([4, 0])
-        .clip(true)
-        .style(t.boxed(t.raised, t.line, RADIUS))
-        .into()
+    diff_box(t, lines, wide)
 }
 
 /// Text a program wrote: its last `max` lines, set in. A file named with its line in it opens in

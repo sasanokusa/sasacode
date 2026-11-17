@@ -103,6 +103,10 @@ impl App {
                 let _ = self.set(|p| p.more.split_diff = on);
                 Task::none()
             }
+            Msg::SetDiffNowrap(on) => {
+                let _ = self.set(|p| p.more.diff_nowrap = on);
+                Task::none()
+            }
             Msg::SetWhitespace(hide) => {
                 let _ = self.set(|p| p.more.hide_whitespace = hide);
                 self.load_scope()

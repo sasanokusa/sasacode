@@ -724,6 +724,11 @@ fn scope_bar(app: &App) -> El<'_> {
             more.hide_whitespace,
             Msg::SetWhitespace(!more.hide_whitespace)
         ),
+        pick(
+            w.diff_nowrap.to_owned(),
+            more.diff_nowrap,
+            Msg::SetDiffNowrap(!more.diff_nowrap)
+        ),
         pick(w.fold_all.to_owned(), false, Msg::FoldFiles(true)),
         pick(w.open_all.to_owned(), false, Msg::FoldFiles(false)),
     ]
@@ -796,7 +801,8 @@ fn scoped_files(app: &App) -> El<'_> {
         } else if app.prefs.more.split_diff {
             split_view(app, diff)
         } else {
-            diff_view(t, s, diff, 400)
+            let wide = unwrapped(app, diff.lines.iter().take(400).map(|l| l.text.as_str()), 1.0);
+            super::diff_view_in(t, s, diff, 400, wide)
         };
         col = col.push(on_file(
             app,
@@ -811,9 +817,12 @@ fn scoped_files(app: &App) -> El<'_> {
 fn split_view<'a>(app: &'a App, diff: &'a crate::diff::Diff) -> El<'a> {
     use crate::diff::Sign;
     let t = app.t;
-    let side = |line: Option<&'a crate::diff::Line>, left: bool| -> El<'a> {
+    let wide = unwrapped(app, diff.lines.iter().take(800).map(|l| l.text.as_str()), 0.5);
+    let (_, wrapping) = super::diff_line_width(wide);
+    let width = wide.map_or(Length::FillPortion(1), Length::Fixed);
+    let side = move |line: Option<&'a crate::diff::Line>, left: bool| -> El<'a> {
         let Some(line) = line else {
-            return container(Space::new()).width(Length::FillPortion(1)).into();
+            return container(Space::new()).width(width).into();
         };
         let fill = match line.sign {
             Sign::Del if left => Some(t.del_wash),
@@ -825,9 +834,9 @@ fn split_view<'a>(app: &'a App, diff: &'a crate::diff::Diff) -> El<'a> {
                 .size(11.5)
                 .font(mono())
                 .color(if line.sign == Sign::Hunk { t.fg_3 } else { t.fg })
-                .wrapping(text::Wrapping::WordOrGlyph),
+                .wrapping(wrapping),
         )
-        .width(Length::FillPortion(1))
+        .width(width)
         .padding([1, 6])
         .style(move |_| container::Style {
             background: fill.map(Into::into),
@@ -839,12 +848,7 @@ fn split_view<'a>(app: &'a App, diff: &'a crate::diff::Diff) -> El<'a> {
     for (left, right) in crate::scope::side_by_side(diff).into_iter().take(400) {
         lines = lines.push(row![side(left, true), side(right, false)].spacing(2));
     }
-    container(lines)
-        .width(Length::Fill)
-        .padding([4, 0])
-        .clip(true)
-        .style(t.boxed(t.raised, t.line, RADIUS))
-        .into()
+    super::diff_box(t, lines, wide)
 }
 
 /// The hunks of a file's staged diff, or of what is not staged: each with what can be done to it
@@ -863,6 +867,10 @@ fn hunks<'a>(app: &'a App, f: &'a crate::git::File, staged: bool) -> El<'a> {
             .on_press_maybe(msg)
     };
     let busy = app.git_busy;
+    let wide = unwrapped(app, diff.lines.iter().take(300).map(|l| l.text.as_str()), 1.0);
+    let (width, wrapping) = super::diff_line_width(wide);
+    // Comments under a line stay as wide as the panel when the lines scroll sideways.
+    let note_width = wide.map_or(Length::Fill, |_| Length::Fixed(app.insp_width() - 48.0));
     let mut lines = column![];
     let mut hunk = 0usize;
     for (line, n) in diff.lines.iter().zip(numbers).take(300) {
@@ -903,7 +911,7 @@ fn hunks<'a>(app: &'a App, f: &'a crate::git::File, staged: bool) -> El<'a> {
             }
             lines = lines.push(
                 container(bar.clip(true))
-                    .width(Length::Fill)
+                    .width(width)
                     .padding([2, 6])
                     .style(t.fill(t.inset)),
             );
@@ -926,11 +934,11 @@ fn hunks<'a>(app: &'a App, f: &'a crate::git::File, staged: bool) -> El<'a> {
                     .size(12)
                     .font(mono())
                     .color(t.fg)
-                    .wrapping(text::Wrapping::WordOrGlyph),
+                    .wrapping(wrapping),
             ]
             .spacing(2),
         )
-        .width(Length::Fill)
+        .width(width)
         .padding([1, 6])
         .style(move |_| container::Style {
             background: wash.map(Into::into),
@@ -948,7 +956,7 @@ fn hunks<'a>(app: &'a App, f: &'a crate::git::File, staged: bool) -> El<'a> {
         // What was said about this line, and the comment being written under it.
         for (i, c) in app.chat.comments.iter().enumerate() {
             if c.path == path && c.line == n {
-                lines = lines.push(comment_note(app, i, c));
+                lines = lines.push(container(comment_note(app, i, c)).width(note_width));
             }
         }
         if let Some(draft) = &app.commenting
@@ -956,15 +964,19 @@ fn hunks<'a>(app: &'a App, f: &'a crate::git::File, staged: bool) -> El<'a> {
             && draft.line == n
             && draft.staged == staged
         {
-            lines = lines.push(draft_box(app, draft));
+            lines = lines.push(container(draft_box(app, draft)).width(note_width));
         }
     }
-    container(lines)
-        .width(Length::Fill)
-        .padding([4, 0])
-        .clip(true)
-        .style(t.boxed(t.raised, t.line, RADIUS))
-        .into()
+    super::diff_box(t, lines, wide)
+}
+
+/// How wide the git tab draws diff lines when it keeps each whole, or none when it wraps them.
+/// `share` is the part of the panel's width one column of lines takes.
+fn unwrapped<'a>(app: &App, lines: impl Iterator<Item = &'a str>, share: f32) -> Option<f32> {
+    app.prefs
+        .more
+        .diff_nowrap
+        .then(|| super::unwrapped_width(lines, (app.insp_width() - 48.0) * share))
 }
 
 /// The folder's scripts run from the window: each one's state, its output as it comes, and the

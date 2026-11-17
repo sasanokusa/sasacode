@@ -174,6 +174,8 @@ pub struct More {
     /// Diffs side by side, and changes of white space left out of them.
     pub split_diff: bool,
     pub hide_whitespace: bool,
+    /// Diff lines of the git tab kept whole and scrolled sideways, not wrapped.
+    pub diff_nowrap: bool,
     /// Files of the git tab marked as viewed, by branch: `path#hash` of their diff.
     pub viewed: BTreeMap<String, BTreeSet<String>>,
     /// Which conversations the list shows, and in which order.
@@ -700,6 +702,7 @@ mod tests {
                 merge_method: "squash".into(),
                 split_diff: true,
                 hide_whitespace: true,
+                diff_nowrap: true,
                 viewed: [("topic".to_owned(), ["a.rs#1".to_owned()].into())].into(),
                 list_show: Show::Unread,
                 list_order: Order::Created,

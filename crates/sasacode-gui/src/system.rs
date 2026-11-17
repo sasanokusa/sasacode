@@ -549,18 +549,18 @@ pub fn projects(home: &Path) -> Vec<PathBuf> {
                 .max_by_key(|(when, _)| *when)?;
             let first = std::fs::read_to_string(&newest.1).ok()?;
             let head: serde_json::Value = serde_json::from_str(first.lines().next()?).ok()?;
-            // The CLI writes the folder by its real path: one reached through a link (`/var` on
-            // macOS is `/private/var`) is the same folder.
-            let cwd = std::fs::canonicalize(head["cwd"].as_str()?).ok()?;
+            let cwd = PathBuf::from(head["cwd"].as_str()?);
             cwd.is_dir().then_some((newest.0, cwd))
         })
         .collect();
     found.sort_by_key(|a| std::cmp::Reverse(a.0));
+    // One folder reached through a link (`/var` on macOS is `/private/var`) is listed once. The
+    // real path only tells them apart: it is not shown or opened, as on Windows it is `\\?\C:\…`.
     let mut seen = std::collections::HashSet::new();
     found
         .into_iter()
         .map(|(_, cwd)| cwd)
-        .filter(|cwd| seen.insert(cwd.clone()))
+        .filter(|cwd| seen.insert(std::fs::canonicalize(cwd).unwrap_or_else(|_| cwd.clone())))
         .collect()
 }
 
@@ -698,8 +698,8 @@ mod tests {
             "{\"type\":\"session\",\"cwd\":\"/no/such/folder\"}\n",
         )
         .unwrap();
-        let real = |p: &Path| std::fs::canonicalize(p).unwrap();
-        assert_eq!(projects(&home), vec![real(&new), real(&old)]);
+        // As the logs wrote them, the link's folder left out as the one `new` already is.
+        assert_eq!(projects(&home), vec![new.clone(), old.clone()]);
         assert!(same_dir(&link, &new) || cfg!(not(unix)));
         assert!(!same_dir(&old, &new));
         std::fs::remove_dir_all(home).unwrap();
