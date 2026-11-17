@@ -136,6 +136,21 @@ pub struct Profile {
     pub workspace_id: Option<String>,
 }
 
+impl Profile {
+    /// Whether a client at `base` may have this profile's token: Anthropic's API, or the host the
+    /// profile names (its `base_url`, else `$ANTHROPIC_BASE_URL`). The SDK gave it to any keyless
+    /// Anthropic-format client, so another provider without its key (commandcode-anthropic, say) got
+    /// the token, and after a 401 there the refresh token went to that host (rust/DECISIONS.md ADR-013).
+    pub fn serves(&self, base: &str) -> bool {
+        let base = base.trim_end_matches('/');
+        base == "https://api.anthropic.com"
+            || self
+                .base_url
+                .as_deref()
+                .is_some_and(|b| !b.is_empty() && b.trim_end_matches('/') == base)
+    }
+}
+
 /// A string field as the SDK used it (other JSON values as `String(v)`).
 fn text_of(v: &Value) -> String {
     js_string(Some(v))
@@ -521,6 +536,9 @@ pub async fn bearer(env: &Env, client_base: &str, force: bool) -> anyhow::Result
     let task = tokio::spawn(async move {
         let _turn = ONE_AT_A_TIME.lock().await;
         let Some(profile) = load(&env)? else { return Ok(None) };
+        if !profile.serves(&client_base) {
+            return Ok(None);
+        }
         let token = profile.token(&client_base, force).await?;
         Ok(Some(Bearer {
             token,

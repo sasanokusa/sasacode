@@ -119,3 +119,16 @@ before the tokio runtime or any other thread starts, so nothing reads the enviro
 concurrently, with a SAFETY note at each call. That is the second and last place.
 Consequences: std spawns with fork+exec instead of posix_spawn for bash; the error for a missing
 bash is the same `io::Error`. Any other `unsafe` needs its own ADR.
+
+## ADR-013: The `ant auth login` token goes only to Anthropic or the profile's own host
+Status: accepted (2026-11-18)
+Context: The Anthropic SDK gave the profile's token to every Anthropic-format client without a key.
+A provider such as `commandcode-anthropic`, used before its key was set, therefore got the user's
+Anthropic OAuth token as a bearer token. After a 401 there, when the profile names no `base_url`,
+the refresh token was posted to that provider's host. Nobody depends on this.
+Decision: `anthropic_profile::Profile::serves` lets a client have the token only when its base URL
+is `https://api.anthropic.com` or the profile's `base_url` (the file's, else `$ANTHROPIC_BASE_URL`).
+Any other host gets no credentials, and the request fails with the SDK's "Could not resolve
+authentication method" error, as it did without a profile.
+Consequences: This deliberately deviates from the TS (ADR-003). A gateway that really is meant to
+take the profile's token is named in the profile's `base_url` or in `ANTHROPIC_BASE_URL`.

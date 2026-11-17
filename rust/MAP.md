@@ -5,7 +5,8 @@ Goal: sasacode as a pure Rust app (v0.20.0), every format compatible, TS removed
 
 - Decisions: [DECISIONS.md](DECISIONS.md) — ADR-001 whole app, ADR-002 no external plugins,
   ADR-003 full compatibility, ADR-004 oracles, ADR-005 core budget, ADR-006 GUI untouched,
-  ADR-007 v0.20.0, ADR-008 real models, ADR-009 xtask, ADR-010 runtime and libraries, ADR-011 bundled-but-off plugins.
+  ADR-007 v0.20.0, ADR-008 real models, ADR-009 xtask, ADR-010 runtime and libraries, ADR-011 bundled-but-off plugins,
+  ADR-012 two unsafe sites, ADR-013 the profile token stays with its host.
 - Rules for every unit: [PORTING.md](PORTING.md). Names: [GLOSSARY.md](GLOSSARY.md).
 - Research: [research/](research/) (llm-sdks, mcp, tui).
 

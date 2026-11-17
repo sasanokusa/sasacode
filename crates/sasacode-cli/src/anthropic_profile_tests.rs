@@ -386,6 +386,30 @@ async fn the_token_endpoint_is_the_clients_host_when_the_profile_names_none() {
 }
 
 #[tokio::test]
+async fn only_anthropic_and_the_profiles_own_host_get_the_token() {
+    let tmp = TempDir::new().unwrap();
+    let dir = tmp.path();
+    let (server, seen) = token_server(200, json!({ "access_token": "at-2", "expires_in": 60 }));
+    config(dir, "default", oauth(json!({})));
+    write_creds(
+        &dir.join("credentials").join("default.json"),
+        &json!({ "access_token": "at-1", "expires_at": now() - 5, "refresh_token": "rt-1" }),
+    );
+    // Another keyless Anthropic-format provider: no token, and no refresh sent to its host.
+    let other = format!("{}/", server.url());
+    assert!(bearer(&dir_env(dir), &other, true).await.unwrap().is_none());
+    assert!(seen.lock().unwrap().is_empty());
+    // The host the profile names (the file's base_url, else ANTHROPIC_BASE_URL) is served.
+    let named = dir_env(dir).with("ANTHROPIC_BASE_URL", server.url());
+    let b = bearer(&named, &other, false).await.unwrap().unwrap();
+    assert_eq!(b.token, "at-2");
+    assert_eq!(seen.lock().unwrap().len(), 1);
+    let p = load(&dir_env(dir)).unwrap().unwrap();
+    assert!(p.serves("https://api.anthropic.com/"));
+    assert!(!p.serves("https://api.commandcode.ai/provider"));
+}
+
+#[tokio::test]
 async fn a_forced_refresh_replaces_even_a_fresh_token() {
     let tmp = TempDir::new().unwrap();
     let dir = tmp.path();
