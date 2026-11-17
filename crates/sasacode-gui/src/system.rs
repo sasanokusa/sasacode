@@ -559,10 +559,12 @@ mod tests {
 }
 
 /// What sets the environment apart around a login shell's: not the user's choices.
+#[cfg(any(unix, test))]
 const SHELL_OWN: [&str; 5] = ["PWD", "OLDPWD", "SHLVL", "_", "TERM"];
 
 /// The environment `env -0` printed between two `mark`s: name and value, the shell's own left
 /// out.
+#[cfg(any(unix, test))]
 pub fn parse_env(out: &str, mark: &str) -> Vec<(String, String)> {
     let Some(start) = out.find(mark) else {
         return Vec::new();
