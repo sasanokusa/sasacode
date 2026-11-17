@@ -429,11 +429,7 @@ impl Agent {
     /// Send user input. While a run is in progress it is queued and delivered at the next turn
     /// (FR-L05). `accepted` gets the content the user_prompt hooks made of it (None: a plugin
     /// handled it), the same blocks the user message will hold.
-    pub async fn prompt(
-        &self,
-        input: Vec<UserContent>,
-        accepted: Option<Accepted>,
-    ) -> anyhow::Result<StopCause> {
+    pub async fn prompt(&self, input: Vec<UserContent>, accepted: Option<Accepted>) -> anyhow::Result<StopCause> {
         // Sent while a halt waits for the run to stop: it belongs after the halt, not to the
         // stopping run. (Input sent before the halt was queued for that run, and the halt drops it.)
         let halting = self.st().halted.clone();

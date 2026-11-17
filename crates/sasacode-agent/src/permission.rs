@@ -304,6 +304,7 @@ fn escape_extglob(s: &str) -> String {
 
 /// A compiled glob as Bun.Glob matched it: `*` stops at `/`, `**` crosses it, `\` escapes.
 fn glob(pattern: &str) -> globset::GlobMatcher {
+    let pattern = &bun_glob_syntax(pattern);
     let built = globset::GlobBuilder::new(pattern)
         .literal_separator(true)
         .backslash_escape(true)
@@ -321,6 +322,58 @@ fn glob(pattern: &str) -> globset::GlobMatcher {
             // INFALLIBLE: every special character is escaped.
             .unwrap_or_else(|_| globset::Glob::new("").expect("empty glob").compile_matcher()),
     }
+}
+
+/// Bun.Glob's reading where globset's differs. A `}` that closes no `{` is a literal brace
+/// (`\{a,b}` matched the name `{a,b}`; globset refuses the pattern), and `\b` `\n` `\r` `\t`
+/// are the control characters, as in a JS string (`a\b` did not match `ab`).
+fn bun_glob_syntax(pattern: &str) -> String {
+    let mut out = String::with_capacity(pattern.len());
+    let (mut depth, mut in_class, mut chars) = (0usize, false, pattern.chars().peekable());
+    while let Some(ch) = chars.next() {
+        match ch {
+            '\\' => {
+                match chars.next() {
+                    Some('b') => out.push('\u{8}'),
+                    Some('n') => out.push('\n'),
+                    Some('r') => out.push('\r'),
+                    Some('t') => out.push('\t'),
+                    Some(next) => {
+                        out.push(ch);
+                        out.push(next);
+                    }
+                    None => out.push(ch),
+                }
+                continue;
+            }
+            '[' if !in_class => {
+                in_class = true;
+                out.push(ch);
+                // A `]` right after the opening (or after `!`/`^`) belongs to the class.
+                if let Some(&c) = chars.peek()
+                    && (c == '!' || c == '^')
+                {
+                    out.push(c);
+                    chars.next();
+                }
+                if chars.peek() == Some(&']') {
+                    out.push(']');
+                    chars.next();
+                }
+                continue;
+            }
+            ']' if in_class => in_class = false,
+            '{' if !in_class => depth += 1,
+            '}' if !in_class && depth == 0 => {
+                out.push_str("\\}");
+                continue;
+            }
+            '}' if !in_class => depth -= 1,
+            _ => {}
+        }
+        out.push(ch);
+    }
+    out
 }
 
 /// deny/ask rules match when any spelling of a path does (as written, or with symlinks resolved);

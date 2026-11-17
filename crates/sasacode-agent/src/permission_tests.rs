@@ -359,3 +359,54 @@ fn a_symlink_inside_the_project_cannot_smuggle_a_path_past_rules() {
     assert_eq!(v.decision, Ask);
     assert!(v.reason.starts_with("cannot resolve "), "{}", v.reason);
 }
+
+/// The rules' globs answer as Bun.Glob did. `bun_glob_cases.json` is what Bun 1.4.4's
+/// `new Bun.Glob(pattern).match(path)` said for each pair (recorded before the TS was removed);
+/// a rule is a security boundary, so every pair must agree.
+#[test]
+fn globs_match_as_bun_glob_did() {
+    let recorded: Value = serde_json::from_str(include_str!("bun_glob_cases.json")).unwrap();
+    let mut wrong = Vec::new();
+    for case in recorded["cases"].as_array().unwrap() {
+        let (pattern, path, want) = (
+            case[0].as_str().unwrap(),
+            case[1].as_str().unwrap(),
+            case[2].as_bool().unwrap(),
+        );
+        // Bun.Glob's `**/*` did not match a path ending in `/`; a rule never sees one (paths are
+        // resolved first, which drops it), so that quirk is not carried over.
+        if path.len() > 1 && path.ends_with('/') && pattern.contains("**/*") {
+            continue;
+        }
+        if glob(pattern).is_match(path) != want {
+            wrong.push(format!("{pattern:?} {path:?}: bun {want}"));
+        }
+    }
+    assert!(
+        wrong.is_empty(),
+        "{} of {} differ:\n{}",
+        wrong.len(),
+        recorded["cases"].as_array().unwrap().len(),
+        wrong.join("\n")
+    );
+}
+
+/// Bun.Glob turned `\\b` `\\n` `\\r` `\\t` into control characters and left the other escapes
+/// meaning the character itself (probed with Bun 1.4.4).
+#[test]
+fn backslash_escapes_read_as_bun_glob_did() {
+    for (pattern, path, want) in [
+        ("/p/a\\b", "/p/a\u{8}", true),
+        ("/p/a\\b", "/p/ab", false),
+        ("/p/a\\n", "/p/a\n", true),
+        ("/p/a\\t", "/p/a\t", true),
+        ("/p/a\\r", "/p/a\r", true),
+        ("/p/a\\f", "/p/af", true),
+        ("/p/a\\x", "/p/ax", true),
+        ("/p/\\.env", "/p/.env", true),
+        ("/p/\\{a,b}", "/p/{a,b}", true),
+        ("/p/\\{a,b}", "/p/a", false),
+    ] {
+        assert_eq!(glob(pattern).is_match(path), want, "{pattern:?} {path:?}");
+    }
+}
