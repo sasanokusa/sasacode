@@ -2223,6 +2223,21 @@ fn what_always_allowed_is_kept_for_the_conversations_later_runs_and_can_be_taken
         system_file: None,
     };
     assert!(spec.args().windows(2).any(|w| w == ["--allow", "bash(echo one)"]));
+    // Listed in the settings, it can be kept in this folder's settings for later conversations.
+    let w = crate::words::JA;
+    let _ = app.update(Msg::Show(Some(crate::app::Overlay::Settings)));
+    assert!(says(&app, w.allowed_keep_here) && says(&app, w.allowed_keep_all) && says(&app, w.allowed_keep_note));
+    let folder = std::env::temp_dir().join(format!("sasacode-gui-keep-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&folder);
+    std::fs::create_dir_all(&folder).unwrap();
+    app.cwd = folder.clone();
+    let _ = app.update(Msg::KeepAllowed("bash(echo one)".into(), true));
+    let kept = std::fs::read_to_string(folder.join(".sasacode/config.json")).unwrap();
+    assert!(kept.contains("\"bash(echo one)\""), "{kept}");
+    assert!(app.toast.as_deref().is_some_and(|t| t.ends_with("に残しました")));
+    let _ = app.update(Msg::KeepAllowed("bash(echo one)".into(), true));
+    assert!(app.toast.as_deref().is_some_and(|t| t.ends_with("にもうあります")));
+    let _ = std::fs::remove_dir_all(&folder);
     let _ = app.update(Msg::ForgetAllowed("bash(echo one)".into()));
     assert!(!app.prefs.more.allowed.contains_key("s-always"));
 }

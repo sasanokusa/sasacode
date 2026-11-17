@@ -750,6 +750,8 @@ pub enum Msg {
     ArgsSend,
     /// A rule "always" added for the conversation shown, taken back.
     ForgetAllowed(String),
+    /// A rule "always" allowed kept in the CLI's settings: of this folder (`true`) or of all.
+    KeepAllowed(String, bool),
     /// A picture shown larger, and at its own size or to fit.
     ViewImage(PathBuf),
     ImageActual(bool),

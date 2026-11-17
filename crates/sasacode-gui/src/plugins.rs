@@ -205,6 +205,23 @@ impl App {
                     }
                 })
             }
+            Msg::KeepAllowed(rule, here) => {
+                let w = self.s.w();
+                let path = if here {
+                    self.cwd.join(".sasacode").join("config.json")
+                } else if let Some(home) = &self.home {
+                    home.join("config.json")
+                } else {
+                    return Ok(Task::none());
+                };
+                let shown = path.display().to_string();
+                self.toast = Some(match crate::system::add_allow_rule(&path, &rule) {
+                    Ok(true) => crate::i18n::fill(w.allowed_kept, "path", &shown),
+                    Ok(false) => crate::i18n::fill(w.allowed_already, "path", &shown),
+                    Err(e) => crate::i18n::fill(w.allowed_unreadable, "path", &shown).replace("{error}", &e),
+                });
+                Task::none()
+            }
             other => return self.update_cli(other),
         };
         Ok(task)

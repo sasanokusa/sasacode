@@ -137,6 +137,47 @@ pub fn resume_in_terminal(dir: &Path, program: &Path, id: &str) -> bool {
     }
 }
 
+/// `rule` added to the allow rules of the CLI's settings file at `path` (`config.json`, of the
+/// home or of a folder), the rest of it kept as it is. False when it was there already. A file
+/// that cannot be read as JSON is not written over.
+pub fn add_allow_rule(path: &Path, rule: &str) -> Result<bool, String> {
+    let mut config: serde_json::Value = match std::fs::read_to_string(path) {
+        Ok(text) => serde_json::from_str(&text).map_err(|e| e.to_string())?,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => serde_json::json!({}),
+        Err(e) => return Err(e.to_string()),
+    };
+    let Some(top) = config.as_object_mut() else {
+        return Err("not a JSON object".into());
+    };
+    let permissions = top.entry("permissions").or_insert_with(|| serde_json::json!({}));
+    let Some(permissions) = permissions.as_object_mut() else {
+        return Err("\"permissions\" is not an object".into());
+    };
+    let allow = permissions.entry("allow").or_insert_with(|| serde_json::json!([]));
+    let Some(allow) = allow.as_array_mut() else {
+        return Err("\"permissions.allow\" is not a list".into());
+    };
+    if allow.iter().any(|r| r.as_str() == Some(rule)) {
+        return Ok(false);
+    }
+    allow.push(rule.into());
+    let text = serde_json::to_string_pretty(&config).map_err(|e| e.to_string())? + "\n";
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    }
+    let new = !path.exists();
+    std::fs::write(path, text).map_err(|e| e.to_string())?;
+    // As the CLI writes its settings: readable by the user only.
+    #[cfg(unix)]
+    if new {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+    }
+    #[cfg(not(unix))]
+    let _ = new;
+    Ok(true)
+}
+
 /// The editors known to open a file from a command, as named and as run.
 pub const EDITORS: [(&str, &str); 12] = [
     ("VS Code", "code"),
@@ -643,6 +684,38 @@ mod tests {
         assert_eq!(said("zed").unwrap(), ["/w/src/app.rs:42"]);
         assert_eq!(said("idea").unwrap(), ["--line", "42", "/w/src/app.rs"]);
         assert_eq!(said("emacs"), None);
+    }
+
+    #[test]
+    fn an_allow_rule_is_added_to_a_settings_file_and_the_rest_of_it_kept() {
+        let root = std::env::temp_dir().join(format!("sasacode-allow-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let file = root.join(".sasacode/config.json");
+        // None yet: made, with the rule alone.
+        assert_eq!(add_allow_rule(&file, "bash(npm test)"), Ok(true));
+        let read = || -> serde_json::Value { serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap() };
+        assert_eq!(
+            read(),
+            serde_json::json!({"permissions": {"allow": ["bash(npm test)"]}})
+        );
+        // Twice: once.
+        assert_eq!(add_allow_rule(&file, "bash(npm test)"), Ok(false));
+        // What else it holds is kept.
+        std::fs::write(
+            &file,
+            r#"{"model":"m","permissions":{"deny":["bash(rm *)"],"allow":["read"]}}"#,
+        )
+        .unwrap();
+        assert_eq!(add_allow_rule(&file, "write(/w/a.md)"), Ok(true));
+        assert_eq!(
+            read(),
+            serde_json::json!({"model":"m","permissions":{"deny":["bash(rm *)"],"allow":["read","write(/w/a.md)"]}})
+        );
+        // One that cannot be read is not written over.
+        std::fs::write(&file, "{ not json").unwrap();
+        assert!(add_allow_rule(&file, "read").is_err());
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "{ not json");
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]

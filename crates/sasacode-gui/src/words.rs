@@ -353,6 +353,12 @@ words! {
     judged_ask: "判定役が確認に回した", "The judge asked you";
     allowed_head: "この会話で常に許可したもの", "Always allowed in this conversation";
     allowed_none: "まだありません", "Nothing yet";
+    allowed_keep_here: "このフォルダに残す", "Keep for this folder";
+    allowed_keep_all: "どこでも残す", "Keep everywhere";
+    allowed_keep_note: "残すと、CLIの設定ファイル（このフォルダの.sasacode/config.json、またはsasacodeのホームのconfig.json）のallowに入り、次からの会話でも聞かずに許可します。フォルダの設定は、このフォルダを信頼しているときだけ効きます。やめるときは、そのファイルから消してください。", "Kept, a rule goes into the allow rules of the CLI's settings (this folder's .sasacode/config.json, or config.json in sasacode's home) and is allowed without asking in later conversations too. A folder's settings apply only while the folder is trusted. To stop, take it out of that file.";
+    allowed_kept: "{path}に残しました", "Kept in {path}";
+    allowed_already: "{path}にもうあります", "Already in {path}";
+    allowed_unreadable: "{path}を書き換えませんでした（{error}）", "{path} was not changed ({error})";
     slash_skill: "スキル", "skill";
     trust_head: "このフォルダの設定は、信頼するまで使われません", "This folder's settings are not used until it is trusted";
     trust_save: "信頼する", "Trust";

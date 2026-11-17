@@ -562,9 +562,16 @@ fn allowed(app: &App) -> El<'_> {
         .and_then(|id| app.prefs.more.allowed.get(id))
         .filter(|r| !r.is_empty());
     let mut list = column![text(w.allowed_head).size(13).font(super::bold()).color(t.fg)].spacing(4);
+    let keep = |label: &'static str, msg: Msg| {
+        button(text(label).size(11.5).wrapping(text::Wrapping::None))
+            .padding([2, 8])
+            .style(t.outline(t.fg_2))
+            .on_press(msg)
+    };
     match rules {
         None => list = list.push(text(w.allowed_none).size(12).color(t.fg_3)),
         Some(rules) => {
+            list = list.push(text(w.allowed_keep_note).size(11.5).color(t.fg_3));
             for rule in rules {
                 list = list.push(
                     row![
@@ -574,6 +581,8 @@ fn allowed(app: &App) -> El<'_> {
                             .color(t.fg_2)
                             .width(Length::Fill)
                             .wrapping(text::Wrapping::WordOrGlyph),
+                        keep(w.allowed_keep_here, Msg::KeepAllowed(rule.clone(), true)),
+                        keep(w.allowed_keep_all, Msg::KeepAllowed(rule.clone(), false)),
                         button(crate::icons::icon(crate::icons::Icon::Close, 12.0, t.fg_3))
                             .padding(3)
                             .style(t.ghost(t.fg_3, false))
