@@ -3045,7 +3045,7 @@ fn a_scratch_conversation_with_no_folder_runs_in_an_empty_one_and_its_log_goes_f
     app.home = Some(home.clone());
     let _ = app.update(Msg::NewBareScratch);
     assert!(app.chat.scratch && app.chat.bare && app.is_bare(app.chat.key));
-    assert!(says(&app, crate::words::JA.bare_tag));
+    assert!(says(&app, crate::words::JA.bare_tag) && says(&app, crate::words::JA.bare_blank));
     // Its folder: empty, under the home, not this window's.
     let bare = app.bare_folder();
     assert!(bare.is_dir() && bare.starts_with(&home) && bare != app.cwd);
@@ -3725,6 +3725,8 @@ fn what_a_review_asked_for_finds_is_shown_on_the_lines_of_the_diff_until_put_awa
     let w = app.s.w();
     let dir = std::env::temp_dir().join(format!("sasacode-gui-review-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
+    // As git names the folder: with `/private` in front on macOS.
+    let dir = dir.canonicalize().unwrap();
     std::fs::write(dir.join("a.txt"), "a\nb\nc\nd\ne\nf\ng\nh\nd\n").unwrap();
     app.cwd = dir.clone();
     changed_repo(&mut app);
@@ -3733,8 +3735,7 @@ fn what_a_review_asked_for_finds_is_shown_on_the_lines_of_the_diff_until_put_awa
     let _ = app.update(Msg::Send);
     let _ = app.pretend_running();
     let key = app.chat.key;
-    let reply =
-        "1. a.txt:9 で`d`に変えた理由が分かりません。\n2. a.txt:3 の行は差分の外です。\n3. 全体にテストが足りません。";
+    let reply = "1. `a.txt:9`：`d`に変えた理由が分かりません。\n2. a.txt:3 — 差分の外の行です。\n3. 全体にテストが足りません。\n\n[a.txt](a.txt#L1)も見てください。";
     for line in [
         serde_json::json!({"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":reply}],"provider":"fake","model":"m","usage":{"input":10,"output":10},"stopReason":"stop"}}),
         serde_json::json!({"type":"agent_end","cause":"done"}),
@@ -3745,8 +3746,8 @@ fn what_a_review_asked_for_finds_is_shown_on_the_lines_of_the_diff_until_put_awa
     assert_eq!(app.chat.review.len(), 2);
     // On its line in the diff, and the one off the diff above it with where it is.
     assert!(says(&app, &crate::i18n::fill(w.review_found, "n", 2)));
-    assert!(says(&app, "a.txt:9 で`d`に変えた理由が分かりません。"));
-    assert!(says(&app, "@a.txt:3") && says(&app, "a.txt:3 の行は差分の外です。"));
+    assert!(says(&app, "dに変えた理由が分かりません。") && !says(&app, "@a.txt:9"));
+    assert!(says(&app, "@a.txt:3") && says(&app, "差分の外の行です。"));
     // One goes with the next message, as a comment on its line; the other is put away.
     let _ = app.update(Msg::ReviewTake(0));
     assert_eq!(app.chat.comments.len(), 1);

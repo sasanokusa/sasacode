@@ -139,7 +139,9 @@ fn blank(app: &App) -> El<'_> {
         column![
             icon(Icon::Leaf, 28.0, t.accent),
             text(s.blank_h).size(20).font(bold()).color(t.fg),
-            text(s.blank_p).size(13).color(t.fg_3),
+            text(if app.chat.bare { s.w().bare_blank } else { s.blank_p })
+                .size(13)
+                .color(t.fg_3),
         ]
         .spacing(10)
         .align_x(Alignment::Center),

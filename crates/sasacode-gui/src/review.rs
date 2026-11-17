@@ -48,12 +48,14 @@ pub fn place(path: &Path, line: usize, cwd: &Path) -> String {
 /// How long one finding of a review is kept, in characters.
 const FINDING_CHARS: usize = 600;
 
-/// Whether `prompt` is the window's request for a review, in either language.
+/// Whether `prompt` is the window's request for a review, in either language: it begins with the
+/// request's first sentence, whatever was changed or added after it.
 pub fn asks_review(prompt: &str) -> bool {
     let prompt = prompt.trim_start();
     [crate::words::JA.review_prompt, crate::words::EN.review_prompt]
         .iter()
-        .any(|asked| prompt.starts_with(asked))
+        .map(|asked| asked.split_inclusive(['。', '.']).next().unwrap_or(asked))
+        .any(|first| prompt.starts_with(first))
 }
 
 /// What the agent found when the newest message asked for a review, each on the line of the file
@@ -65,12 +67,14 @@ pub fn of_review(transcript: &crate::transcript::Transcript, cwd: &Path) -> Vec<
     }
 }
 
-/// The findings of a review: each paragraph or list item that names a line of a file in `cwd`
-/// (`path:12`, `path:12-14`, `path#L12`), with what it says. Its first such line is where it goes.
+/// The findings of a review: each list item, heading or row of a table that names a line of a
+/// file in `cwd` (`path:12`, `path:12-14`, `path#L12`), with what it says, the lines that carry it
+/// on with it. Its first such line is where it goes. A paragraph of its own is not one: what is
+/// said around the findings names files too.
 pub fn findings(reply: &str, cwd: &Path) -> Vec<Comment> {
     let mut out: Vec<Comment> = Vec::new();
     let mut fence = false;
-    // The finding being read, and whether a blank line closed it.
+    // The finding the lines that follow carry on, until a blank line, an item or a heading.
     let mut open: Option<usize> = None;
     for raw in reply.lines() {
         let line = raw.trim();
@@ -83,23 +87,22 @@ pub fn findings(reply: &str, cwd: &Path) -> Vec<Comment> {
             open = None;
             continue;
         }
-        let said = plain(line);
-        match first_place(line, cwd) {
-            Some((path, at)) => {
+        let starts = item(line) || line.starts_with('#') || line.starts_with('|');
+        match first_place(line, cwd).filter(|_| starts) {
+            Some((path, at, word)) => {
                 out.push(Comment {
                     path,
                     line: at,
-                    text: said,
+                    text: plain(line, word),
                 });
                 open = Some(out.len() - 1);
             }
-            // A line that carries on the finding above it, not a new item or a heading.
             None => match open {
-                Some(i) if !item(line) && !line.starts_with('#') => {
+                Some(i) if !starts => {
                     let c = &mut out[i];
                     if c.text.chars().count() < FINDING_CHARS {
                         c.text.push(' ');
-                        c.text.push_str(&said);
+                        c.text.push_str(&plain(line, ""));
                     }
                 }
                 _ => open = None,
@@ -121,19 +124,59 @@ fn item(line: &str) -> bool {
         || (digits > 0 && (line[digits..].starts_with(". ") || line[digits..].starts_with(") ")))
 }
 
-/// A line of Markdown as it reads: without the mark of its item or heading, and without emphasis.
-fn plain(line: &str) -> String {
+/// A line of Markdown as it reads: without the mark of its item or heading, the bars of a table,
+/// emphasis, code marks and the targets of links; and without `place` (where it is, said apart)
+/// when it begins with it.
+fn plain(line: &str, place: &str) -> String {
     let mut rest = line.trim_start_matches('#').trim_start();
     if item(rest) {
         rest = rest.trim_start_matches(|c: char| c.is_ascii_digit());
         rest = rest[1..].trim_start();
     }
-    rest.replace("**", "").replace("__", "")
+    let rest = if rest.starts_with('|') {
+        let cells: Vec<&str> = rest.split('|').map(str::trim).filter(|c| !c.is_empty()).collect();
+        cells.join(" — ")
+    } else {
+        rest.to_owned()
+    };
+    let mut said = unlink(&rest).replace("**", "").replace("__", "").replace('`', "");
+    if !place.is_empty()
+        && let Some(after) = said.trim_start_matches('@').strip_prefix(place.trim_start_matches('@'))
+    {
+        // Only when what follows is set apart from it: `path:12: what`, `path:12 — what`.
+        let apart = after.trim_start().starts_with(|c: char| "：:—–-".contains(c));
+        let after = after.trim_start_matches(|c: char| c.is_whitespace() || "：:—–-".contains(c));
+        if apart && !after.is_empty() {
+            said = after.to_owned();
+        }
+    }
+    said.trim().to_owned()
+}
+
+/// `[text](target)` as its text alone.
+fn unlink(text: &str) -> String {
+    let mut out = String::new();
+    let mut rest = text;
+    while let Some(open) = rest.find('[') {
+        let Some((inner, after)) = rest[open + 1..].split_once("](") else {
+            break;
+        };
+        let Some(close) = after.find(')') else {
+            break;
+        };
+        out.push_str(&rest[..open]);
+        out.push_str(inner);
+        rest = &after[close + 1..];
+    }
+    out.push_str(rest);
+    out
 }
 
 /// The first line of a file in `cwd` the text names, read as `path:12`, `path:12-14`, `path:12:3`
 /// or `path#L12`; a path may have `@` or `./` before it, or be the folder's own absolute path.
-fn first_place(line: &str, cwd: &Path) -> Option<(PathBuf, usize)> {
+/// The file as the system names it (`/var` is `/private/var` on macOS, as git says it), and the
+/// word that named it.
+fn first_place<'a>(line: &'a str, cwd: &Path) -> Option<(PathBuf, usize, &'a str)> {
     let breaks = |c: char| {
         c.is_whitespace()
             || !c.is_ascii()
@@ -142,8 +185,8 @@ fn first_place(line: &str, cwd: &Path) -> Option<(PathBuf, usize)> {
                 '`' | '(' | ')' | '[' | ']' | '*' | ',' | '"' | '\'' | '<' | '>' | '|'
             )
     };
-    line.split(breaks).find_map(|word| {
-        let word = word.trim_start_matches('@');
+    line.split(breaks).find_map(|raw| {
+        let word = raw.trim_start_matches('@');
         // A drive's colon is not where the line is said.
         let drive = word.as_bytes().get(1) == Some(&b':') && matches!(word.as_bytes().get(2), Some(b'\\' | b'/'));
         let (head, word) = word.split_at(if drive { 2 } else { 0 });
@@ -167,7 +210,7 @@ fn first_place(line: &str, cwd: &Path) -> Option<(PathBuf, usize)> {
         } else {
             cwd.join(path)
         };
-        (full.starts_with(cwd) && full.is_file()).then_some((full, n))
+        (full.starts_with(cwd) && full.is_file()).then(|| (full.canonicalize().unwrap_or(full), n, raw))
     })
 }
 
@@ -546,16 +589,18 @@ mod tests {
             2. [b.txt](b.txt#L3) のテストがありません\n\
             - ないファイル src/gone.rs:4 は出さない\n\
             - URL https://example.com:8080 も出さない\n\n\
-            ```\nsrc/a.rs:99 コードの中は読まない\n```\n\n\
+            ```\n- src/a.rs:99 コードの中は読まない\n```\n\n\
             ### src/a.rs:20-24 の名前\n\n\
             見出しの下の段落は別のものです。\n\n\
-            まとめ：@./src/a.rs:7で終わり。";
+            まとめ：段落の@./src/a.rs:7は指摘ではない。\n\n\
+            | 場所 | 指摘 |\n| --- | --- |\n| src/a.rs:30 | 名前が長い |\n";
+        let real = dir.canonicalize().unwrap();
         let found = findings(reply, &dir);
         let got: Vec<(String, usize, &str)> = found
             .iter()
             .map(|c| {
                 (
-                    c.path.strip_prefix(&dir).unwrap().display().to_string(),
+                    c.path.strip_prefix(&real).unwrap().display().to_string(),
                     c.line,
                     c.text.as_str(),
                 )
@@ -567,17 +612,20 @@ mod tests {
                 (
                     "src/a.rs".into(),
                     12,
-                    "`src/a.rs:12`：境界の扱いが逆です。 12より大きいときに落ちます。"
+                    "境界の扱いが逆です。 12より大きいときに落ちます。"
                 ),
-                ("b.txt".into(), 3, "[b.txt](b.txt#L3) のテストがありません"),
+                ("b.txt".into(), 3, "b.txt のテストがありません"),
                 ("src/a.rs".into(), 20, "src/a.rs:20-24 の名前"),
-                ("src/a.rs".into(), 7, "まとめ：@./src/a.rs:7で終わり。"),
+                ("src/a.rs".into(), 30, "名前が長い"),
             ]
         );
         assert!(
             asks_review(crate::words::JA.review_prompt)
                 && asks_review(&format!("  {}\n特にa.rs", crate::words::EN.review_prompt))
         );
+        assert!(asks_review(
+            "まだコミットしていない変更（git statusとgit diffで見られます）をレビューしてください。セキュリティだけ見て"
+        ));
         assert!(!asks_review("レビューして"));
         let _ = std::fs::remove_dir_all(&dir);
     }

@@ -1314,6 +1314,10 @@ fn files_tab(app: &App) -> El<'_> {
         );
     }
     let spans = if t.dark { &v.dark } else { &v.light };
+    // The file as the system names it, as a review's findings are kept: only when there are some.
+    let real = (!app.chat.review.is_empty())
+        .then(|| std::fs::canonicalize(&v.path).ok())
+        .flatten();
     let mut lines = column![];
     for (i, line) in v.lines.iter().enumerate() {
         let n = i + 1;
@@ -1355,7 +1359,7 @@ fn files_tab(app: &App) -> El<'_> {
             }
         }
         for (i, c) in app.chat.review.iter().enumerate() {
-            if c.path == v.path && c.line == n {
+            if (c.path == v.path || Some(&c.path) == real.as_ref()) && c.line == n {
                 lines = lines.push(review_note(app, i, c, false));
             }
         }

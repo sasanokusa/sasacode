@@ -476,6 +476,7 @@ words! {
     scratch_tag: "一時的", "Scratch";
     c_scratch_bare: "フォルダなしの一時的な会話を始める（このフォルダのファイルは見ません）", "New scratch conversation with no folder (sees none of this folder's files)";
     bare_tag: "フォルダなし", "No folder";
+    bare_blank: "フォルダなしの一時的な会話です。空のフォルダで動き、このフォルダのファイルは見ません。離れると消えます。", "A scratch conversation with no folder: it runs in an empty folder of its own and sees none of this folder's files. It is gone once left.";
     c_about: "このアプリについて・ログ", "About and log";
     c_review: "変更のレビューを頼む", "Ask for a review of the changes";
     c_instructions: "このフォルダのAGENTS.mdを開く", "Open this folder's AGENTS.md";
