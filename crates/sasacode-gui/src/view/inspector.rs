@@ -1104,7 +1104,6 @@ fn files_tab(app: &App) -> El<'_> {
             .style(t.ghost(t.fg_2, false))
             .on_press(Msg::CloseFile),
             Space::new().width(Length::Fill),
-            edit_buttons(app, v),
             small(s.open_editor, Msg::Editor(v.path.clone())),
             small(s.reveal, Msg::Reveal(v.path.clone())),
         ]
@@ -1115,6 +1114,8 @@ fn files_tab(app: &App) -> El<'_> {
                 .font(MONO)
                 .color(t.fg)
         ),
+        // Under its name, what is done to the file itself: a row of its own, never pushed out.
+        edit_buttons(app, v),
     ]
     .spacing(4);
     if let Some(why) = &v.error {
@@ -1503,6 +1504,19 @@ fn usage_tab(app: &App) -> El<'_> {
         )
         .style(t.boxed(t.bg, t.line, RADIUS_L)),
         text(s.us_note).size(12).color(t.fg_3),
+        // Every conversation's, by day and by model: the screen `/usage` opens.
+        button(
+            row![
+                icon(Icon::Gauge, 13.0, t.fg_2),
+                text(s.w().usage_open).size(12.5).color(t.fg),
+            ]
+            .spacing(8)
+            .align_y(Alignment::Center),
+        )
+        .width(Length::Fill)
+        .padding([6, 10])
+        .style(t.outline(t.fg))
+        .on_press(Msg::UsagePart(crate::usage::Part::All)),
     ]
     .spacing(10)
     .into()

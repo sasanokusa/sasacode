@@ -173,9 +173,13 @@ impl App {
                     Ok(()) => {
                         self.file_edit = None;
                         self.toast = Some(w.edit_saved.to_owned());
-                        // Read again, as it is now; the git tab shows the change.
+                        // Read again, as it is now (the same file is not read by `ViewFile`);
+                        // the git tab shows the change.
                         self.files_asked = false;
-                        return Ok(Task::batch([Task::done(Msg::ViewFile(path, None)), self.refresh_git()]));
+                        let line = self.viewing.as_ref().and_then(|v| v.line);
+                        let now = crate::files::read(path, line);
+                        let shown = self.update(Msg::FileRead(Box::new(now)));
+                        return Ok(Task::batch([shown, self.refresh_git()]));
                     }
                     Err(e) => {
                         self.toast = Some(format!("{}: {e}", path.display()));

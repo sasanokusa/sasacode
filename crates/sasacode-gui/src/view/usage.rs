@@ -11,7 +11,7 @@ use super::{El, MONO, tip};
 use crate::app::{App, Msg};
 use crate::i18n::{compact, fill};
 use crate::icons::{Icon, icon};
-use crate::usage::{HISTORY, Report, Sum, levels, streaks, weeks};
+use crate::usage::{HISTORY, Part, Report, Sum, levels, streaks, weeks};
 
 /// A day of the graph, and the room between two.
 const CELL: f32 = 11.0;
@@ -53,11 +53,19 @@ pub(crate) fn usage(app: &App) -> El<'_> {
             b.style(t.ghost(t.fg_2, false)).into()
         }
     };
+    // Which part, as `/usage` and its words; and of where.
+    let mut parts = row![].spacing(4);
+    for (part, label) in Part::ALL.into_iter().zip(w.usage_parts.split(',')) {
+        parts = parts.push(choice(label, app.usage_part == part, Msg::UsagePart(part)));
+    }
     let scope = row![
+        parts,
+        Space::new().width(Length::Fill),
         choice(w.usage_all, !app.usage_here, Msg::Usage(false)),
         choice(w.usage_here, app.usage_here, Msg::Usage(true)),
     ]
-    .spacing(4);
+    .spacing(4)
+    .align_y(Alignment::Center);
     let Some(r) = &app.usage else {
         return column![
             title(app, w.usage_title),
@@ -79,19 +87,25 @@ pub(crate) fn usage(app: &App) -> El<'_> {
             .spacing(8),
         );
     }
-    let body = column![
-        title(app, w.usage_title),
-        scope,
-        overview,
-        graph(app, r),
-        heading(fill(w.usage_history, "n", HISTORY)),
-        history(app, r),
-        heading(w.usage_models.to_owned()),
-        models(app, r),
-        heading(w.usage_top.to_owned()),
-        top(app, r),
-    ]
-    .spacing(14);
+    let mut body = column![title(app, w.usage_title), scope].spacing(14);
+    let part = app.usage_part;
+    if part == Part::All {
+        body = body.push(overview);
+    }
+    if matches!(part, Part::All | Part::Graph) {
+        body = body.push(graph(app, r));
+    }
+    if matches!(part, Part::All | Part::History) {
+        body = body
+            .push(heading(fill(w.usage_history, "n", HISTORY)))
+            .push(history(app, r));
+    }
+    if matches!(part, Part::All | Part::Models) {
+        body = body.push(heading(w.usage_models.to_owned())).push(models(app, r));
+    }
+    if part == Part::All {
+        body = body.push(heading(w.usage_top.to_owned())).push(top(app, r));
+    }
     container(scrollable(body.padding(iced::Padding::ZERO.right(12))).style(t.scroll()))
         .max_height(700)
         .into()

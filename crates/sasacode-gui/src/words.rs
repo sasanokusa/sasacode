@@ -324,6 +324,8 @@ words! {
     c_usage: "使用量（グラフ・日別・モデル別）", "Usage (graph, days, models)";
     c_compare: "複数のモデルに送る…", "Send to several models…";
     usage_title: "使用量", "Usage";
+    usage_parts: "すべて,グラフ,日別,モデル別", "All,Graph,Days,Models";
+    usage_open: "使用量の画面（グラフ・日別・モデル別）", "The usage screen (graph, days, models)";
     usage_all: "すべてのフォルダ", "Every folder";
     usage_here: "このフォルダ", "This folder";
     usage_reading: "記録を読んでいます…", "Reading the logs…";

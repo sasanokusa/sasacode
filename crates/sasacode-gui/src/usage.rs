@@ -14,6 +14,31 @@ use sasacode_protocol::{Message, SessionEntry, Usage};
 pub const HISTORY: usize = 14;
 pub const TOP: usize = 8;
 
+/// What the usage screen shows, as `/usage` and its words do: all of it, the graph of the days,
+/// the last days one by one, or each model.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Part {
+    #[default]
+    All,
+    Graph,
+    History,
+    Models,
+}
+
+impl Part {
+    pub const ALL: [Part; 4] = [Part::All, Part::Graph, Part::History, Part::Models];
+
+    /// The part `/usage` followed by `word` asks for; all of it for none, or one it does not know.
+    pub fn named(word: &str) -> Part {
+        match word.trim().to_lowercase().as_str() {
+            "graph" | "グラフ" => Part::Graph,
+            "history" | "days" | "日別" => Part::History,
+            "models" | "model" | "モデル" | "モデル別" => Part::Models,
+            _ => Part::All,
+        }
+    }
+}
+
 /// What responses used, added up.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct Sum {
@@ -251,6 +276,15 @@ impl crate::app::App {
             Msg::WatchLog => {
                 self.watch_log();
                 iced::Task::none()
+            }
+            Msg::UsagePart(part) => {
+                self.usage_part = part;
+                // Shown already: only what of it changes; otherwise read, of every folder.
+                if self.overlay == Some(crate::app::Overlay::Usage) && self.usage.is_some() {
+                    iced::Task::none()
+                } else {
+                    return self.update_usage(Msg::Usage(false));
+                }
             }
             Msg::Usage(here) => {
                 self.overlay = Some(crate::app::Overlay::Usage);

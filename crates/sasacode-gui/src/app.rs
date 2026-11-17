@@ -237,6 +237,7 @@ pub struct App {
     /// What the conversations used, once read: of every folder, or of this one.
     pub(crate) usage: Option<crate::usage::Report>,
     pub(crate) usage_here: bool,
+    pub(crate) usage_part: crate::usage::Part,
     /// The next side question, as it is typed.
     pub(crate) side_typed: String,
     /// Conversations whose title the model is writing.
@@ -699,6 +700,8 @@ pub enum Msg {
     /// What the conversations used, of every folder or (true) this one: asked, and read.
     Usage(bool),
     UsageRead(bool, Box<crate::usage::Report>),
+    /// What of it the usage screen shows (`/usage graph` and the others), opened if it is not.
+    UsagePart(crate::usage::Part),
     /// The models the next message goes to at once: one chosen or not, one typed, added; sent.
     CompareToggle(String),
     CompareType(String),
@@ -935,6 +938,7 @@ impl App {
             compare_typed: String::new(),
             usage: None,
             usage_here: false,
+            usage_part: crate::usage::Part::All,
             side_typed: String::new(),
             titling: Default::default(),
             back: Vec::new(),
@@ -1258,7 +1262,7 @@ impl App {
                     // What was typed for a new conversation before is still there.
                     let chat = match self.parked.iter().position(|c| c.untouched() && !c.scratch) {
                         Some(i) => self.parked.remove(i),
-                        None => self.new_chat(),
+                        None => self.fresh_chat(),
                     };
                     self.bring(chat);
                 }

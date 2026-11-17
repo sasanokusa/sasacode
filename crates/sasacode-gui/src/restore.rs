@@ -38,11 +38,17 @@ impl App {
         if self.chat.session.is_none()
             && let Some(draft) = self.prefs.more.drafts.get(&self.folder_key())
         {
-            self.chat.editor = text_editor::Content::with_text(draft);
-            self.chat
-                .editor
-                .perform(text_editor::Action::Move(text_editor::Motion::DocumentEnd));
+            self.chat.editor = typed(draft);
         }
+    }
+
+    /// A new conversation, with what was typed for one in this folder and not sent.
+    pub(crate) fn fresh_chat(&mut self) -> Chat {
+        let mut chat = self.new_chat();
+        if let Some(draft) = self.prefs.more.drafts.get(&self.folder_key()) {
+            chat.editor = typed(draft);
+        }
+        chat
     }
 
     /// Keeps what a run used as the folder's choices for its next window.
@@ -89,7 +95,7 @@ impl App {
         let blank = |t: &str| t.trim().is_empty();
         let mut by_key: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new();
         for (key, text) in all {
-            if !by_key.get(&key).is_some_and(|had| !blank(had)) {
+            if by_key.get(&key).is_none_or(|had| blank(had)) {
                 by_key.insert(key, text);
             }
         }
@@ -164,11 +170,19 @@ impl App {
         self.prefs.more.drafts.get(id)
     }
 
-    /// The draft key of conversation `key`, shown or kept.
+    /// The draft key of conversation `key`, shown or kept; none for a scratch one, whose drafts
+    /// are not kept (and whose new conversation is not the folder's).
     pub(crate) fn draft_key_of(&self, key: u64) -> Option<String> {
         std::iter::once(&self.chat)
             .chain(&self.parked)
-            .find(|c| c.key == key)
+            .find(|c| c.key == key && !c.scratch)
             .map(|c| self.draft_key(c))
     }
+}
+
+/// An editor holding `text`, the cursor at its end.
+fn typed(text: &str) -> text_editor::Content {
+    let mut editor = text_editor::Content::with_text(text);
+    editor.perform(text_editor::Action::Move(text_editor::Motion::DocumentEnd));
+    editor
 }

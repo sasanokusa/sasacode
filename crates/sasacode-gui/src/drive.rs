@@ -2069,7 +2069,7 @@ fn what_always_allowed_is_kept_for_the_conversations_later_runs_and_can_be_taken
     assert!(!app.prefs.more.allowed.contains_key("s-always"));
 }
 
-fn listed() -> crate::cli::Listing {
+pub(crate) fn listed() -> crate::cli::Listing {
     fn json<T: serde::de::DeserializeOwned>(s: &str) -> T {
         serde_json::from_str(s).unwrap()
     }
@@ -2372,6 +2372,16 @@ fn a_folders_window_opens_again_on_its_last_conversation_choices_and_drafts() {
     next.restore_folder(false);
     assert!(next.chat.session.is_none());
     assert_eq!(next.chat.editor.text().trim_end(), "新しい話");
+    // Opened on its last conversation, the window's new one (⌘N) has it too.
+    let mut on_last = window("ja");
+    let _ = real_logs(&mut on_last, "restore");
+    on_last.prefs = app.prefs.clone();
+    on_last.prefs.more.drafts.insert(app.folder_key(), "新しい話".into());
+    on_last.restore_folder(false);
+    assert!(on_last.chat.session.is_some());
+    let _ = on_last.update(Msg::NewSession);
+    assert!(on_last.chat.session.is_none());
+    assert_eq!(on_last.chat.editor.text().trim_end(), "新しい話");
     // Asked for one, the window opens on it and not on the last.
     let mut asked = window("ja");
     asked.prefs = app.prefs.clone();
@@ -2472,10 +2482,14 @@ fn a_scratch_conversation_is_not_listed_and_its_log_goes_once_it_is_left() {
             .is_none_or(|f| f.last.as_deref() != Some(a.id.as_str())),
         "never what the window opens on again"
     );
-    // Left while it runs, it is kept until the run is over, then goes.
+    // Left while it runs, it is kept until the run is over, then goes. Sent from, it leaves
+    // what was typed for the folder's new conversation alone.
+    let folder = app.folder_key();
+    app.prefs.more.drafts.insert(folder.clone(), "まだ送らない".into());
     let _ = app.update(Msg::NewScratch);
     let key = app.chat.key;
     let _ = app.start_run(key, "ちょっと聞く".into(), false);
+    assert!(app.prefs.more.drafts.contains_key(&folder));
     app.chat.session = Some(b.id.clone());
     let _ = app.update(Msg::NewSession);
     assert!(b.path.exists() && app.parked.iter().any(|c| c.scratch));
@@ -2514,6 +2528,8 @@ fn a_file_is_edited_and_saved_in_the_files_tab_a_markdown_one_previewed_and_a_pi
     let _ = app.update(Msg::FileSave);
     assert_eq!(std::fs::read_to_string(&readme).unwrap(), "# 見出しの行\n本文\n追記\n");
     assert!(app.file_edit.is_none());
+    // Shown as it is now.
+    assert!(app.viewing.as_ref().unwrap().lines.iter().any(|l| l.contains("追記")));
     // Written by another since it was read: not written over.
     let _ = app.update(Msg::FileEditStart);
     let _ = app.update(Msg::FileEditAction(Action::Edit(Edit::Insert('x'))));
@@ -2605,13 +2621,30 @@ fn the_usage_screen_shows_the_spans_the_graph_the_days_and_the_models() {
     // An answer for the other scope is not shown.
     let _ = app.update(Msg::UsageRead(true, Box::new(report.clone())));
     assert!(app.usage.is_none());
-    let _ = app.update(Msg::UsageRead(false, Box::new(report)));
+    let _ = app.update(Msg::UsageRead(false, Box::new(report.clone())));
     assert!(says(&app, w.usage_today) && says(&app, w.usage_models) && says(&app, "local/gemma4"));
     assert!(says(&app, "120.0kトークン（出力8.0k）· 12回 · $0.420"));
-    assert!(says(
-        &app,
-        &crate::i18n::fill(w.usage_streak, "current", 1).replace("{longest}", "1")
-    ));
+    let streak = crate::i18n::fill(w.usage_streak, "current", 1).replace("{longest}", "1");
+    assert!(says(&app, &streak));
+    // `/usage graph` typed, as in the CLI: read again, then the graph alone.
+    app.overlay = None;
+    app.set_input("/usage graph");
+    let _ = app.update(Msg::Send);
+    assert_eq!(app.overlay, Some(crate::app::Overlay::Usage));
+    assert_eq!(app.usage_part, crate::usage::Part::Graph);
+    assert!(app.chat.editor.text().trim().is_empty(), "never sent to the agent");
+    let _ = app.update(Msg::UsageRead(false, Box::new(report)));
+    assert!(says(&app, &streak), "the graph");
+    assert!(!says(&app, w.usage_models), "not the models");
+    // Another part, from the screen itself.
+    let _ = app.update(Msg::UsagePart(crate::usage::Part::Models));
+    assert!(app.usage.is_some(), "not read again");
+    assert!(says(&app, w.usage_models) && !says(&app, &streak));
+    // The conversation's usage tab leads to it too.
+    app.overlay = None;
+    app.tab = Tab::Usage;
+    app.insp = true;
+    assert!(says(&app, w.usage_open));
 }
 
 #[test]

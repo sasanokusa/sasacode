@@ -471,3 +471,99 @@ fn snapshots_of_figures() {
     shoot(&app, "34-split", WIDE);
     let _ = std::fs::remove_file(log);
 }
+
+/// Some months of use, as the usage screen reads them: busier on weekdays, two models.
+fn months_of_use() -> crate::usage::Report {
+    use crate::usage::{ModelUse, Report, Sum};
+    use chrono::{Datelike, Duration as Days, NaiveDate};
+    let today = NaiveDate::from_ymd_opt(2026, 11, 17).unwrap();
+    let mut report = Report {
+        today,
+        ..Default::default()
+    };
+    let mut all = Sum::default();
+    for i in 0..150i64 {
+        let day = today - Days::days(i);
+        let weekday = day.weekday().num_days_from_monday() < 5;
+        // Some days nothing; the rest more or less, as work goes.
+        let seed = (i * 7919 + 13) % 23;
+        if seed % 5 == 0 || (!weekday && seed % 2 == 0) {
+            continue;
+        }
+        let tokens = (seed as u64 + 1) * if weekday { 41_000 } else { 9_000 };
+        let s = Sum {
+            tokens,
+            output: tokens / 14,
+            requests: seed as u64 + 2,
+            cost: tokens as f64 / 1_000_000.0 * 0.6,
+        };
+        report.days.insert(day, s);
+        all.tokens += s.tokens;
+        all.output += s.output;
+        all.requests += s.requests;
+        all.cost += s.cost;
+    }
+    let span = |n: i64| {
+        let mut sum = Sum::default();
+        for (_, s) in report.days.range(today - Days::days(n - 1)..) {
+            sum.tokens += s.tokens;
+            sum.output += s.output;
+            sum.requests += s.requests;
+            sum.cost += s.cost;
+        }
+        sum
+    };
+    report.spans = [span(1), span(7), span(30), all];
+    let share = |f: f64| Sum {
+        tokens: (all.tokens as f64 * f) as u64,
+        output: (all.output as f64 * f) as u64,
+        requests: (all.requests as f64 * f) as u64,
+        cost: all.cost * f,
+    };
+    report.models = vec![
+        ModelUse {
+            model: "commandcode/deepseek/deepseek-v4.1-flash".into(),
+            sum: share(0.72),
+            last: today,
+        },
+        ModelUse {
+            model: "local/gemma4".into(),
+            sum: share(0.28),
+            last: today - Days::days(3),
+        },
+    ];
+    report
+}
+
+#[test]
+#[ignore = "writes pictures to look at; run it by name"]
+fn snapshots_of_screens() {
+    let mut app = window("ja");
+    let report = months_of_use();
+    let _ = app.update(Msg::UsagePart(crate::usage::Part::All));
+    let _ = app.update(Msg::UsageRead(false, Box::new(report.clone())));
+    shoot(&app, "35-usage", (1280.0, 900.0));
+    let _ = app.update(Msg::UsagePart(crate::usage::Part::Graph));
+    shoot(&app, "36-usage-graph", WIDE);
+    app.set_dark(true);
+    shoot(&app, "37-usage-graph-dark", WIDE);
+    app.set_dark(false);
+    // One message to several models.
+    app.listing = crate::drive::listed();
+    app.set_input("注文一覧のページングを直して");
+    let _ = app.update(Msg::Show(Some(Overlay::Compare)));
+    let _ = app.update(Msg::CompareToggle("local/gemma4".into()));
+    shoot(&app, "38-compare", WIDE);
+    let _ = app.update(Msg::Show(Some(Overlay::About)));
+    shoot(&app, "39-about", WIDE);
+    // A file of the folder, being edited.
+    let _ = app.update(Msg::Show(None));
+    app.set_input("");
+    app.cwd = Path::new(env!("CARGO_MANIFEST_DIR")).to_path_buf();
+    let path = app.cwd.join("Cargo.toml");
+    let _ = app.update(Msg::FileRead(Box::new(crate::files::read(path, None))));
+    app.tab = Tab::Files;
+    app.insp = true;
+    let _ = app.update(Msg::FileEditStart);
+    shoot(&app, "40-file-edit", WIDE);
+}

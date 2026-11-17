@@ -42,6 +42,7 @@ pub enum Command {
     Outline,
     Split,
     Tui,
+    Usage,
 }
 
 impl Command {
@@ -70,6 +71,7 @@ impl Command {
         ("outline", Command::Outline),
         ("split", Command::Split),
         ("tui", Command::Tui),
+        ("usage", Command::Usage),
     ];
 
     pub fn what(self, s: &Strings) -> &'static str {
@@ -100,12 +102,13 @@ impl Command {
             Command::Outline => s.w().c_outline,
             Command::Split => s.w().c_split,
             Command::Tui => s.w().c_tui,
+            Command::Usage => s.w().c_usage,
         }
     }
 
-    /// Takes what is typed after it: `/btw` and its question.
+    /// Takes what is typed after it: `/btw` and its question, `/usage` and what of it.
     fn takes_text(self) -> bool {
-        matches!(self, Command::Btw | Command::Export)
+        matches!(self, Command::Btw | Command::Export | Command::Usage)
     }
 }
 
@@ -309,6 +312,10 @@ impl App {
         if command == Command::Export && !rest.is_empty() {
             return Some(self.update(Msg::ExportTo(rest)));
         }
+        // `/usage graph`, `history`, `models`: that part, as the CLI's.
+        if command == Command::Usage {
+            return Some(self.update(Msg::UsagePart(crate::usage::Part::named(&rest))));
+        }
         Some(self.command(command))
     }
 
@@ -400,6 +407,7 @@ impl App {
             Command::Worktree => return self.worktree(),
             Command::Settings => self.overlay = Some(Overlay::Settings),
             Command::Keys => self.overlay = Some(Overlay::Keys),
+            Command::Usage => return self.update(Msg::UsagePart(crate::usage::Part::All)),
             Command::Attention => return self.attention(),
             Command::Tui => {
                 let Some(id) = session else {
