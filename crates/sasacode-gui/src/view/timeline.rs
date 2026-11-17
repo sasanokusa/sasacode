@@ -149,14 +149,17 @@ fn blank(app: &App) -> El<'_> {
     .into()
 }
 
+/// The corners of what the user said: round, a pill while it is one line.
+const BUBBLE: f32 = 18.0;
+
 /// What the user said, on the right.
 /// A message's start, drawn as the message is.
 fn bubble_owned<'a>(t: Tokens, prompt: String) -> El<'a> {
     container(
         container(text(prompt).size(14).color(t.fg))
-            .padding([8, 12])
+            .padding([8, 14])
             .max_width(560)
-            .style(t.boxed(t.inset, t.inset, RADIUS_L)),
+            .style(t.boxed(t.raised, t.line, BUBBLE)),
     )
     .align_right(Length::Fill)
     .into()
@@ -165,9 +168,9 @@ fn bubble_owned<'a>(t: Tokens, prompt: String) -> El<'a> {
 pub(crate) fn bubble<'a>(t: Tokens, prompt: &'a str) -> El<'a> {
     container(
         container(text(prompt).size(14).color(t.fg))
-            .padding([8, 12])
+            .padding([8, 14])
             .max_width(560)
-            .style(t.boxed(t.inset, t.inset, RADIUS_L)),
+            .style(t.boxed(t.raised, t.line, BUBBLE)),
     )
     .align_right(Length::Fill)
     .into()
@@ -965,7 +968,7 @@ pub(crate) fn reply<'a>(app: &'a App, md: &'a Markdown, copy: bool) -> El<'a> {
         background: t.inset.into(),
         border: border::rounded(4.0),
     };
-    style.link_color = t.accent;
+    style.link_color = t.link;
     // Named, like the rest of the window: the style's own default is the sans-serif family, which
     // is not the window's font and takes kanji and kana of one bold word from different fonts.
     style.font = UI;

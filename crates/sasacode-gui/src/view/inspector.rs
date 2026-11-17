@@ -173,7 +173,7 @@ fn card<'a>(app: &'a App, id: &'a str, head: El<'a>, body: Option<El<'a>>) -> El
     }
     container(col)
         .width(Length::Fill)
-        .style(t.boxed(t.bg, t.line, RADIUS_L))
+        .style(t.boxed(t.raised, t.line, RADIUS_L))
         .into()
 }
 
@@ -607,7 +607,7 @@ fn pr_part(app: &App) -> El<'_> {
     container(col)
         .width(Length::Fill)
         .padding([8, 10])
-        .style(t.boxed(t.bg, t.line, RADIUS_L))
+        .style(t.boxed(t.raised, t.line, RADIUS_L))
         .into()
 }
 
@@ -976,7 +976,7 @@ fn script_runs(app: &App) -> El<'_> {
             container(column![head, output_block(t, s, &run.output, 40), actions.wrap()].spacing(6))
                 .width(Length::Fill)
                 .padding([8, 10])
-                .style(t.boxed(t.bg, t.line, RADIUS_L)),
+                .style(t.boxed(t.raised, t.line, RADIUS_L)),
         );
     }
     col.into()
@@ -1502,7 +1502,7 @@ fn usage_tab(app: &App) -> El<'_> {
             ]
             .padding([4, 10])
         )
-        .style(t.boxed(t.bg, t.line, RADIUS_L)),
+        .style(t.boxed(t.raised, t.line, RADIUS_L)),
         text(s.us_note).size(12).color(t.fg_3),
         // Every conversation's, by day and by model: the screen `/usage` opens.
         button(

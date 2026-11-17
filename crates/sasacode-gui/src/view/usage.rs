@@ -126,7 +126,7 @@ fn graph<'a>(app: &'a App, r: &'a Report) -> El<'a> {
         let level = levels(&values);
         let shade = |l: usize| -> Color {
             if l == 0 {
-                t.inset
+                empty(app)
             } else {
                 Color {
                     a: [0.0, 0.32, 0.52, 0.76, 1.0][l],
@@ -242,11 +242,17 @@ fn graph<'a>(app: &'a App, r: &'a Report) -> El<'a> {
     .into()
 }
 
+/// A day nothing was used on, and the rest of a bar: set into the card, and in the dark a little
+/// lighter than it, where a darker grey is not seen.
+fn empty(app: &App) -> Color {
+    if app.t.dark { app.t.line } else { app.t.inset }
+}
+
 /// A bar `fraction` of `width` long.
 fn bar<'a>(app: &App, fraction: f64, width: f32) -> El<'a> {
     let t = app.t;
     let filled = (fraction.clamp(0.0, 1.0) as f32 * width).round();
-    let (on, off) = (t.add, t.inset);
+    let (on, off) = (t.add, empty(app));
     row![
         container(Space::new().width(filled).height(8)).style(move |_| container::Style {
             background: Some(on.into()),
