@@ -23,8 +23,9 @@ pub fn node_arch() -> &'static str {
 }
 
 pub fn build_system_prompt(cwd: &str, append: &[String]) -> String {
-    let mut lines: Vec<String> =
-        vec!["You are sasacode, a coding agent running in the user's terminal. You act through the provided tools.".into()];
+    let mut lines: Vec<String> = vec![
+        "You are sasacode, a coding agent running in the user's terminal. You act through the provided tools.".into(),
+    ];
     for a in append {
         if !a.trim().is_empty() {
             lines.push(String::new());
@@ -32,7 +33,11 @@ pub fn build_system_prompt(cwd: &str, append: &[String]) -> String {
         }
     }
     // Stable instructions precede session facts, so a different cwd does not cut their cache prefix.
-    let git = if Path::new(cwd).join(".git").exists() { "yes" } else { "no" };
+    let git = if Path::new(cwd).join(".git").exists() {
+        "yes"
+    } else {
+        "no"
+    };
     lines.push(String::new());
     lines.push("Environment:".into());
     lines.push(format!("- Platform: {} ({})", node_platform(), node_arch()));

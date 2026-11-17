@@ -31,8 +31,14 @@ use sasacode_plugin_api::{
 type Exec = Arc<dyn Fn(JsonObject, ToolContext) -> BoxFuture<'static, anyhow::Result<ToolResult>> + Send + Sync>;
 
 fn make_tool(name: &str, exec: Exec) -> ToolRef {
-    ToolDef::new(name, name, json!({"type": "object", "properties": {}}), ToolKind::Exec, move |a, c| exec(a, c))
-        .into_ref()
+    ToolDef::new(
+        name,
+        name,
+        json!({"type": "object", "properties": {}}),
+        ToolKind::Exec,
+        move |a, c| exec(a, c),
+    )
+    .into_ref()
 }
 fn calling(name: &str, target: &'static str) -> ToolRef {
     make_tool(
@@ -82,7 +88,9 @@ impl Setup {
         let _ = events.on(move |e| s.lock().unwrap().push(e.clone()));
         Setup {
             tools,
-            hooks: HookRunner::new(HookContext { agent: agent.map(str::to_string) }),
+            hooks: HookRunner::new(HookContext {
+                agent: agent.map(str::to_string),
+            }),
             events,
             seen,
             permissions,
@@ -108,7 +116,12 @@ impl Setup {
         let output: Arc<Mutex<Option<ToolResult>>> = Arc::default();
         let messages: Arc<Mutex<Vec<ToolResultMessage>>> = Arc::default();
         let (o, m) = (output.clone(), messages.clone());
-        let call = ToolCall { id: "parent".into(), name: name.into(), input: JsonObject::new(), raw_input: None };
+        let call = ToolCall {
+            id: "parent".into(),
+            name: name.into(),
+            input: JsonObject::new(),
+            raw_input: None,
+        };
         execute_tools(
             self.ctx(),
             vec![call],
@@ -152,7 +165,10 @@ async fn nested_calls_obey_target_deny_rules_despite_a_parent_allow_and_emit_ran
     );
     let h = Setup::new(
         vec![calling("wrapper", "target"), target],
-        policy(PermissionMode::Auto, json!({ "allow": ["wrapper"], "deny": ["target"] })),
+        policy(
+            PermissionMode::Auto,
+            json!({ "allow": ["wrapper"], "deny": ["target"] }),
+        ),
         None,
     );
     let results: Arc<Mutex<Vec<bool>>> = Arc::default();
@@ -174,7 +190,9 @@ async fn nested_calls_obey_target_deny_rules_despite_a_parent_allow_and_emit_ran
     assert_eq!(messages.len(), 1);
     let seen = h.seen.lock().unwrap();
     let end = seen.iter().find_map(|e| match e {
-        AgentEvent::ToolEnd { call, parent_call_id, .. } if call.name == "target" => Some(parent_call_id.clone()),
+        AgentEvent::ToolEnd {
+            call, parent_call_id, ..
+        } if call.name == "target" => Some(parent_call_id.clone()),
         _ => None,
     });
     assert_eq!(end, Some(Some("parent".to_string())));
@@ -221,7 +239,9 @@ async fn rewrites_are_validated_permission_hooks_see_the_actual_input_details_su
         let pa = pa.clone();
         async move {
             if ev.call.name == "target" {
-                pa.lock().unwrap().push(ev.args.get("n").cloned().unwrap_or(Value::Null));
+                pa.lock()
+                    .unwrap()
+                    .push(ev.args.get("n").cloned().unwrap_or(Value::Null));
             }
             Ok(None)
         }
@@ -269,13 +289,25 @@ async fn target_asks_independently_headless_cannot_approve_unknown_tools_never_r
 
 #[tokio::test]
 async fn cycles_and_excessive_nesting_are_stopped_without_invoking_the_rejected_tool() {
-    let h = Setup::new(vec![calling("wrapper", "other"), calling("other", "wrapper")], auto(), None);
+    let h = Setup::new(
+        vec![calling("wrapper", "other"), calling("other", "wrapper")],
+        auto(),
+        None,
+    );
     assert!(body(&h.run_default().await.output).contains("cycle"));
-    let names: Vec<&'static str> = (0..=10).map(|i| &*Box::leak(format!("t{i}").into_boxed_str())).collect();
+    let names: Vec<&'static str> = (0..=10)
+        .map(|i| &*Box::leak(format!("t{i}").into_boxed_str()))
+        .collect();
     let chain: Vec<ToolRef> = (0..10).map(|i| calling(names[i], names[i + 1])).collect();
     let deep = Setup::new(chain, auto(), None);
     assert!(body(&deep.run("t0", CancellationToken::new()).await.output).contains("depth exceeds 8"));
-    let starts = deep.seen.lock().unwrap().iter().filter(|e| matches!(e, AgentEvent::ToolStart { .. })).count();
+    let starts = deep
+        .seen
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|e| matches!(e, AgentEvent::ToolStart { .. }))
+        .count();
     assert_eq!(starts, 8);
 }
 
@@ -385,7 +417,10 @@ async fn nested_calls_are_audited_without_unmatched_tool_messages_in_model_histo
             _ => None,
         })
         .collect();
-    assert_eq!(kinds, vec!["nested_tool_call", "nested_tool_execute", "nested_tool_result"]);
+    assert_eq!(
+        kinds,
+        vec!["nested_tool_call", "nested_tool_execute", "nested_tool_result"]
+    );
 }
 
 #[tokio::test]
@@ -434,8 +469,10 @@ async fn nested_lookup_cannot_reach_a_tool_omitted_from_this_agents_registry() {
 // ── the plugin host ──────────────────────────────────────────────────
 
 fn model() -> ModelInfo {
-    serde_json::from_value(json!({ "id": "m", "provider": "test", "api": "replay", "contextWindow": 10000, "maxOutput": 1000 }))
-        .unwrap()
+    serde_json::from_value(
+        json!({ "id": "m", "provider": "test", "api": "replay", "contextWindow": 10000, "maxOutput": 1000 }),
+    )
+    .unwrap()
 }
 
 fn host(settings: Value) -> Arc<PluginHost> {
@@ -495,7 +532,11 @@ fn api_with(ui: Option<TestUi>) -> PluginApi {
     h.api("p")
 }
 fn opts() -> Vec<SelectOption> {
-    vec![SelectOption::new("a", "A"), SelectOption::new("b", "B"), SelectOption::new("c", "C")]
+    vec![
+        SelectOption::new("a", "A"),
+        SelectOption::new("b", "B"),
+        SelectOption::new("c", "C"),
+    ]
 }
 
 #[tokio::test]
@@ -508,14 +549,27 @@ async fn the_host_reports_api_1_15_0() {
 async fn headless_input_and_select_many_resolve_none_without_asking() {
     let a = api_with(None);
     assert_eq!(a.ui().input("Name?", &InputOptions::default()).await, None);
-    assert_eq!(a.ui().select_many("Which?", &opts(), &SelectManyOptions::default()).await, None);
+    assert_eq!(
+        a.ui()
+            .select_many("Which?", &opts(), &SelectManyOptions::default())
+            .await,
+        None
+    );
 }
 
 #[tokio::test]
 async fn a_front_end_without_the_dialogs_resolves_none() {
-    let a = api_with(Some(TestUi { interactive: true, ..Default::default() }));
+    let a = api_with(Some(TestUi {
+        interactive: true,
+        ..Default::default()
+    }));
     assert_eq!(a.ui().input("Name?", &InputOptions::default()).await, None);
-    assert_eq!(a.ui().select_many("Which?", &opts(), &SelectManyOptions::default()).await, None);
+    assert_eq!(
+        a.ui()
+            .select_many("Which?", &opts(), &SelectManyOptions::default())
+            .await,
+        None
+    );
 }
 
 #[tokio::test]
@@ -530,7 +584,11 @@ async fn input_passes_title_and_options_through_including_an_empty_answer() {
         })),
         ..Default::default()
     }));
-    let o = InputOptions { placeholder: Some("you".into()), initial: Some("x".into()), message: None };
+    let o = InputOptions {
+        placeholder: Some("you".into()),
+        initial: Some("x".into()),
+        message: None,
+    };
     assert_eq!(a.ui().input("Name?", &o).await, Some(String::new()));
     assert_eq!(*seen.lock().unwrap(), vec![("Name?".to_string(), o)]);
 }
@@ -539,17 +597,33 @@ async fn input_passes_title_and_options_through_including_an_empty_answer() {
 async fn select_many_returns_only_offered_values_once_each_in_option_order() {
     let a = api_with(Some(TestUi {
         interactive: true,
-        select_many: Some(Arc::new(|| Some(vec!["c".into(), "zzz".into(), "a".into(), "c".into()]))),
+        select_many: Some(Arc::new(|| {
+            Some(vec!["c".into(), "zzz".into(), "a".into(), "c".into()])
+        })),
         ..Default::default()
     }));
-    let picked = a.ui().select_many("Which?", &opts(), &SelectManyOptions { selected: Some(vec!["b".into()]) }).await;
+    let picked = a
+        .ui()
+        .select_many(
+            "Which?",
+            &opts(),
+            &SelectManyOptions {
+                selected: Some(vec!["b".into()]),
+            },
+        )
+        .await;
     assert_eq!(picked, Some(vec!["a".to_string(), "c".to_string()]));
     let none = api_with(Some(TestUi {
         interactive: true,
         select_many: Some(Arc::new(|| Some(Vec::new()))),
         ..Default::default()
     }));
-    assert_eq!(none.ui().select_many("Which?", &opts(), &SelectManyOptions::default()).await, Some(Vec::new()));
+    assert_eq!(
+        none.ui()
+            .select_many("Which?", &opts(), &SelectManyOptions::default())
+            .await,
+        Some(Vec::new())
+    );
 }
 
 #[test]
@@ -559,7 +633,10 @@ fn define_settings_merges_nested_defaults_replaces_arrays_and_null_without_mutat
     let api = host(raw.clone()).api("demo");
     let schema = json!({ "type": "object", "properties": { "options": { "type": "object" }, "values": { "type": "array", "items": { "type": "integer" } }, "nullable": { "type": ["null", "string"] } }, "additionalProperties": false });
     let value = api.define_settings(&schema, Some(&defaults)).unwrap();
-    assert_eq!(value, json!({ "options": { "timeout": 30, "enabled": true }, "values": [2], "nullable": null }));
+    assert_eq!(
+        value,
+        json!({ "options": { "timeout": 30, "enabled": true }, "values": [2], "nullable": null })
+    );
     assert_eq!(api.settings(), raw);
 }
 
@@ -577,35 +654,71 @@ fn bad_settings_plugin(api: PluginApi) -> BoxFuture<'static, anyhow::Result<()>>
 async fn settings_reject_unknown_keys_wrong_types_ranges_and_unsupported_keywords_without_echoing_secrets() {
     let h = host(json!({ "timeout": "private-token" }));
     let notices: Arc<Mutex<Vec<String>>> = Arc::default();
-    h.set_ui(Some(Arc::new(TestUi { notices: notices.clone(), ..Default::default() })));
+    h.set_ui(Some(Arc::new(TestUi {
+        notices: notices.clone(),
+        ..Default::default()
+    })));
     assert!(!h.load("demo", bad_settings_plugin).await);
     let all = notices.lock().unwrap().join(",");
     assert!(all.contains("plugins.settings.demo.timeout"), "{all}");
     assert!(!all.contains("private-token"));
     let err = |settings: Value, schema: Value| {
-        host(settings).api("demo").define_settings(&schema, None).unwrap_err().to_string()
+        host(settings)
+            .api("demo")
+            .define_settings(&schema, None)
+            .unwrap_err()
+            .to_string()
     };
-    assert!(err(json!({ "extra": true }), json!({ "type": "object", "additionalProperties": false })).contains("extra"));
     assert!(
-        err(json!({ "timeout": 0 }), json!({ "type": "object", "properties": { "timeout": { "minimum": 1 } } }))
-            .contains("minimum")
+        err(
+            json!({ "extra": true }),
+            json!({ "type": "object", "additionalProperties": false })
+        )
+        .contains("extra")
     );
-    assert!(err(json!({}), json!({ "type": "object", "$ref": "https://example.invalid" })).contains("unsupported"));
     assert!(
-        err(json!({}), json!({ "type": "object", "properties": { "x": { "pattern": "[" } } })).contains("invalid schema")
+        err(
+            json!({ "timeout": 0 }),
+            json!({ "type": "object", "properties": { "timeout": { "minimum": 1 } } })
+        )
+        .contains("minimum")
+    );
+    assert!(
+        err(
+            json!({}),
+            json!({ "type": "object", "$ref": "https://example.invalid" })
+        )
+        .contains("unsupported")
+    );
+    assert!(
+        err(
+            json!({}),
+            json!({ "type": "object", "properties": { "x": { "pattern": "[" } } })
+        )
+        .contains("invalid schema")
     );
 }
 
 #[test]
 fn settings_support_schema_valued_maps_and_combinations() {
     let schema = json!({ "type": "object", "additionalProperties": { "anyOf": [{ "const": false }, { "type": "string", "minLength": 2, "maxLength": 8, "pattern": "^[a-z]+$" }] } });
-    let ok = host(json!({ "a": false, "b": "good" })).api("x").define_settings(&schema, None).unwrap();
+    let ok = host(json!({ "a": false, "b": "good" }))
+        .api("x")
+        .define_settings(&schema, None)
+        .unwrap();
     assert_eq!(ok, json!({ "a": false, "b": "good" }));
-    let e = host(json!({ "a": "X" })).api("x").define_settings(&schema, None).unwrap_err().to_string();
+    let e = host(json!({ "a": "X" }))
+        .api("x")
+        .define_settings(&schema, None)
+        .unwrap_err()
+        .to_string();
     assert!(e.contains("anyOf"), "{e}");
     // "__proto__" is an ordinary key in Rust: kept as an own property, nothing polluted.
     let raw: Value = serde_json::from_str(r#"{"__proto__":{"polluted":true},"constructor":"own"}"#).unwrap();
-    let value = host(raw.clone()).api("x").define_settings(&json!({ "type": "object" }), Some(&json!({}))).unwrap();
+    let value = host(raw.clone())
+        .api("x")
+        .define_settings(&json!({ "type": "object" }), Some(&json!({})))
+        .unwrap();
     assert!(value.as_object().unwrap().contains_key("__proto__"));
     let e = host(raw)
         .api("x")
@@ -653,10 +766,17 @@ async fn show_text_sanitizes_controls_awaits_the_viewer_and_falls_back_without_c
     pending.await.unwrap().unwrap();
     let messages = h.api("demo").session().messages();
     let fallback: Arc<Mutex<Vec<String>>> = Arc::default();
-    h.set_ui(Some(Arc::new(TestUi { notices: fallback.clone(), ..Default::default() })));
+    h.set_ui(Some(Arc::new(TestUi {
+        notices: fallback.clone(),
+        ..Default::default()
+    })));
     h.api("demo")
         .ui()
-        .show_text(ShowTextOptions { title: "title".into(), text: "body".into(), format: TextFormat::Text })
+        .show_text(ShowTextOptions {
+            title: "title".into(),
+            text: "body".into(),
+            format: TextFormat::Text,
+        })
         .await
         .unwrap();
     assert_eq!(*fallback.lock().unwrap(), vec!["title\nbody".to_string()]);

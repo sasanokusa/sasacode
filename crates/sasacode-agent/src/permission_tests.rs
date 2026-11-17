@@ -2,15 +2,17 @@
 //! permission surface of the built-in read/edit/write/bash (the tools crate is not a dependency).
 
 use super::*;
-use serde_json::{Value, json};
 use sasacode_plugin_api::{ToolDef, ToolResult};
+use serde_json::{Value, json};
 
 const CWD: &str = "/work/proj";
 
 fn path_tool(name: &str, kind: ToolKind) -> ToolRef {
-    ToolDef::new(name, "", json!({"type": "object"}), kind, |_a, _c| async { Ok(ToolResult::text("")) })
-        .paths(|a, _cwd| vec![a.get("path").and_then(Value::as_str).unwrap_or("").to_string()])
-        .into_ref()
+    ToolDef::new(name, "", json!({"type": "object"}), kind, |_a, _c| async {
+        Ok(ToolResult::text(""))
+    })
+    .paths(|a, _cwd| vec![a.get("path").and_then(Value::as_str).unwrap_or("").to_string()])
+    .into_ref()
 }
 fn read_tool() -> ToolRef {
     path_tool("read", ToolKind::Read)
@@ -22,8 +24,10 @@ fn write_tool() -> ToolRef {
     path_tool("write", ToolKind::Edit)
 }
 fn command_tool(name: &str, permissions_as: Option<&str>) -> ToolRef {
-    let t = ToolDef::new(name, "", json!({"type": "object"}), ToolKind::Exec, |_a, _c| async { Ok(ToolResult::text("")) })
-        .match_target(|a| a.get("command").and_then(Value::as_str).unwrap_or("").to_string());
+    let t = ToolDef::new(name, "", json!({"type": "object"}), ToolKind::Exec, |_a, _c| async {
+        Ok(ToolResult::text(""))
+    })
+    .match_target(|a| a.get("command").and_then(Value::as_str).unwrap_or("").to_string());
     match permissions_as {
         Some(p) => t.permissions_as(p).into_ref(),
         None => t.into_ref(),
@@ -40,10 +44,18 @@ fn args(v: Value) -> JsonObject {
     }
 }
 fn call(tool: ToolRef, path: &str, cwd: &str) -> PermissionCheck {
-    PermissionCheck { tool, args: args(json!({ "path": path })), cwd: cwd.into() }
+    PermissionCheck {
+        tool,
+        args: args(json!({ "path": path })),
+        cwd: cwd.into(),
+    }
 }
 fn bash(command: &str) -> PermissionCheck {
-    PermissionCheck { tool: bash_tool(), args: args(json!({ "command": command })), cwd: CWD.into() }
+    PermissionCheck {
+        tool: bash_tool(),
+        args: args(json!({ "command": command })),
+        cwd: CWD.into(),
+    }
 }
 fn policy(mode: PermissionMode, rules: Value) -> PermissionPolicy {
     PermissionPolicy::new(mode, &serde_json::from_value(rules).unwrap()).unwrap()
@@ -82,11 +94,20 @@ fn edits_mode_asks_before_an_edit_under_git_or_sasacode_127() {
         assert_eq!(d(&p, &call(write_tool(), path, CWD)), Ask, "{path}");
     }
     assert_eq!(d(&p, &call(edit_tool(), ".git/config", CWD)), Ask);
-    for path in [".gitignore", ".github/workflows/ci.yml", "src/.gitkeep", "my.git/x", ".sasacoderc"] {
+    for path in [
+        ".gitignore",
+        ".github/workflows/ci.yml",
+        "src/.gitkeep",
+        "my.git/x",
+        ".sasacoderc",
+    ] {
         assert_eq!(d(&p, &call(write_tool(), path, CWD)), Allow, "{path}");
     }
     assert_eq!(d(&p, &call(read_tool(), ".git/config", CWD)), Allow);
-    assert_eq!(d(&p, &call(write_tool(), "x.ts", "/home/u/.sasacode/plugins/mine")), Allow);
+    assert_eq!(
+        d(&p, &call(write_tool(), "x.ts", "/home/u/.sasacode/plugins/mine")),
+        Allow
+    );
 }
 
 #[test]
@@ -107,7 +128,10 @@ fn allow_rules_must_cover_every_chained_command_substitutions_and_redirects_neve
 
 #[test]
 fn deny_beats_allow_and_auto_path_globs_tool_wildcards() {
-    let p = policy(M::Auto, json!({ "deny": ["bash(rm *)", "edit(secrets/**)"], "allow": ["bash"] }));
+    let p = policy(
+        M::Auto,
+        json!({ "deny": ["bash(rm *)", "edit(secrets/**)"], "allow": ["bash"] }),
+    );
     assert_eq!(d(&p, &bash("ls && rm -rf /")), Deny);
     assert_eq!(d(&p, &call(edit_tool(), "secrets/k.txt", CWD)), Deny);
     let w = policy(M::Ask, json!({ "allow": ["re*"] }));
@@ -119,7 +143,11 @@ fn agent_mode_reads_inside_run_the_rest_is_left_to_the_judge() {
     let p = policy(M::Agent, json!({}));
     assert_eq!(
         p.check(&bash("ls")),
-        Verdict { decision: Ask, reason: "mode agent: not judged".into(), source: VerdictSource::Mode }
+        Verdict {
+            decision: Ask,
+            reason: "mode agent: not judged".into(),
+            source: VerdictSource::Mode
+        }
     );
     assert_eq!(d(&p, &call(read_tool(), "a", CWD)), Allow);
     assert_eq!(d(&p, &call(read_tool(), "/etc/passwd", CWD)), Ask);
@@ -132,7 +160,10 @@ fn a_tool_with_permissions_as_is_judged_by_that_tools_rules_too() {
         args: args(json!({ "command": command })),
         cwd: CWD.into(),
     };
-    let p = policy(M::Auto, json!({ "deny": ["bash(sudo *)", "bg_start(make deploy*)"], "ask": ["bash(git push*)"] }));
+    let p = policy(
+        M::Auto,
+        json!({ "deny": ["bash(sudo *)", "bg_start(make deploy*)"], "ask": ["bash(git push*)"] }),
+    );
     assert_eq!(d(&p, &bg("cd /tmp && sudo rm -rf x")), Deny);
     assert_eq!(d(&p, &bg("git push origin main")), Ask);
     assert_eq!(d(&p, &bg("make deploy")), Deny);
@@ -207,7 +238,10 @@ fn a_project_path_with_glob_characters_still_matches_its_rules_38() {
 #[test]
 fn a_dotdot_after_the_first_part_of_a_rule_is_normalized_50() {
     let denied = |rule: &str, path: &str| {
-        d(&policy(M::Auto, json!({ "deny": [format!("edit({rule})")] })), &call(edit_tool(), path, CWD))
+        d(
+            &policy(M::Auto, json!({ "deny": [format!("edit({rule})")] })),
+            &call(edit_tool(), path, CWD),
+        )
     };
     assert_eq!(denied("foo/../secret/**", "secret/a.txt"), Deny);
     assert_eq!(denied("a/b/../../secret/**", "secret/a.txt"), Deny);
@@ -230,8 +264,10 @@ fn a_working_directory_named_with_extglob_still_anchors_its_relative_rules_98() 
 
 #[test]
 fn a_rule_naming_a_folder_with_extglob_matches_that_folder_131() {
-    let deny =
-        policy(M::Edits, json!({ "deny": ["edit(/tmp/proj+(old)/**)", "edit(/tmp/a@(b)/**)", "edit(lib+(v1)/**)"] }));
+    let deny = policy(
+        M::Edits,
+        json!({ "deny": ["edit(/tmp/proj+(old)/**)", "edit(/tmp/a@(b)/**)", "edit(lib+(v1)/**)"] }),
+    );
     for path in ["/tmp/proj+(old)/x.ts", "/tmp/a@(b)/x.ts", "/work/proj/lib+(v1)/x.ts"] {
         assert_eq!(d(&deny, &call(edit_tool(), path, CWD)), Deny, "{path}");
     }
@@ -274,8 +310,11 @@ fn always_allow_covers_the_command_as_shown_100() {
     ] {
         let p = edits();
         assert_eq!(d(&p, &bash(command)), Ask, "{command:?}");
-        p.add_rules(&PermissionRules { allow: PermissionPolicy::rules_for(&bash(command)), ..Default::default() })
-            .unwrap();
+        p.add_rules(&PermissionRules {
+            allow: PermissionPolicy::rules_for(&bash(command)),
+            ..Default::default()
+        })
+        .unwrap();
         assert_eq!(d(&p, &bash(command)), Allow, "{command:?}");
         assert_eq!(d(&p, &bash(&format!("{command} && rm -rf ~"))), Ask, "{command:?}");
     }
@@ -285,8 +324,17 @@ fn always_allow_covers_the_command_as_shown_100() {
 
 #[test]
 fn an_invalid_rule_is_an_error() {
-    let e = PermissionPolicy::new(M::Edits, &PermissionRules { allow: vec!["a(b".into()], ..Default::default() });
-    assert_eq!(e.err().map(|e| e.to_string()), Some("invalid permission rule: a(b".into()));
+    let e = PermissionPolicy::new(
+        M::Edits,
+        &PermissionRules {
+            allow: vec!["a(b".into()],
+            ..Default::default()
+        },
+    );
+    assert_eq!(
+        e.err().map(|e| e.to_string()),
+        Some("invalid permission rule: a(b".into())
+    );
 }
 
 #[cfg(unix)]

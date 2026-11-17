@@ -132,7 +132,10 @@ pub fn make_tool_search_tool(
     deferred: impl Fn() -> Vec<ToolRef> + Send + Sync + 'static,
     on_load: impl Fn(Vec<String>) + Send + Sync + 'static,
 ) -> ToolSearchTool {
-    ToolSearchTool { deferred: Arc::new(deferred), on_load: Arc::new(on_load) }
+    ToolSearchTool {
+        deferred: Arc::new(deferred),
+        on_load: Arc::new(on_load),
+    }
 }
 
 /// JS `s.slice(0, n)` in UTF-16 units, without splitting a character.
@@ -196,7 +199,11 @@ impl Tool for ToolSearchTool {
     }
     async fn execute(&self, args: JsonObject, _ctx: ToolContext) -> anyhow::Result<ToolResult> {
         let query = args.get("query").and_then(Value::as_str).unwrap_or("").to_string();
-        let limit = args.get("limit").and_then(Value::as_f64).map(|l| l as usize).unwrap_or(5);
+        let limit = args
+            .get("limit")
+            .and_then(Value::as_f64)
+            .map(|l| l as usize)
+            .unwrap_or(5);
         let found = search_tools(&query, &(self.deferred)(), limit);
         if found.is_empty() {
             return Ok(ToolResult::text(format!("No tools match \"{query}\".")));

@@ -51,7 +51,10 @@ pub struct ApprovalAnswer {
 
 impl ApprovalAnswer {
     pub fn new(decision: ApprovalDecision) -> Self {
-        ApprovalAnswer { decision, feedback: None }
+        ApprovalAnswer {
+            decision,
+            feedback: None,
+        }
     }
 }
 
@@ -100,7 +103,10 @@ fn not_run() -> ToolResult {
 /// rewritten to the repaired call (the model imitates its own history), unless it carries
 /// provider-signed reasoning, where editing an earlier turn is rejected by the API. What the model
 /// really produced is kept in the session as a tool_repair entry.
-pub async fn repair_calls(ctx: &ToolRunContext, message: &mut AssistantMessage) -> anyhow::Result<HashMap<String, Repair>> {
+pub async fn repair_calls(
+    ctx: &ToolRunContext,
+    message: &mut AssistantMessage,
+) -> anyhow::Result<HashMap<String, Repair>> {
     let mut repairs = HashMap::new();
     // A call cut off by max_tokens must never be "completed" into something runnable.
     if message.stop_reason == sasacode_ai::StopReason::MaxTokens || !ctx.hooks.has(HookName::ToolCallRaw) {
@@ -111,7 +117,9 @@ pub async fn repair_calls(ctx: &ToolRunContext, message: &mut AssistantMessage) 
         .iter()
         .any(|b| matches!(b, AssistantContent::Thinking(t) if t.signature.as_deref().is_some_and(|s| !s.is_empty())));
     for i in 0..message.content.len() {
-        let AssistantContent::ToolCall(call) = &message.content[i] else { continue };
+        let AssistantContent::ToolCall(call) = &message.content[i] else {
+            continue;
+        };
         let call = call.clone();
         let mut name = call.name.clone();
         let mut input = call.input.clone();
@@ -158,7 +166,11 @@ pub async fn repair_calls(ctx: &ToolRunContext, message: &mut AssistantMessage) 
         } else {
             "arguments repaired".to_string()
         };
-        let original = RepairOrigin { name: call.name.clone(), input: call.input.clone(), raw_input: call.raw_input.clone() };
+        let original = RepairOrigin {
+            name: call.name.clone(),
+            input: call.input.clone(),
+            raw_input: call.raw_input.clone(),
+        };
         ctx.log(SessionEntry::ToolRepair {
             call_id: call.id.clone(),
             original: RepairOriginal {
@@ -166,13 +178,25 @@ pub async fn repair_calls(ctx: &ToolRunContext, message: &mut AssistantMessage) 
                 input: Value::Object(call.input.clone()),
                 raw_input: call.raw_input.clone(),
             },
-            repaired: Repaired { name: name.clone(), input: Value::Object(input.clone()) },
+            repaired: Repaired {
+                name: name.clone(),
+                input: Value::Object(input.clone()),
+            },
             note: note.clone(),
         })?;
-        ctx.events.emit(AgentEvent::ToolRepaired { call: call.clone(), from: original, note: note.clone() });
+        ctx.events.emit(AgentEvent::ToolRepaired {
+            call: call.clone(),
+            from: original,
+            note: note.clone(),
+        });
         repairs.insert(
             call.id.clone(),
-            Repair { name: name.clone(), input: input.clone(), raw_input: raw_input.clone(), note },
+            Repair {
+                name: name.clone(),
+                input: input.clone(),
+                raw_input: raw_input.clone(),
+                note,
+            },
         );
         if rewrite
             && changed
@@ -221,7 +245,11 @@ async fn finish(ctx: &ToolRunContext, ex: &Exec, i: usize, result: ToolResult, d
     let mut result = result;
     ctx.hooks
         .run::<hook::ToolResult>(
-            sasacode_plugin_api::ToolResultEvent { call: job.call.clone(), result: result.clone(), ran: did_run },
+            sasacode_plugin_api::ToolResultEvent {
+                call: job.call.clone(),
+                result: result.clone(),
+                ran: did_run,
+            },
             |r, ev, _| {
                 if let Some(res) = r.result {
                     result = res.clone();
@@ -294,7 +322,10 @@ pub fn execute_tools(
         let n = jobs.len();
         let ex = Arc::new(Exec {
             jobs,
-            flush: Mutex::new(Flush { messages: (0..n).map(|_| None).collect(), flushed: 0 }),
+            flush: Mutex::new(Flush {
+                messages: (0..n).map(|_| None).collect(),
+                flushed: 0,
+            }),
             on_result: opts.on_result.clone(),
             on_tool_result: opts.on_tool_result.clone(),
             parent_call_id: opts.parent_call_id.clone(),
@@ -311,7 +342,14 @@ pub fn execute_tools(
             } else if opts.ancestors.len() >= 8 {
                 Some(err("Nested tool depth exceeds 8."))
             } else {
-                match preflight(&ctx, name, &inputs[i], raw_inputs[i].as_deref(), opts.truncated, &opts.signal) {
+                match preflight(
+                    &ctx,
+                    name,
+                    &inputs[i],
+                    raw_inputs[i].as_deref(),
+                    opts.truncated,
+                    &opts.signal,
+                ) {
                     Ok(tool) => {
                         tools[i] = Some(tool);
                         None
@@ -415,13 +453,22 @@ fn preflight(
 /// A tool_call plugin's decision replaces the permission mode's default, but never the user's
 /// explicit deny/ask rules: the stricter of the two wins. Then permission hooks may change the
 /// verdict within limits (see lowest_for).
-async fn decide(ctx: &ToolRunContext, check: &PermissionCheck, call: &ToolCall, forced: Option<(Decision, String)>) -> Verdict {
+async fn decide(
+    ctx: &ToolRunContext,
+    check: &PermissionCheck,
+    call: &ToolCall,
+    forced: Option<(Decision, String)>,
+) -> Verdict {
     let policy = ctx.permissions.check(check);
     let mut v = policy.clone();
     if let Some((decision, reason)) = forced
         && !(policy.source != VerdictSource::Mode && policy.decision.rank() > decision.rank())
     {
-        v = Verdict { decision, reason, source: VerdictSource::Plugin };
+        v = Verdict {
+            decision,
+            reason,
+            source: VerdictSource::Plugin,
+        };
     }
     if ctx.hooks.has(HookName::Permission) {
         let lowest = lowest_for(&v);
@@ -439,7 +486,11 @@ async fn decide(ctx: &ToolRunContext, check: &PermissionCheck, call: &ToolCall, 
             .run::<hook::Permission>(event, |r, ev, _| {
                 let Some(d) = r.decision else { return true };
                 let decision = if d.rank() < lowest.rank() { lowest } else { d };
-                v = Verdict { decision, reason: r.reason.unwrap_or_else(|| v.reason.clone()), source };
+                v = Verdict {
+                    decision,
+                    reason: r.reason.unwrap_or_else(|| v.reason.clone()),
+                    source,
+                };
                 ev.verdict = v.clone();
                 true
             })
@@ -468,7 +519,11 @@ async fn authorize(
 ) -> anyhow::Result<(JsonObject, Option<ToolResult>)> {
     let mut args = input;
     let mut forced: Option<(Decision, String)> = None;
-    let event = sasacode_plugin_api::ToolCallEvent { call: call.clone(), tool: tool.clone(), args: args.clone() };
+    let event = sasacode_plugin_api::ToolCallEvent {
+        call: call.clone(),
+        tool: tool.clone(),
+        args: args.clone(),
+    };
     ctx.hooks
         .run::<hook::ToolCall>(event, |r, ev, _| {
             if let Some(a) = r.args {
@@ -489,7 +544,11 @@ async fn authorize(
         let e = err(format!("Invalid arguments after tool_call: {}", problems.join("; ")));
         return Ok((args, Some(e)));
     }
-    let check = PermissionCheck { tool: tool.clone(), args: args.clone(), cwd: ctx.cwd.clone() };
+    let check = PermissionCheck {
+        tool: tool.clone(),
+        args: args.clone(),
+        cwd: ctx.cwd.clone(),
+    };
     if signal.is_cancelled() {
         return Ok((args, Some(not_run())));
     }
@@ -527,18 +586,26 @@ async fn authorize(
     };
     let answer = match answer {
         Some(Err(e)) => {
-            let e = err(format!("The approval could not be asked ({e:#}), so the call was not run."));
+            let e = err(format!(
+                "The approval could not be asked ({e:#}), so the call was not run."
+            ));
             return Ok((args, Some(e)));
         }
         Some(Ok(a)) if !signal.is_cancelled() => a,
         _ => return Ok((args, Some(not_run()))),
     };
     if answer.decision == ApprovalDecision::Always {
-        ctx.permissions
-            .add_rules(&PermissionRules { allow: PermissionPolicy::rules_for(&check), ..Default::default() })?;
+        ctx.permissions.add_rules(&PermissionRules {
+            allow: PermissionPolicy::rules_for(&check),
+            ..Default::default()
+        })?;
     }
     if answer.decision == ApprovalDecision::Deny {
-        let feedback = answer.feedback.filter(|f| !f.is_empty()).map(|f| format!(" User feedback: {f}")).unwrap_or_default();
+        let feedback = answer
+            .feedback
+            .filter(|f| !f.is_empty())
+            .map(|f| format!(" User feedback: {f}"))
+            .unwrap_or_default();
         return Ok((args, Some(err(format!("The user denied this tool call.{feedback}")))));
     }
     Ok((args, None))
@@ -563,7 +630,10 @@ async fn run_tool(
     ancestors: &[String],
     parent_call_id: Option<String>,
 ) -> anyhow::Result<ToolResult> {
-    let summary = std::panic::catch_unwind(AssertUnwindSafe(|| tool.summary(&args))).ok().flatten().unwrap_or_default();
+    let summary = std::panic::catch_unwind(AssertUnwindSafe(|| tool.summary(&args)))
+        .ok()
+        .flatten()
+        .unwrap_or_default();
     if let Some(parent) = &parent_call_id {
         ctx.log(SessionEntry::Custom {
             plugin: "core".into(),
@@ -571,12 +641,19 @@ async fn run_tool(
             data: json!({ "parentCallId": parent, "call": call.tagged(), "args": args }),
         })?;
     }
-    ctx.events.emit(AgentEvent::ToolStart { call: call.clone(), summary, parent_call_id: parent_call_id.clone() });
+    ctx.events.emit(AgentEvent::ToolStart {
+        call: call.clone(),
+        summary,
+        parent_call_id: parent_call_id.clone(),
+    });
 
     // Calls from one execution are serialized, including when the caller joins several. Each child
     // has its own queue, so ordinary nested delegation never deadlocks. As with a JS promise, a call
     // is queued and starts when it is made, awaited or not; the tool's end waits for all of them.
-    let queue: Arc<Mutex<Queue>> = Arc::new(Mutex::new(Queue { active: true, tail: None }));
+    let queue: Arc<Mutex<Queue>> = Arc::new(Mutex::new(Queue {
+        active: true,
+        tail: None,
+    }));
     let call_tool: CallTool = {
         let (ctx, queue, signal) = (ctx.clone(), queue.clone(), signal.clone());
         let mut chain: Vec<String> = ancestors.to_vec();
@@ -588,7 +665,14 @@ async fn run_tool(
                 return futures::future::ready(err("Tool context is no longer active.")).boxed();
             }
             let prev = q.tail.take();
-            let work = nested_call(ctx.clone(), signal.clone(), chain.clone(), parent_id.clone(), name, input);
+            let work = nested_call(
+                ctx.clone(),
+                signal.clone(),
+                chain.clone(),
+                parent_id.clone(),
+                name,
+                input,
+            );
             let job: Tail = async move {
                 if let Some(p) = prev {
                     p.await;
@@ -606,7 +690,11 @@ async fn run_tool(
     let on_update = {
         let (events, call, parent) = (ctx.events.clone(), call.clone(), parent_call_id.clone());
         Arc::new(move |text: String| {
-            events.emit(AgentEvent::ToolUpdate { call: call.clone(), text, parent_call_id: parent.clone() })
+            events.emit(AgentEvent::ToolUpdate {
+                call: call.clone(),
+                text,
+                parent_call_id: parent.clone(),
+            })
         })
     };
     let tctx = ToolContext {
@@ -649,7 +737,12 @@ async fn nested_call(
     name: String,
     input: JsonObject,
 ) -> ToolResult {
-    let child = ToolCall { id: format!("nested-{}", uuid::Uuid::new_v4()), name, input, raw_input: None };
+    let child = ToolCall {
+        id: format!("nested-{}", uuid::Uuid::new_v4()),
+        name,
+        input,
+        raw_input: None,
+    };
     let got: Arc<Mutex<Option<ToolResult>>> = Arc::new(Mutex::new(None));
     let work = async {
         ctx.log(SessionEntry::Custom {

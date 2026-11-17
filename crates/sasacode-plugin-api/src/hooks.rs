@@ -13,7 +13,9 @@ use std::sync::{Arc, RwLock};
 use futures::future::BoxFuture;
 use serde::{Deserialize, Serialize};
 
-use sasacode_ai::{AssistantMessage, Fetch, JsonObject, Message, ModelInfo, SamplingOptions, StopReason, ToolCall, Usage, UserContent};
+use sasacode_ai::{
+    AssistantMessage, Fetch, JsonObject, Message, ModelInfo, SamplingOptions, StopReason, ToolCall, Usage, UserContent,
+};
 
 use crate::tool::{ToolRef, ToolResult};
 
@@ -450,7 +452,10 @@ pub struct HookRunner {
 
 impl HookRunner {
     pub fn new(ctx: HookContext) -> Self {
-        HookRunner { ctx, ..Default::default() }
+        HookRunner {
+            ctx,
+            ..Default::default()
+        }
     }
 
     pub fn set_on_error(&self, f: OnHookError) {
@@ -474,7 +479,10 @@ impl HookRunner {
             .unwrap_or_else(|e| e.into_inner())
             .entry(name)
             .or_default()
-            .push(Entry { owner: owner.to_string(), handler });
+            .push(Entry {
+                owner: owner.to_string(),
+                handler,
+            });
     }
 
     /// Register an async handler for hook `H`, owned by `owner` (a plugin name or "core").
@@ -508,7 +516,11 @@ impl HookRunner {
             .filter(|(k, _)| !names.contains(k))
             .map(|(k, v)| (*k, v.clone()))
             .collect();
-        HookRunner { handlers: Arc::new(RwLock::new(map)), on_error: self.on_error.clone(), ctx }
+        HookRunner {
+            handlers: Arc::new(RwLock::new(map)),
+            on_error: self.on_error.clone(),
+            ctx,
+        }
     }
 
     pub fn has(&self, name: HookName) -> bool {
@@ -520,7 +532,12 @@ impl HookRunner {
     }
 
     fn entries(&self, name: HookName) -> Vec<Entry> {
-        self.handlers.read().unwrap_or_else(|e| e.into_inner()).get(&name).cloned().unwrap_or_default()
+        self.handlers
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(&name)
+            .cloned()
+            .unwrap_or_default()
     }
 
     /// Call each handler with the current event; `step` folds its result into the event and
@@ -557,7 +574,11 @@ impl HookRunner {
     }
 
     /// For hooks on the streaming path: async handlers are reported as errors and skipped.
-    pub fn run_sync<H: Hook>(&self, event: &mut H::Event, mut step: impl FnMut(H::Result, &mut H::Event, &str) -> bool) {
+    pub fn run_sync<H: Hook>(
+        &self,
+        event: &mut H::Event,
+        mut step: impl FnMut(H::Result, &mut H::Event, &str) -> bool,
+    ) {
         for entry in self.entries(H::NAME) {
             if let Some(h) = entry.handler.downcast_ref::<SyncHandler<H>>() {
                 match h(event, &self.ctx) {
@@ -570,7 +591,10 @@ impl HookRunner {
                     Ok(None) => {}
                 }
             } else if entry.handler.downcast_ref::<AsyncHandler<H>>().is_some() {
-                let e = anyhow::anyhow!("{} handlers must be synchronous; the result was ignored", H::NAME.as_str());
+                let e = anyhow::anyhow!(
+                    "{} handlers must be synchronous; the result was ignored",
+                    H::NAME.as_str()
+                );
                 self.report(&entry.owner, H::NAME, &e);
             }
         }

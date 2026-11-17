@@ -13,8 +13,12 @@ use sasacode_plugin_api::{Decision, PermissionMode, PermissionRules, ToolKind, T
 
 use crate::paths::{self, WINDOWS};
 
-pub const PERMISSION_MODES: [PermissionMode; 4] =
-    [PermissionMode::Edits, PermissionMode::Ask, PermissionMode::Agent, PermissionMode::Auto];
+pub const PERMISSION_MODES: [PermissionMode; 4] = [
+    PermissionMode::Edits,
+    PermissionMode::Ask,
+    PermissionMode::Agent,
+    PermissionMode::Auto,
+];
 
 pub fn permission_mode_label(m: PermissionMode) -> &'static str {
     match m {
@@ -54,14 +58,20 @@ pub struct PermissionPolicy {
 
 impl Default for PermissionPolicy {
     fn default() -> Self {
-        PermissionPolicy { mode: RwLock::new(PermissionMode::Edits), rules: RwLock::new(Rules::default()) }
+        PermissionPolicy {
+            mode: RwLock::new(PermissionMode::Edits),
+            rules: RwLock::new(Rules::default()),
+        }
     }
 }
 
 impl PermissionPolicy {
     /// Errs on a rule that does not parse ("invalid permission rule: …"), as the TS constructor threw.
     pub fn new(mode: PermissionMode, rules: &PermissionRules) -> anyhow::Result<Self> {
-        let p = PermissionPolicy { mode: RwLock::new(mode), rules: RwLock::new(Rules::default()) };
+        let p = PermissionPolicy {
+            mode: RwLock::new(mode),
+            rules: RwLock::new(Rules::default()),
+        };
         p.add_rules(rules)?;
         Ok(p)
     }
@@ -78,7 +88,12 @@ impl PermissionPolicy {
     /// keeping those before it (as the TS did).
     pub fn add_rules(&self, rules: &PermissionRules) -> anyhow::Result<()> {
         let mut r = self.rules.write().unwrap_or_else(|e| e.into_inner());
-        let lists: [(&Vec<String>, u8); 4] = [(&rules.allow, 0), (&rules.ask, 1), (&rules.deny, 2), (&rules.soft_deny, 3)];
+        let lists: [(&Vec<String>, u8); 4] = [
+            (&rules.allow, 0),
+            (&rules.ask, 1),
+            (&rules.deny, 2),
+            (&rules.soft_deny, 3),
+        ];
         for (list, which) in lists {
             for s in list {
                 let parsed = parse_rule(s).ok_or_else(|| anyhow::anyhow!("invalid permission rule: {s}"))?;
@@ -95,12 +110,20 @@ impl PermissionPolicy {
 
     pub fn check(&self, c: &PermissionCheck) -> Verdict {
         let rules = self.rules.read().unwrap_or_else(|e| e.into_inner());
-        let v = |decision, reason: String, source| Verdict { decision, reason, source };
+        let v = |decision, reason: String, source| Verdict {
+            decision,
+            reason,
+            source,
+        };
         if let Some(d) = rules.deny.iter().find(|r| rule_matches(r, c, false)) {
             return v(Decision::Deny, format!("rule deny: {}", d.source), VerdictSource::Rule);
         }
         if let Some(s) = rules.soft_deny.iter().find(|r| rule_matches(r, c, false)) {
-            return v(Decision::Deny, format!("rule softDeny: {}", s.source), VerdictSource::Soft);
+            return v(
+                Decision::Deny,
+                format!("rule softDeny: {}", s.source),
+                VerdictSource::Soft,
+            );
         }
         if let Some(a) = rules.ask.iter().find(|r| rule_matches(r, c, false)) {
             return v(Decision::Ask, format!("rule ask: {}", a.source), VerdictSource::Rule);
@@ -120,7 +143,10 @@ impl PermissionPolicy {
     fn mode_decision(&self, c: &PermissionCheck) -> (Decision, &'static str) {
         // Through a symlink, a path inside the project can point anywhere: judge where it really goes.
         let cwd = try_real_path(&c.cwd).unwrap_or_else(|| c.cwd.clone());
-        let real: Vec<String> = paths_of(c).into_iter().map(|p| try_real_path(&p).unwrap_or(p)).collect();
+        let real: Vec<String> = paths_of(c)
+            .into_iter()
+            .map(|p| try_real_path(&p).unwrap_or(p))
+            .collect();
         let inside_cwd = real.iter().all(|p| is_inside(p, &cwd));
         // Edits under .git (hooks, config) or .sasacode (plugins, rules) run code at the next git command or start (#127).
         let has_paths = c.tool.paths(&c.args, std::path::Path::new(&c.cwd)).is_some();
@@ -163,7 +189,10 @@ impl PermissionPolicy {
                     seen.push(p);
                 }
             }
-            return seen.iter().map(|p| format!("{name}({})", escape_glob(&slashes(p)))).collect();
+            return seen
+                .iter()
+                .map(|p| format!("{name}({})", escape_glob(&slashes(p))))
+                .collect();
         }
         vec![name.to_string()]
     }
@@ -184,7 +213,10 @@ fn runs_code_re() -> &'static Regex {
 fn escape_glob(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for ch in s.chars() {
-        if matches!(ch, '\\' | '*' | '?' | '[' | ']' | '{' | '}' | '!' | '(' | ')' | '+' | '@') {
+        if matches!(
+            ch,
+            '\\' | '*' | '?' | '[' | ']' | '{' | '}' | '!' | '(' | ')' | '+' | '@'
+        ) {
             out.push('\\');
         }
         out.push(ch);
@@ -204,7 +236,11 @@ fn parse_rule(source: &str) -> Option<ParsedRule> {
     let re = R.get_or_init(|| Regex::new(r"(?s)^([^()]+?)(?:\((.*)\))?$").expect("valid regex"));
     let m = re.captures(source.trim())?;
     let tool = wildcard(m.get(1)?.as_str())?;
-    Some(ParsedRule { tool, pattern: m.get(2).map(|p| p.as_str().to_string()), source: source.to_string() })
+    Some(ParsedRule {
+        tool,
+        pattern: m.get(2).map(|p| p.as_str().to_string()),
+        source: source.to_string(),
+    })
 }
 
 /// `*` matches anything; `\*` is a literal `*` and `\\` a literal backslash.
@@ -311,9 +347,15 @@ fn rule_matches(rule: &ParsedRule, c: &PermissionCheck, for_allow: bool) -> bool
     let real_cwd = try_real_path(&c.cwd).unwrap_or_else(|| c.cwd.clone());
     let fold = folds_case(&real_cwd);
     let mut sources: Vec<String> = if paths::is_absolute(&pattern) {
-        [pattern.clone(), real_pattern(&pattern)].iter().map(|g| escape_extglob(&glob_path(g, fold))).collect()
+        [pattern.clone(), real_pattern(&pattern)]
+            .iter()
+            .map(|g| escape_extglob(&glob_path(g, fold)))
+            .collect()
     } else {
-        [c.cwd.clone(), real_cwd].iter().map(|d| anchored(d, &pattern, fold)).collect()
+        [c.cwd.clone(), real_cwd]
+            .iter()
+            .map(|d| anchored(d, &pattern, fold))
+            .collect()
     };
     sources.dedup();
     let globs: Vec<globset::GlobMatcher> = sources.iter().map(|g| glob(g)).collect();
@@ -321,9 +363,15 @@ fn rule_matches(rule: &ParsedRule, c: &PermissionCheck, for_allow: bool) -> bool
         let gp = glob_path(p, fold);
         globs.iter().any(|g| g.is_match(&gp))
     };
-    let spellings: Vec<String> =
-        paths.iter().flat_map(|p| [p.clone(), try_real_path(p).unwrap_or_else(|| p.clone())]).collect();
-    if for_allow { spellings.iter().all(|s| hit(s)) } else { spellings.iter().any(|s| hit(s)) }
+    let spellings: Vec<String> = paths
+        .iter()
+        .flat_map(|p| [p.clone(), try_real_path(p).unwrap_or_else(|| p.clone())])
+        .collect();
+    if for_allow {
+        spellings.iter().all(|s| hit(s))
+    } else {
+        spellings.iter().any(|s| hit(s))
+    }
 }
 
 /// On Windows, `\` as `/`: rules are globs, where `\` escapes (and no Windows name holds `*` or `?`).
@@ -397,7 +445,11 @@ fn folds_case(dir: &str) -> bool {
         .map(|ch| {
             if ch.is_alphabetic() {
                 let lower: String = ch.to_lowercase().collect();
-                if lower == ch.to_string() { ch.to_uppercase().collect::<String>() } else { lower }
+                if lower == ch.to_string() {
+                    ch.to_uppercase().collect::<String>()
+                } else {
+                    lower
+                }
             } else {
                 ch.to_string()
             }
@@ -448,7 +500,10 @@ fn real_pattern(glob: &str) -> String {
             let fixed = parts[..i].join("/");
             let fixed = if fixed.is_empty() { "/".to_string() } else { fixed };
             let real = try_real_path(&fixed).unwrap_or(fixed);
-            std::iter::once(real.as_str()).chain(parts[i..].iter().copied()).collect::<Vec<_>>().join("/")
+            std::iter::once(real.as_str())
+                .chain(parts[i..].iter().copied())
+                .collect::<Vec<_>>()
+                .join("/")
         }
     }
 }
@@ -460,8 +515,11 @@ fn real_pattern(glob: &str) -> String {
 /// link loop, no permission, ".." below a part that does not exist).
 pub fn real_path(p: &str) -> Result<String, String> {
     let root_len = paths::root_of_parse(p).len();
-    let mut todo: std::collections::VecDeque<String> =
-        p[root_len..].split(paths::is_sep).filter(|s| !s.is_empty()).map(str::to_string).collect();
+    let mut todo: std::collections::VecDeque<String> = p[root_len..]
+        .split(paths::is_sep)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .collect();
     let mut done = root_of(p);
     let mut absent = false;
     let mut hops = 0;
@@ -484,7 +542,10 @@ pub fn real_path(p: &str) -> Result<String, String> {
                 Ok(st) => {
                     if st.file_type().is_symlink() {
                         link = Some(
-                            std::fs::read_link(&next).map_err(|e| e.to_string())?.to_string_lossy().into_owned(),
+                            std::fs::read_link(&next)
+                                .map_err(|e| e.to_string())?
+                                .to_string_lossy()
+                                .into_owned(),
                         );
                     }
                 }
@@ -498,8 +559,11 @@ pub fn real_path(p: &str) -> Result<String, String> {
                     return Err(format!("too many symlinks: {p}"));
                 }
                 let lroot = paths::root_of_parse(&link).len();
-                let parts: Vec<String> =
-                    link[lroot..].split(paths::is_sep).filter(|s| !s.is_empty()).map(str::to_string).collect();
+                let parts: Vec<String> = link[lroot..]
+                    .split(paths::is_sep)
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string)
+                    .collect();
                 for part in parts.into_iter().rev() {
                     todo.push_front(part);
                 }
@@ -519,7 +583,12 @@ pub fn try_real_path(p: &str) -> Option<String> {
 }
 
 fn segments(command: &str) -> Vec<String> {
-    chain_re().split(command).map(str::trim).filter(|s| !s.is_empty()).map(str::to_string).collect()
+    chain_re()
+        .split(command)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .collect()
 }
 
 /// For commands, every chained piece must be covered by some allow rule, and substitutions never are.

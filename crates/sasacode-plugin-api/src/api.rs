@@ -34,7 +34,11 @@ pub struct SelectOption {
 
 impl SelectOption {
     pub fn new(value: impl Into<String>, label: impl Into<String>) -> Self {
-        SelectOption { value: value.into(), label: label.into(), description: None }
+        SelectOption {
+            value: value.into(),
+            label: label.into(),
+            description: None,
+        }
     }
     pub fn describe(mut self, d: impl Into<String>) -> Self {
         self.description = Some(d.into());
@@ -162,7 +166,12 @@ pub trait UiBridge: Send + Sync {
         None
     }
     /// Checked values; None on cancel or when the front end has no multi-select.
-    async fn select_many(&self, _title: &str, _options: &[SelectOption], _opts: &SelectManyOptions) -> Option<Vec<String>> {
+    async fn select_many(
+        &self,
+        _title: &str,
+        _options: &[SelectOption],
+        _opts: &SelectManyOptions,
+    ) -> Option<Vec<String>> {
         None
     }
 }
@@ -246,8 +255,12 @@ pub trait HostServices: Send + Sync {
     /// Only the plugin that registered a tool may take it away.
     fn unregister_tool(&self, plugin: &str, name: &str);
     fn register_command(&self, plugin: &str, command: Command);
-    fn register_provider(&self, name: &str, config: ProviderConfig, implementation: Option<Arc<dyn Provider>>)
-    -> anyhow::Result<()>;
+    fn register_provider(
+        &self,
+        name: &str,
+        config: ProviderConfig,
+        implementation: Option<Arc<dyn Provider>>,
+    ) -> anyhow::Result<()>;
     /// Background startup work: headless waits for it before the first request.
     fn ready(&self, work: BoxFuture<'static, ()>);
     /// Errs on a rule that does not parse.
@@ -262,7 +275,8 @@ pub trait HostServices: Send + Sync {
     async fn confirm(&self, title: &str, message: Option<&str>) -> bool;
     async fn select(&self, title: &str, options: &[SelectOption]) -> Option<String>;
     async fn input(&self, title: &str, options: &InputOptions) -> Option<String>;
-    async fn select_many(&self, title: &str, options: &[SelectOption], opts: &SelectManyOptions) -> Option<Vec<String>>;
+    async fn select_many(&self, title: &str, options: &[SelectOption], opts: &SelectManyOptions)
+    -> Option<Vec<String>>;
     fn set_status(&self, plugin: &str, key: &str, text: Option<String>);
     fn register_tool_renderer(&self, tool: &str, renderer: ToolRenderer);
     fn on_paste(&self, handler: PasteHandler);
@@ -292,7 +306,10 @@ pub struct PluginApi {
 
 impl PluginApi {
     pub fn new(name: impl Into<String>, host: Arc<dyn HostServices>) -> Self {
-        PluginApi { name: name.into(), host }
+        PluginApi {
+            name: name.into(),
+            host,
+        }
     }
     pub fn version(&self) -> &'static str {
         PLUGIN_API_VERSION

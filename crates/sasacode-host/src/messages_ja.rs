@@ -398,6 +398,7 @@ pub static TO_JA: &[(&str, &str)] = &[
     ("model overrides for {models}", "モデル設定の上書き（{models}）"),
     ("MCP server {name}", "MCP サーバー {name}"),
     ("disables plugins {names}", "プラグインの無効化 {names}"),
+    ("enables plugins {names}", "プラグインの有効化 {names}"),
     ("settings for plugins {names}", "プラグインの設定 {names}"),
     ("allow rules {rules}", "許可ルール {rules}"),
     ("permission mode {mode}", "権限モード {mode}"),

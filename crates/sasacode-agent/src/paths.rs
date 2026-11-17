@@ -47,7 +47,9 @@ pub fn is_absolute(p: &str) -> bool {
 }
 
 fn cwd_string() -> String {
-    std::env::current_dir().map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(|_| "/".into())
+    std::env::current_dir()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| "/".into())
 }
 
 /// Node's `path.resolve(...parts)`: right to left until an absolute path, then normalised, no trailing separator.
@@ -122,8 +124,16 @@ pub fn join(a: &str, b: &str) -> String {
         return b.to_string();
     }
     let s = sep();
-    let joined = if a.ends_with(is_sep) { format!("{a}{b}") } else { format!("{a}{s}{b}") };
-    if is_absolute(&joined) { normalize_abs(&joined) } else { joined }
+    let joined = if a.ends_with(is_sep) {
+        format!("{a}{b}")
+    } else {
+        format!("{a}{s}{b}")
+    };
+    if is_absolute(&joined) {
+        normalize_abs(&joined)
+    } else {
+        joined
+    }
 }
 
 /// `path.relative(from, to)` for paths that resolve() normalises.

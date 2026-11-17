@@ -35,11 +35,19 @@ pub struct ToolResult {
 
 impl ToolResult {
     pub fn text(t: impl Into<String>) -> Self {
-        ToolResult { content: vec![UserContent::text(t)], is_error: None, details: None }
+        ToolResult {
+            content: vec![UserContent::text(t)],
+            is_error: None,
+            details: None,
+        }
     }
     /// `errorResult(message)`.
     pub fn error(message: impl Into<String>) -> Self {
-        ToolResult { content: vec![UserContent::text(message)], is_error: Some(true), details: None }
+        ToolResult {
+            content: vec![UserContent::text(message)],
+            is_error: Some(true),
+            details: None,
+        }
     }
     pub fn is_error(&self) -> bool {
         self.is_error.unwrap_or(false)
@@ -75,7 +83,12 @@ pub struct ToolContext {
 
 impl ToolContext {
     pub fn new(cwd: impl Into<PathBuf>) -> Self {
-        ToolContext { cwd: cwd.into(), signal: CancellationToken::new(), on_update: None, call_tool: None }
+        ToolContext {
+            cwd: cwd.into(),
+            signal: CancellationToken::new(),
+            on_update: None,
+            call_tool: None,
+        }
     }
     pub fn update(&self, text: impl Into<String>) {
         if let Some(f) = &self.on_update {
@@ -123,10 +136,15 @@ pub type ToolRef = Arc<dyn Tool>;
 
 /// The model's view of a tool.
 pub fn spec_of(t: &dyn Tool) -> sasacode_ai::ToolSpec {
-    sasacode_ai::ToolSpec { name: t.name().to_string(), description: t.description(), parameters: t.parameters() }
+    sasacode_ai::ToolSpec {
+        name: t.name().to_string(),
+        description: t.description(),
+        parameters: t.parameters(),
+    }
 }
 
-pub type ExecuteFn = Arc<dyn Fn(JsonObject, ToolContext) -> BoxFuture<'static, anyhow::Result<ToolResult>> + Send + Sync>;
+pub type ExecuteFn =
+    Arc<dyn Fn(JsonObject, ToolContext) -> BoxFuture<'static, anyhow::Result<ToolResult>> + Send + Sync>;
 pub type PathsFn = Arc<dyn Fn(&JsonObject, &Path) -> Vec<String> + Send + Sync>;
 pub type StringFn = Arc<dyn Fn(&JsonObject) -> String + Send + Sync>;
 

@@ -15,8 +15,8 @@ use serde_json::{Value, json};
 use sasacode_ai::{Message, ModelInfo, Provider, ProviderConfig, UserContent};
 use sasacode_plugin_api::{
     Command, CompleteOptions, HookRunner, HostServices, InjectWhen, InputOptions, Lang, NotifyLevel, PasteHandler,
-    PermissionMode, PermissionRules, PluginApi, SelectManyOptions, SelectOption, ShowTextOptions,
-    SubagentOptions, SubagentResult, ToolRef, ToolRenderer, UiBridge,
+    PermissionMode, PermissionRules, PluginApi, SelectManyOptions, SelectOption, ShowTextOptions, SubagentOptions,
+    SubagentResult, ToolRef, ToolRenderer, UiBridge,
 };
 
 use crate::agent::Agent;
@@ -177,9 +177,11 @@ impl PluginHost {
         *lock(&self.custom) = entries
             .iter()
             .filter_map(|e| match e {
-                SessionEntry::Custom { plugin, kind, data } => {
-                    Some(Custom { plugin: plugin.clone(), kind: kind.clone(), data: data.clone() })
-                }
+                SessionEntry::Custom { plugin, kind, data } => Some(Custom {
+                    plugin: plugin.clone(),
+                    kind: kind.clone(),
+                    data: data.clone(),
+                }),
                 _ => None,
             })
             .collect();
@@ -225,7 +227,10 @@ impl PluginHost {
             Err(_) => Some("panic".to_string()),
         };
         let ok = error.is_none();
-        lock(&self.plugins).push(LoadedPlugin { name: name.to_string(), error: error.clone() });
+        lock(&self.plugins).push(LoadedPlugin {
+            name: name.to_string(),
+            error: error.clone(),
+        });
         if let Some(error) = error {
             let msg = match HostServices::lang(self.as_ref()) {
                 Lang::En => format!("plugin {name} failed to load: {error}"),
@@ -278,7 +283,10 @@ impl HostServices for PluginHost {
         {
             let mut commands = lock(&self.commands);
             commands.retain(|c| c.command.name != command.name);
-            commands.push(OwnedCommand { command, owner: plugin.to_string() });
+            commands.push(OwnedCommand {
+                command,
+                owner: plugin.to_string(),
+            });
         }
         self.changed();
     }
@@ -317,7 +325,11 @@ impl HostServices for PluginHost {
         }
     }
     async fn show_text(&self, options: ShowTextOptions) -> anyhow::Result<()> {
-        let safe = ShowTextOptions { title: clean(&options.title), text: clean(&options.text), format: options.format };
+        let safe = ShowTextOptions {
+            title: clean(&options.title),
+            text: clean(&options.text),
+            format: options.format,
+        };
         match self.current_ui() {
             Some(ui) => ui.show_text(safe).await,
             None => HeadlessUi.show_text(safe).await,
@@ -340,7 +352,12 @@ impl HostServices for PluginHost {
         }
         ui.input(title, options).await
     }
-    async fn select_many(&self, title: &str, options: &[SelectOption], opts: &SelectManyOptions) -> Option<Vec<String>> {
+    async fn select_many(
+        &self,
+        title: &str,
+        options: &[SelectOption],
+        opts: &SelectManyOptions,
+    ) -> Option<Vec<String>> {
         let ui = self.current_ui()?;
         if !ui.interactive() {
             return None;
@@ -381,14 +398,26 @@ impl HostServices for PluginHost {
         self.agent.session().map(|s| s.id().to_string())
     }
     fn session_append(&self, plugin: &str, kind: &str, data: Value) -> anyhow::Result<()> {
-        lock(&self.custom).push(Custom { plugin: plugin.to_string(), kind: kind.to_string(), data: data.clone() });
+        lock(&self.custom).push(Custom {
+            plugin: plugin.to_string(),
+            kind: kind.to_string(),
+            data: data.clone(),
+        });
         if let Some(s) = self.agent.session() {
-            s.append(&SessionEntry::Custom { plugin: plugin.to_string(), kind: kind.to_string(), data })?;
+            s.append(&SessionEntry::Custom {
+                plugin: plugin.to_string(),
+                kind: kind.to_string(),
+                data,
+            })?;
         }
         Ok(())
     }
     fn session_entries(&self, plugin: &str, kind: &str) -> Vec<Value> {
-        lock(&self.custom).iter().filter(|e| e.plugin == plugin && e.kind == kind).map(|e| e.data.clone()).collect()
+        lock(&self.custom)
+            .iter()
+            .filter(|e| e.plugin == plugin && e.kind == kind)
+            .map(|e| e.data.clone())
+            .collect()
     }
     fn messages(&self) -> Vec<Message> {
         self.agent.messages()

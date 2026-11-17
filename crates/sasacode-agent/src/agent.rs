@@ -23,8 +23,8 @@ use sasacode_ai::{
     ThinkingLevel, ToolCall, UserContent, UserMessage, get_provider, is_context_overflow, now_ms,
 };
 use sasacode_plugin_api::{
-    CompleteOptions, DeltaKind, HookContext, HookName, HookRunner, InjectWhen, Spend, SpendSource, StopCause,
-    Stopped, SubagentControl, SubagentOptions, SubagentResult, ToolRef, hook, spec_of, text,
+    CompleteOptions, DeltaKind, HookContext, HookName, HookRunner, InjectWhen, Spend, SpendSource, StopCause, Stopped,
+    SubagentControl, SubagentOptions, SubagentResult, ToolRef, hook, spec_of, text,
 };
 
 use crate::events::{AgentEvent, EventBus};
@@ -117,9 +117,10 @@ pub fn without_images(messages: &[Message]) -> Vec<Message> {
     messages
         .iter()
         .map(|m| match m {
-            Message::User(u) if has_image(&u.content) => {
-                Message::User(UserMessage { content: strip(&u.content), ..u.clone() })
-            }
+            Message::User(u) if has_image(&u.content) => Message::User(UserMessage {
+                content: strip(&u.content),
+                ..u.clone()
+            }),
             Message::Tool(t) if has_image(&t.content) => {
                 let mut t = t.clone();
                 t.content = strip(&t.content);
@@ -198,7 +199,10 @@ pub fn reply_budget(model: &ModelInfo, messages: &[Message], fixed_chars: usize,
 /// Room left for the next response before the window counts as full. Proportional for small
 /// windows: a local model with an 8K window and a 32K maxOutput would otherwise be "full" at once.
 pub fn response_room(model: &ModelInfo) -> u64 {
-    model.max_output.min(16_384).min((model.context_window as f64 * 0.15).floor() as u64)
+    model
+        .max_output
+        .min(16_384)
+        .min((model.context_window as f64 * 0.15).floor() as u64)
 }
 
 type RunFuture = Shared<BoxFuture<'static, Result<StopCause, String>>>;
@@ -263,8 +267,7 @@ impl Agent {
                 })
             }));
         }
-        let tools: IndexMap<String, ToolRef> =
-            opts.tools.drain(..).map(|t| (t.name().to_string(), t)).collect();
+        let tools: IndexMap<String, ToolRef> = opts.tools.drain(..).map(|t| (t.name().to_string(), t)).collect();
         let state = State {
             messages: std::mem::take(&mut opts.messages),
             model: opts.model.clone(),
@@ -290,7 +293,11 @@ impl Agent {
             // Weak: the agent owns the search tool, which must not own the agent.
             let (w1, w2) = (weak.clone(), weak.clone());
             let search_tool: ToolRef = Arc::new(make_tool_search_tool(
-                move || w1.upgrade().map(|i| Agent { inner: i }.deferred_tools()).unwrap_or_default(),
+                move || {
+                    w1.upgrade()
+                        .map(|i| Agent { inner: i }.deferred_tools())
+                        .unwrap_or_default()
+                },
                 move |names| {
                     if let Some(i) = w2.upgrade() {
                         let mut st = i.state.lock().unwrap_or_else(|e| e.into_inner());
@@ -298,7 +305,15 @@ impl Agent {
                     }
                 },
             ));
-            Inner { events, hooks, opts, search_tool, is_subagent, tasks: TaskTracker::new(), state: Mutex::new(state) }
+            Inner {
+                events,
+                hooks,
+                opts,
+                search_tool,
+                is_subagent,
+                tasks: TaskTracker::new(),
+                state: Mutex::new(state),
+            }
         });
         Agent { inner }
     }
@@ -421,7 +436,9 @@ impl Agent {
         let halting = self.st().halted.clone();
         let mut content = input;
         let mut handled = false;
-        let ev = sasacode_plugin_api::UserPromptEvent { content: content.clone() };
+        let ev = sasacode_plugin_api::UserPromptEvent {
+            content: content.clone(),
+        };
         self.inner
             .hooks
             .run::<hook::UserPrompt>(ev, |r, _, _| {
@@ -628,7 +645,10 @@ impl Agent {
                 content
             }
         };
-        self.push_message(Message::User(UserMessage { content, timestamp: now_ms() }))
+        self.push_message(Message::User(UserMessage {
+            content,
+            timestamp: now_ms(),
+        }))
     }
 
     fn push_message(&self, m: Message) -> anyhow::Result<()> {
@@ -660,12 +680,19 @@ impl Agent {
             source: s.source,
         });
         let hooks = self.inner.hooks.clone();
-        self.inner.tasks.spawn(async move { hooks.emit::<hook::Usage>(s).await });
+        self.inner
+            .tasks
+            .spawn(async move { hooks.emit::<hook::Usage>(s).await });
         Ok(())
     }
 
     fn spent(&self, m: &AssistantMessage, source: SpendSource, emit: bool) -> anyhow::Result<()> {
-        let s = Spend { t: m.timestamp, model: format!("{}/{}", m.provider, m.model), usage: m.usage.clone(), source };
+        let s = Spend {
+            t: m.timestamp,
+            model: format!("{}/{}", m.provider, m.model),
+            usage: m.usage.clone(),
+            source,
+        };
         self.spend(s, emit)
     }
 
@@ -676,7 +703,9 @@ impl Agent {
             return self.push_message(Message::Assistant(m));
         }
         self.spent(&m, SpendSource::Discarded, false)?;
-        self.inner.events.emit(AgentEvent::MessageEnd { message: Message::Assistant(m) });
+        self.inner.events.emit(AgentEvent::MessageEnd {
+            message: Message::Assistant(m),
+        });
         Ok(())
     }
 
@@ -707,7 +736,11 @@ impl Agent {
             cause = StopCause::Error;
         }
         self.st().abort = None;
-        let ev = sasacode_plugin_api::AgentEndEvent { cause, stopped: stopped.clone(), error: error.clone() };
+        let ev = sasacode_plugin_api::AgentEndEvent {
+            cause,
+            stopped: stopped.clone(),
+            error: error.clone(),
+        };
         self.inner
             .hooks
             .run::<hook::AgentEnd>(ev, |r, _, _| {
@@ -786,12 +819,18 @@ impl Agent {
             }
             let mut injected = false;
             let gen_before = self.st().generation;
-            let ev = sasacode_plugin_api::TurnEndEvent { turn, message: msg.clone() };
+            let ev = sasacode_plugin_api::TurnEndEvent {
+                turn,
+                message: msg.clone(),
+            };
             self.inner
                 .hooks
                 .run::<hook::TurnEnd>(ev, |r, _, plugin| {
                     if let Some(reason) = r.stop.filter(|s| !s.is_empty()) {
-                        *stopped = Some(Stopped { plugin: plugin.to_string(), reason });
+                        *stopped = Some(Stopped {
+                            plugin: plugin.to_string(),
+                            reason,
+                        });
                         return false;
                     }
                     if let Some(i) = r.inject.filter(|i| !i.is_empty()) {
@@ -829,7 +868,9 @@ impl Agent {
     /// Emits the event and lets plugins free up context. True when the loop should continue.
     async fn context_limit(&self, tokens: i64, retries: u32) -> bool {
         let context_window = self.st().model.context_window;
-        self.inner.events.emit(AgentEvent::ContextLimit { tokens, context_window });
+        self.inner
+            .events
+            .emit(AgentEvent::ContextLimit { tokens, context_window });
         if retries >= 2 {
             return false;
         }
@@ -871,8 +912,10 @@ impl Agent {
             l
         };
         loaded.shrink_to_fit();
-        let mut out: Vec<ToolRef> =
-            all.into_iter().filter(|t| t.always_load() || loaded.contains(t.name())).collect();
+        let mut out: Vec<ToolRef> = all
+            .into_iter()
+            .filter(|t| t.always_load() || loaded.contains(t.name()))
+            .collect();
         out.push(self.inner.search_tool.clone());
         out
     }
@@ -898,7 +941,13 @@ impl Agent {
             // The connection dropped mid-reply: ask again (after 1, 2, 4 s) rather than take a fragment as the answer.
             if message.stop_reason == StopReason::Error && !signal.is_cancelled() {
                 if cut >= 3 {
-                    anyhow::bail!("{}", message.error_message.clone().unwrap_or_else(|| "the reply failed".into()));
+                    anyhow::bail!(
+                        "{}",
+                        message
+                            .error_message
+                            .clone()
+                            .unwrap_or_else(|| "the reply failed".into())
+                    );
                 }
                 self.spent(&message, SpendSource::Discarded, true)?;
                 self.inner.events.emit(AgentEvent::MessageDiscarded { message });
@@ -968,7 +1017,12 @@ impl Agent {
     async fn stream(&self, signal: &CancellationToken) -> anyhow::Result<(AssistantMessage, Option<Stopped>)> {
         let (model, mut system, thinking, session) = {
             let st = self.st();
-            (st.model.clone(), st.system_prompt.clone(), st.thinking, st.session.clone())
+            (
+                st.model.clone(),
+                st.system_prompt.clone(),
+                st.thinking,
+                st.session.clone(),
+            )
         };
         let provider = get_provider(&model.api)?;
         let api_key = self.api_key(&model.provider).await;
@@ -977,13 +1031,16 @@ impl Agent {
         }
         let hooks = &self.inner.hooks;
         hooks
-            .run::<hook::SystemPrompt>(sasacode_plugin_api::SystemPromptEvent { prompt: system.clone() }, |r, ev, _| {
-                if let Some(p) = r.prompt {
-                    system = p.clone();
-                    ev.prompt = p;
-                }
-                true
-            })
+            .run::<hook::SystemPrompt>(
+                sasacode_plugin_api::SystemPromptEvent { prompt: system.clone() },
+                |r, ev, _| {
+                    if let Some(p) = r.prompt {
+                        system = p.clone();
+                        ev.prompt = p;
+                    }
+                    true
+                },
+            )
             .await;
         let (mut messages, own_len, own_trust) = {
             let st = self.st();
@@ -1053,7 +1110,10 @@ impl Agent {
                 other => {
                     // INFALLIBLE: every event but Done carries a partial message.
                     let partial = other.partial().cloned().expect("partial");
-                    self.inner.events.emit(AgentEvent::MessageUpdate { message: partial.clone(), event: other.clone() });
+                    self.inner.events.emit(AgentEvent::MessageUpdate {
+                        message: partial.clone(),
+                        event: other.clone(),
+                    });
                     let delta = match &other {
                         StreamEvent::TextDelta { index, delta, .. } => Some((DeltaKind::Text, *index, delta.clone())),
                         StreamEvent::ThinkingDelta { index, delta, .. } => {
@@ -1076,10 +1136,21 @@ impl Agent {
                             Some(AssistantContent::Thinking(t)) => t.thinking.clone(),
                             _ => tool_json.get(&index).cloned().unwrap_or_default(),
                         };
-                        let mut ev = sasacode_plugin_api::StreamDeltaEvent { kind, index, delta, text, message: partial };
+                        let mut ev = sasacode_plugin_api::StreamDeltaEvent {
+                            kind,
+                            index,
+                            delta,
+                            text,
+                            message: partial,
+                        };
                         hooks.run_sync::<hook::StreamDelta>(&mut ev, |r, _, owner| {
-                            let Some(reason) = r.stop.filter(|s| !s.is_empty()) else { return true };
-                            stopped = Some(Stopped { plugin: owner.to_string(), reason });
+                            let Some(reason) = r.stop.filter(|s| !s.is_empty()) else {
+                                return true;
+                            };
+                            stopped = Some(Stopped {
+                                plugin: owner.to_string(),
+                                reason,
+                            });
                             request.cancel();
                             false
                         });
@@ -1087,7 +1158,9 @@ impl Agent {
                 }
             }
         }
-        let Some(mut fin) = fin else { anyhow::bail!("provider stream ended without a final message") };
+        let Some(mut fin) = fin else {
+            anyhow::bail!("provider stream ended without a final message")
+        };
         if stopped.is_some() && !signal.is_cancelled() {
             fin.stop_reason = StopReason::Stopped;
         } else {
@@ -1161,7 +1234,13 @@ impl Agent {
                 // A stream cut before its end is a fragment: a compaction would replace the whole
                 // history with it (#95).
                 if message.stop_reason == StopReason::Error {
-                    anyhow::bail!("{}", message.error_message.clone().unwrap_or_else(|| "the reply failed".into()));
+                    anyhow::bail!(
+                        "{}",
+                        message
+                            .error_message
+                            .clone()
+                            .unwrap_or_else(|| "the reply failed".into())
+                    );
                 }
                 out = message.text();
             }
@@ -1206,8 +1285,12 @@ impl Agent {
         opts.permissions = Some(permissions);
         opts.approve = approve;
         opts.session = None;
-        opts.hooks =
-            Some(self.inner.hooks.without(&SESSION_HOOKS, HookContext { agent: Some(format!("sub-{n}")) }));
+        opts.hooks = Some(self.inner.hooks.without(
+            &SESSION_HOOKS,
+            HookContext {
+                agent: Some(format!("sub-{n}")),
+            },
+        ));
         opts.tool_search = Some(tool_search);
         let child = Agent::build(opts, true);
 
@@ -1235,12 +1318,19 @@ impl Agent {
                     *error.lock().unwrap_or_else(|e| e.into_inner()) = Some(msg.clone());
                 }
                 // The child keeps no log: what it used is the parent's.
-                AgentEvent::MessageEnd { message: Message::Assistant(m) } => {
+                AgentEvent::MessageEnd {
+                    message: Message::Assistant(m),
+                } => {
                     let _ = parent.spent(m, SpendSource::Subagent, true);
                 }
                 AgentEvent::Usage { t, model, usage, .. } => {
                     let _ = parent.spend(
-                        Spend { t: *t, model: model.clone(), usage: usage.clone(), source: SpendSource::Subagent },
+                        Spend {
+                            t: *t,
+                            model: model.clone(),
+                            usage: usage.clone(),
+                            source: SpendSource::Subagent,
+                        },
                         true,
                     );
                 }
@@ -1289,6 +1379,11 @@ impl Agent {
             .find(|t| !t.is_empty())
             .unwrap_or_default();
         let error = error.lock().unwrap_or_else(|e| e.into_inner()).take();
-        Ok(SubagentResult { text, messages, cause, error })
+        Ok(SubagentResult {
+            text,
+            messages,
+            cause,
+            error,
+        })
     }
 }

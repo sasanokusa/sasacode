@@ -286,7 +286,7 @@ impl SessionFile {
 
 /// `JSON.stringify(entry)` with every secret replaced, plus the newline.
 fn redacted_line(entry: &SessionEntry, secrets: &[String]) -> io::Result<String> {
-    let mut line = serde_json::to_string(entry).map_err(io::Error::other)?;
+    let mut line = sasacode_ai::json::to_js_string(entry).map_err(io::Error::other)?;
     // Never persist API keys, even if a tool echoed one.
     for s in secrets {
         line = line.replace(s.as_str(), "[REDACTED]");

@@ -74,6 +74,27 @@ pub fn save_output(prefix: &str, content: &str) -> std::io::Result<PathBuf> {
     Ok(file)
 }
 
+/// Start a child in a session of its own, without a controlling terminal, as Node's
+/// `detached: true` did: a command that opens /dev/tty (ssh or git credential prompts, gpg) fails
+/// at once instead of waiting for input nobody can give. The child also leads a new process group
+/// (pgid = its pid), so `kill(-pid)` reaches everything it starts. Do not combine with
+/// `process_group`, which would make `setsid` fail. Windows: nothing (no sessions; callers use
+/// `CREATE_NO_WINDOW` and kill the process tree).
+pub fn detach_session(cmd: &mut tokio::process::Command) {
+    #[cfg(unix)]
+    {
+        // SAFETY: the closure runs in the forked child before exec. setsid(2) is async-signal-safe,
+        // allocates nothing and touches no state shared with the parent; it is the only call made.
+        // This is the one `unsafe` in the code base (rust/DECISIONS.md ADR-012).
+        #[allow(unsafe_code)]
+        unsafe {
+            cmd.pre_exec(|| nix::unistd::setsid().map(|_| ()).map_err(std::io::Error::from));
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = cmd;
+}
+
 /// mkdir -p with mode 0700 on Unix.
 pub fn create_private_dir(dir: &std::path::Path) -> std::io::Result<()> {
     let mut b = std::fs::DirBuilder::new();

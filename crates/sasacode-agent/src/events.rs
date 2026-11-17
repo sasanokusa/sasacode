@@ -161,20 +161,32 @@ pub struct Subscription {
 
 impl Subscription {
     pub fn off(self) {
-        self.bus.listeners.lock().unwrap_or_else(|e| e.into_inner()).retain(|(i, _)| *i != self.id);
+        self.bus
+            .listeners
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .retain(|(i, _)| *i != self.id);
     }
 }
 
 impl EventBus {
     pub fn on(&self, listener: impl Fn(&AgentEvent) + Send + Sync + 'static) -> Subscription {
         let id = self.next.fetch_add(1, Ordering::Relaxed);
-        self.listeners.lock().unwrap_or_else(|e| e.into_inner()).push((id, Arc::new(listener)));
+        self.listeners
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push((id, Arc::new(listener)));
         Subscription { bus: self.clone(), id }
     }
 
     pub fn emit(&self, event: AgentEvent) {
-        let listeners: Vec<Listener> =
-            self.listeners.lock().unwrap_or_else(|e| e.into_inner()).iter().map(|(_, l)| l.clone()).collect();
+        let listeners: Vec<Listener> = self
+            .listeners
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .map(|(_, l)| l.clone())
+            .collect();
         for l in listeners {
             let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| l(&event)));
             if r.is_err() {
