@@ -22,15 +22,15 @@ use crate::diff::Diff;
 const MAX_TOOL_OUTPUT: usize = 8_000;
 
 /// What the harness puts in front of a note it sends the model in the user's place (`NOTE_PREFIX`
-/// in `packages/host/src/notes.ts`). It arrives as a user message, and is not one.
+/// in `crates/sasacode-host/src/notes.rs`). It arrives as a user message, and is not one.
 pub const NOTE_PREFIX: &str = "[Reminder from sasacode, not from the user] ";
 
 /// What the agent puts in front of the first message it is given after an interruption
-/// (`INTERRUPTED_NOTE` in `packages/agent/src/agent.ts`): a part of its own, and not the user's words.
+/// (`INTERRUPTED_NOTE` in `crates/sasacode-agent/src/agent.rs`): a part of its own, and not the user's words.
 const INTERRUPTED: &str = "[The user interrupted the previous response.]";
 
 /// What the harness answers in the place of a call the user said no to
-/// (`packages/agent/src/tool-exec.ts`).
+/// (`crates/sasacode-agent/src/tool_exec.rs`).
 const DENIED: &str = "The user denied this tool call.";
 /// How the answers begin that stand for a call that was never run: denied by the user, cut off
 /// before its turn, or refused by a rule or a plugin. A log keeps nothing else of that.
@@ -870,7 +870,7 @@ fn note_text(content: &[Content]) -> Option<String> {
 }
 
 /// `[task <id> "<description>" ended: <status>]`, a blank line, then the report
-/// (`packages/bundled/src/subagent.ts`).
+/// (`crates/sasacode-bundled/src/subagent.rs`).
 fn task_report(text: &str) -> Option<(&str, &str)> {
     let (head, report) = text.split_once("\n\n").unwrap_or((text, ""));
     let head = head.strip_prefix("[task ")?.strip_suffix(']')?;
@@ -1314,22 +1314,22 @@ mod tests {
     #[test]
     fn harness_notes_and_task_reports_are_not_the_users_words() {
         let source = std::fs::read_to_string(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packages/host/src/notes.ts"),
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../crates/sasacode-host/src/notes.rs"),
         )
         .unwrap();
-        assert!(source.contains(&format!("NOTE_PREFIX = \"{NOTE_PREFIX}\"")));
+        assert!(source.contains(&format!("NOTE_PREFIX: &str = \"{NOTE_PREFIX}\"")));
         let source = std::fs::read_to_string(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packages/agent/src/tool-exec.ts"),
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../crates/sasacode-agent/src/tool_exec.rs"),
         )
         .unwrap();
         for said in NOT_RUN {
             assert!(source.contains(said), "{said}");
         }
         let source = std::fs::read_to_string(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packages/agent/src/agent.ts"),
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../crates/sasacode-agent/src/agent.rs"),
         )
         .unwrap();
-        assert!(source.contains(&format!("INTERRUPTED_NOTE = \"{INTERRUPTED}\"")));
+        assert!(source.contains(&format!("INTERRUPTED_NOTE: &str = \"{INTERRUPTED}\"")));
 
         let text = |s: &str| vec![Content::Text { text: s.to_owned() }];
         assert_eq!(

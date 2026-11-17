@@ -26,8 +26,8 @@ fn run_events() -> Vec<Event> {
         .collect()
 }
 
-/// The `x` of each `<pattern>x"` in a TypeScript source, between `after` and `until`.
-fn ts_types(source: &str, pattern: &str, after: &str, until: &str) -> BTreeSet<String> {
+/// The `x` of each `<pattern>x"` in a source, between `after` and `until`.
+fn source_types(source: &str, pattern: &str, after: &str, until: &str) -> BTreeSet<String> {
     let start = source.find(after).unwrap_or_else(|| panic!("{after} not found"));
     let rest = &source[start..];
     let rest = &rest[..rest.find(until).unwrap_or(rest.len())];
@@ -182,23 +182,54 @@ fn control_messages_are_one_line_each_in_the_shape_the_cli_reads() {
     assert_eq!(ControlMessage::Abort.to_line(), "{\"type\":\"abort\"}\n");
 }
 
-// The TypeScript side is the source of truth: a type added there must be added here.
+// The CLI's sources are the source of truth: a type added there must be added here.
+
+/// The variants of `pub enum AgentEvent` as serde names them (`tag = "type"`, snake_case).
+fn event_variants(source: &str) -> BTreeSet<String> {
+    let start = source
+        .find("pub enum AgentEvent {")
+        .expect("pub enum AgentEvent not found");
+    let body = &source[start..];
+    let body = &body[..body.find("\n}\n").expect("end of AgentEvent not found")];
+    let mut out = BTreeSet::new();
+    for line in body.lines().skip(1) {
+        let Some(rest) = line
+            .strip_prefix("    ")
+            .filter(|l| l.starts_with(|c: char| c.is_ascii_uppercase()))
+        else {
+            continue;
+        };
+        let mut name = String::new();
+        for c in rest.chars().take_while(char::is_ascii_alphanumeric) {
+            if c.is_ascii_uppercase() && !name.is_empty() {
+                name.push('_');
+            }
+            name.push(c.to_ascii_lowercase());
+        }
+        out.insert(name);
+    }
+    out
+}
 
 #[test]
 fn every_agent_event_and_control_line_the_cli_writes_is_known() {
-    let mut written = ts_types(
-        &repo("packages/agent/src/events.ts"),
-        "type: \"",
-        "export type AgentEvent",
-        ";\n",
+    let mut written = event_variants(&repo("crates/sasacode-agent/src/events.rs"));
+    assert!(
+        written.contains("tool_start") && written.contains("agent_end"),
+        "{written:?}"
     );
-    written.extend(ts_types(
-        &repo("packages/cli/src/control.ts"),
-        "emit({ type: \"",
-        "export function startControl",
-        "\n}\n",
-    ));
-    written.insert("session".into()); // headless.ts writes it before the events
+    // `json!({ "type": "…" })` in the files that write lines of their own (the doc comments write
+    // `{"type":…}` without the space and are not counted).
+    for file in [
+        "crates/sasacode-cli/src/control.rs",
+        "crates/sasacode-cli/src/headless.rs",
+    ] {
+        written.extend(source_types(&repo(file), "\"type\": \"", "", "\u{0}"));
+    }
+    assert!(
+        written.contains("approval_request") && written.contains("session"),
+        "{written:?}"
+    );
     let known: BTreeSet<String> = EVENT_TYPES.iter().map(|s| s.to_string()).collect();
     let missing: Vec<_> = written.difference(&known).collect();
     assert!(
@@ -209,12 +240,12 @@ fn every_agent_event_and_control_line_the_cli_writes_is_known() {
 
 #[test]
 fn every_control_message_the_cli_reads_is_known() {
-    let source = repo("packages/cli/src/control.ts");
+    let source = repo("crates/sasacode-cli/src/control.rs");
     let mut read = BTreeSet::new();
     for piece in source
-        .split("msg.type === \"")
+        .split("kind.and_then(Value::as_str) == Some(\"")
         .skip(1)
-        .chain(source.split("msg.type !== \"").skip(1))
+        .chain(source.split("kind.and_then(Value::as_str) != Some(\"").skip(1))
     {
         read.insert(piece[..piece.find('"').unwrap()].to_owned());
     }
@@ -224,7 +255,8 @@ fn every_control_message_the_cli_reads_is_known() {
 
 #[test]
 fn the_session_format_version_matches() {
-    assert!(repo("packages/agent/src/session.ts").contains(&format!("SESSION_VERSION = {}", session::SESSION_VERSION)));
+    let source = repo("crates/sasacode-agent/src/session.rs");
+    assert!(source.contains(&format!("SESSION_VERSION: u32 = {};", session::SESSION_VERSION)));
 }
 
 #[test]
