@@ -37,6 +37,7 @@ pub fn over<'a>(app: &'a App, base: El<'a>) -> El<'a> {
         Overlay::Quit(id) => (quit(app, *id), 460.0, 120.0),
         Overlay::ConfirmAuto => (confirm_auto(app), 480.0, 120.0),
         Overlay::Quote => (quote(app), 720.0, 50.0),
+        Overlay::Args => (args(app), 640.0, 60.0),
     };
     let shade = Color {
         a: if t.dark { 0.45 } else { 0.25 },
@@ -404,12 +405,49 @@ fn settings(app: &App) -> El<'_> {
         width,
         lang,
         scripts(app),
+        allowed(app),
         text(s.set_kept).size(11.5).color(t.fg_3),
     ]
     .spacing(16);
     container(scrollable(body.padding(iced::Padding::ZERO.right(12))).style(t.scroll()))
         .max_height(640)
         .into()
+}
+
+/// What "always" allowed in the conversation shown, each of which can be taken back.
+fn allowed(app: &App) -> El<'_> {
+    let (t, w) = (app.t, app.s.w());
+    let rules = app
+        .chat
+        .session
+        .as_ref()
+        .and_then(|id| app.prefs.more.allowed.get(id))
+        .filter(|r| !r.is_empty());
+    let mut list = column![text(w.allowed_head).size(13).font(super::BOLD).color(t.fg)].spacing(4);
+    match rules {
+        None => list = list.push(text(w.allowed_none).size(12).color(t.fg_3)),
+        Some(rules) => {
+            for rule in rules {
+                list = list.push(
+                    row![
+                        text(rule.as_str())
+                            .size(12.5)
+                            .font(MONO)
+                            .color(t.fg_2)
+                            .width(Length::Fill)
+                            .wrapping(text::Wrapping::WordOrGlyph),
+                        button(crate::icons::icon(crate::icons::Icon::Close, 12.0, t.fg_3))
+                            .padding(3)
+                            .style(t.ghost(t.fg_3, false))
+                            .on_press(Msg::ForgetAllowed(rule.clone())),
+                    ]
+                    .spacing(8)
+                    .align_y(iced::Alignment::Center),
+                );
+            }
+        }
+    }
+    list.into()
 }
 
 /// A reply's text as it was written, to choose part of and quote into the input.
@@ -440,6 +478,40 @@ fn quote(app: &App) -> El<'_> {
                 .padding([6, 14])
                 .style(t.primary())
                 .on_press_maybe(chosen.then_some(Msg::QuoteTake)),
+        ]
+        .spacing(8),
+    ]
+    .spacing(10)
+    .into()
+}
+
+/// The waiting call's arguments, as JSON to edit before it is allowed with them.
+fn args(app: &App) -> El<'_> {
+    let (t, w) = (app.t, app.s.w());
+    let Some((_, content)) = &app.editing_args else {
+        return Space::new().into();
+    };
+    column![
+        title(app, w.args_title),
+        text(w.args_how).size(12).color(t.fg_3),
+        iced::widget::text_editor(content)
+            .id(crate::plugins::ARGS)
+            .on_action(Msg::ArgsEdit)
+            .font(MONO)
+            .size(13)
+            .height(Length::Fixed(320.0))
+            .padding(10)
+            .style(t.editor()),
+        row![
+            Space::new().width(Length::Fill),
+            button(text(w.cancel).size(13))
+                .padding([6, 14])
+                .style(t.outline(t.fg))
+                .on_press(Msg::Show(None)),
+            button(text(w.args_send).size(13))
+                .padding([6, 14])
+                .style(t.primary())
+                .on_press(Msg::ArgsSend),
         ]
         .spacing(8),
     ]

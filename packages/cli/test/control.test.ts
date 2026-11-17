@@ -78,7 +78,8 @@ test("an approval request is one JSON line; the answer with its id settles it", 
   const first = ask();
   const second = ask({ call: { type: "tool_call", id: "call_2", name: "bash", input: {} }, args: { command: "pwd" } });
   expect(out).toHaveLength(2);
-  expect(out[0]).toEqual({ type: "approval_request", id: out[0].id, callId: "call_1", tool: "bash", args: { command: "ls" }, reason: "needs approval", cwd: "/work" });
+  // rules: what "always" would allow (this stand-in tool names no command or paths, so the tool itself).
+  expect(out[0]).toEqual({ type: "approval_request", id: out[0].id, callId: "call_1", tool: "bash", args: { command: "ls" }, reason: "needs approval", cwd: "/work", rules: ["bash"] });
   expect(out[1].callId).toBe("call_2");
   expect(out[0].id).not.toBe(out[1].id);
   // Answered out of order: each answer reaches its own request.
@@ -220,6 +221,148 @@ test("a read that fails ends the channel like EOF", async () => {
   expect(out).toEqual([]);
 });
 
+// ── additions for the GUI: edited args, one call's abort, the plugins' ui, status and commands ──
+
+test("an approval may carry edited args with allow or always; with deny, or not an object, it is a control_error", async () => {
+  const { ch, out, ask } = rig();
+  const p = ask();
+  for (const bad of [
+    { type: "approval", id: out[0].id, decision: "deny", args: { command: "pwd" } },
+    { type: "approval", id: out[0].id, decision: "allow", args: ["pwd"] },
+    { type: "approval", id: out[0].id, decision: "allow", args: null },
+  ])
+    ch.send(bad);
+  await tick();
+  expect(out.slice(1)).toEqual(Array(3).fill({ type: "control_error", error: 'approval "args" must be an object, sent with allow or always' }));
+  ch.send({ type: "approval", id: out[0].id, decision: "always", args: { command: "pwd" } });
+  expect(await p).toEqual({ decision: "always", args: { command: "pwd" } });
+});
+
+test("abort with a callId stops that call alone; one not running, or not a string, is a control_error", async () => {
+  const stopped: string[] = [];
+  const out: any[] = [];
+  const ch = channel();
+  const agent = {
+    aborts: 0,
+    abort() { this.aborts++; },
+    inject() {},
+    abortCall: (id: string) => (stopped.push(id), id === "call_1"),
+    approve: undefined as ((r: ApprovalRequest) => Promise<ApprovalAnswer>) | undefined,
+  };
+  startControl(agent, ch.input, (m) => out.push(m));
+  ch.send({ type: "abort", callId: "call_1" });
+  ch.send({ type: "abort", callId: "call_9" });
+  ch.send({ type: "abort", callId: 3 });
+  await tick();
+  expect(stopped).toEqual(["call_1", "call_9"]);
+  expect(agent.aborts).toBe(0);
+  expect(out).toEqual([
+    { type: "control_error", error: 'no running tool call with callId "call_9"' },
+    { type: "control_error", error: 'abort "callId" must be a string' },
+  ]);
+});
+
+test("a plugin's question is a ui_request; the ui_response with its id answers it, null dismisses it", async () => {
+  const { ch, out, control } = rig();
+  const { ui } = control;
+  expect(ui.interactive).toBe(true);
+  const confirmed = ui.confirm("Delete it?", "for good");
+  const picked = ui.select("Which?", [{ value: "a", label: "A", description: "first" }, { value: "b", label: "B" }]);
+  const typed = ui.input!("Name?", { placeholder: "x", initial: "y" });
+  const many = ui.selectMany!("Which ones?", [{ value: "a", label: "A" }, { value: "b", label: "B" }], { selected: ["b"] });
+  const dismissed = ui.confirm("Again?");
+  expect(out).toEqual([
+    { type: "ui_request", id: "ui-1", kind: "confirm", title: "Delete it?", message: "for good" },
+    { type: "ui_request", id: "ui-2", kind: "select", title: "Which?", options: [{ value: "a", label: "A", description: "first" }, { value: "b", label: "B" }] },
+    { type: "ui_request", id: "ui-3", kind: "input", title: "Name?", placeholder: "x", initial: "y" },
+    { type: "ui_request", id: "ui-4", kind: "select_many", title: "Which ones?", options: [{ value: "a", label: "A" }, { value: "b", label: "B" }], selected: ["b"] },
+    { type: "ui_request", id: "ui-5", kind: "confirm", title: "Again?" },
+  ]);
+  ch.send({ type: "ui_response", id: "ui-1", value: true });
+  ch.send({ type: "ui_response", id: "ui-2", value: "b" });
+  ch.send({ type: "ui_response", id: "ui-3", value: "sasa" });
+  ch.send({ type: "ui_response", id: "ui-4", value: ["a", "b"] });
+  ch.send({ type: "ui_response", id: "ui-5", value: null });
+  expect([await confirmed, await picked, await typed, await many, await dismissed]).toEqual([true, "b", "sasa", ["a", "b"], false]);
+  expect(out).toHaveLength(5); // nothing else was written
+});
+
+test("a ui_response that cannot answer its question is a control_error, and the question stays open", async () => {
+  const { ch, out, control } = rig();
+  const picked = control.ui.select("Which?", [{ value: "a", label: "A" }]);
+  const sure = control.ui.confirm("Sure?");
+  for (const bad of [
+    { type: "ui_response", id: "ui-1", value: "z" }, // not offered
+    { type: "ui_response", id: "ui-2", value: "yes" },
+    { type: "ui_response", id: "ui-2" },
+    { type: "ui_response", value: true },
+    { type: "ui_response", id: "ui-9", value: true },
+  ])
+    ch.send(bad);
+  await tick();
+  expect(out.slice(2).map((e) => e.error)).toEqual([
+    `ui_response to a select needs "value": one of the options' values, or null`,
+    `ui_response to a confirm needs "value": true or false, or null`,
+    'ui_response needs "value" (null dismisses the question)',
+    'ui_response needs a string "id"',
+    'no pending ui_request with id "ui-9" (unknown, already answered or cancelled)',
+  ]);
+  ch.send({ type: "ui_response", id: "ui-1", value: "a" });
+  ch.send({ type: "ui_response", id: "ui-2", value: false });
+  expect([await picked, await sure]).toEqual(["a", false]);
+  ch.send({ type: "ui_response", id: "ui-1", value: "a" }); // answered already
+  await tick();
+  expect(out.at(-1).error).toContain('"ui-1"');
+});
+
+test("abort dismisses the open questions with ui_cancelled; once stdin closes, every question is dismissed unannounced", async () => {
+  const { ch, out, agent, control } = rig();
+  const open = control.ui.select("Which?", [{ value: "a", label: "A" }]);
+  ch.send({ type: "abort" });
+  expect(await open).toBeUndefined();
+  expect(agent.aborts).toBe(1);
+  expect(out).toEqual([expect.objectContaining({ type: "ui_request", id: "ui-1" }), { type: "ui_cancelled", id: "ui-1" }]);
+  const waiting = control.ui.input!("Name?", {});
+  ch.end();
+  expect(await waiting).toBeUndefined();
+  expect(control.ui.interactive).toBe(false);
+  expect(await control.ui.confirm("Later?")).toBe(false); // not even asked
+  expect(out.map((e) => e.type)).toEqual(["ui_request", "ui_cancelled", "ui_request"]);
+});
+
+test("notices and shown text are lines; status items and commands are reported now and as they change", async () => {
+  const { out, control } = rig();
+  control.ui.notify("hello", "warning");
+  await control.ui.showText!({ title: "Usage", text: "12 tokens", format: "markdown" });
+  const host = {
+    status: new Map([["goal:goal", "writing tests"]]),
+    commands: [{ name: "goal", description: "set a goal", argumentHint: "<text>", owner: "goal", run() {} }],
+    onChange: undefined as (() => void) | undefined,
+  };
+  control.watch(host);
+  host.status.set("goal:goal", "done");
+  host.status.set("mcp:servers", "MCP 1/1");
+  host.onChange!();
+  host.onChange!(); // nothing changed: nothing written
+  host.status.delete("goal:goal");
+  host.commands.push({ name: "mcp", description: "servers", argumentHint: undefined as unknown as string, owner: "mcp", run() {} });
+  host.onChange!();
+  expect(out).toEqual([
+    { type: "plugin_notify", level: "warning", text: "hello" },
+    { type: "plugin_text", title: "Usage", text: "12 tokens", format: "markdown" },
+    { type: "plugin_status", key: "goal:goal", text: "writing tests" },
+    { type: "commands", commands: [{ name: "goal", description: "set a goal", argumentHint: "<text>", owner: "goal" }] },
+    { type: "plugin_status", key: "goal:goal", text: "done" },
+    { type: "plugin_status", key: "mcp:servers", text: "MCP 1/1" },
+    { type: "plugin_status", key: "goal:goal", text: null },
+    { type: "commands", commands: [{ name: "goal", description: "set a goal", argumentHint: "<text>", owner: "goal" }, { name: "mcp", description: "servers", owner: "mcp" }] },
+  ]);
+  control.stop();
+  host.status.set("late:x", "after the run");
+  host.onChange!();
+  expect(out).toHaveLength(8); // after stop, nothing more is written
+});
+
 test("--control is stdio only, and only with -p and --output jsonl", () => {
   expect(controlMode(undefined, "hi", "text")).toBe(false);
   expect(controlMode(undefined, undefined, "text")).toBe(false);
@@ -281,7 +424,7 @@ test("allow: the call runs; a bad line in between is reported and does not stop 
   });
   expect(code).toBe(0);
   const asked = events.filter((e) => e.type === "approval_request");
-  expect(asked).toEqual([{ type: "approval_request", id: asked[0].id, callId: "c1", tool: "bash", args: { command: "touch allowed" }, reason: expect.any(String), cwd: proj }]);
+  expect(asked).toEqual([{ type: "approval_request", id: asked[0].id, callId: "c1", tool: "bash", args: { command: "touch allowed" }, reason: expect.any(String), cwd: proj, rules: ["bash(touch allowed)"] }]);
   expect(events.filter((e) => e.type === "control_error")).toEqual([{ type: "control_error", error: "not valid JSON" }]);
   expect(existsSync(join(proj, "allowed"))).toBe(true);
   expect(types.indexOf("approval_request")).toBeLessThan(types.indexOf("tool_start"));

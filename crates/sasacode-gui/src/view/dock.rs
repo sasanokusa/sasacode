@@ -15,7 +15,8 @@ use crate::i18n::fill;
 use crate::icons::{Icon, icon};
 use crate::input::{Offer, OfferKind};
 use crate::theme::RADIUS_L;
-use crate::transcript::{Approval, Kind};
+use crate::transcript::{Approval, Ask, Kind};
+use sasacode_protocol::event::UiAsk;
 
 pub fn dock(app: &App) -> El<'_> {
     // Keyed, so that the input is the same widget whatever comes and goes above it: in a plain
@@ -23,6 +24,9 @@ pub fn dock(app: &App) -> El<'_> {
     let mut col = iced::widget::keyed::Column::new().spacing(8);
     if let Some(approval) = app.chat.transcript.pending_approval() {
         col = col.push(Above::Approval, approval_card(app, approval));
+    }
+    if let Some(ask) = app.chat.transcript.asks.first() {
+        col = col.push(Above::Ask, ask_card(app, ask));
     }
     if let Some(offer) = app.offer() {
         col = col.push(Above::Offer, offered(app, offer));
@@ -75,6 +79,7 @@ pub fn dock(app: &App) -> El<'_> {
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Above {
     Approval,
+    Ask,
     Offer,
     Drop,
     Comments,
@@ -343,6 +348,151 @@ fn offered(app: &App, offer: Offer) -> El<'_> {
 }
 
 /// The call that waits, shown whole, and the three answers.
+/// A plugin's question, answered here: yes or no, one of its options, several, or a text. The run
+/// waits for it.
+fn ask_card<'a>(app: &'a App, ask: &'a Ask) -> El<'a> {
+    let (t, w) = (app.t, app.s.w());
+    let id = ask.id.clone();
+    let mut head = row![
+        icon(Icon::Bot, 15.0, t.accent),
+        text(w.ask_head).size(12).color(t.fg_3),
+        Space::new().width(Length::Fill),
+    ]
+    .spacing(8)
+    .align_y(Alignment::Center);
+    let more = app.chat.transcript.asks.len() - 1;
+    if more > 0 {
+        head = head.push(text(fill(w.ask_more, "n", more)).size(12).color(t.fg_3));
+    }
+    head = head.push(tip(
+        t,
+        button(icon(Icon::Close, 13.0, t.fg_3))
+            .padding(4)
+            .style(t.ghost(t.fg_3, false))
+            .on_press(Msg::AskAnswer(id.clone(), serde_json::Value::Null)),
+        w.ask_dismiss.to_owned(),
+        tooltip::Position::Top,
+    ));
+    let mut body = column![
+        head,
+        text(ask.title.as_str())
+            .size(14)
+            .font(BOLD)
+            .color(t.fg)
+            .wrapping(text::Wrapping::WordOrGlyph)
+    ]
+    .spacing(8);
+    let said = |message: &'a Option<String>| {
+        message
+            .as_deref()
+            .filter(|m| !m.trim().is_empty())
+            .map(|m| text(m).size(13).color(t.fg_2).wrapping(text::Wrapping::WordOrGlyph))
+    };
+    let label = |said: &'a str| text(said).size(13).wrapping(text::Wrapping::None);
+    let option = |o: &'a sasacode_protocol::event::UiOption, on: bool| -> El<'a> {
+        let mut what = column![text(o.label.as_str()).size(13).color(t.fg)].spacing(2);
+        if let Some(d) = o.description.as_deref().filter(|d| !d.is_empty()) {
+            what = what.push(text(d).size(12).color(t.fg_3).wrapping(text::Wrapping::WordOrGlyph));
+        }
+        row![
+            icon(
+                if on { Icon::Check } else { Icon::Dot },
+                13.0,
+                if on { t.accent } else { t.fg_3 }
+            ),
+            what
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center)
+        .into()
+    };
+    match &ask.ask {
+        UiAsk::Confirm { message } => {
+            if let Some(m) = said(message) {
+                body = body.push(m);
+            }
+            body = body.push(
+                row![
+                    button(label(w.ask_yes))
+                        .padding([6, 16])
+                        .style(t.primary())
+                        .on_press(Msg::AskAnswer(id.clone(), serde_json::Value::Bool(true))),
+                    button(label(w.ask_no))
+                        .padding([6, 12])
+                        .style(t.outline(t.fg))
+                        .on_press(Msg::AskAnswer(id.clone(), serde_json::Value::Bool(false))),
+                ]
+                .spacing(8),
+            );
+        }
+        UiAsk::Select { options } => {
+            let mut list = column![].spacing(2);
+            for o in options {
+                list = list.push(
+                    button(option(o, false))
+                        .width(Length::Fill)
+                        .padding([6, 10])
+                        .style(t.ghost(t.fg, false))
+                        .on_press(Msg::AskAnswer(id.clone(), serde_json::Value::String(o.value.clone()))),
+                );
+            }
+            body = body.push(container(scrollable(list).style(t.scroll())).max_height(240));
+        }
+        UiAsk::SelectMany { options, .. } => {
+            let mut list = column![].spacing(2);
+            for o in options {
+                list = list.push(
+                    button(option(o, ask.chosen.contains(&o.value)))
+                        .width(Length::Fill)
+                        .padding([6, 10])
+                        .style(t.ghost(t.fg, false))
+                        .on_press(Msg::AskToggle(id.clone(), o.value.clone())),
+                );
+            }
+            body = body.push(container(scrollable(list).style(t.scroll())).max_height(240));
+            body = body.push(
+                button(label(w.ask_ok))
+                    .padding([6, 16])
+                    .style(t.primary())
+                    .on_press(Msg::AskSubmit(id.clone())),
+            );
+        }
+        UiAsk::Input {
+            message, placeholder, ..
+        } => {
+            if let Some(m) = said(message) {
+                body = body.push(m);
+            }
+            let typed = id.clone();
+            body = body.push(
+                row![
+                    text_input(placeholder.as_deref().unwrap_or(""), &ask.typed)
+                        .id(ASK)
+                        .on_input(move |v| Msg::AskType(typed.clone(), v))
+                        .on_submit(Msg::AskSubmit(id.clone()))
+                        .size(13)
+                        .padding([7, 10])
+                        .style(t.input()),
+                    button(label(w.ask_ok))
+                        .padding([6, 16])
+                        .style(t.primary())
+                        .on_press(Msg::AskSubmit(id.clone())),
+                ]
+                .spacing(8)
+                .align_y(Alignment::Center),
+            );
+        }
+    }
+    container(body)
+        .width(Length::Fill)
+        .padding(14)
+        .style(t.floating(t.raised, t.accent))
+        .into()
+}
+
+/// The text a plugin's question is answered with.
+pub const ASK: &str = "ask";
+
 fn approval_card<'a>(app: &'a App, approval: &'a Approval) -> El<'a> {
     let (t, s) = (app.t, app.s);
     let tool = app.chat.transcript.tool(&approval.call_id);
@@ -435,6 +585,10 @@ fn approval_card<'a>(app: &'a App, approval: &'a Approval) -> El<'a> {
             .padding([6, 12])
             .style(t.outline(t.err))
             .on_press(Msg::Answer(Decision::Deny)),
+        button(label(s.w().args_edit))
+            .padding([6, 12])
+            .style(t.ghost(t.fg_2, false))
+            .on_press(Msg::ArgsOpen),
     ]
     .spacing(8)
     .align_y(Alignment::Center)
@@ -703,6 +857,19 @@ fn hints(app: &App) -> El<'_> {
     keys.push(key(newline, s.h_nl));
     if running {
         keys.push(key("Esc".into(), s.stop));
+    }
+    // What the plugins show as their status, as the newest run left it.
+    if !app.chat.transcript.status.is_empty() {
+        keys.push(Space::new().width(Length::Fill).into());
+        for status in app.chat.transcript.status.values() {
+            keys.push(
+                text(clip(first_line(status), 48))
+                    .size(11.5)
+                    .color(t.fg_3)
+                    .wrapping(text::Wrapping::None)
+                    .into(),
+            );
+        }
     }
     container(Row::with_children(keys).spacing(14).align_y(Alignment::Center).wrap())
         .padding([0, 6])

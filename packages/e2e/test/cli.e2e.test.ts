@@ -160,7 +160,7 @@ test("--control stdio: the parent answers an approval request over stdin and the
   const before = await run.until("approval_request");
   expect(before[0].type).toBe("session");
   const request = before.at(-1);
-  expect(request).toEqual({ type: "approval_request", id: request.id, callId: expect.any(String), tool: "bash", args: { command: "touch made-by-bash" }, reason: expect.any(String), cwd: expect.any(String) });
+  expect(request).toEqual({ type: "approval_request", id: request.id, callId: expect.any(String), tool: "bash", args: { command: "touch made-by-bash" }, reason: expect.any(String), cwd: expect.any(String), rules: ["bash(touch made-by-bash)"] });
   expect(existsSync(join(box.project, "made-by-bash"))).toBe(false); // nothing ran before the answer
   run.send({ type: "approval", id: request.id, decision: "allow" });
   const rest = await run.until("agent_end");

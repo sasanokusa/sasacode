@@ -84,7 +84,8 @@ fn the_buttons_of_the_card_answer_the_approval_that_waits() {
             Some(ControlMessage::Approval {
                 id: id.clone(),
                 decision,
-                feedback: None
+                feedback: None,
+                args: None
             })
         );
         assert_eq!(answer_of(&app, &id), Some(answer));
@@ -108,7 +109,8 @@ fn a_reply_typed_while_an_approval_waits_denies_it_and_says_why() {
         Some(ControlMessage::Approval {
             id: id.clone(),
             decision: Decision::Deny,
-            feedback: Some("それは不要".into())
+            feedback: Some("それは不要".into()),
+            args: None
         })
     );
     assert_eq!(answer_of(&app, &id), Some(Answer::Denied("それは不要".into())));
@@ -137,7 +139,8 @@ fn the_chord_allows_only_when_nothing_is_typed() {
         Some(ControlMessage::Approval {
             id,
             decision: Decision::Deny,
-            feedback: Some("先にテストを書いて".into())
+            feedback: Some("先にテストを書いて".into()),
+            args: None
         })
     );
 }
@@ -539,7 +542,7 @@ fn with_enter_breaking_the_line_the_command_enter_adds_to_the_run_and_does_not_s
         ui.typewrite("今すぐこれ");
         ui.simulate(pressed(enter(), Modifiers::COMMAND | Modifiers::SHIFT, "\r"));
     });
-    assert_eq!(written.try_recv().ok(), Some(ControlMessage::Abort));
+    assert_eq!(written.try_recv().ok(), Some(ControlMessage::Abort { call_id: None }));
     assert_eq!(app.chat.next.as_deref(), Some("今すぐこれ"));
 }
 
@@ -608,7 +611,7 @@ fn what_is_sent_while_the_agent_works_goes_to_the_run_and_waits_in_view() {
     assert_eq!(app.chat.transcript.exchanges.len(), 1);
 
     let _ = app.update(Msg::Stop);
-    assert_eq!(written.try_recv().ok(), Some(ControlMessage::Abort));
+    assert_eq!(written.try_recv().ok(), Some(ControlMessage::Abort { call_id: None }));
 }
 
 #[test]
@@ -1825,4 +1828,224 @@ fn the_conversation_says_when_its_branch_is_no_longer_checked_out() {
     assert!(says(&app, "fix/retryに戻る"));
     let _ = app.update(Msg::BranchSeen(id));
     assert!(!says(&app, "fix/retryに戻る"));
+}
+
+/// One line of the run, as the CLI would write it.
+fn told(app: &mut App, line: serde_json::Value) {
+    let event = sasacode_protocol::parse_event(&line.to_string()).expect("a line the CLI writes");
+    let key = app.chat.key;
+    let _ = app.update(Msg::Run(key, crate::runner::RunUpdate::Event(Box::new(event))));
+}
+
+#[test]
+fn a_plugins_question_is_answered_in_the_dock_and_the_run_hears_each_answer() {
+    let (mut app, mut written, _) = waiting();
+    let _ = app.update(Msg::Answer(Decision::Allow));
+    let _ = written.try_recv();
+    let ui_response = |id: &str, value: serde_json::Value| ControlMessage::UiResponse { id: id.into(), value };
+
+    // One of its options.
+    told(
+        &mut app,
+        serde_json::json!({"type": "ui_request", "id": "ui-1", "kind": "select", "title": "どの色にしますか",
+            "options": [{"value": "red", "label": "赤"}, {"value": "blue", "label": "青", "description": "落ち着いた色"}]}),
+    );
+    assert!(app.chat.transcript.waits());
+    assert!(says(&app, "どの色にしますか") && says(&app, "落ち着いた色"));
+    act(&mut app, |ui| {
+        ui.click("青").expect("the option is there");
+    });
+    assert_eq!(written.try_recv().ok(), Some(ui_response("ui-1", "blue".into())));
+    assert!(!app.chat.transcript.waits());
+
+    // Yes or no.
+    told(
+        &mut app,
+        serde_json::json!({"type": "ui_request", "id": "ui-2", "kind": "confirm", "title": "続けますか", "message": "3件を消します"}),
+    );
+    assert!(says(&app, "3件を消します"));
+    act(&mut app, |ui| {
+        ui.click("いいえ").expect("the answer is there");
+    });
+    assert_eq!(written.try_recv().ok(), Some(ui_response("ui-2", false.into())));
+
+    // A text, typed after what it offered first.
+    told(
+        &mut app,
+        serde_json::json!({"type": "ui_request", "id": "ui-3", "kind": "input", "title": "名前", "initial": "sasa"}),
+    );
+    act(&mut app, |ui| {
+        ui.click(iced::widget::Id::from(crate::view::dock::ASK))
+            .expect("the field is there");
+        ui.typewrite("code");
+        ui.tap_key(Named::Enter);
+    });
+    assert_eq!(written.try_recv().ok(), Some(ui_response("ui-3", "sasacode".into())));
+
+    // Several, in the order offered; what it ticked first can be unticked.
+    told(
+        &mut app,
+        serde_json::json!({"type": "ui_request", "id": "ui-4", "kind": "select_many", "title": "どれを入れますか",
+            "options": [{"value": "a", "label": "甲"}, {"value": "b", "label": "乙"}, {"value": "c", "label": "丙"}],
+            "selected": ["a"]}),
+    );
+    act(&mut app, |ui| {
+        ui.click("丙").expect("the option is there");
+    });
+    act(&mut app, |ui| {
+        ui.click("甲").expect("the option is there");
+    });
+    act(&mut app, |ui| {
+        ui.click("乙").expect("the option is there");
+    });
+    act(&mut app, |ui| {
+        ui.click("決定").expect("the button is there");
+    });
+    assert_eq!(
+        written.try_recv().ok(),
+        Some(ui_response("ui-4", serde_json::json!(["b", "c"])))
+    );
+
+    // Dismissed, and one the run took back itself.
+    for id in ["ui-5", "ui-6"] {
+        told(
+            &mut app,
+            serde_json::json!({"type": "ui_request", "id": id, "kind": "confirm", "title": "?"}),
+        );
+    }
+    let _ = app.update(Msg::AskAnswer("ui-5".into(), serde_json::Value::Null));
+    assert_eq!(
+        written.try_recv().ok(),
+        Some(ui_response("ui-5", serde_json::Value::Null))
+    );
+    told(&mut app, serde_json::json!({"type": "ui_cancelled", "id": "ui-6"}));
+    assert!(!app.chat.transcript.waits());
+    assert!(written.try_recv().is_err());
+}
+
+#[test]
+fn what_the_plugins_say_shows_and_a_judged_call_says_so() {
+    let (mut app, _written, _) = waiting();
+    told(
+        &mut app,
+        serde_json::json!({"type": "plugin_status", "key": "todo:left", "text": "残り2件"}),
+    );
+    assert!(says(&app, "残り2件"));
+    told(
+        &mut app,
+        serde_json::json!({"type": "plugin_status", "key": "todo:left", "text": null}),
+    );
+    assert!(!says(&app, "残り2件"));
+    told(
+        &mut app,
+        serde_json::json!({"type": "plugin_notify", "level": "info", "text": "保存しました"}),
+    );
+    assert_eq!(app.toast.as_deref(), Some("保存しました"));
+    told(
+        &mut app,
+        serde_json::json!({"type": "plugin_notify", "level": "warning", "text": "設定が古い"}),
+    );
+    told(
+        &mut app,
+        serde_json::json!({"type": "plugin_text", "title": "使用量", "text": "合計 12k", "format": "markdown"}),
+    );
+    let notes: Vec<&Note> = app
+        .chat
+        .transcript
+        .exchanges
+        .last()
+        .unwrap()
+        .steps
+        .iter()
+        .filter_map(|s| match s {
+            Step::Note(n) => Some(n),
+            _ => None,
+        })
+        .collect();
+    assert!(notes.contains(&&Note::Notice("設定が古い".into())));
+    assert!(
+        notes
+            .iter()
+            .any(|n| matches!(n, Note::Text { title, .. } if title == "使用量"))
+    );
+    told(
+        &mut app,
+        serde_json::json!({"type": "commands", "commands": [{"name": "hello", "description": "say hello", "owner": "asker"}]}),
+    );
+    assert_eq!(app.plugin_commands[0].name, "hello");
+    let call = app.chat.transcript.pending_approval().unwrap().call_id.clone();
+    told(
+        &mut app,
+        serde_json::json!({"type": "judged", "callId": call, "tool": "bash", "verdict": "ask", "reason": "消す操作"}),
+    );
+    assert!(says(&app, app.s.w().judged_ask));
+}
+
+#[test]
+fn a_call_can_be_allowed_with_its_arguments_edited_and_stopped_alone() {
+    let (mut app, mut written, id) = waiting();
+    act(&mut app, |ui| {
+        ui.click(crate::words::JA.args_edit).expect("the button is there");
+    });
+    assert_eq!(app.overlay, Some(crate::app::Overlay::Args));
+    // What is not an object is not sent.
+    app.editing_args.as_mut().unwrap().1 = text_editor::Content::with_text("[1, 2");
+    let _ = app.update(Msg::ArgsSend);
+    assert!(written.try_recv().is_err() && app.toast.is_some());
+    app.editing_args.as_mut().unwrap().1 = text_editor::Content::with_text("{\"command\": \"echo safer\"}");
+    let _ = app.update(Msg::ArgsSend);
+    assert_eq!(
+        written.try_recv().ok(),
+        Some(ControlMessage::Approval {
+            id: id.clone(),
+            decision: Decision::Allow,
+            feedback: None,
+            args: Some(serde_json::json!({"command": "echo safer"}))
+        })
+    );
+    assert_eq!(answer_of(&app, &id), Some(Answer::Allowed));
+    assert!(app.overlay.is_none());
+
+    let _ = app.update(Msg::StopCall("call-9".into()));
+    assert_eq!(
+        written.try_recv().ok(),
+        Some(ControlMessage::Abort {
+            call_id: Some("call-9".into())
+        })
+    );
+}
+
+#[test]
+fn what_always_allowed_is_kept_for_the_conversations_later_runs_and_can_be_taken_back() {
+    let (mut app, mut written, _) = waiting();
+    app.chat.session = Some("s-always".into());
+    for step in app
+        .chat
+        .transcript
+        .exchanges
+        .iter_mut()
+        .flat_map(|e| e.steps.iter_mut())
+    {
+        if let Step::Approval(a) = step {
+            a.rules = vec!["bash(echo one)".into()];
+        }
+    }
+    let _ = app.update(Msg::Answer(Decision::Always));
+    let _ = written.try_recv();
+    assert_eq!(app.prefs.more.allowed["s-always"], vec!["bash(echo one)".to_owned()]);
+    let spec = crate::runner::RunSpec {
+        program: "sasacode".into(),
+        cwd: ".".into(),
+        prompt: "go".into(),
+        resume: None,
+        model: None,
+        permission: None,
+        thinking: None,
+        no_session: false,
+        lang: None,
+        allow: app.prefs.more.allowed["s-always"].clone(),
+    };
+    assert!(spec.args().windows(2).any(|w| w == ["--allow", "bash(echo one)"]));
+    let _ = app.update(Msg::ForgetAllowed("bash(echo one)".into()));
+    assert!(!app.prefs.more.allowed.contains_key("s-always"));
 }

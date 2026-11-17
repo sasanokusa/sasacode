@@ -213,6 +213,10 @@ pub struct App {
     pub(crate) find_at: usize,
     /// A reply whose text is being chosen to quote: its exchange, and its text, read only.
     pub(crate) quoting: Option<(usize, text_editor::Content)>,
+    /// The approval whose call's arguments are being edited, and their JSON.
+    pub(crate) editing_args: Option<(String, text_editor::Content)>,
+    /// The slash commands the plugins offered in the newest run.
+    pub(crate) plugin_commands: Vec<sasacode_protocol::event::Command>,
     /// Conversations whose notice that the branch changed was put away.
     pub(crate) branch_seen: HashSet<String>,
     /// That search's field was the last to take the keyboard: an Esc there puts it away.
@@ -595,6 +599,20 @@ pub enum Msg {
     QuoteOpen(usize),
     QuoteEdit(text_editor::Action),
     QuoteTake,
+    /// A plugin's question answered (`Null` dismisses it), what is ticked or typed for it so far,
+    /// and the answer as it stands sent.
+    AskAnswer(String, serde_json::Value),
+    AskToggle(String, String),
+    AskType(String, String),
+    AskSubmit(String),
+    /// One tool call stopped, by its id: the run goes on.
+    StopCall(String),
+    /// The waiting call's arguments edited, then allowed with them.
+    ArgsOpen,
+    ArgsEdit(text_editor::Action),
+    ArgsSend,
+    /// A rule "always" added for the conversation shown, taken back.
+    ForgetAllowed(String),
     /// Back to the branch the conversation was started on.
     BackToBranch(String),
     /// The notice that the branch changed, put away for this conversation.
@@ -790,6 +808,8 @@ impl App {
             find_in: None,
             find_at: 0,
             quoting: None,
+            editing_args: None,
+            plugin_commands: Vec::new(),
             branch_seen: HashSet::new(),
             find_held: false,
             show_archived: false,
@@ -847,7 +867,7 @@ impl App {
             .map(|f| f.to_string_lossy().into_owned())
             .unwrap_or_default();
         // What the conversation is doing, before its name: the window list and the Dock show it.
-        let state = if self.running() && self.chat.transcript.pending_approval().is_some() {
+        let state = if self.running() && self.chat.transcript.waits() {
             "⚠ "
         } else if self.running() {
             "● "
@@ -1080,7 +1100,7 @@ impl App {
             }
             Msg::Stop => {
                 if self.running() {
-                    self.control(ControlMessage::Abort);
+                    self.control(ControlMessage::Abort { call_id: None });
                 } else {
                     // Nothing to stop: Esc puts the search in the conversation away.
                     self.find_in = None;
@@ -1682,6 +1702,7 @@ impl App {
                 id: id.clone(),
                 decision: Decision::Deny,
                 feedback: Some(text.clone()),
+                args: None,
             });
             self.chat.transcript.answer_approval(&id, Answer::Denied(text));
             return Task::none();
@@ -1740,7 +1761,7 @@ impl App {
             return Task::none();
         }
         if self.running() {
-            self.control(ControlMessage::Abort);
+            self.control(ControlMessage::Abort { call_id: None });
             self.queue_next();
             return Task::none();
         }
@@ -1748,21 +1769,39 @@ impl App {
     }
 
     fn answer(&mut self, decision: Decision) -> Task<Msg> {
-        if let Some(approval) = self.chat.transcript.pending_approval() {
-            let id = approval.id.clone();
-            self.control(ControlMessage::Approval {
-                id: id.clone(),
-                decision,
-                feedback: None,
-            });
-            let answer = match decision {
-                Decision::Allow => Answer::Allowed,
-                Decision::Always => Answer::Always,
-                Decision::Deny => Answer::Denied(String::new()),
-            };
-            self.chat.transcript.answer_approval(&id, answer);
+        self.answer_with(decision, None)
+    }
+
+    /// Answers the approval waiting, with the call's arguments as the user edited them if so.
+    /// "Always" is kept for the conversation's later runs too.
+    pub(crate) fn answer_with(&mut self, decision: Decision, args: Option<serde_json::Value>) -> Task<Msg> {
+        let Some(approval) = self.chat.transcript.pending_approval() else {
+            return Task::none();
+        };
+        let (id, rules) = (approval.id.clone(), approval.rules.clone());
+        self.control(ControlMessage::Approval {
+            id: id.clone(),
+            decision,
+            feedback: None,
+            args,
+        });
+        let answer = match decision {
+            Decision::Allow => Answer::Allowed,
+            Decision::Always => Answer::Always,
+            Decision::Deny => Answer::Denied(String::new()),
+        };
+        self.chat.transcript.answer_approval(&id, answer);
+        match self.chat.session.clone() {
+            Some(session) if decision == Decision::Always && !rules.is_empty() => self.set(|p| {
+                let kept = p.more.allowed.entry(session).or_default();
+                for rule in rules {
+                    if !kept.contains(&rule) {
+                        kept.push(rule);
+                    }
+                }
+            }),
+            _ => Task::none(),
         }
-        Task::none()
     }
 
     /// Starts a run of conversation `key` on `prompt`.
@@ -1779,7 +1818,18 @@ impl App {
             thinking: self.effort.map(str::to_owned),
             no_session: key == SIDE,
             lang: self.prefs.more.lang.clone(),
+            allow: Vec::new(),
         };
+        // What "always" allowed in its earlier runs.
+        let session = std::iter::once(&self.chat)
+            .chain(&self.parked)
+            .find(|c| c.key == key)
+            .and_then(|c| c.session.as_ref());
+        if key != SIDE
+            && let Some(rules) = session.and_then(|id| self.prefs.more.allowed.get(id))
+        {
+            spec.allow = rules.clone();
+        }
         if key == SIDE {
             // A side question reads; what would change something is asked, and denied.
             spec.permission = Some("ask".into());
@@ -1833,6 +1883,9 @@ impl App {
         let mut ended_now = false;
         // A conversation's id, once its run names it: the branch it was started on is kept.
         let mut named = None;
+        // A plugin's notice for the toast, and the slash commands the plugins offer now.
+        let mut notice = None;
+        let mut commands = None;
         match update {
             RunUpdate::Started(control) => run.control = Some(control),
             RunUpdate::Event(event) => {
@@ -1858,6 +1911,7 @@ impl App {
                             id: id.clone(),
                             decision: Decision::Deny,
                             feedback: feedback.clone(),
+                            args: None,
                         });
                         chat.transcript
                             .answer_approval(&id, Answer::Denied(s.side_denied.to_owned()));
@@ -1867,6 +1921,24 @@ impl App {
                         news = Some(s.n_waiting);
                     }
                 }
+                if let Some(id) = effect.asked {
+                    if key == SIDE {
+                        // Answered as a headless run answers: a side question asks nobody.
+                        chat.transcript.asks.retain(|a| a.id != id);
+                        chat.control(ControlMessage::UiResponse {
+                            id,
+                            value: serde_json::Value::Null,
+                        });
+                    } else {
+                        chat.unread |= !shown;
+                        attention = true;
+                        news = Some(s.n_waiting);
+                    }
+                }
+                if shown {
+                    notice = effect.notice.map(|(_, text)| text);
+                }
+                commands = effect.commands;
                 // A new conversation's log is there once its first message is: the list shows it.
                 relist = matches!(*event, sasacode_protocol::Event::MessageEnd { .. }) && chat.session.is_some();
             }
@@ -1929,6 +2001,12 @@ impl App {
             self.reload_sessions();
         }
         self.now = now;
+        if let Some(text) = notice {
+            self.toast = Some(text);
+        }
+        if let Some(commands) = commands {
+            self.plugin_commands = commands;
+        }
         if let Some(id) = named
             && key != SIDE
             && let Some(branch) = self.git.branch.clone()

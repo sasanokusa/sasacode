@@ -213,7 +213,7 @@ impl App {
             }
             Msg::SetFailedOnly(on) => self.set(|p| p.more.failed_only = on),
             Msg::SetHideThinking(hide) => self.set(|p| p.more.hide_thinking = hide),
-            other => return Err(other),
+            other => return self.update_plugins(other),
         };
         Ok(task)
     }

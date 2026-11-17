@@ -16,6 +16,8 @@ export interface ToolRunContext {
   permissions: PermissionPolicy;
   approve?: (req: ApprovalRequest) => Promise<ApprovalAnswer>;
   session?: SessionFile;
+  /** Where each running call's own controller is kept while it runs (Agent.abortCall). */
+  calls?: Map<string, AbortController>;
   findTool(name: string): ToolDefinition<any> | undefined;
   /** Every tool the model could call, deferred ones included (repair candidates). */
   allTools(): ToolDefinition<any>[];
@@ -120,10 +122,10 @@ export async function executeTools(
       role: "tool",
       toolCallId: job.call.id,
       toolName: job.name,
-      // Tell the model briefly what was fixed, so it can produce the right form next time. Well-formed: a lone
-      // surrogate (half an emoji) fails every later request (#88).
+      // Tell the model briefly what was fixed (or edited), so it can produce the right form next time. Well-formed: a
+      // lone surrogate (half an emoji) fails every later request (#88).
       content: (job.note
-        ? [{ type: "text" as const, text: `[harness repaired this call: ${job.note}]` }, ...result.content]
+        ? [{ type: "text" as const, text: job.note }, ...result.content]
         : result.content
       ).map((c) => (c.type === "text" ? { ...c, text: c.text.toWellFormed() } : c)),
       isError: !!result.isError,
@@ -135,7 +137,8 @@ export async function executeTools(
   // Validation runs one call at a time, in order; permission prompts do not (below).
   for (const call of calls) {
     const fixed = opts.repairs.get(call.id);
-    const job: Job = { call, name: fixed?.name ?? call.name, note: fixed?.note, input: fixed?.input ?? call.input };
+    const note = fixed && `[harness repaired this call: ${fixed.note}]`;
+    const job: Job = { call, name: fixed?.name ?? call.name, note, input: fixed?.input ?? call.input };
     jobs.push(job);
     const rejected = opts.ancestors?.includes(job.name)
       ? err(`Nested tool cycle: ${[...opts.ancestors, job.name].join(" -> ")}`)
@@ -160,7 +163,10 @@ export async function executeTools(
       continue;
     }
     // Approvals stay one at a time, in order: only the runs overlap.
-    const { args, denied } = await authorize(ctx, job.tool!, job.call, job.input!, opts.signal);
+    const { args, denied, edited } = await authorize(ctx, job.tool!, job.call, job.input!, opts.signal);
+    // The stored call keeps what the model asked for: say what ran instead.
+    const told = edited && `[the user edited the arguments; the call ran with ${JSON.stringify(args)}]`;
+    if (told) job.note = job.note ? `${job.note}\n${told}` : told;
     const run = async () => {
       if (denied) return finish(job, denied, false);
       // A call must not start once the user has interrupted.
@@ -259,7 +265,7 @@ async function authorize(
   call: ToolCall,
   input: Record<string, unknown>,
   signal: AbortSignal,
-): Promise<{ args: Record<string, unknown>; denied?: ToolResult }> {
+): Promise<{ args: Record<string, unknown>; denied?: ToolResult; edited?: boolean }> {
   let args = input;
   let forced: { decision: Decision; reason: string } | undefined;
   await ctx.hooks.run("tool_call", { call, tool, args }, (r, ev) => {
@@ -297,10 +303,27 @@ async function authorize(
   if (answer instanceof Error)
     return denied(err(`The approval could not be asked (${answer.message}), so the call was not run.`));
   if (!answer || signal.aborted) return denied(notRun());
-  if (answer.decision === "always") ctx.permissions.addRules({ allow: PermissionPolicy.rulesFor(check) });
   if (answer.decision === "deny")
     return denied(err(`The user denied this tool call.${answer.feedback ? ` User feedback: ${answer.feedback}` : ""}`));
-  return { args };
+  // Arguments the user edited are checked as the model's are: plugins see them again (a checkpoint of the files they
+  // name, the guards), and their denials and the deny rules still hold (softDeny asks: it was asked).
+  let edited: PermissionCheck | undefined;
+  if (answer.args) {
+    let next = answer.args;
+    let refused: string | undefined;
+    await ctx.hooks.run("tool_call", { call, tool, args: next }, (r, ev) => {
+      if (r.args) next = ev.args = r.args;
+      if (r.decision === "deny") refused = r.reason ?? "plugin";
+      return !refused;
+    });
+    edited = { ...check, args: next };
+    const problems = refused ? [refused] : validate(tool.parameters, next);
+    const verdict = problems.length ? undefined : await ctx.permissions.check(edited);
+    if (!verdict || (verdict.decision === "deny" && verdict.source === "rule"))
+      return denied(err(`The user's edited arguments were refused (${verdict?.reason ?? problems.join("; ")}).`));
+  }
+  if (answer.decision === "always") ctx.permissions.addRules({ allow: PermissionPolicy.rulesFor(edited || check) });
+  return { args: edited ? edited.args : args, edited: !!edited };
 }
 
 async function runTool(
@@ -324,6 +347,12 @@ async function runTool(
       data: { parentCallId, call, args },
     });
   ctx.events.emit({ type: "tool_start", call, summary, parentCallId });
+  // Its own signal, so this call alone can be stopped (Agent.abortCall); stopping the run stops it too.
+  const own = new AbortController();
+  const stop = () => own.abort();
+  signal.addEventListener("abort", stop, { once: true });
+  if (signal.aborted) stop(); // already stopped (a tool_start listener can do that): the listener never fires
+  ctx.calls?.set(call.id, own);
   let active = true;
   // Calls from one execution are serialized, including when the caller uses Promise.all.
   // Each child has its own queue, so ordinary nested delegation never deadlocks.
@@ -349,7 +378,7 @@ async function runTool(
         // Programmatic calls are already structured; tool_call_raw (model-output repair) is skipped.
         await executeTools(ctx, [childCall], {
           truncated: false,
-          signal,
+          signal: own.signal,
           repairs: new Map(),
           ancestors: [...ancestors, tool.name],
           parentCallId: call.id,
@@ -370,18 +399,24 @@ async function runTool(
     pending = work;
     return work;
   };
+  let result: ToolResult;
   try {
-    return await tool.execute(args, {
+    result = await tool.execute(args, {
       cwd: ctx.cwd,
-      signal,
+      signal: own.signal,
       callTool,
       onUpdate: (text) => ctx.events.emit({ type: "tool_update", call, text, parentCallId }),
     });
   } catch (e) {
-    return err(`Tool failed: ${e instanceof Error ? e.message : String(e)}`);
+    result = err(`Tool failed: ${e instanceof Error ? e.message : String(e)}`);
   } finally {
     active = false;
     // Even a plugin forgetting await cannot leave children running after its tool has finished.
     await pending;
+    signal.removeEventListener("abort", stop);
+    ctx.calls?.delete(call.id);
   }
+  if (!own.signal.aborted || signal.aborted) return result;
+  const note = { type: "text" as const, text: "[The user stopped this tool call; the rest of the run goes on.]" };
+  return { ...result, isError: true, content: [note, ...result.content] };
 }

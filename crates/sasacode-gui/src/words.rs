@@ -258,6 +258,24 @@ words! {
     attached_conversation: "会話をMarkdownにして入力欄に添えました", "Attached the conversation as Markdown";
     branch_moved: "この会話は{was}で始めましたが、今は{now}です", "This conversation started on {was}; {now} is checked out now";
     branch_back: "{branch}に戻る", "Back to {branch}";
+    // The plugins of a run: questions, texts, the judge; a call stopped or edited.
+    plugin_text: "プラグインの表示", "From a plugin";
+    ask_head: "プラグインからの質問", "A plugin asks";
+    ask_yes: "はい", "Yes";
+    ask_no: "いいえ", "No";
+    ask_ok: "決定", "OK";
+    ask_dismiss: "答えずに閉じる", "Dismiss";
+    ask_more: "ほかに{n}件", "{n} more";
+    stop_call: "この呼び出しだけ止める", "Stop this call";
+    args_edit: "引数を直して許可", "Edit and allow";
+    args_title: "引数を直して許可する", "Edit the arguments, then allow";
+    args_how: "JSONのまま直します。直した呼び出しも、拒否のルールとプラグインの確認を受け直します", "Edit the JSON. The edited call is checked again against the deny rules and the plugins";
+    args_send: "この引数で許可", "Allow with these";
+    args_bad: "引数はJSONのオブジェクトで書いてください（{error}）", "The arguments must be a JSON object ({error})";
+    judged_allow: "判定役が許可", "The judge allowed it";
+    judged_ask: "判定役が確認に回した", "The judge asked you";
+    allowed_head: "この会話で常に許可したもの", "Always allowed in this conversation";
+    allowed_none: "まだありません", "Nothing yet";
 }
 
 #[cfg(test)]

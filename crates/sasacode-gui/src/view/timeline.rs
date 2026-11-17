@@ -628,6 +628,15 @@ fn tool_row<'a>(app: &'a App, i: usize, j: usize, tool: &'a Tool) -> El<'a> {
     if tool.repaired.is_some() {
         parts.push(tag(t, s.repaired, t.warn_wash, t.warn));
     }
+    if let Some((allowed, _)) = &tool.judged {
+        let w = s.w();
+        parts.push(tag(
+            t,
+            if *allowed { w.judged_allow } else { w.judged_ask },
+            t.inset,
+            t.fg_2,
+        ));
+    }
     match tool.state {
         ToolState::Waiting => {
             let asked = app
@@ -677,7 +686,24 @@ fn tool_row<'a>(app: &'a App, i: usize, j: usize, tool: &'a Tool) -> El<'a> {
     let open = app.chat.open.contains(&(i, j)) != by_itself;
     let details = tool_details(app, tool);
     let press = details.is_some().then_some((Msg::Open(i, j), open));
-    let head = line(t, (symbol, color), parts, meta, press);
+    let mut head = line(t, (symbol, color), parts, meta, press);
+    // A call that runs long can be stopped alone: its result is an error, and the run goes on.
+    if running && app.running() {
+        head = iced::widget::row![
+            container(head).width(Length::Fill),
+            super::tip(
+                t,
+                iced::widget::button(icon(Icon::Stop, 12.0, t.fg_3))
+                    .padding(4)
+                    .style(t.ghost(t.fg_3, false))
+                    .on_press(Msg::StopCall(tool.id.clone())),
+                s.w().stop_call.to_owned(),
+                iced::widget::tooltip::Position::Left,
+            ),
+        ]
+        .align_y(iced::Alignment::Center)
+        .into();
+    }
     let row: El<'a> = match details {
         Some(details) if open => column![head, under(details)].into(),
         _ => head,
@@ -700,6 +726,16 @@ fn tool_details<'a>(app: &'a App, tool: &'a Tool) -> Option<El<'a>> {
             text(format!("{}{}{note}", s.repaired, if s.ja { "：" } else { ": " }))
                 .size(12)
                 .color(t.warn)
+                .into(),
+        );
+    }
+    if let Some((allowed, reason)) = tool.judged.as_ref().filter(|(_, r)| !r.is_empty()) {
+        let w = s.w();
+        let who = if *allowed { w.judged_allow } else { w.judged_ask };
+        push(
+            text(format!("{who}{}{reason}", if s.ja { "：" } else { ": " }))
+                .size(12)
+                .color(t.fg_2)
                 .into(),
         );
     }
@@ -891,6 +927,30 @@ fn note_row<'a>(app: &'a App, i: usize, j: usize, note: &'a Note) -> El<'a> {
         Note::ContextFull => line(t, (Icon::Alert, t.warn), vec![say(s.context_full, t.warn)], None, None),
         Note::Compacted => quiet(Icon::Spark, s.compacted),
         Note::Retrying => quiet(Icon::Spark, s.discarded),
+        Note::Notice(body) => container(
+            row![
+                container(icon(Icon::Alert, 14.0, t.warn)).padding(Padding::ZERO.top(1.0)),
+                text(body.as_str())
+                    .size(13)
+                    .color(t.fg)
+                    .width(Length::Fill)
+                    .wrapping(text::Wrapping::WordOrGlyph),
+            ]
+            .spacing(8),
+        )
+        .width(Length::Fill)
+        .padding([8, 10])
+        .style(t.boxed(t.warn_wash, t.warn_line, RADIUS))
+        .into(),
+        Note::Text { title, text: body } => {
+            let w = s.w();
+            let label = if title.trim().is_empty() {
+                w.plugin_text.to_owned()
+            } else {
+                format!("{} · {}", w.plugin_text, clip(title, 60))
+            };
+            folded(Icon::File, label, body)
+        }
     }
 }
 

@@ -12,6 +12,7 @@ use std::path::Path;
 use std::time::{Duration, Instant, SystemTime};
 
 use iced::widget::markdown;
+use sasacode_protocol::event::{Command, NoticeLevel, UiAsk};
 use sasacode_protocol::{
     Content, Event, Message, SessionEntry, StopCause, StreamDelta, ToolCall, ToolResult, Usage, text_of,
 };
@@ -83,6 +84,13 @@ pub enum Note {
     Compacted,
     /// A reply was thrown away and is asked again.
     Retrying,
+    /// A plugin's warning or error.
+    Notice(String),
+    /// A text a plugin showed whole.
+    Text {
+        title: String,
+        text: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -165,6 +173,8 @@ pub struct Tool {
     pub plan: Option<PlanUpdate>,
     /// What tool-repair mended in the call before it ran.
     pub repaired: Option<String>,
+    /// What the agent mode's judge said of it: allowed, or handed to the user, and why.
+    pub judged: Option<(bool, String)>,
     /// The call that made this one (a tool calling another tool).
     pub parent: Option<String>,
     pub started: Option<Instant>,
@@ -216,6 +226,8 @@ pub struct Approval {
     pub args: Value,
     pub reason: String,
     pub cwd: String,
+    /// The allow rules "always" adds, which later runs of the conversation are given (`--allow`).
+    pub rules: Vec<String>,
     pub answer: Option<Answer>,
 }
 
@@ -253,6 +265,22 @@ pub struct Transcript {
     replay: bool,
     /// While a log is read: the entry being read, when it is a message of its own.
     at_entry: Option<usize>,
+    /// The plugins' questions, open until they are answered or the run ends.
+    pub asks: Vec<Ask>,
+    /// The plugins' status items, by `plugin:key`, as the newest run left them.
+    pub status: std::collections::BTreeMap<String, String>,
+}
+
+/// A plugin's question.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Ask {
+    pub id: String,
+    pub title: String,
+    pub ask: UiAsk,
+    /// The values ticked so far, when several may be.
+    pub chosen: std::collections::BTreeSet<String>,
+    /// What is typed so far, when the answer is a text.
+    pub typed: String,
 }
 
 /// What an event changed beyond the conversation.
@@ -262,6 +290,12 @@ pub struct Effect {
     pub ended: Option<StopCause>,
     /// An approval started to wait.
     pub approval: Option<String>,
+    /// A plugin asked something.
+    pub asked: Option<String>,
+    /// A plugin's notice.
+    pub notice: Option<(NoticeLevel, String)>,
+    /// The plugins' slash commands, as they are now.
+    pub commands: Option<Vec<Command>>,
 }
 
 impl Tool {
@@ -280,6 +314,7 @@ impl Tool {
             change: None,
             plan: None,
             repaired: None,
+            judged: None,
             parent: None,
             started: None,
             elapsed: None,
@@ -437,6 +472,11 @@ impl Transcript {
         self.exchanges.iter().flat_map(Exchange::tools)
     }
 
+    /// Whether the run waits for the user: an approval, or a plugin's question.
+    pub fn waits(&self) -> bool {
+        self.pending_approval().is_some() || !self.asks.is_empty()
+    }
+
     pub fn tool(&self, id: &str) -> Option<&Tool> {
         self.tools().find(|t| t.id == id)
     }
@@ -514,6 +554,8 @@ impl Transcript {
     pub fn close(&mut self, now: Instant) {
         self.settle(now);
         self.streaming.clear();
+        // Nobody is left to hear the answers.
+        self.asks.clear();
     }
 
     pub fn apply(&mut self, event: &Event, now: Instant) -> Effect {
@@ -602,6 +644,7 @@ impl Transcript {
                 args,
                 reason,
                 cwd,
+                rules,
             } => {
                 let approval = Step::Approval(Approval {
                     id: id.clone(),
@@ -610,6 +653,7 @@ impl Transcript {
                     args: args.clone(),
                     reason: reason.clone(),
                     cwd: cwd.clone(),
+                    rules: rules.clone(),
                     answer: None,
                 });
                 // The question comes before the call it is about.
@@ -623,6 +667,51 @@ impl Transcript {
             }
             Event::ApprovalCancelled { id } => self.answer_approval(id, Answer::Cancelled),
             Event::ControlError { error } => self.note(Note::Error(format!("control: {error}"))),
+            Event::UiRequest { id, ask, title } => {
+                let (chosen, typed) = match ask {
+                    UiAsk::SelectMany { selected, .. } => (selected.iter().cloned().collect(), String::new()),
+                    UiAsk::Input { initial, .. } => (Default::default(), initial.clone().unwrap_or_default()),
+                    _ => Default::default(),
+                };
+                self.asks.push(Ask {
+                    id: id.clone(),
+                    title: title.clone(),
+                    ask: ask.clone(),
+                    chosen,
+                    typed,
+                });
+                effect.asked = Some(id.clone());
+            }
+            Event::UiCancelled { id } => self.asks.retain(|a| a.id != *id),
+            Event::PluginNotify { level, text } => {
+                if *level != NoticeLevel::Info {
+                    self.note(Note::Notice(text.clone()));
+                }
+                effect.notice = Some((*level, text.clone()));
+            }
+            Event::PluginText { title, text, .. } => self.note(Note::Text {
+                title: title.clone(),
+                text: text.clone(),
+            }),
+            Event::PluginStatus { key, text } => match text {
+                Some(text) => {
+                    self.status.insert(key.clone(), text.clone());
+                }
+                None => {
+                    self.status.remove(key);
+                }
+            },
+            Event::Commands { commands } => effect.commands = Some(commands.clone()),
+            Event::Judged {
+                call_id,
+                verdict,
+                reason,
+                ..
+            } => {
+                if let Some(tool) = self.tool_mut(call_id) {
+                    tool.judged = Some((verdict == "allow", reason.clone()));
+                }
+            }
             Event::TurnStart { .. } | Event::TurnEnd { .. } | Event::Unknown(_) => {}
         }
         effect

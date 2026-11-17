@@ -427,3 +427,54 @@ test("an abort that comes in between requests stops the next one: no reply is ta
   expect(provider.requests).toHaveLength(1);
   expect(JSON.stringify(agent.messages)).not.toContain("generated after the abort");
 });
+
+test("abortCall stops one call; a call whose run was stopped as it started sees its signal aborted", async () => {
+  const seen: boolean[] = [];
+  const watch = {
+    name: "watch", description: "", parameters: { type: "object", properties: {} },
+    execute: async (_: unknown, { signal }: { signal: AbortSignal }) => {
+      seen.push(signal.aborted);
+      if (!signal.aborted) await new Promise((r) => signal.addEventListener("abort", r, { once: true }));
+      return { content: [say("watched")] };
+    },
+  } as never;
+  const auto = { tools: [watch], permissions: new PermissionPolicy("auto") };
+  const one = setup([reply([call("1", "watch", {})]), reply([say("ok")])], auto);
+  one.agent.events.on((e) => {
+    if (e.type === "tool_start") queueMicrotask(() => one.agent.abortCall("1"));
+  });
+  expect(await one.agent.prompt("go")).toBe("done");
+  expect(JSON.stringify(one.agent.messages)).toContain("The user stopped this tool call");
+  expect(one.agent.abortCall("1")).toBe(false); // finished: nothing is kept for it
+  // The run is stopped by a tool_start listener, before the call's own signal is linked to it.
+  const two = setup([reply([call("2", "watch", {})])], auto);
+  two.agent.events.on((e) => {
+    if (e.type === "tool_start") two.agent.abort();
+  });
+  expect(await two.agent.prompt("go")).toBe("aborted");
+  expect(seen).toEqual([false, true]);
+});
+
+test("edited arguments go past the plugins again: they see them, may refuse them, and the call runs with them", async () => {
+  const seen: string[] = [];
+  const { agent, provider } = setup(
+    [
+      reply([call("1", "write", { path: "asked.txt", content: "a" })]),
+      reply([call("2", "write", { path: "asked.txt", content: "b" })]),
+      reply([say("ok")]),
+    ],
+    {
+      permissions: new PermissionPolicy("ask"),
+      approve: async (r) => ({ decision: "allow", args: { ...r.args, path: r.call.id === "1" ? "edited.txt" : "refused.txt" } }),
+    },
+  );
+  agent.hooks.on("tool_call", ({ args }) => {
+    seen.push(String(args.path));
+    return args.path === "refused.txt" ? { decision: "deny", reason: "not there" } : undefined;
+  });
+  await agent.prompt("go");
+  expect(seen).toEqual(["asked.txt", "edited.txt", "asked.txt", "refused.txt"]);
+  expect(readFileSync(join(dir, "edited.txt"), "utf8")).toBe("a");
+  expect(() => readFileSync(join(dir, "refused.txt"))).toThrow();
+  expect(JSON.stringify(provider.requests[2]!.messages.at(-1))).toContain("edited arguments were refused (not there)");
+});

@@ -163,9 +163,11 @@ test("abort releases a pending child approval without executing or adding an alw
     new PermissionPolicy("auto", { ask: ["target"] }));
   let started!: () => void;
   const asking = new Promise<void>((resolve) => { started = resolve; });
-  h.ctx.approve = async (req) => { expect(req.signal).toBe(controller.signal); started(); return new Promise(() => {}); };
+  // The child's request carries its parent call's own signal (abortCall), which the run's abort aborts too.
+  let asked: AbortSignal | undefined;
+  h.ctx.approve = async (req) => { asked = req.signal; started(); return new Promise(() => {}); };
   const run = h.run("wrapper", {}, controller.signal);
-  await asking; controller.abort();
+  await asking; expect(asked?.aborted).toBe(false); controller.abort(); expect(asked?.aborted).toBe(true);
   expect(body((await run).output)).toContain("Interrupted"); expect(ran).toBe(false);
 });
 

@@ -276,7 +276,7 @@ fn row_of<'a>(app: &'a App, session: &'a SessionSummary, now: SystemTime, cells:
     let mark = app
         .chat_of(&session.id)
         .map_or(marked.then_some((t.fg, s.unread)), |chat| {
-            if chat.running() && chat.transcript.pending_approval().is_some() {
+            if chat.running() && chat.transcript.waits() {
                 Some((t.warn, s.st_waiting))
             } else if chat.running() {
                 Some((t.accent, s.st_running))

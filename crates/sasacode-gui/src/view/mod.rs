@@ -5,7 +5,7 @@
 //! along the bottom.
 
 mod chords;
-mod dock;
+pub(crate) mod dock;
 mod inspector;
 mod menu;
 pub(crate) use timeline::has;

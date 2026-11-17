@@ -70,8 +70,13 @@ sasacode -r <id> -p "続き"            # セッション ID を指定して続�
 | `--append-system-prompt-file <path>` | ファイルの中身（UTF-8）を、設定の `instructions` の後ろにシステムプロンプトとして足す。読めないファイルはエラーで終わり、空のファイルは何も足さない。TUIでも使える |
 | `-c` / `-r <id>` / `--no-session` | 再開 / IDを指定して再開 / 保存しない |
 | `--trust-project` | プロジェクトを確認なしで信頼する（ヘッドレス向け。[プロジェクトの信頼](#プロジェクトの信頼)） |
+| `--allow <rule>` | 権限ルールに合う呼び出しを、この実行のあいだ「常に許可」と答えたように許す。繰り返し指定できる。形は `approval_request` の `rules` と同じ（例 `bash(npm test)`）。入力ごとにプロセスを起動するGUIが「常に許可」を次の入力へ引き継ぐのに使う |
+| `--slash` | `-p` と併用。`/<コマンド> 引数` で始まるプロンプトを、モデルに送らずにそのプラグインのコマンドとして実行する（`-r <id>` で続ける会話の `/goal …` など）。知らないコマンドならエラーで終わる。コマンドの表示は `--control stdio` では `plugin_notify` などの行に、それ以外ではstderrに出る |
 | `sasacode plugin search\|install\|update\|remove\|list\|publish` | プラグインを探す・入れる（npmかgit URL）・更新する・npmに公開する（[共有](#プラグインを共有する)） |
 | `sasacode endpoint add\|remove\|list` | 自前のサーバーの追加（形式は自動判別） |
+| `sasacode list models\|commands\|skills [--json]` | このフォルダでの実行が使えるもの。`models` はTUIの `/model` と同じ一覧（`[{"id":"provider/model","contextWindow"?,"maxContext"?,"server"?,"current"?}]`）、`skills` は `[{"name","description","path"}]`、`commands` はTUIのコマンドとSkillsのコマンド（`[{"name","description","argumentHint"?,"owner","headless"}]`）。ほかのプラグインのコマンドは、読み込むとプラグインの起動時の処理が走るのでここには出さず、`--control stdio` の実行が `commands` 行で知らせる |
+| `sasacode plugin list --json` | 同梱を含む全プラグインを `[{"name","version"?,"source":"bundled"\|"global"\|"project","dir"?,"enabled","error"?}]` で。`error` はコードを動かさずに分かる読み込めない理由（APIの版、ファイルがない） |
+| `sasacode trust [--yes] [--json]` | このフォルダを信頼しているかと、信頼すると有効になるもの（`{"cwd","trusted","needed","complete","items","plugins","mcpServers","endpoints","allow","mode"}`）。`--yes` で、起動時の確認に「y」と答えたのと同じく信頼を保存する。`complete` が `false`（プラグインのコードを読み切れない）なら保存は効かないので、毎回 `--trust-project` が要る |
 | `sasacode login [status\|logout]` | ChatGPTプランでログイン（`openai-codex/…` のモデル用） |
 | `-h, --help` / `-v, --version` | 使い方 / 版を出す |
 
@@ -82,9 +87,19 @@ sasacode -r <id> -p "続き"            # セッション ID を指定して続�
 stdoutには、これまでのJSONLのイベントに混ざって、次の行が1件ずつ出る。
 
 ```jsonc
-{"type":"approval_request","id":"approval-1","callId":"call_1","tool":"bash","args":{"command":"touch x"},"reason":"…","cwd":"/path/to/project"}
+{"type":"approval_request","id":"approval-1","callId":"call_1","tool":"bash","args":{"command":"touch x"},"reason":"…","cwd":"/path/to/project","rules":["bash(touch x)"]}
 {"type":"approval_cancelled","id":"approval-1"}
 {"type":"control_error","error":"not valid JSON"}
+{"type":"ui_request","id":"ui-1","kind":"confirm","title":"…","message":"…"}   // kind: "confirm" | "select" | "input" | "select_many"
+{"type":"ui_request","id":"ui-2","kind":"select","title":"…","options":[{"value":"a","label":"A","description":"…"}]}
+{"type":"ui_request","id":"ui-3","kind":"input","title":"…","message":"…","placeholder":"…","initial":"…"}
+{"type":"ui_request","id":"ui-4","kind":"select_many","title":"…","options":[…],"selected":["a"]}
+{"type":"ui_cancelled","id":"ui-1"}
+{"type":"plugin_notify","level":"info","text":"…"}                 // "info" | "warning" | "error"
+{"type":"plugin_text","title":"…","text":"…","format":"text"}      // "text" | "markdown"
+{"type":"plugin_status","key":"goal:goal","text":"…"}             // textがnullなら消える
+{"type":"commands","commands":[{"name":"goal","description":"…","argumentHint":"…","owner":"goal"}]}
+{"type":"judged","callId":"call_1","tool":"bash","verdict":"allow","reason":"agent judged safe: …"}   // "allow" | "ask"
 ```
 
 stdinは1行1件のJSON（JSON Lines）で読む。
@@ -92,12 +107,21 @@ stdinは1行1件のJSON（JSON Lines）で読む。
 ```jsonc
 {"type":"approval","id":"approval-1","decision":"allow"}           // "allow" | "always" | "deny"
 {"type":"approval","id":"approval-1","decision":"deny","feedback":"理由"}
+{"type":"approval","id":"approval-1","decision":"allow","args":{"command":"touch y"}}   // 引数を直して許可
 {"type":"message","text":"テストも見て"}
 {"type":"abort"}
+{"type":"abort","callId":"call_1"}                                // その呼び出しだけを止める
+{"type":"ui_response","id":"ui-1","value":true}                   // confirmならtrue/false、selectなら選んだvalue、inputなら文字列、select_manyならvalueの配列、nullで閉じる
 ```
 
 - `approval_request` は、確認が必要な呼び出しごとに1行出る。呼び出しは答えが届くまで実行しない。`id` は答えに付ける。`callId` は会話の中のtool_callのid、`tool` と `args` は呼び出しの中身、`reason` は確認が必要な理由。
 - `approval` の `decision` は、`allow` が今回だけ許可、`always` が許可に加えて同じ呼び出しを許すルールの追加（TUIの「常に許可」と同じで、プロセスの終了まで有効）、`deny` が拒否。`feedback` は `deny` のときモデルに渡る。
+- `approval_request` の `rules` は、`always` で足される許可ルール。次のプロセスに `--allow` で1つずつ渡すと、「常に許可」が実行をまたいで続く。
+- `allow` と `always` には `args` を付けられる。呼び出しはその引数で動く（同じツール）。モデルの引数と同じように確かめ、合わなければ、またはdenyルールに当たれば、拒否としてモデルに理由を返す。モデルには、引数が直されたことと実際の引数を結果と一緒に伝える。`always` のルールは直した引数のものになる。
+- `abort` に `callId` を付けると、その実行中のツール呼び出し（サブエージェント、長いコマンドなど）だけを止める。その結果はエラーになり、実行は続く。実行中でないidは `control_error`。止まるのは、中断の合図に従うツール（bash、サブエージェント、MCPなど）。
+- プラグインの `api.ui` は親プロセスに届く。`confirm` / `select` / `input` / `selectMany` は `ui_request` を出し、同じ `id` の `ui_response` を待つ。`null` で閉じると、ヘッドレスと同じ答え（`false` か `undefined`）になる。実行の中断（`abort` かCtrl+C）で、答えの届いていない問いには `ui_cancelled` を出して閉じた扱いにし、stdinが閉じたら以降の問いもすべて閉じた扱いにする。お知らせは `plugin_notify`、テキストの表示は `plugin_text`、ステータス行は `plugin_status`（キーは `プラグイン名:キー`）になる。プラグインからは対話できる実行に見える（`api.ui.interactive` が `true`。stdinが閉じたら `false`）。
+- `commands` は、プラグインを読み込んだ後に1回と、変わるたびに出る。その実行で使えるスラッシュコマンドの一覧で、どれも `--slash` で動かせる。
+- `judged` は、`agent` モードの判定（同梱プラグイン `agent-judge`）が呼び出しを決めたときに出る。`allow` はそのまま実行、`ask` は危ないか判定に失敗したので、続けて `approval_request` が出る。
 - `message` は、TUIで実行中に打った入力と同じで、モデルの次のターンに届く。実行中の作業に指示を足したり、方向を変えたりするのに使う。`text` は空でない文字列。
 - `abort` はCtrl+Cと同じで、実行を中断する（`agent_end` の `cause` は `aborted`、終了コードは1）。
 - 実行が中断されたとき、答えが届いていない要求には `approval_cancelled` を出す。そのidへの答えは `control_error` になる。

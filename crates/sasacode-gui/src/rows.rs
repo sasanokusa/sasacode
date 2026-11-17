@@ -216,7 +216,7 @@ impl App {
         match self.prefs.more.list_show {
             Show::All => true,
             Show::Running => chat.is_some_and(|c| c.running()),
-            Show::Waiting => chat.is_some_and(|c| c.running() && c.transcript.pending_approval().is_some()),
+            Show::Waiting => chat.is_some_and(|c| c.running() && c.transcript.waits()),
             Show::Unread => self.prefs.more.unread.contains(&session.id) || chat.is_some_and(|c| c.unread),
         }
     }

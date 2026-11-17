@@ -188,6 +188,9 @@ pub struct More {
     /// Messages sent while a run works wait for it to end, each for a run of its own, rather than
     /// reaching the model at its next turn.
     pub queue: bool,
+    /// What "always" allowed in each conversation, by its id: rules every later run of it is
+    /// given (`--allow`).
+    pub allowed: BTreeMap<String, Vec<String>>,
 }
 
 impl More {
@@ -652,6 +655,7 @@ mod tests {
                 failed_only: true,
                 hide_thinking: true,
                 queue: true,
+                allowed: BTreeMap::from([("s1".into(), vec!["bash(npm test)".into()])]),
             },
         };
         write(&file, &Layout::default(), &prefs).unwrap();

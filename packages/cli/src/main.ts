@@ -3,7 +3,7 @@
 import { statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
-import { PERMISSION_MODES } from "@sasacode/agent";
+import { PERMISSION_MODES, PermissionPolicy } from "@sasacode/agent";
 import { BUILTIN_PROVIDERS, resolveLang, setLang, t } from "@sasacode/host";
 import { hideFromChildren } from "@sasacode/plugin-api";
 import { codexLogin, codexLogout, codexStatus, installRustxng, openGui, ownProgram } from "@sasacode/bundled";
@@ -15,6 +15,7 @@ import { readPipedStdin } from "./stdin.ts";
 import { notifyIfNewer, updateCommand } from "./update.ts";
 import { endpointCommand } from "./endpoints.ts";
 import { pluginCommand } from "./loader.ts";
+import { listCommand, trustCommand } from "./listings.ts";
 import { askTrust, assessProject, isTrusted, saveTrust } from "./trust.ts";
 import { readPromptFile, setup } from "./setup.ts";
 
@@ -42,15 +43,20 @@ Options:
                                  add the file's text to the system prompt, after the config's instructions
       --trust-project            trust this project's plugins, endpoints, MCP servers and
                                  permission settings without asking
+      --allow <rule>             allow calls matching a permission rule for this run, as answering "always" does
+                                 (repeatable; e.g. "bash(npm test)", the rules of approval_request)
+      --slash                    with -p: a prompt that starts with /<command> runs that plugin command
 
 Subcommands:
   sasacode plugin search [words]              find plugins (sasanokusa.com's list and npm)
   sasacode plugin install <npm-spec|git-url> [--project] [--yes]
-  sasacode plugin update [name] | remove <name> | list   (flags may go anywhere)
+  sasacode plugin update [name] | remove <name> | list [--json]   (flags may go anywhere)
   sasacode plugin publish <file.ts|dir> [--name <pkg>] [--license <id>] [--dry-run]
   sasacode endpoint add <name> <url> [--key-env VAR] [--project]   add a server (format detected)
   sasacode endpoint remove <name> [--project]
   sasacode endpoint list
+  sasacode list models|commands|skills [--json]   what a run here can use (the GUI asks with --json)
+  sasacode trust [--yes] [--json]   is this folder trusted, and what would trust enable; --yes trusts it
   sasacode login [status|logout]    use a ChatGPT plan instead of an API key (openai-codex/… models)
   sasacode update [--check] [tag]   download and install the newest release (checksum-verified)
   sasacode web-search install [tag] install RustXNG for the web_search tool (checksum-verified)
@@ -80,6 +86,8 @@ async function main(): Promise<number> {
   if (process.argv[2] === "update") return updateCommand(process.argv.slice(3));
   if (process.argv[2] === "web-search") return webSearchCommand(process.argv.slice(3));
   if (process.argv[2] === "gui") return guiCommand(process.argv.slice(3));
+  if (process.argv[2] === "list") return listCommand(process.argv.slice(3), process.cwd());
+  if (process.argv[2] === "trust") return trustCommand(process.argv.slice(3), process.cwd());
   const { values, positionals } = parseArgs({
     allowPositionals: true,
     options: {
@@ -95,6 +103,8 @@ async function main(): Promise<number> {
       resume: { type: "string", short: "r" },
       "no-session": { type: "boolean" },
       "trust-project": { type: "boolean" },
+      allow: { type: "string", multiple: true },
+      slash: { type: "boolean" },
       stdin: { type: "boolean" },
       help: { type: "boolean", short: "h" },
       version: { type: "boolean", short: "v" },
@@ -110,6 +120,14 @@ async function main(): Promise<number> {
   }
   // Checked before anything is loaded: a wrong combination should fail at once, not after the setup.
   const control = controlMode(values.control, values.print, values.output);
+  if (values.slash && values.print === undefined) throw new Error(t("--slash needs -p"));
+  const allow = values.allow ?? [];
+  for (const rule of allow)
+    try {
+      new PermissionPolicy("edits", { allow: [rule] });
+    } catch {
+      throw new Error(t('--allow "{rule}" is not a permission rule (like bash, bash(npm test) or edit(src/**))', { rule }));
+    }
   const appendSystemPrompt = values["append-system-prompt-file"] !== undefined ? readPromptFile(values["append-system-prompt-file"]) : undefined;
   // One trust decision covers project plugins and the parts of .sasacode/config.json that could
   // run code or send data elsewhere. Asked here, before anything from the project is used.
@@ -133,6 +151,8 @@ async function main(): Promise<number> {
     preloaded: project,
   });
   for (const w of harness.warnings) console.error(t("warning: {warning}", { warning: w }));
+  // As if "always" had been answered for each: a window that starts a process per message keeps its grants this way.
+  if (allow.length) harness.agent.permissions.addRules({ allow });
   // A mistyped -m should stop here, not start a session that fails at the first request.
   if (values.model) await harness.checkModel(values.model);
 
@@ -142,7 +162,7 @@ async function main(): Promise<number> {
     const piped = control ? "" : await readPipedStdin(!!values.stdin);
     if (piped.trim()) prompt = `${prompt}\n\n${piped}`;
     if (values.output !== "text" && values.output !== "jsonl") throw new Error(t("--output must be text or jsonl"));
-    return runHeadless(harness, prompt, values.output, control ? Bun.stdin.stream() : undefined);
+    return runHeadless(harness, prompt, values.output, control ? Bun.stdin.stream() : undefined, { slash: values.slash });
   }
   const { runTui } = await import("@sasacode/tui");
   // A quiet heads-up when a newer release is out; "updateCheck": false in config turns it off.

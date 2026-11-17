@@ -29,6 +29,8 @@ pub struct RunSpec {
     pub no_session: bool,
     /// The language the window was set to, for what the CLI says (`SASACODE_LANG`).
     pub lang: Option<String>,
+    /// Calls allowed without asking (`--allow`), as "always" allowed them in earlier runs.
+    pub allow: Vec<String>,
 }
 
 impl RunSpec {
@@ -53,6 +55,10 @@ impl RunSpec {
         opt("--thinking", &self.thinking);
         if self.no_session {
             args.push("--no-session".into());
+        }
+        for rule in &self.allow {
+            args.push("--allow".into());
+            args.push(rule.clone());
         }
         args
     }

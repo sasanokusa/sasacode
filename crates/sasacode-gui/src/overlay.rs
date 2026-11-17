@@ -44,6 +44,8 @@ pub enum Overlay {
     ConfirmAuto,
     /// A reply whose text is being chosen to quote, `App::quoting`.
     Quote,
+    /// The waiting call's arguments being edited, `App::editing_args`.
+    Args,
 }
 
 /// What a palette picks from.

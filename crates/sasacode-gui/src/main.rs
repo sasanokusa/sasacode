@@ -22,6 +22,7 @@ mod layout;
 mod list;
 mod outline;
 mod overlay;
+mod plugins;
 mod review;
 mod rows;
 mod runner;
