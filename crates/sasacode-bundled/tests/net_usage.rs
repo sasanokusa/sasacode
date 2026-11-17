@@ -8,7 +8,7 @@ use std::path::Path;
 use chrono::{Local, TimeZone};
 use serde_json::{Value, json};
 
-use sasacode_bundled::usage::{UsageRecord, by_day, day_key, days_ago, graph, plan_lines, read_records};
+use sasacode_bundled::usage::{UsageRecord, by_day, graph, plan_lines, read_records};
 use sasacode_plugin_api::Lang;
 use support_net::*;
 
@@ -232,6 +232,9 @@ fn history_days_are_calendar_days_the_day_the_clocks_go_forward_is_not_skipped()
         .unwrap_or_else(|| panic!("local"));
     assert_eq!(local.offset().local_minus_utc(), -4 * 3600, "TZ is not New York's here");
     let now = local.timestamp_millis(); // the day after DST began in the US
-    let keys: Vec<String> = [3, 2, 1, 0].iter().map(|n| day_key(days_ago(*n, now))).collect();
+    let keys: Vec<String> = [3, 2, 1, 0]
+        .iter()
+        .map(|n| sasacode_bundled::usage::day_key(sasacode_bundled::usage::days_ago(*n, now)))
+        .collect();
     assert_eq!(keys, ["2026-03-06", "2026-03-07", "2026-03-08", "2026-03-09"]);
 }
