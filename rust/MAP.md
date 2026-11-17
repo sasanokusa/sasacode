@@ -85,7 +85,7 @@ Contract requests from the units, as settled: `save_output_in` was not added (th
 process instead); `messages_generation` was replaced by compaction's prefix check; validate's JS helpers
 are public and repair re-exports them; `net_util` keeps its own `to_fixed` (sasacode-ai's stays private).
 
-## Open checks (block the TS removal)
+## Open checks
 
 - ~~Glob equivalence~~: done. `bun_glob_cases.json` holds Bun 1.4.4's answers for 2,303 pairs; all agree
   except Bun's `**/*` on paths ending in `/`, which a rule never sees (79b82b6).
