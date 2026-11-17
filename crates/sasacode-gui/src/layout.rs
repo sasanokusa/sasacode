@@ -177,6 +177,8 @@ pub struct More {
     /// Which conversations the list shows, and in which order.
     pub list_show: Show,
     pub list_order: Order,
+    /// The other folders sasacode was used in are listed under the conversations.
+    pub folders_open: bool,
     /// Conversations not written to for this many days are archived; none keeps them.
     pub archive_after: Option<u32>,
     /// Conversations taken back from the archive by hand, which are not archived again for age.
@@ -690,6 +692,7 @@ mod tests {
                 viewed: [("topic".to_owned(), ["a.rs#1".to_owned()].into())].into(),
                 list_show: Show::Unread,
                 list_order: Order::Created,
+                folders_open: true,
                 archive_after: Some(30),
                 kept: ["eeee".to_owned()].into(),
                 failed_only: true,

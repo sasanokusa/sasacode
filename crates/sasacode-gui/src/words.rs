@@ -429,6 +429,8 @@ words! {
     about_log_none: "まだ何もありません", "Nothing yet";
     about_copy: "まとめてコピー", "Copy all";
     about_open_home: "保存先を開く", "Open the folder";
+    other_folders: "ほかのフォルダ", "Other folders";
+    other_folders_tip: "そのフォルダの会話を、別のウィンドウで開きます", "Opens that folder's conversations in a window of its own";
     about_update_check: "更新を確かめる", "Check for updates";
     about_update_checking: "確かめています…", "Checking…";
     about_update_failed: "確かめられませんでした：{why}", "Could not check: {why}";

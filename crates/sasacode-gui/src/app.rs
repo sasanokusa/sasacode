@@ -256,6 +256,8 @@ pub struct App {
     /// What `sasacode update --check` said, once asked; none while it is asked.
     pub(crate) update_said: Option<Result<String, String>>,
     pub(crate) checking_update: bool,
+    /// The other folders sasacode was used in, the most recently used first.
+    pub(crate) others: Vec<PathBuf>,
     /// The next side question, as it is typed.
     pub(crate) side_typed: String,
     /// Conversations whose title the model is writing.
@@ -797,6 +799,10 @@ pub enum Msg {
     FindInClose,
     /// Another folder sasacode was used in, in a window of its own.
     OpenProject(PathBuf),
+    /// The other folders sasacode was used in, as read from its home.
+    Others(Vec<PathBuf>),
+    /// The other folders, listed under the conversations or not.
+    FoldFolders,
     /// A worktree made (and readied, or what failed readying it), or why not.
     WorktreeMade(Result<(PathBuf, Option<String>), String>),
     /// The worktrees made here, read for the list; one to remove, and how that went.
@@ -918,6 +924,7 @@ impl App {
         let git = app.refresh_git();
         let sweep = app.sweep();
         let listed = app.relist_cli();
+        let others = app.list_others();
         app.compact_at = crate::cli::compaction_point(app.home.as_deref(), &app.cwd);
         (
             app,
@@ -929,7 +936,23 @@ impl App {
                 git,
                 sweep,
                 listed,
+                others,
             ]),
+        )
+    }
+
+    /// Reads which other folders sasacode was used in, off the window's thread.
+    pub(crate) fn list_others(&self) -> Task<Msg> {
+        let Some(home) = self.home.clone() else {
+            return Task::none();
+        };
+        Task::perform(
+            async move {
+                tokio::task::spawn_blocking(move || crate::system::projects(&home))
+                    .await
+                    .unwrap_or_default()
+            },
+            Msg::Others,
         )
     }
 
@@ -1004,6 +1027,7 @@ impl App {
             gisting: false,
             update_said: None,
             checking_update: false,
+            others: Vec::new(),
             side_typed: String::new(),
             titling: Default::default(),
             back: Vec::new(),

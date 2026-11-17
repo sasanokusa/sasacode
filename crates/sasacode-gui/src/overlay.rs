@@ -425,6 +425,7 @@ impl App {
                 // Back in front: what another window said about conversations meanwhile is shown.
                 if on {
                     self.read_others();
+                    return Ok(self.list_others());
                 }
                 Task::none()
             }
@@ -496,6 +497,13 @@ impl App {
                 Task::none()
             }
             Msg::OpenProject(path) => self.new_window(path, None),
+            Msg::Others(mut found) => {
+                found.retain(|p| *p != self.cwd);
+                found.truncate(12);
+                self.others = found;
+                Task::none()
+            }
+            Msg::FoldFolders => self.set(|p| p.more.folders_open = !p.more.folders_open),
             Msg::FolderPicked(path) => match path.filter(|p| p.is_dir()) {
                 Some(path) if path != self.cwd => self.new_window(path, None),
                 _ => Task::none(),

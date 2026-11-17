@@ -130,6 +130,9 @@ pub fn sidebar(app: &App) -> El<'_> {
             .on_press(Msg::Command(crate::input::Command::Archived)),
         );
     }
+    if !app.others.is_empty() {
+        list = list.push(other_folders(app, folder_cells + 8));
+    }
     if shown == 0 {
         let none = if app.sessions.is_empty() {
             s.no_sessions
@@ -170,6 +173,71 @@ pub fn sidebar(app: &App) -> El<'_> {
     .padding(10)
     .style(t.fill(t.surface))
     .into()
+}
+
+/// The other folders sasacode was used in, folded or not: each opens in a window of its own, with
+/// its conversations listed there.
+fn other_folders(app: &App, cells: usize) -> El<'_> {
+    let (t, w) = (app.t, app.s.w());
+    let open = app.prefs.more.folders_open;
+    let mut head = row![
+        icon(if open { Icon::ChevronDown } else { Icon::ChevronRight }, 11.0, t.fg_3),
+        text(w.other_folders)
+            .size(11.5)
+            .color(t.fg_3)
+            .wrapping(text::Wrapping::None),
+    ]
+    .spacing(4)
+    .align_y(Alignment::Center);
+    if !open {
+        head = head.push(text(format!("({})", app.others.len())).size(11).color(t.fg_3));
+    }
+    let mut col = column![
+        button(head)
+            .width(Length::Fill)
+            .padding(iced::Padding {
+                top: 10.0,
+                left: 8.0,
+                bottom: 2.0,
+                right: 8.0,
+            })
+            .style(t.ghost(t.fg_3, false))
+            .on_press(Msg::FoldFolders)
+    ]
+    .spacing(1);
+    if !open {
+        return col.into();
+    }
+    for folder in &app.others {
+        let name = folder
+            .file_name()
+            .map_or_else(|| folder.display().to_string(), |n| n.to_string_lossy().into_owned());
+        let parent = folder.parent().map(|p| p.display().to_string()).unwrap_or_default();
+        let line = row![
+            icon(Icon::Folder, 12.0, t.fg_3),
+            text(clip(&name, cells / 2 + 4))
+                .size(12.5)
+                .color(t.fg_2)
+                .wrapping(text::Wrapping::None),
+            text(clip(&parent, cells / 2))
+                .size(11)
+                .color(t.fg_3)
+                .wrapping(text::Wrapping::None),
+        ]
+        .spacing(6)
+        .align_y(Alignment::Center);
+        col = col.push(tip(
+            t,
+            button(line)
+                .width(Length::Fill)
+                .padding([4, 10])
+                .style(t.ghost(t.fg_2, false))
+                .on_press(Msg::OpenProject(folder.clone())),
+            format!("{}\n{}", folder.display(), w.other_folders_tip),
+            iced::widget::tooltip::Position::Right,
+        ));
+    }
+    col.into()
 }
 
 /// Which conversations are listed, and in which order.

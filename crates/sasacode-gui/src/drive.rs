@@ -2497,6 +2497,27 @@ fn the_about_screen_says_the_versions_and_what_the_runs_wrote_and_a_warning_is_s
     );
 }
 
+/// The other folders sasacode was used in are listed under the conversations, this one left out,
+/// folded until asked and kept so; each opens in a window of its own.
+#[test]
+fn the_other_folders_are_listed_under_the_conversations_and_open_in_their_own_window() {
+    let mut app = window("ja");
+    assert!(!says(&app, "ほかのフォルダ"), "none read yet, none listed");
+    let _ = app.update(Msg::Others(vec![
+        app.cwd.clone(),
+        "/Users/me/src/billing-web".into(),
+        "/Users/me/work/infra".into(),
+    ]));
+    assert_eq!(app.others.len(), 2);
+    assert!(says(&app, "ほかのフォルダ") && says(&app, "(2)"));
+    assert!(!says(&app, "billing-web"));
+    let _ = app.update(Msg::FoldFolders);
+    assert!(app.prefs.more.folders_open);
+    assert!(says(&app, "billing-web") && says(&app, "/Users/me/src") && says(&app, "infra"));
+    let _ = app.update(Msg::FoldFolders);
+    assert!(!says(&app, "billing-web"));
+}
+
 /// "Check for updates" asks the CLI on a click and says its line; a check not made says why.
 #[test]
 fn updates_are_checked_on_a_click_and_what_the_cli_said_is_shown() {
