@@ -429,6 +429,10 @@ words! {
     about_log_none: "まだ何もありません", "Nothing yet";
     about_copy: "まとめてコピー", "Copy all";
     about_open_home: "保存先を開く", "Open the folder";
+    about_update_check: "更新を確かめる", "Check for updates";
+    about_update_checking: "確かめています…", "Checking…";
+    about_update_failed: "確かめられませんでした：{why}", "Could not check: {why}";
+    about_update_hint: "新しい版は、ターミナルで「sasacode update」を実行すると入ります（npmで入れたときは「npm install -g sasacode@latest」）", "A newer version goes in with `sasacode update` in a terminal (`npm install -g sasacode@latest` when npm installed it)";
     about_old: "CLIが古いため、バージョンがわかりません", "The CLI is too old to say its version";
     review_ask: "レビューを頼む", "Ask for a review";
     review_prompt: "まだコミットしていない変更（git statusとgit diffで見られます）をレビューしてください。バグ、扱いの抜け、足りないテストを、重いものから順に、ファイルと行を添えて挙げてください。直すのは、私が頼むまで待ってください。", "Review the uncommitted changes (see git status and git diff). List bugs, unhandled cases and missing tests, most serious first, each with its file and line. Wait for me before fixing anything.";

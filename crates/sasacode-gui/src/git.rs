@@ -166,6 +166,28 @@ fn run_within(cwd: &Path, program: &str, args: &[&str], wait: Option<Duration>) 
     exec(cwd, program, args, wait, None).map(|out| out.trim().to_owned())
 }
 
+/// `sasacode update --check`: the line the CLI says about its newest release, in `lang`. Nothing
+/// is downloaded.
+pub fn update_check(cwd: &Path, program: &str, lang: Option<&str>) -> Result<String, String> {
+    let envs: Vec<(&str, &str)> = lang.map(|l| ("SASACODE_LANG", l)).into_iter().collect();
+    exec_with(
+        cwd,
+        program,
+        &["update", "--check"],
+        Some(Duration::from_secs(30)),
+        None,
+        &envs,
+    )
+    .map(|out| out.trim().lines().last().unwrap_or_default().to_owned())
+    .map_err(|e| {
+        e.lines()
+            .map(str::trim)
+            .find(|l| !l.is_empty())
+            .unwrap_or_default()
+            .to_owned()
+    })
+}
+
 /// Runs `program` as [`run_within`] does, with `input` to read if given, and says what it wrote
 /// as it wrote it: a diff's last line of context may be a blank line's one space.
 fn exec(
@@ -175,10 +197,23 @@ fn exec(
     wait: Option<Duration>,
     input: Option<&str>,
 ) -> Result<String, String> {
+    exec_with(cwd, program, args, wait, input, &[])
+}
+
+/// [`exec`], with `envs` set for `program`.
+fn exec_with(
+    cwd: &Path,
+    program: &str,
+    args: &[&str],
+    wait: Option<Duration>,
+    input: Option<&str>,
+    envs: &[(&str, &str)],
+) -> Result<String, String> {
     use std::io::{Read, Write};
     let mut child = Command::new(program)
         .args(args)
         .current_dir(cwd)
+        .envs(envs.iter().copied())
         .env("GIT_TERMINAL_PROMPT", "0")
         .env("GH_PROMPT_DISABLED", "1")
         .stdin(if input.is_some() { Stdio::piped() } else { Stdio::null() })

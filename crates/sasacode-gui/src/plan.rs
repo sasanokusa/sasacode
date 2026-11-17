@@ -3,6 +3,10 @@
 //! prompt says to end with a plan, and the window denies each write and edit it asks for. Commands
 //! are put to the user as under `ask`: one may be a search, or may change something. Once a plan
 //! is written, the window offers to go ahead with it in the mode chosen before.
+//!
+//! What it cannot stop: the CLI looks at the allow rules of its config files before the mode, so a
+//! call one of them allows (`permissions.allow` with `edit(src/**)`, say) runs unasked here too;
+//! and the CLI has no flag to deny one.
 
 use std::path::{Path, PathBuf};
 

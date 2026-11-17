@@ -2497,6 +2497,25 @@ fn the_about_screen_says_the_versions_and_what_the_runs_wrote_and_a_warning_is_s
     );
 }
 
+/// "Check for updates" asks the CLI on a click and says its line; a check not made says why.
+#[test]
+fn updates_are_checked_on_a_click_and_what_the_cli_said_is_shown() {
+    let mut app = window("ja");
+    let _ = app.update(Msg::Show(Some(crate::app::Overlay::About)));
+    assert!(says(&app, "更新を確かめる"));
+    let _ = app.update(Msg::CheckUpdate);
+    assert!(app.checking_update && says(&app, "確かめています…"));
+    let _ = app.update(Msg::UpdateChecked(Ok(
+        "newer version available: v0.9.0 (this is 0.8.0)".into(),
+    )));
+    assert!(!app.checking_update);
+    assert!(says(&app, "newer version available: v0.9.0 (this is 0.8.0)"));
+    assert!(says(&app, crate::words::JA.about_update_hint));
+    let _ = app.update(Msg::CheckUpdate);
+    let _ = app.update(Msg::UpdateChecked(Err("sasacode: unknown command update".into())));
+    assert!(says(&app, "確かめられませんでした：sasacode: unknown command update"));
+}
+
 #[test]
 fn a_review_is_asked_for_in_the_input_and_the_instruction_files_open_from_the_extensions() {
     let mut app = window("ja");

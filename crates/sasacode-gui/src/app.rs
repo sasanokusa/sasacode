@@ -253,6 +253,9 @@ pub struct App {
     pub(crate) auto_form: crate::automations::Form,
     /// A gist is being made.
     pub(crate) gisting: bool,
+    /// What `sasacode update --check` said, once asked; none while it is asked.
+    pub(crate) update_said: Option<Result<String, String>>,
+    pub(crate) checking_update: bool,
     /// The next side question, as it is typed.
     pub(crate) side_typed: String,
     /// Conversations whose title the model is writing.
@@ -754,6 +757,9 @@ pub enum Msg {
     OpenInstructions(PathBuf),
     /// The sasacode home folder, shown in the file manager.
     OpenHome,
+    /// "Check for updates" on the about screen: `sasacode update --check`, and what it said.
+    CheckUpdate,
+    UpdateChecked(Result<String, String>),
     /// To the conversation left, and forward again.
     Back,
     Forward,
@@ -996,6 +1002,8 @@ impl App {
             before_plan: None,
             auto_form: crate::automations::Form::default(),
             gisting: false,
+            update_said: None,
+            checking_update: false,
             side_typed: String::new(),
             titling: Default::default(),
             back: Vec::new(),

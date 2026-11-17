@@ -86,6 +86,28 @@ impl App {
                 }
                 Task::none()
             }
+            Msg::CheckUpdate => {
+                if self.checking_update {
+                    return Ok(Task::none());
+                }
+                self.checking_update = true;
+                self.update_said = None;
+                let (cwd, program) = (self.cwd.clone(), self.program.to_string_lossy().into_owned());
+                let lang = self.prefs.more.lang.clone();
+                Task::perform(
+                    async move {
+                        tokio::task::spawn_blocking(move || crate::git::update_check(&cwd, &program, lang.as_deref()))
+                            .await
+                            .unwrap_or_else(|e| Err(e.to_string()))
+                    },
+                    Msg::UpdateChecked,
+                )
+            }
+            Msg::UpdateChecked(said) => {
+                self.checking_update = false;
+                self.update_said = Some(said);
+                Task::none()
+            }
             other => return self.update_compare(other),
         };
         Ok(task)
@@ -95,6 +117,30 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The check runs `update --check` in the window's language and says the CLI's last line.
+    #[cfg(unix)]
+    #[test]
+    fn the_update_check_asks_the_cli_in_the_windows_language() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("sasacode-update-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let cli = dir.join("sasacode");
+        std::fs::write(
+            &cli,
+            "#!/bin/sh\n[ \"$1 $2\" = \"update --check\" ] || exit 3\necho \"lang=$SASACODE_LANG\"\necho 'sasacode is up to date (0.8.0)'\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&cli, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let said = crate::git::update_check(&dir, cli.to_str().unwrap(), Some("ja"));
+        assert_eq!(said.as_deref(), Ok("sasacode is up to date (0.8.0)"));
+        std::fs::write(&cli, "#!/bin/sh\necho \"lang=$SASACODE_LANG\"\n").unwrap();
+        assert_eq!(
+            crate::git::update_check(&dir, cli.to_str().unwrap(), Some("ja")).as_deref(),
+            Ok("lang=ja")
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     #[test]
     fn the_instruction_files_go_from_the_global_one_to_the_repositorys_top_down_to_the_folder() {

@@ -742,6 +742,41 @@ fn about(app: &App) -> El<'_> {
         ),
     ]
     .spacing(4);
+    // Asked on a click only: the check asks the release server.
+    let check = button(
+        text(if app.checking_update {
+            w.about_update_checking
+        } else {
+            w.about_update_check
+        })
+        .size(12.5),
+    )
+    .padding([5, 12])
+    .style(t.outline(t.fg))
+    .on_press_maybe((!app.checking_update).then_some(Msg::CheckUpdate));
+    let mut update = row![check].spacing(10).align_y(iced::Alignment::Center);
+    match &app.update_said {
+        Some(Ok(said)) => {
+            update = update.push(
+                column![
+                    text(said.clone()).size(12.5).color(t.fg),
+                    text(w.about_update_hint).size(11.5).color(t.fg_3),
+                ]
+                .spacing(2)
+                .width(Length::Fill),
+            );
+        }
+        Some(Err(why)) => {
+            update = update.push(
+                text(crate::i18n::fill(w.about_update_failed, "why", why))
+                    .size(12.5)
+                    .color(t.err)
+                    .width(Length::Fill),
+            );
+        }
+        None => {}
+    }
+    let info = column![info, update].spacing(10);
     let log: El<'_> = if app.log.is_empty() {
         text(w.about_log_none).size(12).color(t.fg_3).into()
     } else {
