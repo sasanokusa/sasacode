@@ -72,6 +72,19 @@ pub struct ToolCall {
     pub raw_input: Option<String>,
 }
 
+impl ToolCall {
+    /// The call as the TS wrote it on its own (events, logs): the content block, `type` first.
+    pub fn tagged(&self) -> serde_json::Value {
+        serde_json::to_value(AssistantContent::ToolCall(self.clone())).unwrap_or(serde_json::Value::Null)
+    }
+}
+
+/// `#[serde(serialize_with = "tagged_call")]`: a [`ToolCall`] field written with its `type`.
+pub fn tagged_call<S: serde::Serializer>(c: &ToolCall, s: S) -> Result<S::Ok, S::Error> {
+    use serde::Serialize;
+    AssistantContent::ToolCall(c.clone()).serialize(s)
+}
+
 /// Content of user and tool-result messages.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]

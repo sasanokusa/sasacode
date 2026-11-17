@@ -10,13 +10,11 @@ pub mod tool;
 pub mod validate;
 
 pub use api::*;
-pub use hooks::{
-    hook, Decision, DeltaKind, Hook, HookContext, HookName, HookRunner, PermissionMode, SessionEndReason, Spend,
-    SpendSource, StopCause, Stopped, Verdict, VerdictSource,
-};
+pub use hooks::*;
 pub use host::*;
 pub use sasacode_ai::{
     AssistantContent, AssistantMessage, JsonObject, Message, ModelInfo, Provider, ProviderConfig, SamplingOptions,
     StopReason, ToolCall, UserContent,
 };
 pub use tool::*;
+pub use validate::validate;

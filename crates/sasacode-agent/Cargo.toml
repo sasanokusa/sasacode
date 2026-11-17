@@ -24,3 +24,7 @@ globset.workspace = true
 regex.workspace = true
 unicode-normalization.workspace = true
 dirs.workspace = true
+indexmap.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

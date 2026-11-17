@@ -250,7 +250,8 @@ pub trait HostServices: Send + Sync {
     -> anyhow::Result<()>;
     /// Background startup work: headless waits for it before the first request.
     fn ready(&self, work: BoxFuture<'static, ()>);
-    fn add_permission_rules(&self, rules: PermissionRules);
+    /// Errs on a rule that does not parse.
+    fn add_permission_rules(&self, rules: PermissionRules) -> anyhow::Result<()>;
     fn permission_mode(&self) -> PermissionMode;
 
     // ui
@@ -268,10 +269,11 @@ pub trait HostServices: Send + Sync {
 
     // session
     fn session_id(&self) -> Option<String>;
-    fn session_append(&self, plugin: &str, kind: &str, data: Value);
+    /// Errs when the log cannot be written.
+    fn session_append(&self, plugin: &str, kind: &str, data: Value) -> anyhow::Result<()>;
     fn session_entries(&self, plugin: &str, kind: &str) -> Vec<Value>;
     fn messages(&self) -> Vec<Message>;
-    fn replace_messages(&self, messages: Vec<Message>);
+    fn replace_messages(&self, messages: Vec<Message>) -> anyhow::Result<()>;
     fn inject(&self, content: Vec<UserContent>, when: InjectWhen);
 
     // agent
@@ -353,8 +355,8 @@ impl PluginApi {
     pub fn ready(&self, work: impl std::future::Future<Output = ()> + Send + 'static) {
         self.host.ready(Box::pin(work));
     }
-    pub fn add_permission_rules(&self, rules: PermissionRules) {
-        self.host.add_permission_rules(rules);
+    pub fn add_permission_rules(&self, rules: PermissionRules) -> anyhow::Result<()> {
+        self.host.add_permission_rules(rules)
     }
     pub fn ui(&self) -> Ui<'_> {
         Ui { api: self }
@@ -432,8 +434,8 @@ impl Session<'_> {
         self.api.host.session_id()
     }
     /// Persist plugin state in the session log (FR-S03).
-    pub fn append(&self, kind: &str, data: Value) {
-        self.api.host.session_append(&self.api.name, kind, data);
+    pub fn append(&self, kind: &str, data: Value) -> anyhow::Result<()> {
+        self.api.host.session_append(&self.api.name, kind, data)
     }
     /// Entries this plugin appended under `kind`, oldest first, including restored ones.
     pub fn entries(&self, kind: &str) -> Vec<Value> {
@@ -443,8 +445,8 @@ impl Session<'_> {
         self.api.host.messages()
     }
     /// Replace the conversation (e.g. after compaction). Persisted.
-    pub fn replace_messages(&self, messages: Vec<Message>) {
-        self.api.host.replace_messages(messages);
+    pub fn replace_messages(&self, messages: Vec<Message>) -> anyhow::Result<()> {
+        self.api.host.replace_messages(messages)
     }
     pub fn inject(&self, content: Vec<UserContent>, when: InjectWhen) {
         self.api.host.inject(content, when);

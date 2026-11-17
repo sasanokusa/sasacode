@@ -2,6 +2,7 @@
 
 pub mod agent;
 pub mod events;
+pub mod paths;
 pub mod permission;
 pub mod plugins;
 pub mod session;

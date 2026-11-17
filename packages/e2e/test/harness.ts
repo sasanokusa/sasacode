@@ -7,6 +7,12 @@ import { join, resolve } from "node:path";
 const MAIN = resolve(import.meta.dir, "../../cli/src/main.ts");
 // An empty bunfig, not /dev/null: Bun cannot open /dev/null (or NUL) on Windows.
 const NO_BUNFIG = resolve(import.meta.dir, "../../../scripts/no-bunfig.toml");
+// SASACODE_E2E_BIN runs the suite against another build of sasacode (the Rust binary) instead of
+// main.ts under Bun: a path, or a command on the PATH. A relative path is taken from the directory
+// the tests were started in, since each run's cwd is its throwaway project.
+const E2E_BIN = process.env.SASACODE_E2E_BIN;
+const BIN = E2E_BIN && /[\\/]/.test(E2E_BIN) ? resolve(E2E_BIN) : E2E_BIN;
+const command = (args: string[]) => (BIN ? [BIN, ...args] : [process.execPath, "--no-env-file", `--config=${NO_BUNFIG}`, MAIN, ...args]);
 
 /** A sasacode child process that keeps running: read its stdout line by line, write to its stdin. */
 export interface Live {
@@ -44,7 +50,7 @@ export function sandbox(config: Record<string, unknown>): Sandbox {
   writeFileSync(join(home, ".env"), ""); // no keys from the developer's machine
 
   const spawn = (args: string[], stdin: "ignore" | "pipe" | Uint8Array, extraEnv?: Record<string, string>) =>
-    Bun.spawn([process.execPath, "--no-env-file", `--config=${NO_BUNFIG}`, MAIN, ...args], {
+    Bun.spawn(command(args), {
       cwd: project,
       env: { PATH: process.env.PATH ?? "", HOME: root, USERPROFILE: root, SASACODE_HOME: home, SASACODE_LANG: "en", NO_COLOR: "1", ...extraEnv },
       stdin,
