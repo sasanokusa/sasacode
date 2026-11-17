@@ -2191,3 +2191,48 @@ fn a_picture_a_reply_names_is_shown_and_opens_larger() {
     assert!(app.image_actual && says(&app, w.image_fit));
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn a_side_question_can_be_followed_by_another_and_brought_into_the_input() {
+    use crate::runner::RunUpdate;
+    let mut app = window("ja");
+    let _ = app.side_question("この関数は何をする？".into());
+    let side = crate::app::SIDE;
+    let _ = app.update(Msg::Run(side, RunUpdate::Exited(Some(0))));
+    let _ = app.update(Msg::SideType("テストはある？".into()));
+    let _ = app.update(Msg::SideAsk);
+    let aside = app.aside.as_ref().expect("the side chat is kept");
+    let prompts: Vec<&str> = aside.transcript.exchanges.iter().map(|e| e.prompt.as_str()).collect();
+    assert_eq!(prompts, ["この関数は何をする？", "テストはある？"]);
+    assert!(app.side_typed.is_empty() && aside.running());
+    assert!(says(&app, "この関数は何をする？") && says(&app, crate::words::JA.side_bring));
+    let _ = app.update(Msg::Run(side, RunUpdate::Exited(Some(0))));
+    let _ = app.update(Msg::SideBring);
+    assert!(app.aside.is_none() && app.overlay.is_none());
+    let typed = app.chat.editor.text();
+    assert!(
+        typed.contains("> この関数は何をする？") && typed.contains("> テストはある？"),
+        "{typed}"
+    );
+}
+
+#[test]
+fn a_title_the_model_writes_names_a_conversation_the_user_did_not() {
+    let mut app = window("ja");
+    let id = app.sessions[0].id.clone();
+    app.prefs.names.remove(&id);
+    // Off unless the settings say so.
+    let _ = app.write_title(&id, false);
+    assert!(app.titling.is_empty());
+    app.prefs.more.auto_title = true;
+    let _ = app.update(Msg::Titled(id.clone(), false, Ok("「再試行の設計」\n".into())));
+    assert_eq!(app.prefs.names[&id], "再試行の設計");
+    // One the user gave stays, unless they ask for the model's.
+    app.prefs.names.insert(id.clone(), "自分の名前".into());
+    let _ = app.update(Msg::Titled(id.clone(), false, Ok("別の題".into())));
+    assert_eq!(app.prefs.names[&id], "自分の名前");
+    let _ = app.update(Msg::Titled(id.clone(), true, Ok("別の題".into())));
+    assert_eq!(app.prefs.names[&id], "別の題");
+    let _ = app.update(Msg::OpenMenu(crate::rows::MenuFor::Row(id)));
+    assert!(says(&app, crate::words::JA.title_write));
+}

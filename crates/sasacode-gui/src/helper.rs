@@ -42,7 +42,7 @@ pub struct PrDraft {
 }
 
 /// The start of `text`, at most `max` bytes, cut at a line; said to be cut if it is.
-fn head(text: &str, max: usize) -> String {
+pub(crate) fn head(text: &str, max: usize) -> String {
     if text.len() <= max {
         return text.to_owned();
     }
@@ -55,7 +55,7 @@ fn head(text: &str, max: usize) -> String {
 }
 
 /// The answer as it is meant: the fence a model may put around it taken off.
-fn clean(answer: &str) -> String {
+pub(crate) fn clean(answer: &str) -> String {
     let answer = answer.trim();
     let inner = answer
         .strip_prefix("```")
@@ -77,7 +77,7 @@ fn title_and_body(answer: &str) -> (String, String) {
 }
 
 /// Asks `sasacode` once: `instruction` as the prompt, `context` piped in after it.
-async fn ask(
+pub(crate) async fn ask(
     program: PathBuf,
     cwd: PathBuf,
     model: Option<String>,
@@ -122,7 +122,7 @@ async fn ask(
 }
 
 impl App {
-    fn language(&self) -> &'static str {
+    pub(crate) fn language(&self) -> &'static str {
         if self.s.ja { "Japanese" } else { "English" }
     }
 

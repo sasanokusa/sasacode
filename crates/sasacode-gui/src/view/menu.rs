@@ -84,6 +84,12 @@ fn row_items(app: &App, id: &str) -> Vec<Item> {
         false,
     )));
     items.push(Some((
+        Icon::Spark,
+        w.title_write.to_owned(),
+        Msg::WriteTitle(id.to_owned()),
+        false,
+    )));
+    items.push(Some((
         Icon::Tag,
         w.c_group.to_owned(),
         Msg::Group(id.to_owned()),

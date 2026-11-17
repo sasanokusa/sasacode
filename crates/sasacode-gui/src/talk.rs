@@ -273,3 +273,82 @@ mod tests {
         assert_eq!((r.as_str(), range.start), ("src/日本.py:3", 7));
     }
 }
+
+impl App {
+    /// A title for conversation `id`, written by the model from how it began. `asked`: the user
+    /// asked for it, and it replaces the name it has; otherwise only one with no name gets one,
+    /// and only when the settings say so.
+    pub(crate) fn write_title(&mut self, id: &str, asked: bool) -> Task<Msg> {
+        if self.titling.contains(id) || (!asked && (!self.prefs.more.auto_title || self.prefs.names.contains_key(id))) {
+            return Task::none();
+        }
+        let begun = match self.chat_of(id).and_then(|c| c.transcript.exchanges.first()) {
+            Some(ex) => (ex.prompt.clone(), ex.answer_text()),
+            None => {
+                let Some(log) = self.sessions.iter().find(|s| s.id == id).map(|s| s.path.clone()) else {
+                    return Task::none();
+                };
+                let Ok(entries) = sasacode_protocol::read_entries(&log) else {
+                    return Task::none();
+                };
+                let t = crate::transcript::Transcript::from_entries(&entries);
+                match t.exchanges.iter().find(|e| !e.prompt.is_empty()) {
+                    Some(ex) => (ex.prompt.clone(), ex.answer_text()),
+                    None => return Task::none(),
+                }
+            }
+        };
+        if begun.0.trim().is_empty() {
+            return Task::none();
+        }
+        self.titling.insert(id.to_owned());
+        let (program, cwd) = (self.program.clone(), self.cwd.clone());
+        let model = Some(self.model.trim().to_owned()).filter(|m| !m.is_empty());
+        let instruction = format!(
+            "Below is how a conversation between a user and a coding agent began. Write a title for it: what \
+             it is about, at most 40 characters, in {}. Reply with the title only, without quotes. Do not use \
+             any tools.",
+            self.language()
+        );
+        let context = format!(
+            "The user said:\n{}\n\nThe agent answered:\n{}",
+            crate::helper::head(&begun.0, 2048),
+            crate::helper::head(&begun.1, 2048)
+        );
+        let id = id.to_owned();
+        Task::perform(
+            async move { crate::helper::ask(program, cwd, model, instruction, context).await },
+            move |answer| Msg::Titled(id.clone(), asked, answer),
+        )
+    }
+
+    /// The model's title for a conversation, if it is still wanted.
+    pub(crate) fn titled(&mut self, id: String, asked: bool, answer: Result<String, String>) -> Task<Msg> {
+        self.titling.remove(&id);
+        let title = match answer {
+            Ok(answer) => crate::helper::clean(&answer)
+                .lines()
+                .next()
+                .unwrap_or_default()
+                .trim()
+                .trim_matches(|c| c == '"' || c == '「' || c == '」' || c == '#')
+                .trim()
+                .chars()
+                .take(60)
+                .collect::<String>(),
+            Err(error) => {
+                if asked {
+                    self.toast = Some(fill(self.s.w().draft_failed, "error", error));
+                }
+                return Task::none();
+            }
+        };
+        // Named meanwhile by the user: theirs stays.
+        if title.is_empty() || (!asked && self.prefs.names.contains_key(&id)) {
+            return Task::none();
+        }
+        self.set(|p| {
+            p.names.insert(id, title);
+        })
+    }
+}

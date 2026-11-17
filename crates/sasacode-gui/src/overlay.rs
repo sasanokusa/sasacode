@@ -593,11 +593,31 @@ impl App {
     /// Asks the side question: the conversation so far is read, nothing is written to it, and its
     /// tools are not let do anything that asks first.
     pub(crate) fn side_question(&mut self, question: String) -> Task<Msg> {
-        let mut side = Chat::new(SIDE);
-        side.session = self.chat.session.clone();
-        self.aside = Some(side);
+        // A question after others: the run reads the conversation again, not the side questions,
+        // so they go with it.
+        let earlier = self
+            .aside
+            .as_ref()
+            .filter(|a| !a.running() && self.overlay == Some(Overlay::Side))
+            .map(|a| side_context(a))
+            .filter(|c| !c.is_empty());
+        if earlier.is_none() {
+            let mut side = Chat::new(SIDE);
+            side.session = self.chat.session.clone();
+            self.aside = Some(side);
+        }
         self.overlay = Some(Overlay::Side);
-        self.start(SIDE, question)
+        self.side_typed.clear();
+        let prompt = match &earlier {
+            Some(context) => format!("{context}\n\n{question}"),
+            None => question.clone(),
+        };
+        let task = self.start(SIDE, prompt);
+        // Shown as it was asked.
+        if let Some(ex) = self.aside.as_mut().and_then(|a| a.transcript.exchanges.last_mut()) {
+            ex.prompt = question;
+        }
+        task
     }
 
     /// A git worktree of this folder's repository on a branch of its own, opened in a new window.
@@ -631,6 +651,24 @@ impl App {
             None => Task::done(Msg::NewWindow(cwd.clone(), session.clone(), None)),
         })
     }
+}
+
+/// The side questions asked so far and their answers, for the next one to read.
+fn side_context(aside: &Chat) -> String {
+    let said: Vec<String> = aside
+        .transcript
+        .exchanges
+        .iter()
+        .filter(|ex| !ex.prompt.is_empty())
+        .map(|ex| format!("Q: {}\nA: {}", ex.prompt.trim(), ex.answer_text()))
+        .collect();
+    if said.is_empty() {
+        return String::new();
+    }
+    format!(
+        "[Earlier side questions about this conversation, and your answers]\n\n{}\n\n[The next side question]",
+        said.join("\n\n")
+    )
 }
 
 /// How far below and to the right of the window a window it opens is put.

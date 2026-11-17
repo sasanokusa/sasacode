@@ -296,6 +296,11 @@ words! {
     image_actual: "等倍で見る", "Actual size";
     image_fit: "窓に合わせる", "Fit";
     image_open: "ほかのアプリで開く", "Open in another app";
+    side_more: "続けて聞く", "Ask more";
+    side_send: "聞く", "Ask";
+    side_bring: "このやり取りを入力欄に引用する", "Quote this in the input";
+    title_write: "モデルに題名を付けさせる", "Have the model title it";
+    set_auto_title: "名前のない会話に、モデルが題名を付ける（最初の実行のあと）", "The model titles unnamed conversations (after their first run)";
 }
 
 #[cfg(test)]

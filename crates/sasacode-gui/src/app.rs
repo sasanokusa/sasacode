@@ -225,6 +225,10 @@ pub struct App {
     pub(crate) compact_at: Option<f64>,
     /// The picture shown larger is at its own size, not fitted.
     pub(crate) image_actual: bool,
+    /// The next side question, as it is typed.
+    pub(crate) side_typed: String,
+    /// Conversations whose title the model is writing.
+    pub(crate) titling: std::collections::BTreeSet<String>,
     /// Conversations whose notice that the branch changed was put away.
     pub(crate) branch_seen: HashSet<String>,
     /// That search's field was the last to take the keyboard: an Esc there puts it away.
@@ -628,6 +632,15 @@ pub enum Msg {
     /// A picture shown larger, and at its own size or to fit.
     ViewImage(PathBuf),
     ImageActual(bool),
+    /// The next side question typed, asked; and the side questions and answers put in the input
+    /// as a quote, for the conversation.
+    SideType(String),
+    SideAsk,
+    SideBring,
+    /// A title for a conversation written by the model: asked for, and come back.
+    WriteTitle(String),
+    Titled(String, bool, Result<String, String>),
+    SetAutoTitle(bool),
     /// What the CLI listed (part of it), asked again, and the folder trusted: for good, as the
     /// CLI asks, or for this window's runs.
     Listed(Box<crate::cli::Listing>),
@@ -839,6 +852,8 @@ impl App {
             trust_once: false,
             compact_at: None,
             image_actual: false,
+            side_typed: String::new(),
+            titling: Default::default(),
             branch_seen: HashSet::new(),
             find_held: false,
             show_archived: false,
@@ -2103,6 +2118,12 @@ impl App {
             tasks.push(self.start(key, prompt));
         } else if ended_now {
             tasks.push(self.guess_next(key));
+            // A conversation's first run ended: it may get a title of the model's.
+            if key != SIDE
+                && let Some(id) = self.chat_mut(key).and_then(|c| c.session.clone())
+            {
+                tasks.push(self.write_title(&id, false));
+            }
         }
         if attention && !again {
             // The run waits for the user or ended: say so even when the window is behind others

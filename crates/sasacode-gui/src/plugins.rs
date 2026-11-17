@@ -123,6 +123,52 @@ impl App {
                 self.overlay = Some(Overlay::Image(path));
                 Task::none()
             }
+            Msg::WriteTitle(id) => self.write_title(&id, true),
+            Msg::Titled(id, asked, answer) => self.titled(id, asked, answer),
+            Msg::SetAutoTitle(on) => self.set(|p| p.more.auto_title = on),
+            Msg::SideType(typed) => {
+                self.side_typed = typed;
+                Task::none()
+            }
+            Msg::SideAsk => {
+                let question = self.side_typed.trim().to_owned();
+                if question.is_empty() || self.aside.as_ref().is_some_and(|a| a.running()) {
+                    return Ok(Task::none());
+                }
+                self.side_question(question)
+            }
+            Msg::SideBring => {
+                let Some(aside) = &self.aside else {
+                    return Ok(Task::none());
+                };
+                let quoted: String = aside
+                    .transcript
+                    .exchanges
+                    .iter()
+                    .filter(|ex| !ex.prompt.is_empty())
+                    .map(|ex| format!("{}\n\n{}", ex.prompt.trim(), ex.answer_text()))
+                    .collect::<Vec<_>>()
+                    .join("\n\n")
+                    .lines()
+                    .map(|l| {
+                        if l.is_empty() {
+                            ">\n".to_owned()
+                        } else {
+                            format!("> {l}\n")
+                        }
+                    })
+                    .collect();
+                let typed = self.chat.editor.text();
+                let typed = typed.trim_end();
+                self.set_input(&if typed.is_empty() {
+                    format!("{quoted}\n")
+                } else {
+                    format!("{typed}\n\n{quoted}\n")
+                });
+                self.aside = None;
+                self.overlay = None;
+                operation::focus(crate::app::INPUT)
+            }
             Msg::ImageActual(actual) => {
                 self.image_actual = actual;
                 Task::none()

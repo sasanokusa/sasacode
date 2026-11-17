@@ -432,6 +432,20 @@ impl Exchange {
             .filter_map(|t| t.change.as_ref().map(|c| (t, c)))
     }
 
+    /// All the model wrote in the exchange, its texts one after another.
+    pub fn answer_text(&self) -> String {
+        let texts: Vec<&str> = self
+            .steps
+            .iter()
+            .filter_map(|s| match s {
+                Step::Text(md) => Some(md.raw.trim()),
+                _ => None,
+            })
+            .filter(|t| !t.is_empty())
+            .collect();
+        texts.join("\n\n")
+    }
+
     /// The step that is the reply to the prompt: the text the exchange ends with.
     pub fn answer(&self) -> Option<usize> {
         match self.steps.last() {

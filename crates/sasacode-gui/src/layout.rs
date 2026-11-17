@@ -191,6 +191,8 @@ pub struct More {
     /// What "always" allowed in each conversation, by its id: rules every later run of it is
     /// given (`--allow`).
     pub allowed: BTreeMap<String, Vec<String>>,
+    /// A conversation the user has not named gets a title the model writes, after its first run.
+    pub auto_title: bool,
 }
 
 impl More {
@@ -656,6 +658,7 @@ mod tests {
                 hide_thinking: true,
                 queue: true,
                 allowed: BTreeMap::from([("s1".into(), vec!["bash(npm test)".into()])]),
+                auto_title: true,
             },
         };
         write(&file, &Layout::default(), &prefs).unwrap();

@@ -403,6 +403,7 @@ fn settings(app: &App) -> El<'_> {
         }),
         switch(s.w().set_auto_archive, p.auto_archive, Msg::SetAutoArchive),
         switch(s.w().set_suggest, p.suggest, Msg::SetSuggest),
+        switch(s.w().set_auto_title, p.more.auto_title, Msg::SetAutoTitle),
         idle,
         width,
         lang,
@@ -880,40 +881,44 @@ fn confirm_auto(app: &App) -> El<'_> {
     ask(app, w.auto_title, w.auto_body.to_owned(), w.auto_yes, Msg::AutoAgree)
 }
 
-/// The side question, and its answer as it comes.
+/// The side questions, and their answers as they come; another can follow, and all of it can be
+/// put in the input for the conversation.
 fn side(app: &App) -> El<'_> {
-    let (t, s) = (app.t, app.s);
-    let mut col = column![title(app, s.side_title)].spacing(12);
+    let (t, s, w) = (app.t, app.s, app.s.w());
+    let col = column![title(app, s.side_title)].spacing(12);
     let Some(aside) = &app.aside else {
         return col.into();
     };
-    let Some(ex) = aside.transcript.exchanges.last() else {
-        return col.into();
-    };
-    col = col.push(
-        container(text(ex.prompt.as_str()).size(13.5).color(t.fg))
-            .padding([8, 12])
-            .style(t.boxed(t.inset, t.inset, RADIUS_L)),
-    );
-    let mut answer = column![].spacing(8);
-    for step in &ex.steps {
-        match step {
-            Step::Text(md) if !md.raw.trim().is_empty() => answer = answer.push(reply(app, md, false)),
-            Step::Tool(tool) => {
-                answer = answer.push(
-                    text(format!("{} {}", tool.name, tool.summary))
-                        .size(12)
-                        .font(MONO)
-                        .color(t.fg_3),
-                )
+    let mut answer = column![].spacing(10);
+    for ex in &aside.transcript.exchanges {
+        if ex.prompt.is_empty() {
+            continue;
+        }
+        answer = answer.push(
+            container(text(ex.prompt.as_str()).size(13.5).color(t.fg))
+                .padding([8, 12])
+                .style(t.boxed(t.inset, t.inset, RADIUS_L)),
+        );
+        for step in &ex.steps {
+            match step {
+                Step::Text(md) if !md.raw.trim().is_empty() => answer = answer.push(reply(app, md, false)),
+                Step::Tool(tool) => {
+                    answer = answer.push(
+                        text(format!("{} {}", tool.name, tool.summary))
+                            .size(12)
+                            .font(MONO)
+                            .color(t.fg_3),
+                    )
+                }
+                Step::Note(crate::transcript::Note::Error(body)) => {
+                    answer = answer.push(text(body.as_str()).size(12.5).color(t.err))
+                }
+                _ => {}
             }
-            Step::Note(crate::transcript::Note::Error(body)) => {
-                answer = answer.push(text(body.as_str()).size(12.5).color(t.err))
-            }
-            _ => {}
         }
     }
-    if aside.running() {
+    let running = aside.running();
+    if running {
         answer = answer.push(
             row![
                 icon(Icon::Dot, 10.0, t.accent),
@@ -923,8 +928,42 @@ fn side(app: &App) -> El<'_> {
             .align_y(Alignment::Center),
         );
     }
-    let body = col.push(scrollable(answer).height(Length::Shrink).style(t.scroll()).direction(
-        scrollable::Direction::Vertical(scrollable::Scrollbar::new().width(6).scroller_width(6).margin(1)),
-    ));
+    let ask = row![
+        text_input(w.side_more, &app.side_typed)
+            .id(SIDE_INPUT)
+            .on_input(Msg::SideType)
+            .on_submit(Msg::SideAsk)
+            .size(13)
+            .padding([7, 10])
+            .style(t.input()),
+        button(text(w.side_send).size(13))
+            .padding([6, 14])
+            .style(t.primary())
+            .on_press_maybe((!running && !app.side_typed.trim().is_empty()).then_some(Msg::SideAsk)),
+    ]
+    .spacing(8)
+    .align_y(Alignment::Center);
+    let bring = row![
+        Space::new().width(Length::Fill),
+        button(text(w.side_bring).size(12.5))
+            .padding([5, 12])
+            .style(t.outline(t.fg))
+            .on_press_maybe((!running).then_some(Msg::SideBring)),
+    ];
+    let body = col
+        .push(
+            scrollable(answer)
+                .height(Length::Shrink)
+                .style(t.scroll())
+                .direction(scrollable::Direction::Vertical(
+                    scrollable::Scrollbar::new().width(6).scroller_width(6).margin(1),
+                ))
+                .anchor_bottom(),
+        )
+        .push(ask)
+        .push(bring);
     container(body).max_height(620).into()
 }
+
+/// Where the next side question is typed.
+pub const SIDE_INPUT: &str = "side-input";
