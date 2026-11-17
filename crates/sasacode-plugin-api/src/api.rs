@@ -480,3 +480,6 @@ impl Agent<'_> {
 
 /// A bundled plugin: called once at startup with its own API handle.
 pub type PluginFn = fn(PluginApi) -> BoxFuture<'static, anyhow::Result<()>>;
+
+/// A plugin set up from values it closes over (MCP servers, skill folders).
+pub type PluginInit = Box<dyn FnOnce(PluginApi) -> BoxFuture<'static, anyhow::Result<()>> + Send>;

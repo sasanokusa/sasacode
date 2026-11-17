@@ -19,3 +19,22 @@ async-trait.workspace = true
 anyhow.workspace = true
 reqwest.workspace = true
 url.workspace = true
+indexmap.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+# SIGTERM for a server that does not exit when its stdin closes (safe wrapper, no unsafe here).
+nix = { version = "0.31", default-features = false, features = ["signal"] }
+
+[target.'cfg(windows)'.dependencies]
+which.workspace = true
+
+[dev-dependencies]
+# The test servers only (tests/fixture, examples/mcp-fixture.rs): an MCP implementation that is
+# not this crate's own. Never reaches the shipped binary.
+rmcp = { version = "3.10", default-features = false, features = ["server", "transport-io", "transport-streamable-http-server"] }
+axum.workspace = true
+tempfile.workspace = true
+
+[[example]]
+name = "mcp-fixture"
+test = false

@@ -15,7 +15,7 @@ use serde_json::{Value, json};
 use sasacode_ai::{Message, ModelInfo, Provider, ProviderConfig, UserContent};
 use sasacode_plugin_api::{
     Command, CompleteOptions, HookRunner, HostServices, InjectWhen, InputOptions, Lang, NotifyLevel, PasteHandler,
-    PermissionMode, PermissionRules, PluginApi, PluginFn, SelectManyOptions, SelectOption, ShowTextOptions,
+    PermissionMode, PermissionRules, PluginApi, SelectManyOptions, SelectOption, ShowTextOptions,
     SubagentOptions, SubagentResult, ToolRef, ToolRenderer, UiBridge,
 };
 
@@ -209,8 +209,16 @@ impl PluginHost {
         PluginApi::new(name, self.clone() as Arc<dyn HostServices>)
     }
 
-    pub async fn load(self: &Arc<Self>, name: &str, plugin: PluginFn) -> bool {
-        let outcome = std::panic::AssertUnwindSafe(plugin(self.api(name))).catch_unwind().await;
+    /// Run a plugin's setup. A failure or panic is reported and recorded, never propagated.
+    pub async fn load<F>(self: &Arc<Self>, name: &str, plugin: F) -> bool
+    where
+        F: FnOnce(PluginApi) -> BoxFuture<'static, anyhow::Result<()>>,
+    {
+        let api = self.api(name);
+        let outcome = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| plugin(api))) {
+            Ok(setup) => std::panic::AssertUnwindSafe(setup).catch_unwind().await,
+            Err(panic) => Err(panic),
+        };
         let error = match outcome {
             Ok(Ok(())) => None,
             Ok(Err(e)) => Some(format!("{e:#}")),

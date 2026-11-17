@@ -4484,6 +4484,7 @@ dependencies = [
  "chrono",
  "futures",
  "http",
+ "hyper",
  "regex",
  "reqwest",
  "rustls",
