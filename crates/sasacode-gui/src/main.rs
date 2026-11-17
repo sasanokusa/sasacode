@@ -24,6 +24,7 @@ mod outline;
 mod overlay;
 mod review;
 mod runner;
+mod scope;
 mod scripts;
 #[cfg(test)]
 mod snapshots;

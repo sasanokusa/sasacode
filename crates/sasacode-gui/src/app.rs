@@ -228,6 +228,13 @@ pub struct App {
     /// The folder's scripts run from the window, the newest first, and how many were run.
     pub(crate) script_runs: Vec<crate::scripts::ScriptRun>,
     pub(crate) script_runs_made: u64,
+    /// What the git tab compares, what it found, and the commits it can pick from.
+    pub(crate) git_scope: crate::scope::Scope,
+    pub(crate) scoped: Option<Result<crate::git::Scoped, String>>,
+    pub(crate) scope_loading: bool,
+    pub(crate) scope_commits: Vec<(String, String)>,
+    /// A commit or a push on the default branch was asked for once: the next press does it.
+    pub(crate) confirm_default: bool,
     /// What the model is being asked, apart from any conversation.
     pub(crate) drafting: Vec<crate::helper::Draft>,
     /// The pull request being written before it is made.
@@ -499,6 +506,7 @@ pub enum Msg {
     PrTitle(String),
     PrBody(text_editor::Action),
     PrCreate,
+    PrAsDraft(bool),
     /// The pull request left to `gh pr create --fill`.
     PrFill,
     /// The next message guessed, put in the input or put away.
@@ -518,6 +526,20 @@ pub enum Msg {
     /// A long message opened whole, or folded again.
     Whole(usize),
     SetLang(Option<&'static str>),
+    /// What the git tab compares, and what was found for it.
+    GitScope(crate::scope::Scope),
+    Scoped(
+        crate::scope::Scope,
+        Vec<(String, String)>,
+        Result<Box<crate::git::Scoped>, String>,
+    ),
+    /// Every file of the scope folded, or opened.
+    FoldFiles(bool),
+    SetSplitDiff(bool),
+    SetWhitespace(bool),
+    /// A file marked as viewed, or not, by its key.
+    Viewed(String),
+    SetMergeMethod(&'static str),
     /// The pointer over a row of the list, or off it.
     RowHover(Option<String>),
     /// What the search inside the conversation looks for, and the search put away.
@@ -708,6 +730,11 @@ impl App {
             file_query: String::new(),
             key_capture: None,
             key_note: None,
+            git_scope: crate::scope::Scope::Changes,
+            scoped: None,
+            scope_loading: false,
+            scope_commits: Vec::new(),
+            confirm_default: false,
             drafting: Vec::new(),
             pr_draft: None,
             suggestion: None,

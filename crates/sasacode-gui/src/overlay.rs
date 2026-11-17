@@ -661,10 +661,22 @@ impl App {
                     self.confirm_discard = Some(key);
                     return Ok(Task::none());
                 }
-                if op == Op::Merge && !std::mem::take(&mut self.confirm_merge) {
+                if matches!(op, Op::Merge(_)) && !std::mem::take(&mut self.confirm_merge) {
                     self.confirm_merge = true;
                     return Ok(Task::none());
                 }
+                // A commit or a push to the branch others start from asks once more.
+                let on_default = self.git.branch.is_some() && self.git.branch == self.git.default_branch;
+                if matches!(op, Op::Commit(_) | Op::Push) && on_default && !std::mem::take(&mut self.confirm_default) {
+                    self.confirm_default = true;
+                    self.toast = Some(crate::i18n::fill(
+                        self.s.w().default_sure,
+                        "branch",
+                        self.git.branch.clone().unwrap_or_default(),
+                    ));
+                    return Ok(Task::none());
+                }
+                self.confirm_default = false;
                 self.confirm_discard = None;
                 self.confirm_merge = false;
                 // A branch picked in the list: the list goes.

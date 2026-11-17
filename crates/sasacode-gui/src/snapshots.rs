@@ -331,6 +331,8 @@ fn snapshots() {
         branch: Some("retry-backoff".into()),
         upstream: true,
         ahead: 2,
+        behind: 0,
+        default_branch: Some("main".into()),
         files: vec![
             crate::git::File {
                 path: "src/client.ts".into(),

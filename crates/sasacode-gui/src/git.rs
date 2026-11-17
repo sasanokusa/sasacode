@@ -28,8 +28,11 @@ pub struct Status {
     pub branch: Option<String>,
     /// The branch has an upstream to push to.
     pub upstream: bool,
-    /// Commits not pushed yet, when it has.
+    /// Commits not pushed yet, when it has; and commits of the upstream not pulled yet.
     pub ahead: usize,
+    pub behind: usize,
+    /// The branch pull requests go into, by its local name: `main`.
+    pub default_branch: Option<String>,
     pub files: Vec<File>,
 }
 
@@ -112,8 +115,20 @@ pub enum Op {
     /// Another branch checked out, or a new one made from where HEAD is.
     Switch(String),
     NewBranch(String),
-    /// The branch's pull request merged, by `gh pr merge` with a merge commit.
-    Merge,
+    /// The branch's pull request merged by `gh pr merge`: `merge`, `squash` or `rebase`.
+    Merge(String),
+    /// Merged so, by GitHub, once its checks pass (`gh pr merge --auto`).
+    AutoMerge(String),
+    /// A pull request made as a draft, with this title and description.
+    DraftPr(String, String),
+    /// The pull request ready for review, or back to a draft.
+    Ready(bool),
+    /// The folder made a repository.
+    Init,
+    /// What the upstream has, taken in when it only adds to the branch.
+    Pull,
+    /// The pull request's base merged into the branch, by GitHub.
+    UpdateBranch,
 }
 
 fn run(cwd: &Path, program: &str, args: &[&str]) -> Result<String, String> {
@@ -264,16 +279,7 @@ impl PrContext {
 
 pub fn pr_context(cwd: &Path) -> Result<PrContext, String> {
     let top = top(cwd).ok_or_else(|| "not a git repository".to_owned())?;
-    let base = git(&top, &["rev-parse", "--abbrev-ref", "origin/HEAD"])
-        .ok()
-        .filter(|b| !b.is_empty() && b != "origin/HEAD")
-        .or_else(|| {
-            ["origin/main", "origin/master", "main", "master"]
-                .into_iter()
-                .find(|b| git(&top, &["rev-parse", "--verify", "--quiet", b]).is_ok())
-                .map(str::to_owned)
-        })
-        .ok_or_else(|| "no branch to compare with".to_owned())?;
+    let base = base_of(&top).ok_or_else(|| "no branch to compare with".to_owned())?;
     let range = format!("{base}..HEAD");
     let log = git(&top, &["log", "--reverse", "--format=%s%x1f%b%x1e", &range])?;
     let commits = log
@@ -301,6 +307,7 @@ pub fn status(cwd: &Path) -> Status {
     let mut status = Status {
         repo: true,
         top: top.clone(),
+        default_branch: base_of(&top).map(|b| b.trim_start_matches("origin/").to_owned()),
         ..Status::default()
     };
     let Ok(out) = git(
@@ -317,10 +324,13 @@ pub fn status(cwd: &Path) -> Status {
                 .then(|| branch.trim().to_owned())
                 .or_else(|| branch.strip_prefix("No commits yet on ").map(str::to_owned));
             status.upstream = !rest.is_empty();
-            status.ahead = rest
-                .split_once("ahead ")
-                .and_then(|(_, n)| n.trim_end_matches(']').split(',').next()?.trim().parse().ok())
-                .unwrap_or(0);
+            let count = |word: &str| {
+                rest.split_once(word)
+                    .and_then(|(_, n)| n.trim_end_matches(']').split(',').next()?.trim().parse().ok())
+                    .unwrap_or(0)
+            };
+            status.ahead = count("ahead ");
+            status.behind = count("behind ");
             continue;
         }
         let mut letters = entry.chars();
@@ -449,6 +459,9 @@ pub struct Pr {
     pub checks: Vec<Check>,
     /// What reviewers said: on the pull request, and on lines of its diff.
     pub comments: Vec<Remark>,
+    /// A draft, not ready for review yet; and to be merged by GitHub once its checks pass.
+    pub draft: bool,
+    pub auto_merge: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -515,7 +528,7 @@ pub fn pr(cwd: &Path) -> Option<Pr> {
             "pr",
             "view",
             "--json",
-            "number,title,url,state,reviewDecision,statusCheckRollup,comments,reviews",
+            "number,title,url,state,reviewDecision,statusCheckRollup,comments,reviews,isDraft,autoMergeRequest",
         ],
         Some(REMOTE_WAIT),
     )
@@ -533,6 +546,8 @@ pub fn pr(cwd: &Path) -> Option<Pr> {
             .map(|all| all.iter().map(check).collect())
             .unwrap_or_default(),
         comments: Vec::new(),
+        draft: v["isDraft"].as_bool().unwrap_or(false),
+        auto_merge: v["autoMergeRequest"].is_object(),
     };
     let said = |v: &serde_json::Value| Remark {
         author: text(&v["author"]["login"]),
@@ -638,6 +653,9 @@ pub fn numbers(diff: &Diff) -> Vec<Option<usize>> {
 
 /// Does `op`, and says what came of it.
 pub fn apply(cwd: &Path, op: &Op, branch: Option<&str>) -> Result<String, String> {
+    if *op == Op::Init {
+        return git(cwd, &["init", "-q"]).map(|_| "git init".to_owned());
+    }
     let top = top(cwd).ok_or_else(|| "not a git repository".to_owned())?;
     match op {
         Op::Stage(path) => git(&top, &["add", "--", path]),
@@ -691,9 +709,144 @@ pub fn apply(cwd: &Path, op: &Op, branch: Option<&str>) -> Result<String, String
         }
         Op::Switch(branch) => git(&top, &["switch", "-q", branch]).map(|_| branch.clone()),
         Op::NewBranch(name) => git(&top, &["switch", "-q", "-c", name.trim()]).map(|_| name.trim().to_owned()),
-        Op::Merge => run_within(&top, "gh", &["pr", "merge", "--merge"], Some(REMOTE_WAIT))
-            .map(|out| if out.is_empty() { "merged".to_owned() } else { out }),
+        Op::Merge(how) => run_within(
+            &top,
+            "gh",
+            &["pr", "merge", &format!("--{}", method(how))],
+            Some(REMOTE_WAIT),
+        )
+        .map(|out| if out.is_empty() { "merged".to_owned() } else { out }),
+        Op::AutoMerge(how) => run_within(
+            &top,
+            "gh",
+            &["pr", "merge", "--auto", &format!("--{}", method(how))],
+            Some(REMOTE_WAIT),
+        )
+        .map(|out| {
+            if out.is_empty() {
+                "auto-merge on".to_owned()
+            } else {
+                out
+            }
+        }),
+        Op::DraftPr(title, body) => run_within(
+            &top,
+            "gh",
+            &["pr", "create", "--draft", "--title", title, "--body", body],
+            Some(REMOTE_WAIT),
+        ),
+        Op::Ready(true) => run_within(&top, "gh", &["pr", "ready"], Some(REMOTE_WAIT)),
+        Op::Ready(false) => run_within(&top, "gh", &["pr", "ready", "--undo"], Some(REMOTE_WAIT)),
+        Op::Init => unreachable!("made before the repository's top is looked for"),
+        Op::Pull => run_within(&top, "git", &["pull", "-q", "--ff-only"], Some(REMOTE_WAIT))
+            .map(|out| if out.is_empty() { "pulled".to_owned() } else { out }),
+        Op::UpdateBranch => run_within(&top, "gh", &["pr", "update-branch"], Some(REMOTE_WAIT)),
     }
+}
+
+/// A merge method `gh` takes; a merge commit when it is not one.
+fn method(how: &str) -> &str {
+    match how {
+        "squash" | "rebase" => how,
+        _ => "merge",
+    }
+}
+
+/// The branch the folder's work is compared with: the remote's default, else `main` or `master`.
+fn base_of(top: &Path) -> Option<String> {
+    git(top, &["rev-parse", "--abbrev-ref", "origin/HEAD"])
+        .ok()
+        .filter(|b| !b.is_empty() && b != "origin/HEAD")
+        .or_else(|| {
+            ["origin/main", "origin/master", "main", "master"]
+                .into_iter()
+                .find(|b| git(top, &["rev-parse", "--verify", "--quiet", b]).is_ok())
+                .map(str::to_owned)
+        })
+}
+
+/// The files of a diff of several, each with its hunks.
+pub fn split_diff(text: &str) -> Vec<(String, Diff)> {
+    let mut files = Vec::new();
+    for chunk in text
+        .split("\ndiff --git ")
+        .map(|c| c.strip_prefix("diff --git ").unwrap_or(c))
+    {
+        let Some(head) = chunk.lines().next() else {
+            continue;
+        };
+        let Some((_, path)) = head.rsplit_once(" b/") else {
+            continue;
+        };
+        let hunks: String = chunk
+            .lines()
+            .skip_while(|l| !l.starts_with("@@"))
+            .map(|l| format!("{l}\n"))
+            .collect();
+        files.push((path.to_owned(), Diff::parse(&hunks)));
+    }
+    files
+}
+
+/// What a scope of the git tab shows: the files of the branch since its base, or of one commit.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Scoped {
+    /// What it is compared with: the base, or the commit's parent.
+    pub base: String,
+    pub files: Vec<(String, Diff)>,
+}
+
+/// The branch's work since its base, as a pull request would show it.
+pub fn branch_diff(cwd: &Path, whitespace: bool) -> Result<Scoped, String> {
+    let top = top(cwd).ok_or_else(|| "not a git repository".to_owned())?;
+    let base = base_of(&top).ok_or_else(|| "no branch to compare with".to_owned())?;
+    let since = format!("{base}...HEAD");
+    let mut args = vec!["diff", "--no-color", "--no-ext-diff", since.as_str()];
+    if !whitespace {
+        args.push("-w");
+    }
+    Ok(Scoped {
+        files: split_diff(&git(&top, &args)?),
+        base,
+    })
+}
+
+/// The branch's commits since its base, newest first; the last ones when it is the base.
+pub fn commits(cwd: &Path) -> Vec<(String, String)> {
+    let Some(top) = top(cwd) else {
+        return Vec::new();
+    };
+    let range = base_of(&top).map(|b| format!("{b}..HEAD"));
+    let mut args = vec!["log", "--format=%h%x1f%s", "-50"];
+    if let Some(range) = &range {
+        args.push(range);
+    }
+    let listed = |args: &[&str]| -> Vec<(String, String)> {
+        git(&top, args)
+            .unwrap_or_default()
+            .lines()
+            .filter_map(|l| l.split_once('\u{1f}'))
+            .map(|(h, s)| (h.to_owned(), s.to_owned()))
+            .collect()
+    };
+    let found = listed(&args);
+    if found.is_empty() && range.is_some() {
+        return listed(&["log", "--format=%h%x1f%s", "-20"]);
+    }
+    found
+}
+
+/// What one commit changed.
+pub fn commit_diff(cwd: &Path, sha: &str, whitespace: bool) -> Result<Scoped, String> {
+    let top = top(cwd).ok_or_else(|| "not a git repository".to_owned())?;
+    let mut args = vec!["show", "--no-color", "--no-ext-diff", "--format=", sha];
+    if !whitespace {
+        args.push("-w");
+    }
+    Ok(Scoped {
+        files: split_diff(&git(&top, &args)?),
+        base: format!("{sha}^"),
+    })
 }
 
 #[cfg(test)]
@@ -746,6 +899,50 @@ mod tests {
         );
         assert!(pr.stat.contains("c.txt") && pr.diff.contains("+c"));
         assert_eq!(pr.filled("topic"), ("topic".into(), "- fix: one\n- fix: two".into()));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_branch_and_each_commit_are_diffed_since_the_base_and_a_folder_is_made_a_repository() {
+        let dir = std::env::temp_dir().join(format!("sasacode-gui-git-{}-init", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        assert!(!status(&dir).repo);
+        apply(&dir, &Op::Init, None).unwrap();
+        assert!(status(&dir).repo);
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let dir = repo("scope");
+        std::fs::write(dir.join("a.txt"), "one\ntwo\n").unwrap();
+        apply(&dir, &Op::Commit("base".into()), None).unwrap();
+        assert_eq!(status(&dir).default_branch.as_deref(), Some("main"));
+        git(&dir, &["checkout", "-q", "-b", "topic"]).unwrap();
+        std::fs::create_dir_all(dir.join("src")).unwrap();
+        std::fs::write(dir.join("src/b.rs"), "fn b() {}\n").unwrap();
+        apply(&dir, &Op::Commit("add b".into()), None).unwrap();
+        std::fs::write(dir.join("a.txt"), "one\n  two\n").unwrap();
+        apply(&dir, &Op::Commit("indent".into()), None).unwrap();
+
+        let branch = branch_diff(&dir, true).unwrap();
+        assert_eq!(branch.base, "main");
+        let paths: Vec<&str> = branch.files.iter().map(|(p, _)| p.as_str()).collect();
+        assert_eq!(paths, vec!["a.txt", "src/b.rs"]);
+        assert_eq!((branch.files[1].1.added, branch.files[1].1.removed), (1, 0));
+        // White space left out, the indent is no change.
+        let paths: Vec<String> = branch_diff(&dir, false)
+            .unwrap()
+            .files
+            .into_iter()
+            .map(|(p, _)| p)
+            .collect();
+        assert_eq!(paths, vec!["src/b.rs"]);
+
+        let commits = commits(&dir);
+        let subjects: Vec<&str> = commits.iter().map(|(_, s)| s.as_str()).collect();
+        assert_eq!(subjects, vec!["indent", "add b"]);
+        let one = commit_diff(&dir, &commits[1].0, true).unwrap();
+        assert_eq!(one.files.len(), 1);
+        assert_eq!(one.files[0].0, "src/b.rs");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

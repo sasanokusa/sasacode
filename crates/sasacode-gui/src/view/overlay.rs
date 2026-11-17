@@ -521,7 +521,16 @@ fn pr(app: &App) -> El<'_> {
     );
     column![
         title(app, w.pr_title),
-        text(base).size(12).color(t.fg_3),
+        row![
+            text(base).size(12).color(t.fg_3),
+            Space::new().width(Length::Fill),
+            iced::widget::checkbox(pr.draft)
+                .label(w.pr_as_draft)
+                .on_toggle(Msg::PrAsDraft)
+                .size(14)
+                .text_size(12.5),
+        ]
+        .align_y(Alignment::Center),
         text_input(w.pr_title_ph, &pr.title)
             .id(PR_TITLE)
             .on_input(Msg::PrTitle)

@@ -142,6 +142,13 @@ pub struct More {
     pub lang: Option<String>,
     /// Running everything without asking (`auto`) was agreed to once.
     pub auto_agreed: bool,
+    /// How a pull request is merged: `merge`, `squash` or `rebase`.
+    pub merge_method: String,
+    /// Diffs side by side, and changes of white space left out of them.
+    pub split_diff: bool,
+    pub hide_whitespace: bool,
+    /// Files of the git tab marked as viewed, by branch: `path#hash` of their diff.
+    pub viewed: BTreeMap<String, BTreeSet<String>>,
 }
 
 impl More {
@@ -595,6 +602,10 @@ mod tests {
                 chat_width: Width::Full,
                 lang: Some("en".into()),
                 auto_agreed: true,
+                merge_method: "squash".into(),
+                split_diff: true,
+                hide_whitespace: true,
+                viewed: [("topic".to_owned(), ["a.rs#1".to_owned()].into())].into(),
             },
         };
         write(&file, &Layout::default(), &prefs).unwrap();

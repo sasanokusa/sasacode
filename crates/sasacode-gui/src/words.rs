@@ -156,6 +156,31 @@ words! {
     fold_whole: "たたむ", "Fold";
     set_lang: "言語", "Language";
     lang_system: "システムに合わせる", "As the system";
+    // The git tab's scopes, and more of what it does.
+    scope_changes: "変更", "Changes";
+    scope_branch: "ブランチ全体", "Whole branch";
+    scope_commit: "コミットを選ぶ", "Pick a commit";
+    scope_base: "{base}との比較", "Compared with {base}";
+    scope_loading: "読んでいます…", "Reading…";
+    scope_empty: "違いはありません", "No differences";
+    split_diff: "2列", "Side by side";
+    hide_ws: "空白を無視", "Ignore white space";
+    fold_all: "全部たたむ", "Fold all";
+    open_all: "全部開く", "Open all";
+    viewed: "見た", "Viewed";
+    viewed_n: "{n}/{all}件見た", "{n}/{all} viewed";
+    default_sure: "{branch}に直接書き込みます。もう一度押すと続けます", "This goes straight to {branch}. Press again to go on";
+    git_init: "ここでgitを始める", "Start git here";
+    pull: "取り込む", "Pull";
+    behind: "↓{n}", "↓{n}";
+    update_branch: "ベースを取り込む", "Update from base";
+    auto_merge: "チェックが通ったらマージ", "Merge when checks pass";
+    auto_merge_on: "自動マージ待ち", "Auto-merge armed";
+    ready: "レビュー可能にする", "Ready for review";
+    to_draft: "下書きに戻す", "Back to draft";
+    draft_tag: "下書き", "Draft";
+    pr_as_draft: "下書きとして作る", "Create as a draft";
+    merge_how: "マージの仕方", "Merge method";
     // The conversation beside the one shown.
     c_split: "会話を横に開く", "Open a conversation beside";
     split_close: "横の会話を閉じる", "Close the conversation beside";

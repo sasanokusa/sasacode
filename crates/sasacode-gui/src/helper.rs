@@ -37,6 +37,8 @@ pub struct PrDraft {
     pub title: String,
     pub body: text_editor::Content,
     pub context: PrContext,
+    /// Made as a draft, not ready for review yet.
+    pub draft: bool,
 }
 
 /// The start of `text`, at most `max` bytes, cut at a line; said to be cut if it is.
@@ -299,6 +301,7 @@ impl App {
                     title,
                     body: text_editor::Content::with_text(&body),
                     context: *context,
+                    draft: false,
                 });
                 self.overlay = Some(Overlay::Pr);
                 iced::widget::operation::focus(crate::app::PR_TITLE)
@@ -324,12 +327,23 @@ impl App {
                     return Ok(Task::none());
                 };
                 let (title, body) = (pr.title.trim().to_owned(), pr.body.text().trim().to_owned());
+                let draft = pr.draft;
                 if title.is_empty() {
                     return Ok(Task::none());
                 }
                 self.overlay = None;
                 self.pr_draft = None;
-                return Ok(self.update(Msg::GitDo(Op::Pr(Some((title, body))))));
+                return Ok(self.update(Msg::GitDo(if draft {
+                    Op::DraftPr(title, body)
+                } else {
+                    Op::Pr(Some((title, body)))
+                })));
+            }
+            Msg::PrAsDraft(on) => {
+                if let Some(pr) = &mut self.pr_draft {
+                    pr.draft = on;
+                }
+                Task::none()
             }
             Msg::PrFill => {
                 self.overlay = None;
@@ -349,7 +363,7 @@ impl App {
                 self.suggestion = None;
                 Task::none()
             }
-            other => return self.update_extras(other),
+            other => return self.update_scope(other),
         };
         Ok(task)
     }

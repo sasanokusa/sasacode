@@ -1042,9 +1042,9 @@ fn a_hunk_is_discarded_and_a_pull_request_merged_only_on_the_second_press() {
     });
     let w = app.s.w();
     assert!(says(&app, w.fix_checks) && says(&app, w.check_failed));
-    let _ = app.update(Msg::GitDo(crate::git::Op::Merge));
+    let _ = app.update(Msg::GitDo(crate::git::Op::Merge("merge".into())));
     assert!(app.confirm_merge && !app.git_busy && says(&app, w.merge_sure));
-    let _ = app.update(Msg::GitDo(crate::git::Op::Merge));
+    let _ = app.update(Msg::GitDo(crate::git::Op::Merge("merge".into())));
     assert!(app.git_busy && !app.confirm_merge);
 }
 
@@ -1496,4 +1496,62 @@ fn the_window_asks_before_it_closes_on_a_run_and_before_auto_and_keeps_what_was_
     assert!(!app.s.ja && app.prefs.more.lang.as_deref() == Some("en"));
     let _ = app.update(Msg::SetWidth(crate::layout::Width::Full));
     assert_eq!(app.prefs.more.chat_width, crate::layout::Width::Full);
+}
+
+#[test]
+fn the_git_tab_shows_the_branch_or_a_commit_side_by_side_with_files_marked_viewed() {
+    use crate::diff::Diff;
+    use crate::scope::Scope;
+    let mut app = window("ja");
+    app.tab = Tab::Git;
+    app.insp = true;
+    app.git = crate::git::Status {
+        repo: true,
+        branch: Some("topic".into()),
+        default_branch: Some("main".into()),
+        ..Default::default()
+    };
+    let _ = app.update(Msg::GitScope(Scope::Branch));
+    assert!(app.scope_loading);
+    let scoped = crate::git::Scoped {
+        base: "origin/main".into(),
+        files: vec![
+            (
+                "src/retry.ts".into(),
+                Diff::parse("@@ -1 +1 @@\n-const WAIT = 100\n+const WAIT = 200\n"),
+            ),
+            ("src/util/time.ts".into(), Diff::parse("@@ -0,0 +1 @@\n+export {}\n")),
+        ],
+    };
+    let _ = app.update(Msg::Scoped(
+        Scope::Branch,
+        vec![("abc1234".into(), "待ち時間".into())],
+        Ok(Box::new(scoped.clone())),
+    ));
+    assert!(says(&app, "origin/mainとの比較") && says(&app, "src/") && says(&app, "src/util/"));
+    assert!(says(&app, "0/2件見た") && says(&app, "const WAIT = 200"));
+    // Side by side, the removed line is drawn beside the added one.
+    let _ = app.update(Msg::SetSplitDiff(true));
+    assert!(says(&app, "const WAIT = 100") && says(&app, "const WAIT = 200"));
+    // Viewed, a file folds away; changed, it is shown again.
+    let key = crate::scope::viewed_key("src/retry.ts", &scoped.files[0].1);
+    let _ = app.update(Msg::Viewed(key));
+    assert!(says(&app, "1/2件見た") && !says(&app, "const WAIT = 200"));
+    // An answer for a scope left meanwhile is not shown.
+    let _ = app.update(Msg::GitScope(Scope::Changes));
+    let _ = app.update(Msg::Scoped(Scope::Branch, Vec::new(), Ok(Box::new(scoped))));
+    assert!(app.scoped.is_none());
+
+    // A commit on the branch others start from asks once more.
+    app.git.branch = Some("main".into());
+    app.git.files = vec![crate::git::File {
+        path: "a.txt".into(),
+        index: ' ',
+        tree: 'M',
+        staged_diff: Diff::default(),
+        unstaged_diff: Diff::parse("@@ -1 +1 @@\n-a\n+b\n"),
+    }];
+    let _ = app.update(Msg::GitDo(crate::git::Op::Commit("x".into())));
+    assert!(app.confirm_default && !app.git_busy);
+    assert!(app.toast.as_deref().is_some_and(|t| t.contains("mainに直接")));
 }

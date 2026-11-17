@@ -274,10 +274,21 @@ fn git_tab(app: &App) -> El<'_> {
     use crate::git::Op;
     let (t, s) = (app.t, app.s);
     let g = &app.git;
-    if !g.repo {
-        return empty(app, Icon::Branch, s.tab_git, s.git_none);
-    }
     let w = s.w();
+    if !g.repo {
+        return column![
+            empty(app, Icon::Branch, s.tab_git, s.git_none),
+            container(
+                button(text(w.git_init).size(12.5))
+                    .padding([5, 12])
+                    .style(t.outline(t.fg))
+                    .on_press_maybe((!app.git_busy).then_some(Msg::GitDo(Op::Init)))
+            )
+            .center_x(Length::Fill),
+        ]
+        .spacing(8)
+        .into();
+    }
     let mut head = row![icon(Icon::Branch, 14.0, t.fg_3)]
         .spacing(8)
         .align_y(Alignment::Center);
@@ -305,6 +316,9 @@ fn git_tab(app: &App) -> El<'_> {
     ));
     if g.ahead > 0 {
         head = head.push(tag(t, fill(s.ahead, "n", g.ahead), t.accent_wash, t.accent));
+    }
+    if g.behind > 0 {
+        head = head.push(tag(t, fill(w.behind, "n", g.behind), t.inset, t.fg_2));
     }
     head = head.push(Space::new().width(Length::Fill));
     if app.git_busy {
@@ -339,6 +353,10 @@ fn git_tab(app: &App) -> El<'_> {
                 .padding([5, 12])
                 .style(t.outline(t.fg))
                 .on_press_maybe((!busy && g.branch.is_some()).then_some(Msg::GitDo(Op::Push))),
+            button(text(w.pull).size(12.5))
+                .padding([5, 12])
+                .style(t.outline(t.fg))
+                .on_press_maybe((!busy && g.upstream).then_some(Msg::GitDo(Op::Pull))),
             button(text(s.pr).size(12.5))
                 .padding([5, 12])
                 .style(t.outline(t.fg))
@@ -360,6 +378,10 @@ fn git_tab(app: &App) -> El<'_> {
     .spacing(6);
     col = col.push(commit);
     col = col.push(pr_part(app));
+    col = col.push(scope_bar(app));
+    if app.git_scope != crate::scope::Scope::Changes {
+        return col.push(scoped_files(app)).into();
+    }
 
     if g.files.is_empty() {
         return col.push(empty(app, Icon::Check, s.git_clean, "")).into();
@@ -441,6 +463,12 @@ fn pr_part(app: &App) -> El<'_> {
     if let Some((label, color)) = decision {
         head = head.push(text(label).size(11.5).color(color).wrapping(text::Wrapping::None));
     }
+    if pr.draft {
+        head = head.push(tag(t, w.draft_tag, t.inset, t.fg_2));
+    }
+    if pr.auto_merge {
+        head = head.push(tag(t, w.auto_merge_on, t.accent_wash, t.accent));
+    }
     let mut col = column![head].spacing(6);
 
     if !pr.checks.is_empty() {
@@ -478,11 +506,29 @@ fn pr_part(app: &App) -> El<'_> {
     if pr.failing().next().is_some() {
         actions = actions.push(small(w.fix_checks, t.err, Some(Msg::FixChecks)));
     }
+    let how = app.prefs.more.merge_method.clone();
     if pr.state == "OPEN" {
         actions = actions.push(small(
             if app.confirm_merge { w.merge_sure } else { w.merge },
             t.accent,
-            (!busy).then_some(Msg::GitDo(Op::Merge)),
+            (!busy && !pr.draft).then(|| Msg::GitDo(Op::Merge(how.clone()))),
+        ));
+        if !pr.auto_merge && !pr.draft {
+            actions = actions.push(small(
+                w.auto_merge,
+                t.fg_2,
+                (!busy).then(|| Msg::GitDo(Op::AutoMerge(how.clone()))),
+            ));
+        }
+        actions = actions.push(small(
+            if pr.draft { w.ready } else { w.to_draft },
+            t.fg_2,
+            (!busy).then_some(Msg::GitDo(Op::Ready(pr.draft))),
+        ));
+        actions = actions.push(small(
+            w.update_branch,
+            t.fg_2,
+            (!busy).then_some(Msg::GitDo(Op::UpdateBranch)),
         ));
     }
     actions = actions.push(small(
@@ -491,6 +537,23 @@ fn pr_part(app: &App) -> El<'_> {
         (!app.pr_loading).then_some(Msg::PrRefresh),
     ));
     col = col.push(actions.wrap());
+    if pr.state == "OPEN" {
+        let mut ways = row![text(w.merge_how).size(11.5).color(t.fg_3)]
+            .spacing(4)
+            .align_y(Alignment::Center);
+        for way in ["merge", "squash", "rebase"] {
+            let on = method_of(&app.prefs.more.merge_method) == way;
+            let b = button(text(way).size(11).font(MONO))
+                .padding([2, 6])
+                .on_press(Msg::SetMergeMethod(way));
+            ways = ways.push(if on {
+                b.style(t.primary())
+            } else {
+                b.style(t.ghost(t.fg_2, false))
+            });
+        }
+        col = col.push(ways);
+    }
 
     if !pr.comments.is_empty() {
         let mut said = column![text(w.reviews).size(11.5).color(t.fg_3)].spacing(6);
@@ -530,6 +593,195 @@ fn pr_part(app: &App) -> El<'_> {
         .width(Length::Fill)
         .padding([8, 10])
         .style(t.boxed(t.bg, t.line, RADIUS_L))
+        .into()
+}
+
+/// The merge method kept, as gh names it.
+fn method_of(kept: &str) -> &str {
+    match kept {
+        "squash" | "rebase" => kept,
+        _ => "merge",
+    }
+}
+
+/// What the git tab compares, and how its diffs are drawn.
+fn scope_bar(app: &App) -> El<'_> {
+    use crate::scope::Scope;
+    let t = app.t;
+    let w = app.s.w();
+    let pick = |label: String, on: bool, msg: Msg| -> El<'_> {
+        let b = button(text(label).size(11.5).wrapping(text::Wrapping::None))
+            .padding([3, 8])
+            .on_press(msg);
+        if on {
+            b.style(t.primary()).into()
+        } else {
+            b.style(t.outline(t.fg_2)).into()
+        }
+    };
+    let commit = match &app.git_scope {
+        Scope::Commit(sha) => app
+            .scope_commits
+            .iter()
+            .find(|(h, _)| h == sha)
+            .map(|(h, subject)| format!("{h} {}", clip(subject, 28))),
+        _ => None,
+    };
+    let choices: Vec<String> = app
+        .scope_commits
+        .iter()
+        .map(|(h, subject)| format!("{h} {}", clip(subject, 40)))
+        .collect();
+    let scopes = row![
+        pick(
+            w.scope_changes.to_owned(),
+            app.git_scope == Scope::Changes,
+            Msg::GitScope(Scope::Changes)
+        ),
+        pick(
+            w.scope_branch.to_owned(),
+            app.git_scope == Scope::Branch,
+            Msg::GitScope(Scope::Branch)
+        ),
+        iced::widget::pick_list(choices, commit, |picked: String| {
+            Msg::GitScope(Scope::Commit(picked.split(' ').next().unwrap_or_default().to_owned()))
+        })
+        .placeholder(w.scope_commit)
+        .text_size(11.5)
+        .padding([3, 6])
+        .style(t.pick(t.fg_2))
+        .menu_style(t.menu()),
+    ]
+    .spacing(6)
+    .align_y(Alignment::Center);
+    let more = app.prefs.more.clone();
+    let views = row![
+        pick(
+            w.split_diff.to_owned(),
+            more.split_diff,
+            Msg::SetSplitDiff(!more.split_diff)
+        ),
+        pick(
+            w.hide_ws.to_owned(),
+            more.hide_whitespace,
+            Msg::SetWhitespace(!more.hide_whitespace)
+        ),
+        pick(w.fold_all.to_owned(), false, Msg::FoldFiles(true)),
+        pick(w.open_all.to_owned(), false, Msg::FoldFiles(false)),
+    ]
+    .spacing(6);
+    column![scopes.wrap(), views.wrap()].spacing(6).into()
+}
+
+/// The files of the branch or of a commit: by folder, each folded by its head, marked as viewed.
+fn scoped_files(app: &App) -> El<'_> {
+    let (t, s) = (app.t, app.s);
+    let w = s.w();
+    if app.scope_loading && app.scoped.is_none() {
+        return text(w.scope_loading).size(12).color(t.fg_3).into();
+    }
+    let scoped = match &app.scoped {
+        Some(Ok(scoped)) => scoped,
+        Some(Err(e)) => return text(e.as_str()).size(12).color(t.err).into(),
+        None => return Space::new().into(),
+    };
+    let mut col = column![].spacing(8);
+    let keys: Vec<String> = scoped
+        .files
+        .iter()
+        .map(|(p, d)| crate::scope::viewed_key(p, d))
+        .collect();
+    let seen = keys.iter().filter(|k| app.viewed(k)).count();
+    col = col.push(
+        row![
+            text(fill(w.scope_base, "base", &scoped.base)).size(11.5).color(t.fg_3),
+            Space::new().width(Length::Fill),
+            text(fill(&fill(w.viewed_n, "n", seen), "all", keys.len()))
+                .size(11.5)
+                .color(t.fg_3),
+        ]
+        .align_y(Alignment::Center),
+    );
+    if scoped.files.is_empty() {
+        return col.push(empty(app, Icon::Check, w.scope_empty, "")).into();
+    }
+    let mut folder = None;
+    for ((path, diff), key) in scoped.files.iter().zip(keys) {
+        // A folder's name once, over its files.
+        let here = path.rsplit_once('/').map(|(d, _)| d);
+        if here != folder {
+            folder = here;
+            if let Some(dir) = here {
+                col = col.push(text(format!("{dir}/")).size(11.5).font(MONO).color(t.fg_3));
+            }
+        }
+        let viewed = app.viewed(&key);
+        let file_name = path.rsplit_once('/').map_or(path.as_str(), |(_, f)| f);
+        let head = row![
+            iced::widget::checkbox(viewed)
+                .label(w.viewed)
+                .on_toggle(move |_| Msg::Viewed(key.clone()))
+                .size(13)
+                .text_size(11),
+            name(
+                text(clip_start(file_name, cells(app, 200.0)))
+                    .size(12.5)
+                    .font(MONO)
+                    .color(if viewed { t.fg_3 } else { t.fg })
+            ),
+            plus_minus(t, diff.added, diff.removed),
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center);
+        let body: El<'_> = if viewed {
+            Space::new().into()
+        } else if app.prefs.more.split_diff {
+            split_view(app, diff)
+        } else {
+            diff_view(t, s, diff, 400)
+        };
+        col = col.push(card(app, path, head.into(), (!viewed).then_some(body)));
+    }
+    col.into()
+}
+
+/// A diff in two columns: before on the left, after on the right.
+fn split_view<'a>(app: &'a App, diff: &'a crate::diff::Diff) -> El<'a> {
+    use crate::diff::Sign;
+    let t = app.t;
+    let side = |line: Option<&'a crate::diff::Line>, left: bool| -> El<'a> {
+        let Some(line) = line else {
+            return container(Space::new()).width(Length::FillPortion(1)).into();
+        };
+        let fill = match line.sign {
+            Sign::Del if left => Some(t.del_wash),
+            Sign::Add if !left => Some(t.add_wash),
+            _ => None,
+        };
+        container(
+            text(line.text.as_str())
+                .size(11.5)
+                .font(MONO)
+                .color(if line.sign == Sign::Hunk { t.fg_3 } else { t.fg })
+                .wrapping(text::Wrapping::WordOrGlyph),
+        )
+        .width(Length::FillPortion(1))
+        .padding([1, 6])
+        .style(move |_| container::Style {
+            background: fill.map(Into::into),
+            ..container::Style::default()
+        })
+        .into()
+    };
+    let mut lines = column![];
+    for (left, right) in crate::scope::side_by_side(diff).into_iter().take(400) {
+        lines = lines.push(row![side(left, true), side(right, false)].spacing(2));
+    }
+    container(lines)
+        .width(Length::Fill)
+        .padding([4, 0])
+        .clip(true)
+        .style(t.boxed(t.raised, t.line, RADIUS))
         .into()
 }
 
