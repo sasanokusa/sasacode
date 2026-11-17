@@ -15,6 +15,7 @@ mod git;
 mod i18n;
 mod icons;
 mod input;
+mod keys;
 mod layout;
 mod list;
 mod overlay;

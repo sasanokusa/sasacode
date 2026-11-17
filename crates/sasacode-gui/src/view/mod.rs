@@ -66,6 +66,14 @@ pub(crate) fn room(app: &App) -> f32 {
 /// The key that makes a chord: ⌘ on macOS, Ctrl elsewhere.
 pub(crate) const MOD: &str = if cfg!(target_os = "macos") { "⌘" } else { "Ctrl+" };
 
+/// A shortcut's key as it is bound now, or nothing for one the user unbound.
+pub(crate) fn keys_for(act: crate::keys::Act) -> String {
+    crate::keys::bound()
+        .chord(act)
+        .map(crate::keys::Chord::show)
+        .unwrap_or_default()
+}
+
 pub fn window(app: &App) -> El<'_> {
     let t = app.t;
     // What comes and goes in front of the conversation keeps its place, empty while it is not
@@ -171,7 +179,7 @@ fn header(app: &App) -> El<'_> {
                 .padding(6)
                 .style(t.ghost(t.fg_2, false))
                 .on_press(Msg::ToggleSide),
-                format!("{}  {MOD}B", s.a_side),
+                format!("{}  {}", s.a_side, keys_for(crate::keys::Act::Side)),
                 tooltip::Position::Bottom,
             ),
             // The title is cut where the header runs out of room, so the state and the buttons stay.
@@ -200,7 +208,7 @@ fn header(app: &App) -> El<'_> {
                 .padding(6)
                 .style(t.ghost(t.fg_2, false))
                 .on_press(Msg::Command(crate::input::Command::Scripts)),
-                format!("{}  {MOD}⇧R", s.w().c_scripts),
+                format!("{}  {}", s.w().c_scripts, keys_for(crate::keys::Act::Scripts)),
                 tooltip::Position::Bottom,
             ),
             tip(
@@ -209,7 +217,7 @@ fn header(app: &App) -> El<'_> {
                     .padding(6)
                     .style(t.ghost(t.fg_2, false))
                     .on_press(Msg::Show(Some(crate::app::Overlay::palette()))),
-                format!("{}  {MOD}⇧P", s.c_palette),
+                format!("{}  {}", s.c_palette, keys_for(crate::keys::Act::Palette)),
                 tooltip::Position::Bottom,
             ),
             tip(
@@ -218,7 +226,7 @@ fn header(app: &App) -> El<'_> {
                     .padding(6)
                     .style(t.ghost(t.fg_2, false))
                     .on_press(Msg::Show(Some(crate::app::Overlay::Settings))),
-                format!("{}  {MOD},", s.settings),
+                format!("{}  {}", s.settings, keys_for(crate::keys::Act::Settings)),
                 tooltip::Position::Bottom,
             ),
             tip(
@@ -227,7 +235,7 @@ fn header(app: &App) -> El<'_> {
                     .padding(6)
                     .style(t.ghost(t.fg_2, false))
                     .on_press(Msg::ToggleInspector),
-                format!("{}  {MOD}I", s.a_insp),
+                format!("{}  {}", s.a_insp, keys_for(crate::keys::Act::Inspector)),
                 tooltip::Position::Bottom,
             ),
         ]

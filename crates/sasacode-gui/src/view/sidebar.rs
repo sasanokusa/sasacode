@@ -5,7 +5,7 @@ use std::time::SystemTime;
 use iced::widget::{Space, button, column, container, mouse_area, row, scrollable, text, text_input};
 use iced::{Alignment, Length};
 
-use super::{BOLD, El, MOD, clip, tip};
+use super::{BOLD, El, clip, tip};
 use crate::app::{App, Msg, SEARCH};
 use crate::i18n::fill;
 use crate::icons::{Icon, icon};
@@ -42,7 +42,7 @@ pub fn sidebar(app: &App) -> El<'_> {
             icon(Icon::Plus, 14.0, t.fg),
             text(s.new_session).size(13),
             Space::new().width(Length::Fill),
-            text(format!("{MOD}N")).size(11).color(t.fg_3),
+            text(super::keys_for(crate::keys::Act::New)).size(11).color(t.fg_3),
         ]
         .spacing(8)
         .align_y(Alignment::Center),
@@ -63,7 +63,7 @@ pub fn sidebar(app: &App) -> El<'_> {
                 .size(13)
                 .padding(0)
                 .style(t.input_bare()),
-            text(format!("{MOD}K")).size(11).color(t.fg_3),
+            text(super::keys_for(crate::keys::Act::Find)).size(11).color(t.fg_3),
         ]
         .spacing(8)
         .align_y(Alignment::Center),

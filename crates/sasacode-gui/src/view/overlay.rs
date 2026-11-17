@@ -9,6 +9,7 @@ use super::{BOLD, El, MOD, MONO};
 use crate::app::{App, GROUP, Msg, Overlay, PALETTE, RENAME};
 use crate::i18n::fill;
 use crate::icons::{Icon, icon};
+use crate::keys::Act;
 use crate::layout::{ZOOM_MAX, ZOOM_MIN};
 use crate::overlay::Pick;
 use crate::theme::RADIUS_L;
@@ -124,6 +125,7 @@ fn palette<'a>(app: &'a App, query: &'a str, at: usize, pick: Pick) -> El<'a> {
 
 fn keys(app: &App) -> El<'_> {
     let (t, s) = (app.t, app.s);
+    let w = s.w();
     let send = if app.prefs.enter_sends {
         "↵".to_owned()
     } else {
@@ -134,7 +136,7 @@ fn keys(app: &App) -> El<'_> {
     } else {
         "↵".to_owned()
     };
-    let mut rows: Vec<(String, String)> = vec![
+    let fixed: Vec<(String, String)> = vec![
         (send, s.h_send.to_owned()),
         (newline, s.h_nl.to_owned()),
         (super::dock::chord_keys(app), format!("{} / {}", s.h_allow, s.h_now)),
@@ -143,38 +145,91 @@ fn keys(app: &App) -> El<'_> {
         ("@".into(), s.c_mention.to_owned()),
         ("/".into(), s.k_commands.to_owned()),
     ];
-    rows.extend(
-        app.entries()
-            .into_iter()
-            .filter_map(|e| Some((e.keys.filter(|k| k.starts_with(MOD))?, e.label))),
-    );
-    // The palette is not one of its own entries; the input is reached from anywhere.
-    rows.push((format!("{MOD}⇧P"), s.c_palette.to_owned()));
-    rows.push((format!("{MOD}L"), s.k_input.to_owned()));
-    let mut list = column![]
+    let line = |keys: El<'static>, what: String, end: El<'static>| -> El<'static> {
+        row![
+            container(keys).width(110),
+            text(what).size(13).color(t.fg).width(Length::Fill),
+            end,
+        ]
+        .spacing(12)
+        .width(Length::Fill)
+        .align_y(Alignment::Center)
+        .into()
+    };
+    let mut list = column![text(w.keys_fixed).size(12).color(t.fg_3)]
         .spacing(4)
         .width(Length::Fill)
         .padding(iced::Padding::ZERO.right(14));
-    for (keys, what) in rows {
-        list = list.push(
-            row![
-                text(keys).size(12).font(MONO).color(t.fg_2).width(110),
-                text(what).size(13).color(t.fg).width(Length::Fill),
-            ]
-            .spacing(12)
-            .width(Length::Fill)
-            .align_y(Alignment::Center),
-        );
+    for (keys, what) in fixed {
+        list = list.push(line(
+            text(keys).size(12).font(MONO).color(t.fg_2).into(),
+            what,
+            Space::new().into(),
+        ));
     }
-    let body = column![
-        title(app, s.keys_title),
+    list = list.push(Space::new().height(8)).push(
+        row![
+            text(w.keys_yours).size(12).color(t.fg_3).width(Length::Fill),
+            button(text(w.key_all_default).size(11.5))
+                .padding([2, 8])
+                .style(t.ghost(t.fg_2, false))
+                .on_press_maybe((!app.prefs.keys.is_empty()).then_some(Msg::KeyReset(None))),
+        ]
+        .align_y(Alignment::Center),
+    );
+    let table = crate::keys::bound();
+    for act in crate::keys::ACTS {
+        let waiting = app.key_capture == Some(act);
+        let shown = if waiting {
+            w.key_waiting.to_owned()
+        } else {
+            table
+                .chord(act)
+                .map_or_else(|| w.key_none.to_owned(), crate::keys::Chord::show)
+        };
+        let changed = app.prefs.keys.contains_key(&act.name());
+        let mut end = row![
+            button(text(w.key_change).size(11.5))
+                .padding([2, 8])
+                .style(t.ghost(t.fg_2, waiting))
+                .on_press(Msg::KeyCapture(act))
+        ]
+        .spacing(2);
+        if changed {
+            end = end.push(
+                button(text(w.key_default).size(11.5))
+                    .padding([2, 8])
+                    .style(t.ghost(t.fg_3, false))
+                    .on_press(Msg::KeyReset(Some(act))),
+            );
+        }
+        list = list.push(line(
+            text(shown)
+                .size(12)
+                .font(MONO)
+                .color(if waiting {
+                    t.accent
+                } else if changed {
+                    t.fg
+                } else {
+                    t.fg_2
+                })
+                .into(),
+            act.label(&s).to_owned(),
+            end.into(),
+        ));
+    }
+    let mut body = column![title(app, s.keys_title)].spacing(12);
+    if let Some(note) = &app.key_note {
+        body = body.push(text(note.clone()).size(12.5).color(t.accent));
+    }
+    let body = body.push(
         scrollable(list)
             .width(Length::Fill)
             .height(Length::Shrink)
             .style(t.scroll()),
-    ]
-    .spacing(12);
-    container(body).max_height(560).into()
+    );
+    container(body).max_height(620).into()
 }
 
 fn settings(app: &App) -> El<'_> {
@@ -236,10 +291,14 @@ fn settings(app: &App) -> El<'_> {
                 .padding([4, 10])
                 .style(t.ghost(t.fg_2, false))
                 .on_press(Msg::Zoom(0)),
-            text(format!("{MOD}+ / {MOD}- / {MOD}0"))
-                .size(11.5)
-                .font(MONO)
-                .color(t.fg_3),
+            text(
+                [Act::ZoomIn, Act::ZoomOut, Act::ZoomReset]
+                    .map(super::keys_for)
+                    .join(" / ")
+            )
+            .size(11.5)
+            .font(MONO)
+            .color(t.fg_3),
         ]
         .spacing(8)
         .align_y(Alignment::Center),

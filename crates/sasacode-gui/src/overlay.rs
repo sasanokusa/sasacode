@@ -7,9 +7,9 @@ use iced::widget::operation;
 
 use crate::app::{App, Chat, Clip, Msg, PALETTE, RENAME, Tab};
 use crate::input::Command;
+use crate::keys::Act;
 use crate::layout::{ZOOM_MAX, ZOOM_MIN};
 use crate::system;
-use crate::view::MOD;
 
 /// The key of the side question's run, which is no conversation's.
 pub const SIDE: u64 = u64::MAX;
@@ -79,17 +79,18 @@ impl App {
             keys,
             msg,
         };
-        let key = |k: &str| Some(format!("{MOD}{k}"));
+        let table = crate::keys::bound();
+        let key = |act: Act| table.chord(act).map(crate::keys::Chord::show);
         let mut all = vec![
-            entry(s.new_session, key("N"), Msg::NewSession),
-            entry(s.find, key("K"), Msg::Find),
-            entry(s.c_find, key("F"), Msg::Command(Command::Find)),
-            entry(s.c_mention, key("P"), Msg::Command(Command::Mention)),
-            entry(s.c_prev, key("⇧["), Msg::Neighbour(-1)),
-            entry(s.c_next, key("⇧]"), Msg::Neighbour(1)),
-            entry(s.c_attention, key("⇧A"), Msg::Command(Command::Attention)),
+            entry(s.new_session, key(Act::New), Msg::NewSession),
+            entry(s.find, key(Act::Find), Msg::Find),
+            entry(s.c_find, key(Act::FindIn), Msg::Command(Command::Find)),
+            entry(s.c_mention, key(Act::Mention), Msg::Command(Command::Mention)),
+            entry(s.c_prev, key(Act::Prev), Msg::Neighbour(-1)),
+            entry(s.c_next, key(Act::Next), Msg::Neighbour(1)),
+            entry(s.c_attention, key(Act::Attention), Msg::Command(Command::Attention)),
             entry(s.c_btw, Some("/btw".into()), Msg::Command(Command::Btw)),
-            entry(s.w().c_scripts, key("⇧R"), Msg::Command(Command::Scripts)),
+            entry(s.w().c_scripts, key(Act::Scripts), Msg::Command(Command::Scripts)),
             entry(s.c_export, None, Msg::Copy(Clip::Conversation)),
             entry(s.c_steps, None, Msg::Command(Command::Steps)),
             entry(s.c_model, None, Msg::Command(Command::Model)),
@@ -103,24 +104,24 @@ impl App {
         }
         all.extend([
             entry(s.c_archived, None, Msg::Command(Command::Archived)),
-            entry(s.a_side, key("B"), Msg::ToggleSide),
-            entry(s.a_insp, key("I"), Msg::ToggleInspector),
-            entry(s.tab_changes, key("1"), Msg::Tab(Tab::Changes)),
-            entry(s.tab_plan, key("2"), Msg::Tab(Tab::Plan)),
-            entry(s.tab_cmd, key("3"), Msg::Tab(Tab::Commands)),
-            entry(s.tab_usage, key("4"), Msg::Tab(Tab::Usage)),
-            entry(s.tab_git, key("5"), Msg::Tab(Tab::Git)),
-            entry(s.w().tab_files, key("6"), Msg::Tab(Tab::Files)),
-            entry(s.c_window, key("⇧N"), Msg::Command(Command::Window)),
+            entry(s.a_side, key(Act::Side), Msg::ToggleSide),
+            entry(s.a_insp, key(Act::Inspector), Msg::ToggleInspector),
+            entry(s.tab_changes, key(Act::Tab(1)), Msg::Tab(Tab::Changes)),
+            entry(s.tab_plan, key(Act::Tab(2)), Msg::Tab(Tab::Plan)),
+            entry(s.tab_cmd, key(Act::Tab(3)), Msg::Tab(Tab::Commands)),
+            entry(s.tab_usage, key(Act::Tab(4)), Msg::Tab(Tab::Usage)),
+            entry(s.tab_git, key(Act::Tab(5)), Msg::Tab(Tab::Git)),
+            entry(s.w().tab_files, key(Act::Tab(6)), Msg::Tab(Tab::Files)),
+            entry(s.c_window, key(Act::Window), Msg::Command(Command::Window)),
             entry(s.c_folder, None, Msg::Command(Command::Folder)),
             entry(s.c_terminal, None, Msg::Command(Command::Terminal)),
             entry(s.c_editor, None, Msg::Command(Command::Editor)),
             entry(s.c_worktree, None, Msg::Command(Command::Worktree)),
-            entry(s.settings, key(","), Msg::Show(Some(Overlay::Settings))),
-            entry(s.c_keys, key("/"), Msg::Show(Some(Overlay::Keys))),
-            entry(s.c_zoom_in, key("+"), Msg::Zoom(1)),
-            entry(s.c_zoom_out, key("-"), Msg::Zoom(-1)),
-            entry(s.c_zoom_reset, key("0"), Msg::Zoom(0)),
+            entry(s.settings, key(Act::Settings), Msg::Show(Some(Overlay::Settings))),
+            entry(s.c_keys, key(Act::Keys), Msg::Show(Some(Overlay::Keys))),
+            entry(s.c_zoom_in, key(Act::ZoomIn), Msg::Zoom(1)),
+            entry(s.c_zoom_out, key(Act::ZoomOut), Msg::Zoom(-1)),
+            entry(s.c_zoom_reset, key(Act::ZoomReset), Msg::Zoom(0)),
         ]);
         for (name, dark) in [
             (s.theme_system, None),
@@ -255,6 +256,9 @@ impl App {
                     None => operation::focus(crate::app::INPUT),
                     _ => Task::none(),
                 };
+                // A key waited for is let go with the list of keys.
+                self.key_capture = None;
+                self.key_note = None;
                 if overlay.is_none() || self.overlay == Some(Overlay::Side) {
                     // The side question's run goes with it.
                     self.aside = None;
@@ -435,6 +439,7 @@ impl App {
     /// Changes a setting, and keeps it.
     pub(crate) fn set(&mut self, change: impl FnOnce(&mut crate::layout::Prefs)) -> Task<Msg> {
         change(&mut self.prefs);
+        crate::keys::bind(crate::keys::Table::from(&self.prefs.keys));
         self.keep_layout();
         Task::none()
     }

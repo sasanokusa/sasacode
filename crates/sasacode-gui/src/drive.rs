@@ -1236,3 +1236,37 @@ fn a_folders_script_is_listed_in_the_settings_run_from_the_list_and_its_output_s
     let _ = app.update(Msg::ScriptRemove(0));
     assert!(app.scripts().is_empty() && app.prefs.scripts.is_empty());
 }
+
+#[test]
+fn a_shortcut_is_given_a_new_key_in_the_list_of_keys_but_not_one_that_is_taken_or_reserved() {
+    let mut app = window("ja");
+    let _ = app.update(Msg::Show(Some(crate::app::Overlay::Keys)));
+    // The palette's key: a key another has is refused, saying whose it is.
+    let _ = app.update(Msg::KeyCapture(crate::keys::Act::Palette));
+    assert!(says(&app, crate::words::JA.key_waiting));
+    let _ = app.update(Msg::KeyCaptured(Key::Character("k".into()), Modifiers::COMMAND));
+    assert!(
+        app.key_note
+            .as_deref()
+            .is_some_and(|n| n.contains(crate::i18n::Strings::get("ja").find))
+    );
+    let _ = app.update(Msg::KeyCaptured(Key::Character("v".into()), Modifiers::COMMAND));
+    assert!(app.key_capture.is_some());
+    // A free one is taken: the palette opens by it, and no longer by its old key.
+    let _ = app.update(Msg::KeyCaptured(
+        Key::Character("y".into()),
+        Modifiers::COMMAND | Modifiers::SHIFT,
+    ));
+    assert_eq!(app.key_capture, None);
+    assert_eq!(app.prefs.keys.get("palette").map(String::as_str), Some("cmd+shift+y"));
+    assert!(matches!(
+        shortcut(&Key::Character("y".into()), Modifiers::COMMAND | Modifiers::SHIFT),
+        Some(Msg::Show(Some(crate::app::Overlay::Palette { .. })))
+    ));
+    assert!(shortcut(&Key::Character("p".into()), Modifiers::COMMAND | Modifiers::SHIFT).is_none());
+    assert!(says(&app, &crate::keys::Chord::parse("cmd+shift+y").unwrap().show()));
+    // Back to its default.
+    let _ = app.update(Msg::KeyReset(None));
+    assert!(app.prefs.keys.is_empty());
+    assert!(shortcut(&Key::Character("p".into()), Modifiers::COMMAND | Modifiers::SHIFT).is_some());
+}

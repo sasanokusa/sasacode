@@ -102,6 +102,18 @@ words! {
     script_again: "もう一度", "Run again";
     script_to_agent: "エージェントに見せる", "Show the agent";
     stop: "止める", "Stop";
+    // The list of keys, where they are changed.
+    key_change: "変更", "Change";
+    key_default: "既定に戻す", "Reset";
+    key_all_default: "すべて既定に戻す", "Reset all";
+    key_none: "なし", "None";
+    key_press: "新しいキーを押してください（Escでやめる）", "Press the new key (Esc to cancel)";
+    key_waiting: "キーを待っています…", "Waiting for a key…";
+    key_needs_mod: "{mod}と一緒に押してください", "Hold {mod} with it";
+    key_reserved: "{key}は文字の編集かシステムが使うので割り当てられません", "{key} is kept for editing text or the system";
+    key_taken: "{key}は「{other}」に使われています", "{key} is already “{other}”";
+    keys_fixed: "決まっているキー", "Fixed keys";
+    keys_yours: "変えられるキー", "Keys you can change";
 }
 
 #[cfg(test)]

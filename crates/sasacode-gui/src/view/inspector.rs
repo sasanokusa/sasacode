@@ -7,7 +7,7 @@ use iced::widget::tooltip;
 
 use super::timeline::{command_copies, todo_list};
 use super::{
-    BOLD, El, MOD, MONO, clip, clip_start, diff_view, first_line, hline, output_block, plus_minus, short_path, tag, tip,
+    BOLD, El, MONO, clip, clip_start, diff_view, first_line, hline, output_block, plus_minus, short_path, tag, tip,
 };
 use crate::app::{App, Msg, Tab};
 use crate::i18n::{compact, fill};
@@ -51,7 +51,7 @@ pub fn inspector(app: &App) -> El<'_> {
                 .padding([5, 8])
                 .style(t.ghost(t.fg_2, on))
                 .on_press(Msg::Tab(tab)),
-            format!("{MOD}{key}"),
+            super::keys_for(crate::keys::Act::Tab(key)),
             tooltip::Position::Bottom,
         )
     };

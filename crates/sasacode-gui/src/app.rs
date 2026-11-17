@@ -223,6 +223,10 @@ pub struct App {
     /// The folder's scripts run from the window, the newest first, and how many were run.
     pub(crate) script_runs: Vec<crate::scripts::ScriptRun>,
     pub(crate) script_runs_made: u64,
+    /// The shortcut whose new key is waited for in the list of keys, and what was said of the last
+    /// key given.
+    pub(crate) key_capture: Option<crate::keys::Act>,
+    pub(crate) key_note: Option<String>,
     /// The file the files tab shows, and what is typed to find one.
     pub(crate) viewing: Option<crate::files::Viewing>,
     pub(crate) file_query: String,
@@ -452,6 +456,11 @@ pub enum Msg {
     ScriptName(usize, String),
     ScriptCommand(usize, String),
     ScriptRemove(usize),
+    /// A new key for a shortcut asked for in the list of keys; the key pressed then; and a
+    /// shortcut's key back to its default, or all of them.
+    KeyCapture(crate::keys::Act),
+    KeyCaptured(Key, keyboard::Modifiers),
+    KeyReset(Option<crate::keys::Act>),
     /// The pointer over a row of the list, or off it.
     RowHover(Option<String>),
     /// What the search inside the conversation looks for, and the search put away.
@@ -607,7 +616,10 @@ impl App {
             height: layout.size.height / options.prefs.zoom,
             layout_file: options.layout_file,
             kept: layout,
-            prefs: options.prefs.clone(),
+            prefs: {
+                crate::keys::bind(crate::keys::Table::from(&options.prefs.keys));
+                options.prefs.clone()
+            },
             kept_prefs: options.prefs,
             system_dark: false,
             focused: true,
@@ -636,6 +648,8 @@ impl App {
             confirm_delete: None,
             viewing: None,
             file_query: String::new(),
+            key_capture: None,
+            key_note: None,
             script_runs: Vec::new(),
             script_runs_made: 0,
             collapsed: HashSet::new(),
@@ -683,10 +697,16 @@ impl App {
     }
 
     pub fn subscription(&self) -> Subscription<Msg> {
+        // While a shortcut's new key is waited for, the keys are that, and do nothing else.
+        let keys = if self.key_capture.is_some() {
+            event::listen_with(capture_key)
+        } else {
+            event::listen_with(global_key)
+        };
         let mut all = vec![
             iced::system::theme_changes().map(Msg::ThemeMode),
             window::resize_events().map(|(_, size)| Msg::Resized(size)),
-            event::listen_with(global_key),
+            keys,
             event::listen_with(window_event),
         ];
         // Conversations whose pull request was merged or closed are looked for now and then.
@@ -1705,6 +1725,20 @@ pub(crate) fn global_key(event: iced::Event, status: event::Status, _window: win
     shortcut(&key, modifiers)
 }
 
+/// A key pressed while a shortcut's new key is waited for: any but a modifier alone.
+fn capture_key(event: iced::Event, _status: event::Status, _window: window::Id) -> Option<Msg> {
+    let iced::Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. }) = event else {
+        return None;
+    };
+    if matches!(
+        key,
+        Key::Named(Named::Shift | Named::Control | Named::Alt | Named::Super | Named::Meta)
+    ) {
+        return None;
+    }
+    Some(Msg::KeyCaptured(key, modifiers))
+}
+
 /// What the window hears of itself: whether it is in front, and files held over it or dropped.
 fn window_event(event: iced::Event, _status: event::Status, _window: window::Id) -> Option<Msg> {
     match event {
@@ -1737,37 +1771,14 @@ pub(crate) fn shortcut(key: &Key, modifiers: keyboard::Modifiers) -> Option<Msg>
     if !modifiers.command() {
         return None;
     }
-    match key.as_ref() {
-        Key::Named(Named::Enter) => Some(Msg::CommandEnter {
+    if let Key::Named(Named::Enter) = key.as_ref() {
+        return Some(Msg::CommandEnter {
             shift: modifiers.shift(),
-        }),
-        Key::Character("b") => Some(Msg::ToggleSide),
-        Key::Character("i") => Some(Msg::ToggleInspector),
-        Key::Character("n") if modifiers.shift() => Some(Msg::Command(Command::Window)),
-        Key::Character("n") => Some(Msg::NewSession),
-        // ⌘⇧[ and ⌘⇧]: the conversation above or below in the list.
-        Key::Character("[") if modifiers.shift() => Some(Msg::Neighbour(-1)),
-        Key::Character("]") if modifiers.shift() => Some(Msg::Neighbour(1)),
-        Key::Character("a") if modifiers.shift() => Some(Msg::Command(Command::Attention)),
-        Key::Character("r") if modifiers.shift() => Some(Msg::Command(Command::Scripts)),
-        Key::Character("p") if modifiers.shift() => Some(Msg::Show(Some(Overlay::palette()))),
-        Key::Character("p") => Some(Msg::Command(Command::Mention)),
-        Key::Character("f") => Some(Msg::Command(Command::Find)),
-        Key::Character(",") => Some(Msg::Show(Some(Overlay::Settings))),
-        Key::Character("/") => Some(Msg::Show(Some(Overlay::Keys))),
-        Key::Character("=" | "+") => Some(Msg::Zoom(1)),
-        Key::Character("-") => Some(Msg::Zoom(-1)),
-        Key::Character("0") => Some(Msg::Zoom(0)),
-        Key::Character("k") => Some(Msg::Find),
-        Key::Character("l") => Some(Msg::FocusInput),
-        Key::Character("1") => Some(Msg::Tab(Tab::Changes)),
-        Key::Character("2") => Some(Msg::Tab(Tab::Plan)),
-        Key::Character("3") => Some(Msg::Tab(Tab::Commands)),
-        Key::Character("4") => Some(Msg::Tab(Tab::Usage)),
-        Key::Character("5") => Some(Msg::Tab(Tab::Git)),
-        Key::Character("6") => Some(Msg::Tab(Tab::Files)),
-        _ => None,
+        });
     }
+    // The others as bound: by default, or as the settings say.
+    let chord = crate::keys::Chord::of(key, modifiers)?;
+    crate::keys::bound().act(&chord).map(crate::keys::Act::msg)
 }
 
 /// Opens a link from a reply in the system's browser. Only web links: a reply is model output.

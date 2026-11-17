@@ -257,7 +257,7 @@ impl App {
                 });
                 Task::none()
             }
-            other => return Err(other),
+            other => return self.update_keys(other),
         };
         Ok(task)
     }
