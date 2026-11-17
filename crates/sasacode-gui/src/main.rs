@@ -23,6 +23,7 @@ mod icons;
 mod input;
 mod keys;
 mod layout;
+mod link;
 mod list;
 mod nav;
 mod outline;
@@ -49,9 +50,10 @@ mod words;
 
 use std::path::PathBuf;
 
-const USAGE: &str = "usage: sasacode-gui [--sasacode <path>] [--session <id>] [folder]
+const USAGE: &str = "usage: sasacode-gui [--sasacode <path>] [--session <id>] [folder | link]
 
   folder              the project to work in (default: the current directory)
+  link                sasacode://open?folder=<path>&session=<id>, as the window copies it
   --sasacode <path>   the sasacode executable (default: $SASACODE_BIN, else sasacode on PATH)
   --session <id>      open on this conversation of the folder (its id, or the start of it)
   --at <x,y>          put the window's top left corner here, in points (a window opening another)
@@ -87,6 +89,13 @@ fn main() -> iced::Result {
                 None => exit_with("--at needs x,y"),
             },
             Some(flag) if flag.starts_with('-') => exit_with(&format!("unknown option {flag}")),
+            Some(url) if url.starts_with(link::SCHEME) => match link::parse(url) {
+                Some(to) => {
+                    folder = to.folder.or(folder);
+                    session = to.session.or(session);
+                }
+                None => exit_with(&format!("not a link this window opens: {url}")),
+            },
             _ => folder = Some(PathBuf::from(arg)),
         }
     }

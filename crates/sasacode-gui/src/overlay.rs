@@ -127,6 +127,7 @@ impl App {
             ),
             entry(s.w().c_draft_commit, None, Msg::Draft(crate::helper::Draft::Commit)),
             entry(s.w().copy_folder, None, Msg::Copy(Clip::Folder)),
+            entry(s.w().copy_link, None, Msg::Copy(Clip::Link)),
             entry(s.w().c_tui, Some("/tui".into()), Msg::Command(Command::Tui)),
             entry(s.w().c_extensions, None, Msg::Show(Some(Overlay::Extensions))),
             entry(s.w().c_about, None, Msg::Show(Some(Overlay::About))),

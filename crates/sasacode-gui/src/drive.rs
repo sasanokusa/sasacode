@@ -283,6 +283,13 @@ fn what_is_copied_is_the_source_not_what_is_shown() {
     let reply = app.copy_text(&Clip::Reply(0)).expect("the reply");
     assert!(reply.starts_with("## 変更点") && reply.contains("```ts") && reply.contains("**指数バックオフ**"));
     assert_eq!(app.copy_text(&Clip::Session).as_deref(), Some("0a1b2c3d-0"));
+    // A link that opens the window here, on this conversation.
+    let link = app.copy_text(&Clip::Link).unwrap();
+    let to = crate::link::parse(&link).unwrap();
+    assert_eq!(
+        (to.folder.as_deref(), to.session.as_deref()),
+        (Some(app.cwd.as_path()), Some("0a1b2c3d-0"))
+    );
 
     // A command without the `$ ` it is shown with, and all it wrote.
     let mut app = window("ja");

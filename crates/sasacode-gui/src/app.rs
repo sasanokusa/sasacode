@@ -122,6 +122,8 @@ pub enum Clip {
     Log,
     /// The conversation's id, which `sasacode -r` takes.
     Session,
+    /// A link that opens the folder's window on the conversation: `sasacode://open?…`.
+    Link,
     /// The whole conversation, as Markdown.
     Conversation,
     /// The versions, the paths and the recent log, for a report of something wrong.
@@ -1774,6 +1776,7 @@ impl App {
             Clip::Conversation => Some(crate::export::markdown(self.name(), &self.chat.transcript, self.s)),
             Clip::Text(text) => Some(text.clone()),
             Clip::Folder => Some(self.cwd.display().to_string()),
+            Clip::Link => Some(crate::link::make(&self.cwd, self.chat.session.as_deref())),
             Clip::About => Some(self.about_text()),
             Clip::Log => {
                 let id = self.chat.session.as_deref()?;
