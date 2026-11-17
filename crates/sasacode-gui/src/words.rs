@@ -165,6 +165,10 @@ words! {
     worktree_making: "ワークツリーを作っています…", "Making a worktree…";
     worktree_setup_failed: "準備のコマンドが失敗しました：{why}", "Its setup command failed: {why}";
     mention_chat: "会話", "conversation";
+    where_here: "このフォルダで", "In this folder";
+    where_worktree: "新しいワークツリーで", "In a new worktree";
+    where_hint: "押すと切り替え。新しいワークツリーにすると、送ったとき今のブランチからワークツリーを作って窓で開き、メッセージをその入力欄に入れます", "Click to switch. In a new worktree, sending makes one from the branch checked out, opens it in a window of its own, and puts the message in its input";
+    worktree_handoff: "このワークツリーで始めるメッセージを入力欄に入れました", "The message to start this worktree with is in the input";
     worktree_from: "ブランチ{branch}から新しいワークツリー", "New worktree from {branch}";
     worktree_fetch_failed: "取ってこられなかったので、手元のもので作りました：{why}", "Could not fetch, so it was made from what is here: {why}";
     worktree_sweep: "{days}日より前に使った、変更のないワークツリーを片付ける", "Remove the worktrees last used {days} days ago or more, unless they hold changes";

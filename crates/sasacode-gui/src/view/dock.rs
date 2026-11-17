@@ -843,6 +843,7 @@ fn approval_card<'a>(app: &'a App, approval: &'a Approval) -> El<'a> {
 
 fn composer(app: &App) -> El<'_> {
     let (t, s) = (app.t, app.s);
+    let w = s.w();
     let waiting = app.chat.transcript.pending_approval().is_some();
     let running = app.running();
     // Comments alone are a message too.
@@ -1031,10 +1032,34 @@ fn composer(app: &App) -> El<'_> {
     );
 
     // The model's name takes the room the rest leaves: it is the one part that can be long.
-    let controls = row![model, mode, effort]
+    let mut controls = row![model, mode, effort]
         .spacing(6)
         .align_y(Alignment::Center)
         .width(Length::Fill);
+    // Where a new conversation's first message starts: here, or in a new worktree.
+    if app.offers_worktree() {
+        let on = app.to_worktree;
+        let color = if on { t.accent } else { t.fg_3 };
+        controls = controls.push(tip(
+            t,
+            button(
+                row![
+                    icon(Icon::Branch, 12.0, color),
+                    text(if on { w.where_worktree } else { w.where_here })
+                        .size(12)
+                        .color(if on { t.accent } else { t.fg_2 })
+                        .wrapping(text::Wrapping::None),
+                ]
+                .spacing(4)
+                .align_y(Alignment::Center),
+            )
+            .padding([4, 6])
+            .style(t.ghost(color, on))
+            .on_press(Msg::ToWorktree(!on)),
+            w.where_hint.to_owned(),
+            tooltip::Position::Bottom,
+        ));
+    }
     let mut col = column![editor].spacing(8);
     if tight {
         col = col.push(controls).push(container(actions).align_right(Length::Fill));

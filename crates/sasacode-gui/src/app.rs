@@ -254,6 +254,10 @@ pub struct App {
     pub(crate) worktree_list: Option<Vec<crate::worktrees::Tree>>,
     /// The branches a worktree can be made from, read with the list.
     pub(crate) worktree_bases: Vec<String>,
+    /// The next message of a new conversation starts in a new worktree.
+    pub(crate) to_worktree: bool,
+    /// The message to start the worktree being made with, until its window is opened.
+    pub(crate) handoff: Option<String>,
     /// The permission mode before plan mode was chosen.
     pub(crate) before_plan: Option<&'static str>,
     /// The automation being written.
@@ -900,6 +904,8 @@ pub enum Msg {
     Worktrees(Vec<crate::worktrees::Tree>, Vec<String>),
     /// A worktree made from this branch, chosen in the list.
     WorktreeFrom(String),
+    /// Whether the next message of a new conversation starts in a new worktree, not here.
+    ToWorktree(bool),
     /// The worktrees unused for long are cleaned up.
     WorktreeSweep,
     /// How many were, and the names of those kept for what they hold.
@@ -1025,6 +1031,18 @@ impl App {
             );
         }
         app.restore_folder(asked);
+        // A worktree made for a message: the message waits in the input, sent by the user here.
+        if let Some(text) = app
+            .home
+            .as_deref()
+            .and_then(|home| crate::worktrees::take_handoff(home, &app.cwd))
+        {
+            app.chat.editor = text_editor::Content::with_text(&text);
+            app.chat
+                .editor
+                .perform(text_editor::Action::Move(text_editor::Motion::DocumentEnd));
+            app.toast = Some(app.s.w().worktree_handoff.to_owned());
+        }
         let screen = window::oldest().and_then(|id| window::monitor_size(id).map(move |size| Msg::Screen(id, size)));
         // In front when it opens: a window another one started is not brought there by the system.
         let front = window::oldest().and_then(window::gain_focus);
@@ -1131,6 +1149,8 @@ impl App {
             usage_part: crate::usage::Part::All,
             worktree_list: None,
             worktree_bases: Vec::new(),
+            to_worktree: false,
+            handoff: None,
             before_plan: None,
             auto_form: crate::automations::Form::default(),
             gisting: false,
@@ -2203,6 +2223,16 @@ impl App {
                 return Task::none();
             };
             return self.start_run(self.chat.key, text, true);
+        }
+        // A new conversation's first message, to start in a new worktree: made, and opened in a
+        // window of its own with the message in its input.
+        if self.to_worktree && self.offers_worktree() {
+            let Some(text) = self.take_input() else {
+                return Task::none();
+            };
+            self.to_worktree = false;
+            self.handoff = Some(text);
+            return self.worktree(None);
         }
         if self.running() {
             let Some(text) = self.take_input() else {

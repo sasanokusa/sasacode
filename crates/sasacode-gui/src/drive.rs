@@ -3765,3 +3765,43 @@ fn what_a_review_asked_for_finds_is_shown_on_the_lines_of_the_diff_until_put_awa
     assert!(app.chat.review.is_empty());
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn a_new_conversations_message_can_start_in_a_new_worktree_whose_window_finds_it_in_its_input() {
+    let mut app = window("ja");
+    let w = crate::words::JA;
+    let home = std::env::temp_dir().join(format!("sasacode-gui-handoff-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&home);
+    app.home = Some(home.clone());
+    changed_repo(&mut app);
+    // Offered for a new conversation in a repository: here until switched.
+    assert!(app.offers_worktree() && says(&app, w.where_here));
+    let _ = app.update(Msg::ToWorktree(true));
+    assert!(says(&app, w.where_worktree));
+    app.set_input("ログインの画面を作って");
+    let _ = app.update(Msg::Send);
+    // Nothing is sent here: the worktree is being made, the message kept for it.
+    assert!(app.chat.transcript.exchanges.is_empty() && typed(&app).is_empty());
+    assert_eq!(app.handoff.as_deref(), Some("ログインの画面を作って"));
+    assert!(!app.to_worktree);
+    // Made: the message waits for its window, which takes it once.
+    let tree = home.join("worktrees").join("orders-api-1");
+    std::fs::create_dir_all(&tree).unwrap();
+    let _ = app.update(Msg::WorktreeMade(Ok((tree.clone(), None))));
+    assert!(app.handoff.is_none());
+    assert_eq!(
+        crate::worktrees::take_handoff(&home, &tree).as_deref(),
+        Some("ログインの画面を作って")
+    );
+    assert_eq!(crate::worktrees::take_handoff(&home, &tree), None);
+    // Not made: the message is back in the input.
+    let _ = app.update(Msg::ToWorktree(true));
+    app.set_input("もう一度");
+    let _ = app.update(Msg::Send);
+    let _ = app.update(Msg::WorktreeMade(Err("fatal: not a git repository".into())));
+    assert_eq!(typed(&app), "もう一度");
+    // Not offered in a conversation that has begun.
+    app.chat.session = Some("s-1".into());
+    assert!(!app.offers_worktree() && !says(&app, w.where_here));
+    let _ = std::fs::remove_dir_all(&home);
+}

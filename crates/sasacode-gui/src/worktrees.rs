@@ -286,6 +286,16 @@ impl App {
         all
     }
 
+    /// Whether a new conversation's message can be started in a new worktree from here.
+    pub(crate) fn offers_worktree(&self) -> bool {
+        self.git.repo
+            && self.home.is_some()
+            && !self.busy()
+            && self.chat.session.is_none()
+            && self.chat.transcript.exchanges.is_empty()
+            && !self.chat.scratch
+    }
+
     /// The worktree messages; any other comes back.
     pub(crate) fn update_worktrees(&mut self, msg: Msg) -> Result<Task<Msg>, Msg> {
         let (s, w) = (self.s, self.s.w());
@@ -295,6 +305,13 @@ impl App {
                     .file_name()
                     .map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned());
                 let made = crate::i18n::fill(s.worktree_made, "path", name);
+                // The message it was made for, left for its window to take.
+                if let Some(text) = self.handoff.take() {
+                    let left = self.home.as_deref().map(|home| leave_handoff(home, &path, &text));
+                    if left.is_none_or(|left| left.is_err()) {
+                        let _ = self.put_in_input(&text);
+                    }
+                }
                 // Readied or not, it opens: what failed is said, to be done by hand there.
                 self.toast = Some(match note {
                     Some(why) => format!("{made}\n{}", crate::i18n::fill(w.worktree_setup_failed, "why", why)),
@@ -304,6 +321,14 @@ impl App {
             }
             Msg::WorktreeMade(Err(error)) => {
                 self.toast = Some(crate::i18n::fill(s.worktree_failed, "error", error));
+                // Not made: the message it was for is back in the input.
+                match self.handoff.take() {
+                    Some(text) => self.put_in_input(&text),
+                    None => Task::none(),
+                }
+            }
+            Msg::ToWorktree(on) => {
+                self.to_worktree = on;
                 Task::none()
             }
             Msg::Worktrees(list, bases) => {
@@ -399,6 +424,35 @@ impl App {
         };
         Ok(task)
     }
+}
+
+/// Where a message to start a new worktree with waits for that worktree's window: one file for
+/// each folder, under the home (not in its arguments, where any process can read it).
+pub(crate) fn handoff_file(home: &Path, folder: &Path) -> PathBuf {
+    use std::hash::{Hash, Hasher};
+    let real = folder.canonicalize().unwrap_or_else(|_| folder.to_path_buf());
+    let mut hash = std::hash::DefaultHasher::new();
+    real.hash(&mut hash);
+    home.join("gui")
+        .join("handoff")
+        .join(format!("{:016x}.md", hash.finish()))
+}
+
+/// `text` left for the window opened on `folder`.
+pub(crate) fn leave_handoff(home: &Path, folder: &Path, text: &str) -> std::io::Result<()> {
+    let file = handoff_file(home, folder);
+    if let Some(dir) = file.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    std::fs::write(file, text)
+}
+
+/// The message left for a window on `folder`, taken: read once, and gone.
+pub(crate) fn take_handoff(home: &Path, folder: &Path) -> Option<String> {
+    let file = handoff_file(home, folder);
+    let text = std::fs::read_to_string(&file).ok()?;
+    let _ = std::fs::remove_file(&file);
+    (!text.trim().is_empty()).then_some(text)
 }
 
 #[cfg(test)]
