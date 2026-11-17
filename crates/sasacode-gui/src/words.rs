@@ -145,6 +145,16 @@ words! {
     copy_folder: "フォルダのパスをコピー", "Copy the folder's path";
     checks_passed: "CIのチェックがすべて通りました", "The checks all passed";
     checks_failed: "CIのチェックが{n}件失敗しました", "{n} checks failed";
+    c_worktrees: "ワークツリーの一覧と片付け", "Worktrees: list and clean up";
+    worktrees_ph: "ワークツリーを探す", "Find a worktree";
+    worktrees_loading: "ワークツリーを読んでいます…", "Reading the worktrees…";
+    worktree_making: "ワークツリーを作っています…", "Making a worktree…";
+    worktree_setup_failed: "準備のコマンドが失敗しました：{why}", "Its setup command failed: {why}";
+    worktree_remove: "片付ける：{name}（{branch}）", "Remove {name} ({branch})";
+    worktree_removed: "{name}を片付けました（ブランチは残っています）", "Removed {name} (its branch is kept)";
+    worktree_keep: "片付けませんでした：{why}", "Not removed: {why}";
+    set_setup: "ワークツリーの準備（このフォルダ）", "Readying a worktree (this folder)";
+    setup_ph: "作った後に走らせるコマンド（例: npm install）", "A command run in a new worktree (e.g. npm install)";
     c_open_folder: "フォルダを開く…", "Open a folder…";
     copy_link: "この会話を開くリンクをコピー", "Copy a link that opens this conversation";
     copy_log: "会話のログのパスをコピー", "Copy the conversation log's path";

@@ -374,7 +374,8 @@ pub fn new_window(program: &Path, cwd: &Path, session: Option<&str>, at: Option<
 
 /// A git worktree of the repository `cwd` is in, on a new branch from what is checked out, under
 /// sasacode's home: where the same folder of it is, to be opened in a window of its own.
-pub fn make_worktree(cwd: &Path, home: &Path) -> Result<PathBuf, String> {
+/// A worktree of `cwd`'s repository on a new branch, from the branch checked out or `base`.
+pub fn make_worktree(cwd: &Path, home: &Path, base: Option<&str>) -> Result<PathBuf, String> {
     let git = |args: &[&std::ffi::OsStr]| -> Result<String, String> {
         let out = Command::new("git")
             .args(args)
@@ -395,13 +396,21 @@ pub fn make_worktree(cwd: &Path, home: &Path) -> Result<PathBuf, String> {
     let stamp = stamp(std::time::SystemTime::now());
     let dir = home.join("worktrees").join(format!("{name}-{stamp}"));
     let branch = format!("sasacode/{stamp}");
-    git(&[
+    let mut args: Vec<&std::ffi::OsStr> = vec![
         "worktree".as_ref(),
         "add".as_ref(),
         "-b".as_ref(),
         branch.as_ref(),
         dir.as_os_str(),
-    ])?;
+    ];
+    if let Some(base) = base.map(str::trim).filter(|b| !b.is_empty()) {
+        // Never taken as an option of git's.
+        if base.starts_with('-') {
+            return Err(format!("{base}?"));
+        }
+        args.push(base.as_ref());
+    }
+    git(&args)?;
     // The same folder inside it, where the window was opened on a folder inside the repository.
     let inside = cwd.canonicalize().ok().and_then(|c| {
         let top = top.canonicalize().ok()?;

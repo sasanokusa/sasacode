@@ -50,7 +50,7 @@ pub enum ScriptUpdate {
 
 /// `command` run in `cwd` by the user's shell, as a login shell so it has the user's `PATH` as a
 /// terminal would: a window started from the Dock has the system's alone.
-fn shell(command: &str, cwd: &std::path::Path) -> tokio::process::Command {
+pub(crate) fn shell(command: &str, cwd: &std::path::Path) -> tokio::process::Command {
     #[cfg(windows)]
     let mut c = {
         let mut c = tokio::process::Command::new("cmd");

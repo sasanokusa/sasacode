@@ -2737,3 +2737,44 @@ fn a_message_goes_to_several_models_each_in_a_conversation_of_its_own() {
         Some(format!("同じ質問 · {short}").as_str())
     );
 }
+
+#[test]
+fn worktrees_are_readied_by_the_folders_command_listed_and_offered_to_remove_but_not_the_windows_own() {
+    let mut app = window("ja");
+    let w = crate::words::JA;
+    // The command that readies them, kept for this folder.
+    let _ = app.update(Msg::Show(Some(crate::app::Overlay::Settings)));
+    assert!(says(&app, w.set_setup));
+    let _ = app.update(Msg::SetWorktreeSetup("npm install".into()));
+    assert_eq!(app.worktree_setup().as_deref(), Some("npm install"));
+    // Made, and its setup failed: it opens anyway, and says what failed.
+    let made = std::path::PathBuf::from("/tmp/home/worktrees/orders-api-20261117-000000");
+    let _ = app.update(Msg::WorktreeMade(Ok((made.clone(), Some("npm ERR! missing".into())))));
+    let toast = app.toast.clone().unwrap();
+    assert!(toast.contains("orders-api-20261117-000000") && toast.contains("npm ERR! missing"));
+    // Listed: a new one, and each made here but the one this window is in.
+    app.worktree_list = Some(vec![
+        crate::worktrees::Tree {
+            path: made.clone(),
+            branch: Some("sasacode/20261117-000000".into()),
+        },
+        crate::worktrees::Tree {
+            path: app.cwd.clone(),
+            branch: Some("sasacode/here".into()),
+        },
+    ]);
+    app.overlay = Some(crate::overlay::Overlay::picker(crate::overlay::Pick::Worktrees));
+    let found: Vec<Msg> = app.found_entries().into_iter().map(|e| e.msg).collect();
+    assert!(matches!(&found[..], [
+        Msg::Command(Command::Worktree),
+        Msg::WorktreeRemove(p),
+    ] if *p == made));
+    // One not made here is never removed.
+    let _ = app.update(Msg::WorktreeRemove("/Users/me/elsewhere".into()));
+    app.toast = None;
+    let _ = app.update(Msg::WorktreeRemoved(
+        made,
+        Err("contains modified or untracked files".into()),
+    ));
+    assert!(app.toast.as_deref().is_some_and(|t| t.contains("modified")));
+}

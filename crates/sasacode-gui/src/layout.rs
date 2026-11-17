@@ -215,6 +215,8 @@ pub struct Folder {
     pub effort: Option<String>,
     /// The conversation last shown.
     pub last: Option<String>,
+    /// What readies a worktree made of it, run in the worktree before its window opens.
+    pub setup: String,
 }
 
 impl More {
@@ -704,6 +706,7 @@ mod tests {
                         permission: Some("ask".into()),
                         effort: None,
                         last: Some("s1".into()),
+                        setup: "npm install".into(),
                     },
                 )]),
                 drafts: BTreeMap::from([("s1".into(), "途中".into())]),

@@ -243,6 +243,8 @@ pub struct App {
     pub(crate) usage: Option<crate::usage::Report>,
     pub(crate) usage_here: bool,
     pub(crate) usage_part: crate::usage::Part,
+    /// The worktrees made here, once read for their list.
+    pub(crate) worktree_list: Option<Vec<crate::worktrees::Tree>>,
     /// The next side question, as it is typed.
     pub(crate) side_typed: String,
     /// Conversations whose title the model is writing.
@@ -753,6 +755,14 @@ pub enum Msg {
     FindInClose,
     /// Another folder sasacode was used in, in a window of its own.
     OpenProject(PathBuf),
+    /// A worktree made (and readied, or what failed readying it), or why not.
+    WorktreeMade(Result<(PathBuf, Option<String>), String>),
+    /// The worktrees made here, read for the list; one to remove, and how that went.
+    Worktrees(Vec<crate::worktrees::Tree>),
+    WorktreeRemove(PathBuf),
+    WorktreeRemoved(PathBuf, Result<(), String>),
+    /// The command that readies this folder's new worktrees.
+    SetWorktreeSetup(String),
     /// The folder chosen in the system's picker (⌘O), none when it was closed: a window of its own.
     FolderPicked(Option<PathBuf>),
     /// Another window on a folder, open on a conversation if given, where this one is if known.
@@ -946,6 +956,7 @@ impl App {
             usage: None,
             usage_here: false,
             usage_part: crate::usage::Part::All,
+            worktree_list: None,
             side_typed: String::new(),
             titling: Default::default(),
             back: Vec::new(),

@@ -71,6 +71,8 @@ pub enum Pick {
     Outline,
     /// The list's conversations, to put one beside the one shown.
     Split,
+    /// The worktrees made here: a new one, or one to remove.
+    Worktrees,
 }
 
 impl Overlay {
@@ -183,6 +185,11 @@ impl App {
             entry(s.c_terminal, None, Msg::Command(Command::Terminal)),
             entry(s.c_editor, None, Msg::Command(Command::Editor)),
             entry(s.c_worktree, None, Msg::Command(Command::Worktree)),
+            entry(
+                s.w().c_worktrees,
+                Some("/worktrees".into()),
+                Msg::Command(Command::Worktrees),
+            ),
             entry(s.settings, key(Act::Settings), Msg::Show(Some(Overlay::Settings))),
             entry(s.c_keys, key(Act::Keys), Msg::Show(Some(Overlay::Keys))),
             entry(s.c_zoom_in, key(Act::ZoomIn), Msg::Zoom(1)),
@@ -272,6 +279,9 @@ impl App {
         if *pick == Pick::Split {
             return self.split_entries(query);
         }
+        if *pick == Pick::Worktrees {
+            return self.worktree_entries(query);
+        }
         if *pick == Pick::Outline {
             return self.outline_entries(query);
         }
@@ -321,6 +331,9 @@ impl App {
                     Some(Overlay::Palette {
                         pick: Pick::Branches, ..
                     }) => Task::batch([operation::focus(PALETTE), self.list_branches()]),
+                    Some(Overlay::Palette {
+                        pick: Pick::Worktrees, ..
+                    }) => Task::batch([operation::focus(PALETTE), self.list_worktrees()]),
                     Some(Overlay::Palette { .. }) => operation::focus(PALETTE),
                     Some(Overlay::Rename { .. }) => {
                         Task::batch([operation::focus(RENAME), operation::select_all(RENAME)])
@@ -648,27 +661,6 @@ impl App {
         if let Some(ex) = self.aside.as_mut().and_then(|a| a.transcript.exchanges.last_mut()) {
             ex.prompt = question;
         }
-        task
-    }
-
-    /// A git worktree of this folder's repository on a branch of its own, opened in a new window.
-    pub(crate) fn worktree(&mut self) -> Task<Msg> {
-        let s = self.s;
-        let (note, task) = match self.home.as_deref().map(|home| system::make_worktree(&self.cwd, home)) {
-            // Its folder's name: the bar has no room for the path, which the new window shows.
-            Some(Ok(path)) => (
-                crate::i18n::fill(
-                    s.worktree_made,
-                    "path",
-                    path.file_name()
-                        .map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned()),
-                ),
-                self.new_window(path, None),
-            ),
-            Some(Err(error)) => (crate::i18n::fill(s.worktree_failed, "error", error), Task::none()),
-            None => return Task::none(),
-        };
-        self.toast = Some(note);
         task
     }
 

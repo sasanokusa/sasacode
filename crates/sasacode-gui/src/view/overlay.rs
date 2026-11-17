@@ -95,6 +95,7 @@ fn palette<'a>(app: &'a App, query: &'a str, at: usize, pick: Pick) -> El<'a> {
         Pick::Scripts => s.w().script_ph,
         Pick::Outline => s.w().outline_ph,
         Pick::Split => s.w().split_ph,
+        Pick::Worktrees => s.w().worktrees_ph,
     };
     let field = text_input(placeholder, query)
         .id(PALETTE)
@@ -106,6 +107,8 @@ fn palette<'a>(app: &'a App, query: &'a str, at: usize, pick: Pick) -> El<'a> {
     let mut list = column![].spacing(1);
     if pick == Pick::Branches && app.branch_list.is_none() {
         list = list.push(container(text(s.w().branch_loading).size(13).color(t.fg_3)).padding([8, 10]));
+    } else if pick == Pick::Worktrees && app.worktree_list.is_none() {
+        list = list.push(container(text(s.w().worktrees_loading).size(13).color(t.fg_3)).padding([8, 10]));
     } else if found.is_empty() {
         list = list.push(container(text(s.nothing).size(13).color(t.fg_3)).padding([8, 10]));
     }
@@ -414,6 +417,22 @@ fn settings(app: &App) -> El<'_> {
             .style(t.input()),
     ]
     .spacing(6);
+    let setup = app
+        .prefs
+        .more
+        .folders
+        .get(&app.folder_key())
+        .map_or("", |f| f.setup.as_str());
+    let setup = column![
+        heading(w.set_setup),
+        text_input(w.setup_ph, setup)
+            .on_input(Msg::SetWorktreeSetup)
+            .size(13)
+            .font(MONO)
+            .padding([6, 10])
+            .style(t.input()),
+    ]
+    .spacing(6);
     let body = column![
         title(app, s.settings),
         enter,
@@ -435,6 +454,7 @@ fn settings(app: &App) -> El<'_> {
         width,
         lang,
         editor,
+        setup,
         scripts(app),
         allowed(app),
         text(s.set_kept).size(11.5).color(t.fg_3),

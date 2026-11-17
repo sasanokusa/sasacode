@@ -44,6 +44,7 @@ pub enum Command {
     Tui,
     Usage,
     OpenFolder,
+    Worktrees,
 }
 
 impl Command {
@@ -74,6 +75,7 @@ impl Command {
         ("tui", Command::Tui),
         ("usage", Command::Usage),
         ("open", Command::OpenFolder),
+        ("worktrees", Command::Worktrees),
     ];
 
     pub fn what(self, s: &Strings) -> &'static str {
@@ -106,12 +108,16 @@ impl Command {
             Command::Tui => s.w().c_tui,
             Command::Usage => s.w().c_usage,
             Command::OpenFolder => s.w().c_open_folder,
+            Command::Worktrees => s.w().c_worktrees,
         }
     }
 
     /// Takes what is typed after it: `/btw` and its question, `/usage` and what of it.
     fn takes_text(self) -> bool {
-        matches!(self, Command::Btw | Command::Export | Command::Usage)
+        matches!(
+            self,
+            Command::Btw | Command::Export | Command::Usage | Command::Worktree
+        )
     }
 }
 
@@ -315,6 +321,10 @@ impl App {
         if command == Command::Export && !rest.is_empty() {
             return Some(self.update(Msg::ExportTo(rest)));
         }
+        // `/worktree main`: from that branch.
+        if command == Command::Worktree {
+            return Some(self.worktree((!rest.is_empty()).then_some(rest)));
+        }
         // `/usage graph`, `history`, `models`: that part, as the CLI's.
         if command == Command::Usage {
             return Some(self.update(Msg::UsagePart(crate::usage::Part::named(&rest))));
@@ -407,7 +417,10 @@ impl App {
             Command::Editor => {
                 system::editor_with(&self.cwd, &self.prefs.more.editor);
             }
-            Command::Worktree => return self.worktree(),
+            Command::Worktree => return self.worktree(None),
+            Command::Worktrees => {
+                return self.update(Msg::Show(Some(Overlay::picker(crate::overlay::Pick::Worktrees))));
+            }
             Command::Settings => self.overlay = Some(Overlay::Settings),
             Command::Keys => self.overlay = Some(Overlay::Keys),
             Command::Usage => return self.update(Msg::UsagePart(crate::usage::Part::All)),

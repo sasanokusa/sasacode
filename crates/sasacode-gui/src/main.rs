@@ -47,6 +47,7 @@ mod usage;
 mod view;
 mod watch;
 mod words;
+mod worktrees;
 
 use std::path::PathBuf;
 

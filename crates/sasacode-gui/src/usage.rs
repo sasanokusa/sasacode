@@ -314,7 +314,7 @@ impl crate::app::App {
                 }
                 iced::Task::none()
             }
-            other => return Err(other),
+            other => return self.update_worktrees(other),
         };
         Ok(task)
     }
