@@ -133,6 +133,29 @@ words! {
     suggest_label: "次に", "Next";
     suggest_take: "入力欄に入れる", "Put it in the input";
     set_suggest: "返答のあとに次の入力を提案する（モデルを1回呼びます）", "Suggest the next message after a reply (asks the model once)";
+    // Asked before the window closes on a run, and before `auto`.
+    quit_title: "実行中のものがあります", "Something is running";
+    quit_body: "{n}件の実行が動いています。窓を閉じると止まります。", "{n} runs are going on. Closing the window stops them.";
+    quit_yes: "止めて閉じる", "Stop them and close";
+    auto_title: "確認なしで実行するモード", "Run without asking";
+    auto_body: "autoでは、エージェントがコマンドの実行やファイルの変更を確認せずに行います。信頼できるフォルダでだけ使ってください。この確認は一度だけです。", "In auto, the agent runs commands and changes files without asking. Use it only in folders you trust. This is asked once.";
+    auto_yes: "autoにする", "Use auto";
+    mark_unread: "この会話を未読にする", "Mark this conversation unread";
+    mark_read: "この会話を既読にする", "Mark this conversation read";
+    copy_folder: "フォルダのパスをコピー", "Copy the folder's path";
+    copy_log: "会話のログのパスをコピー", "Copy the conversation log's path";
+    exported: "{path}に書き出しました", "Written to {path}";
+    export_failed: "書き出せませんでした: {error}", "Could not write it: {error}";
+    c_tui: "ターミナルのTUIで続ける", "Continue in the terminal's TUI";
+    tui_failed: "ターミナルを開けませんでした", "Could not open a terminal";
+    set_width: "会話の幅", "Conversation width";
+    width_normal: "標準", "Normal";
+    width_wide: "広く", "Wide";
+    width_full: "窓いっぱい", "Full";
+    show_whole: "全文を表示", "Show all";
+    fold_whole: "たたむ", "Fold";
+    set_lang: "言語", "Language";
+    lang_system: "システムに合わせる", "As the system";
     // The conversation beside the one shown.
     c_split: "会話を横に開く", "Open a conversation beside";
     split_close: "横の会話を閉じる", "Close the conversation beside";

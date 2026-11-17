@@ -6,7 +6,7 @@ use iced::{Alignment, Color, Length, Padding, border};
 use sasacode_protocol::StopCause;
 
 use super::{
-    BOLD, COL_W, El, MONO, UI, clip, copy_button, diff_view, first_line, output_block, plus_minus, short_path, tag,
+    BOLD, El, MONO, UI, clip, col_w, copy_button, diff_view, first_line, output_block, plus_minus, short_path, tag,
 };
 use crate::app::{App, Clip, Msg, TIMELINE, Tab};
 use crate::i18n::fill;
@@ -66,7 +66,7 @@ pub fn timeline(app: &App) -> El<'_> {
         );
     }
     let mut list = scrollable(
-        container(container(col).max_width(COL_W))
+        container(container(col).max_width(col_w(app)))
             .center_x(Length::Fill)
             .padding([20, 24]),
     )
@@ -144,6 +144,18 @@ fn blank(app: &App) -> El<'_> {
 }
 
 /// What the user said, on the right.
+/// A message's start, drawn as the message is.
+fn bubble_owned<'a>(t: Tokens, prompt: String) -> El<'a> {
+    container(
+        container(text(prompt).size(14).color(t.fg))
+            .padding([8, 12])
+            .max_width(560)
+            .style(t.boxed(t.inset, t.inset, RADIUS_L)),
+    )
+    .align_right(Length::Fill)
+    .into()
+}
+
 pub(crate) fn bubble<'a>(t: Tokens, prompt: &'a str) -> El<'a> {
     container(
         container(text(prompt).size(14).color(t.fg))
@@ -161,7 +173,34 @@ fn exchange<'a>(app: &'a App, i: usize, ex: &'a Exchange) -> El<'a> {
     let live = last && app.running();
     let mut col = column![].spacing(10);
     if !ex.prompt.is_empty() {
-        let mut said = column![bubble(t, &ex.prompt)].spacing(3);
+        // A long message is folded to its start until it is opened.
+        let mut said = match crate::extras::folded(&ex.prompt) {
+            Some(head) => {
+                let whole = app.chat.whole.contains(&i);
+                let toggle = button(
+                    text(if whole {
+                        app.s.w().fold_whole
+                    } else {
+                        app.s.w().show_whole
+                    })
+                    .size(12)
+                    .color(t.accent),
+                )
+                .padding([2, 6])
+                .style(t.ghost(t.accent, false))
+                .on_press(Msg::Whole(i));
+                column![
+                    if whole {
+                        bubble(t, &ex.prompt)
+                    } else {
+                        bubble_owned(t, head)
+                    },
+                    container(toggle).align_right(Length::Fill)
+                ]
+                .spacing(3)
+            }
+            None => column![bubble(t, &ex.prompt)].spacing(3),
+        };
         // The images it named, small, each opened by a click.
         let images = crate::composer::image_refs(&ex.prompt, &app.cwd);
         if !images.is_empty() {

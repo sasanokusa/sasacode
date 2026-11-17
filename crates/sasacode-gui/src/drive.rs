@@ -1441,3 +1441,59 @@ fn the_model_writes_the_commit_message_the_pull_request_and_the_next_message_whe
     let _ = app.update(Msg::Drafted(Draft::Next(key, 0), Ok("古い".into())));
     assert!(app.suggestion.is_none());
 }
+
+#[test]
+fn the_window_asks_before_it_closes_on_a_run_and_before_auto_and_keeps_what_was_marked() {
+    let mut app = window("ja");
+    let id = iced::window::Id::unique();
+    // Nothing runs: it closes at once. A run going on: it asks.
+    let _ = app.update(Msg::CloseAsked(id));
+    assert!(app.overlay.is_none());
+    app.chat.session = Some(app.sessions[0].id.clone());
+    app.chat.transcript.send("長い作業", std::time::Instant::now());
+    let _written = app.pretend_running();
+    let _ = app.update(Msg::CloseAsked(id));
+    assert!(matches!(app.overlay, Some(crate::app::Overlay::Quit(_))));
+    assert!(says(&app, "1件の実行が動いています。窓を閉じると止まります。"));
+    assert!(app.title().starts_with("● 長い作業 — "));
+    let _ = app.update(Msg::Show(None));
+
+    // `auto` is agreed to once.
+    let _ = app.update(Msg::Permission("auto"));
+    assert!(matches!(app.overlay, Some(crate::app::Overlay::ConfirmAuto)) && app.permission.is_none());
+    act(&mut app, |ui| {
+        let _ = ui.click(crate::words::JA.auto_yes);
+    });
+    assert_eq!(app.permission, Some("auto"));
+    let _ = app.update(Msg::Permission("edits"));
+    let _ = app.update(Msg::Permission("auto"));
+    assert!(app.overlay.is_none() && app.permission == Some("auto"));
+
+    // Marked unread, a conversation not open shows it in the list; opened, it is read.
+    let other = app.sessions[2].id.clone();
+    let _ = app.update(Msg::MarkUnread(other.clone()));
+    assert!(app.prefs.more.unread.contains(&other));
+    let _ = app.update(Msg::MarkUnread(other.clone()));
+    assert!(!app.prefs.more.unread.contains(&other));
+
+    // Written to a file by `/export path`.
+    let dir = std::env::temp_dir().join(format!("sasacode-gui-export-{}", std::process::id()));
+    app.cwd = dir.clone();
+    let _ = app.update(Msg::ExportTo("out/会話.md".into()));
+    let written = std::fs::read_to_string(dir.join("out/会話.md")).unwrap();
+    assert!(written.contains("長い作業"));
+    let _ = std::fs::remove_dir_all(&dir);
+
+    // A long message is folded until opened.
+    let long = (1..=30).map(|n| format!("{n}行目")).collect::<Vec<_>>().join("\n");
+    app.chat.transcript.send(&long, std::time::Instant::now());
+    assert!(says(&app, crate::words::JA.show_whole) && !says(&app, "30行目"));
+    let _ = app.update(Msg::Whole(1));
+    assert!(says(&app, crate::words::JA.fold_whole));
+
+    // The language and the width are kept with the other choices.
+    let _ = app.update(Msg::SetLang(Some("en")));
+    assert!(!app.s.ja && app.prefs.more.lang.as_deref() == Some("en"));
+    let _ = app.update(Msg::SetWidth(crate::layout::Width::Full));
+    assert_eq!(app.prefs.more.chat_width, crate::layout::Width::Full);
+}

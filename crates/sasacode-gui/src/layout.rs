@@ -117,6 +117,52 @@ pub struct Prefs {
     pub keys: BTreeMap<String, String>,
     /// Each folder's scripts, run from the window: by the folder's path.
     pub scripts: BTreeMap<String, Vec<Script>>,
+    pub more: More,
+}
+
+/// How wide the conversation and the input are drawn.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Width {
+    #[default]
+    Normal,
+    Wide,
+    Full,
+}
+
+/// The choices added later, each kept under its own name at the top of the file. Two windows keep
+/// each other's: a choice this window did not change is taken from the file.
+#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct More {
+    /// Conversations the user marked unread, by session id.
+    pub unread: BTreeSet<String>,
+    pub chat_width: Width,
+    /// The window's language, `ja` or `en`; none follows the system.
+    pub lang: Option<String>,
+    /// Running everything without asking (`auto`) was agreed to once.
+    pub auto_agreed: bool,
+}
+
+impl More {
+    fn read(held: &Value) -> More {
+        serde_json::from_value(held.clone()).unwrap_or_default()
+    }
+
+    fn over(&self, kept: &More, disk: &More) -> More {
+        let object = |m: &More| match serde_json::to_value(m) {
+            Ok(Value::Object(o)) => o,
+            _ => serde_json::Map::new(),
+        };
+        let (mine, kept) = (object(self), object(kept));
+        let mut all = object(disk);
+        for (key, value) in mine {
+            if kept.get(&key) != Some(&value) {
+                all.insert(key, value);
+            }
+        }
+        serde_json::from_value(Value::Object(all)).unwrap_or_else(|_| self.clone())
+    }
 }
 
 /// A command a folder's scripts run, by the name it is listed as.
@@ -144,6 +190,7 @@ impl Default for Prefs {
             groups: BTreeMap::new(),
             keys: BTreeMap::new(),
             scripts: BTreeMap::new(),
+            more: More::default(),
         }
     }
 }
@@ -243,6 +290,7 @@ impl Prefs {
                         .collect()
                 })
                 .unwrap_or_default(),
+            more: More::read(&held),
         }
     }
 
@@ -283,6 +331,7 @@ impl Prefs {
             groups: merge_map(&self.groups, &kept.groups, &disk.groups),
             keys: merge_map(&self.keys, &kept.keys, &disk.keys),
             scripts: merge_map(&self.scripts, &kept.scripts, &disk.scripts),
+            more: self.more.over(&kept.more, &disk.more),
         }
     }
 }
@@ -299,7 +348,7 @@ pub fn write(file: &Path, layout: &Layout, prefs: &Prefs) -> io::Result<()> {
         Some(false) => "light",
         Some(true) => "dark",
     };
-    let text = serde_json::to_string_pretty(&json!({
+    let mut all = json!({
         "window": { "width": whole(layout.size.width), "height": whole(layout.size.height) },
         "side": whole(layout.side),
         "inspector": whole(layout.inspector),
@@ -329,7 +378,11 @@ pub fn write(file: &Path, layout: &Layout, prefs: &Prefs) -> io::Result<()> {
                 (folder.clone(), Value::Array(list))
             })
             .collect::<serde_json::Map<String, Value>>(),
-    }))?;
+    });
+    if let (Some(all), Ok(Value::Object(more))) = (all.as_object_mut(), serde_json::to_value(&prefs.more)) {
+        all.extend(more);
+    }
+    let text = serde_json::to_string_pretty(&all)?;
     let part = file.with_extension(format!("json.{}.part", std::process::id()));
     std::fs::write(&part, text + "\n")?;
     std::fs::rename(&part, file)
@@ -350,6 +403,29 @@ mod tests {
     use std::path::PathBuf;
 
     use super::*;
+
+    #[test]
+    fn the_later_choices_are_kept_by_name_and_two_windows_keep_each_others() {
+        let dir = std::env::temp_dir().join(format!("sasacode-gui-more-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let file = dir.join("gui.json");
+        let kept = Prefs::default();
+        let mut first = kept.clone();
+        first.more.chat_width = Width::Wide;
+        write(&file, &Layout::default(), &first).unwrap();
+        let text = std::fs::read_to_string(&file).unwrap();
+        assert!(text.contains("\"chatWidth\": \"wide\""));
+        assert_eq!(Prefs::read(&file).more.chat_width, Width::Wide);
+        // Another window, which read the file before, changes the language only.
+        let mut second = kept.clone();
+        second.more.lang = Some("en".into());
+        let merged = second.over(&kept, &Prefs::read(&file));
+        assert_eq!(
+            (merged.more.chat_width, merged.more.lang.as_deref()),
+            (Width::Wide, Some("en"))
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn two_windows_keep_what_each_said_about_conversations() {
@@ -514,6 +590,12 @@ mod tests {
                 }],
             )]
             .into(),
+            more: More {
+                unread: ["dddd".to_owned()].into(),
+                chat_width: Width::Full,
+                lang: Some("en".into()),
+                auto_agreed: true,
+            },
         };
         write(&file, &Layout::default(), &prefs).unwrap();
         assert_eq!(Prefs::read(&file), prefs);

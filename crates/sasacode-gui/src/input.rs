@@ -41,6 +41,7 @@ pub enum Command {
     Scripts,
     Outline,
     Split,
+    Tui,
 }
 
 impl Command {
@@ -68,6 +69,7 @@ impl Command {
         ("run", Command::Scripts),
         ("outline", Command::Outline),
         ("split", Command::Split),
+        ("tui", Command::Tui),
     ];
 
     pub fn what(self, s: &Strings) -> &'static str {
@@ -97,12 +99,13 @@ impl Command {
             Command::Scripts => s.w().c_scripts,
             Command::Outline => s.w().c_outline,
             Command::Split => s.w().c_split,
+            Command::Tui => s.w().c_tui,
         }
     }
 
     /// Takes what is typed after it: `/btw` and its question.
     fn takes_text(self) -> bool {
-        self == Command::Btw
+        matches!(self, Command::Btw | Command::Export)
     }
 }
 
@@ -292,6 +295,10 @@ impl App {
         if command == Command::Btw {
             return Some(self.side_question(rest));
         }
+        // `/export path`: to a file, not the clipboard.
+        if command == Command::Export && !rest.is_empty() {
+            return Some(self.update(Msg::ExportTo(rest)));
+        }
         Some(self.command(command))
     }
 
@@ -384,6 +391,14 @@ impl App {
             Command::Settings => self.overlay = Some(Overlay::Settings),
             Command::Keys => self.overlay = Some(Overlay::Keys),
             Command::Attention => return self.attention(),
+            Command::Tui => {
+                let Some(id) = session else {
+                    return Task::none();
+                };
+                if !system::resume_in_terminal(&self.cwd, &self.program, &id) {
+                    self.toast = Some(self.s.w().tui_failed.to_owned());
+                }
+            }
             Command::Split => {
                 if self.split.is_some() {
                     return self.update(Msg::SplitClose);

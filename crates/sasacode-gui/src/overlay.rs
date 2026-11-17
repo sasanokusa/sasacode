@@ -38,6 +38,10 @@ pub enum Overlay {
     },
     /// The pull request being written, `App::pr_draft`.
     Pr,
+    /// The window asked to close while runs go on.
+    Quit(iced::window::Id),
+    /// `auto` asked for the first time.
+    ConfirmAuto,
 }
 
 /// What a palette picks from.
@@ -108,11 +112,22 @@ impl App {
                 Msg::Command(Command::Split),
             ),
             entry(s.w().c_draft_commit, None, Msg::Draft(crate::helper::Draft::Commit)),
+            entry(s.w().copy_folder, None, Msg::Copy(Clip::Folder)),
+            entry(s.w().c_tui, Some("/tui".into()), Msg::Command(Command::Tui)),
             entry(s.w().pr_title, None, Msg::PrOpen),
             entry(s.c_export, None, Msg::Copy(Clip::Conversation)),
             entry(s.c_steps, None, Msg::Command(Command::Steps)),
             entry(s.c_model, None, Msg::Command(Command::Model)),
         ];
+        if let Some(id) = self.chat.session.clone() {
+            let unread = self.prefs.more.unread.contains(&id) || self.chat.unread;
+            all.push(entry(
+                if unread { s.w().mark_read } else { s.w().mark_unread },
+                None,
+                Msg::MarkUnread(id),
+            ));
+            all.push(entry(s.w().copy_log, None, Msg::Copy(Clip::Log)));
+        }
         if self.chat.session.is_some() {
             all.push(entry(s.c_rename, None, Msg::Command(Command::Rename)));
             all.push(entry(s.c_pin, None, Msg::Command(Command::Pin)));

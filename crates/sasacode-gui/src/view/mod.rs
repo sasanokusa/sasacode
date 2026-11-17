@@ -53,7 +53,10 @@ pub(crate) const MONO: Font = if cfg!(target_os = "macos") {
 };
 
 /// The conversation and the input keep to this width, centred.
-const COL_W: f32 = 760.0;
+/// How wide the conversation and the input are drawn at most, as the settings say.
+pub(crate) fn col_w(app: &App) -> f32 {
+    crate::extras::column_width(app.prefs.more.chat_width)
+}
 /// How wide a panel's edge is to the pointer: wider than its line, so as to be taken.
 const GRIP: f32 = 7.0;
 

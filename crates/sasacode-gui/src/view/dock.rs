@@ -7,7 +7,7 @@ use iced::widget::{
 use iced::{Alignment, Length};
 use sasacode_protocol::Decision;
 
-use super::{BOLD, COL_W, El, MOD, MONO, clip_start, diff_view, plus_minus, room, short_path, tag, tip};
+use super::{BOLD, El, MOD, MONO, clip_start, col_w, diff_view, plus_minus, room, short_path, tag, tip};
 use crate::app::{App, EFFORTS, INPUT, MODEL, Msg, PERMISSIONS, shortcut};
 use crate::i18n::fill;
 use crate::icons::{Icon, icon};
@@ -52,7 +52,7 @@ pub fn dock(app: &App) -> El<'_> {
         col = col.push(Above::Suggestion, next);
     }
     col = col.push(Above::Input, composer(app)).push(Above::Hints, hints(app));
-    container(container(col).max_width(COL_W))
+    container(container(col).max_width(col_w(app)))
         .center_x(Length::Fill)
         .padding(iced::Padding {
             top: 4.0,

@@ -349,7 +349,7 @@ impl App {
                 self.suggestion = None;
                 Task::none()
             }
-            other => return Err(other),
+            other => return self.update_extras(other),
         };
         Ok(task)
     }

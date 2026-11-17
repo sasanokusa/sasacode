@@ -8,6 +8,7 @@ mod diff;
 #[cfg(test)]
 mod drive;
 mod export;
+mod extras;
 mod figure;
 mod files;
 mod fork;
@@ -106,6 +107,8 @@ fn main() -> iced::Result {
             size: iced::Size::new(layout.size.width / zoom, layout.size.height / zoom),
             min_size: Some(layout::MIN_SIZE),
             position: at.map_or(iced::window::Position::Default, iced::window::Position::Specific),
+            // Asked first while something runs: `Msg::CloseAsked`.
+            exit_on_close_request: false,
             ..iced::window::Settings::default()
         })
         .run()

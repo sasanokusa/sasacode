@@ -115,6 +115,9 @@ pub enum Clip {
     Command(String),
     /// All a call wrote, by call id.
     Output(String),
+    /// The folder's path, and the conversation's log's.
+    Folder,
+    Log,
     /// The conversation's id, which `sasacode -r` takes.
     Session,
     /// The whole conversation, as Markdown.
@@ -296,6 +299,8 @@ pub(crate) struct Chat {
     pub(crate) unread: bool,
     /// Comments on lines of a diff, to go with the next message.
     pub(crate) comments: Vec<crate::review::Comment>,
+    /// Long messages opened whole, by exchange.
+    pub(crate) whole: HashSet<usize>,
 }
 
 impl Chat {
@@ -313,6 +318,7 @@ impl Chat {
             closed: HashSet::new(),
             unread: false,
             comments: Vec::new(),
+            whole: HashSet::new(),
         }
     }
 
@@ -499,6 +505,19 @@ pub enum Msg {
     TakeSuggestion,
     DropSuggestion,
     SetSuggest(bool),
+    /// The window was asked to close; closed after all.
+    CloseAsked(window::Id),
+    Quit(window::Id),
+    /// `auto` agreed to, the first time.
+    AutoAgree,
+    /// A conversation marked unread, or read again.
+    MarkUnread(String),
+    /// The conversation written as Markdown to a file.
+    ExportTo(String),
+    SetWidth(crate::layout::Width),
+    /// A long message opened whole, or folded again.
+    Whole(usize),
+    SetLang(Option<&'static str>),
     /// The pointer over a row of the list, or off it.
     RowHover(Option<String>),
     /// What the search inside the conversation looks for, and the search put away.
@@ -585,7 +604,8 @@ pub enum Msg {
 impl App {
     pub fn new(options: Options) -> (Self, Task<Msg>) {
         let wanted = options.session.clone();
-        let mut app = App::blank(options, Strings::detect());
+        let lang = options.prefs.more.lang.clone();
+        let mut app = App::blank(options, App::strings_for(lang.as_deref()));
         // Shared with the TUI. A window made in a test has none, so tests never write to it.
         app.history_file = app.home.as_ref().map(|home| home.join("history.jsonl"));
         app.history = app
@@ -717,7 +737,18 @@ impl App {
             .file_name()
             .map(|f| f.to_string_lossy().into_owned())
             .unwrap_or_default();
-        format!("sasacode — {folder}")
+        // What the conversation is doing, before its name: the window list and the Dock show it.
+        let state = if self.running() && self.chat.transcript.pending_approval().is_some() {
+            "⚠ "
+        } else if self.running() {
+            "● "
+        } else {
+            ""
+        };
+        if self.chat.transcript.exchanges.is_empty() && self.chat.session.is_none() {
+            return format!("sasacode — {folder}");
+        }
+        format!("{state}{} — {folder}", self.chat_title(&self.chat))
     }
 
     pub fn theme(&self) -> Theme {
@@ -751,6 +782,7 @@ impl App {
             window::resize_events().map(|(_, size)| Msg::Resized(size)),
             keys,
             event::listen_with(window_event),
+            window::close_requests().map(Msg::CloseAsked),
         ];
         // Conversations whose pull request was merged or closed are looked for now and then.
         if self.prefs.auto_archive {
@@ -1014,6 +1046,10 @@ impl App {
                 }
             }
             Msg::Model(model) => self.model = model,
+            // Running everything without asking is agreed to once, knowing what it does.
+            Msg::Permission("auto") if !self.prefs.more.auto_agreed => {
+                self.overlay = Some(Overlay::ConfirmAuto);
+            }
             Msg::Permission(p) => self.permission = PERMISSIONS.contains(&p).then_some(p),
             Msg::Effort(e) => self.effort = EFFORTS.contains(&e).then_some(e),
             Msg::ToggleSide => {
@@ -1315,6 +1351,13 @@ impl App {
 
     fn bring_as(&mut self, mut chat: Chat, keep: bool) {
         chat.unread = false;
+        if let Some(id) = chat.session.clone()
+            && self.prefs.more.unread.contains(&id)
+        {
+            let _ = self.set(|p| {
+                p.more.unread.remove(&id);
+            });
+        }
         // Shown here, it is no longer beside.
         if chat.session.is_some() && chat.session == self.split {
             self.split = None;
@@ -1420,6 +1463,11 @@ impl App {
             Clip::Session => self.chat.session.clone(),
             Clip::Conversation => Some(crate::export::markdown(self.name(), &self.chat.transcript, self.s)),
             Clip::Text(text) => Some(text.clone()),
+            Clip::Folder => Some(self.cwd.display().to_string()),
+            Clip::Log => {
+                let id = self.chat.session.as_deref()?;
+                Some(self.sessions.iter().find(|s| s.id == id)?.path.display().to_string())
+            }
         }?;
         (!text.trim().is_empty()).then_some(text)
     }
@@ -1588,6 +1636,7 @@ impl App {
             permission: self.permission.map(str::to_owned),
             thinking: self.effort.map(str::to_owned),
             no_session: key == SIDE,
+            lang: self.prefs.more.lang.clone(),
         };
         if key == SIDE {
             // A side question reads; what would change something is asked, and denied.

@@ -205,17 +205,20 @@ fn row_of<'a>(app: &'a App, session: &'a SessionSummary, now: SystemTime, cells:
     }
     title_row = title_row.push(text(title).size(13).color(t.fg).wrapping(text::Wrapping::None));
     // What it is doing, shown or not: it runs, it waits for an answer, or it has news.
-    let mark = app.chat_of(&session.id).and_then(|chat| {
-        if chat.running() && chat.transcript.pending_approval().is_some() {
-            Some((t.warn, s.st_waiting))
-        } else if chat.running() {
-            Some((t.accent, s.st_running))
-        } else if chat.unread {
-            Some((t.fg, s.unread))
-        } else {
-            None
-        }
-    });
+    let marked = app.prefs.more.unread.contains(&session.id);
+    let mark = app
+        .chat_of(&session.id)
+        .map_or(marked.then_some((t.fg, s.unread)), |chat| {
+            if chat.running() && chat.transcript.pending_approval().is_some() {
+                Some((t.warn, s.st_waiting))
+            } else if chat.running() {
+                Some((t.accent, s.st_running))
+            } else if chat.unread || marked {
+                Some((t.fg, s.unread))
+            } else {
+                None
+            }
+        });
     if let Some((color, _)) = mark {
         title_row = title_row
             .push(Space::new().width(Length::Fill))

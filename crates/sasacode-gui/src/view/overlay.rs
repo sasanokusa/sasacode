@@ -12,7 +12,7 @@ use crate::app::{App, GROUP, Msg, Overlay, PALETTE, PR_TITLE, RENAME};
 use crate::i18n::fill;
 use crate::icons::{Icon, icon};
 use crate::keys::Act;
-use crate::layout::{ZOOM_MAX, ZOOM_MIN};
+use crate::layout::{Width, ZOOM_MAX, ZOOM_MIN};
 use crate::overlay::Pick;
 use crate::theme::RADIUS_L;
 use crate::transcript::Step;
@@ -34,6 +34,8 @@ pub fn over<'a>(app: &'a App, base: El<'a>) -> El<'a> {
         Overlay::Side => (side(app), 680.0, 50.0),
         Overlay::Group { name, .. } => (group(app, name), 460.0, 120.0),
         Overlay::Pr => (pr(app), 640.0, 60.0),
+        Overlay::Quit(id) => (quit(app, *id), 460.0, 120.0),
+        Overlay::ConfirmAuto => (confirm_auto(app), 480.0, 120.0),
     };
     let shade = Color {
         a: if t.dark { 0.45 } else { 0.25 },
@@ -275,6 +277,47 @@ fn settings(app: &App) -> El<'_> {
         .spacing(8),
     ]
     .spacing(6);
+    let w = s.w();
+    let width = column![
+        heading(w.set_width),
+        row![
+            choice(
+                w.width_normal.to_owned(),
+                p.more.chat_width == Width::Normal,
+                Msg::SetWidth(Width::Normal)
+            ),
+            choice(
+                w.width_wide.to_owned(),
+                p.more.chat_width == Width::Wide,
+                Msg::SetWidth(Width::Wide)
+            ),
+            choice(
+                w.width_full.to_owned(),
+                p.more.chat_width == Width::Full,
+                Msg::SetWidth(Width::Full)
+            ),
+        ]
+        .spacing(8),
+    ]
+    .spacing(6);
+    let lang = column![
+        heading(w.set_lang),
+        row![
+            choice(w.lang_system.to_owned(), p.more.lang.is_none(), Msg::SetLang(None)),
+            choice(
+                "日本語".to_owned(),
+                p.more.lang.as_deref() == Some("ja"),
+                Msg::SetLang(Some("ja"))
+            ),
+            choice(
+                "English".to_owned(),
+                p.more.lang.as_deref() == Some("en"),
+                Msg::SetLang(Some("en"))
+            ),
+        ]
+        .spacing(8),
+    ]
+    .spacing(6);
     let zoom = column![
         heading(s.set_zoom),
         row![
@@ -327,6 +370,8 @@ fn settings(app: &App) -> El<'_> {
         switch(s.set_steps, p.steps, Msg::SetSteps),
         switch(s.w().set_auto_archive, p.auto_archive, Msg::SetAutoArchive),
         switch(s.w().set_suggest, p.suggest, Msg::SetSuggest),
+        width,
+        lang,
         scripts(app),
         text(s.set_kept).size(11.5).color(t.fg_3),
     ]
@@ -513,6 +558,45 @@ fn pr(app: &App) -> El<'_> {
     ]
     .spacing(12)
     .into()
+}
+
+/// Two buttons under a question: the one that goes on, and the one that does not.
+fn ask<'a>(app: &'a App, title_text: &'static str, body: String, yes: &'static str, msg: Msg) -> El<'a> {
+    let (t, w) = (app.t, app.s.w());
+    column![
+        title(app, title_text),
+        text(body).size(13).color(t.fg_2),
+        row![
+            Space::new().width(Length::Fill),
+            button(text(w.cancel).size(13))
+                .padding([6, 12])
+                .style(t.outline(t.fg))
+                .on_press(Msg::Show(None)),
+            button(text(yes).size(13))
+                .padding([6, 14])
+                .style(t.primary())
+                .on_press(msg),
+        ]
+        .spacing(8),
+    ]
+    .spacing(12)
+    .into()
+}
+
+fn quit(app: &App, id: iced::window::Id) -> El<'_> {
+    let w = app.s.w();
+    ask(
+        app,
+        w.quit_title,
+        fill(w.quit_body, "n", app.runs_going()),
+        w.quit_yes,
+        Msg::Quit(id),
+    )
+}
+
+fn confirm_auto(app: &App) -> El<'_> {
+    let w = app.s.w();
+    ask(app, w.auto_title, w.auto_body.to_owned(), w.auto_yes, Msg::AutoAgree)
 }
 
 /// The side question, and its answer as it comes.

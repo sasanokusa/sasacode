@@ -95,6 +95,48 @@ pub fn terminal(dir: &Path) -> bool {
     }
 }
 
+/// A terminal in `dir` going on with conversation `id` in sasacode's TUI.
+pub fn resume_in_terminal(dir: &Path, program: &Path, id: &str) -> bool {
+    // Quoted for the shell: what is between single quotes is taken as it is.
+    let quote = |s: &str| format!("'{}'", s.replace('\'', "'\\''"));
+    let line = format!(
+        "cd {} && exec {} -r {}",
+        quote(&dir.to_string_lossy()),
+        quote(&program.to_string_lossy()),
+        quote(id)
+    );
+    if cfg!(target_os = "macos") {
+        // A `.command` file is run by Terminal when opened: no permission to script it is asked.
+        let script = std::env::temp_dir().join(format!("sasacode-resume-{}.command", id.replace('/', "_")));
+        let written = std::fs::write(&script, format!("#!/bin/sh\n{line}\n")).is_ok() && {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).is_ok()
+            }
+            #[cfg(not(unix))]
+            true
+        };
+        let mut c = command("open");
+        c.args(["-a", "Terminal"]).arg(&script);
+        written && spawn(c)
+    } else if cfg!(windows) {
+        let mut c = command("cmd");
+        c.args(["/C", "start", "cmd", "/K"])
+            .arg(format!("{} -r {id}", program.display()))
+            .current_dir(dir);
+        spawn(c)
+    } else {
+        ["x-terminal-emulator", "gnome-terminal", "konsole", "xterm"]
+            .iter()
+            .any(|program| {
+                let mut c = command(program);
+                c.args(["-e", "sh", "-c", &line]).current_dir(dir);
+                spawn(c)
+            })
+    }
+}
+
 /// `path` in an editor: VS Code when it is on the PATH, else what the system opens text with.
 pub fn editor(path: &Path) -> bool {
     let mut code = command(if cfg!(windows) { "code.cmd" } else { "code" });

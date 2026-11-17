@@ -9,6 +9,7 @@ rust-version.workspace = true
 
 [dependencies]
 sasacode-protocol = { path = "../sasacode-protocol" }
+serde.workspace = true
 serde_json.workspace = true
 iced = { version = "0.14", features = ["markdown", "tokio", "advanced", "svg", "highlighter", "image"] }
 tokio = { version = "1", features = ["process", "io-util", "sync", "rt", "macros", "time"] }
