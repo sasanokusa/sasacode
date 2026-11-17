@@ -56,6 +56,42 @@ pub struct Tokens {
     pub del_wash: Color,
 }
 
+/// The colours offered for sasacode's own, by name: each as it is in light and in dark.
+pub const ACCENTS: [(&str, u32, u32); 4] = [
+    ("blue", 0x2563EB, 0x60A5FA),
+    ("violet", 0x7C3AED, 0xA78BFA),
+    ("amber", 0xB45309, 0xFBBF24),
+    ("rose", 0xBE185D, 0xF472B6),
+];
+
+/// `#RRGGBB` (or `RRGGBB`) as a colour.
+pub fn parse_hex(text: &str) -> Option<Color> {
+    let digits = text.trim().trim_start_matches('#');
+    if digits.len() != 6 {
+        return None;
+    }
+    u32::from_str_radix(digits, 16).ok().map(hex)
+}
+
+/// `t` with `accent` as sasacode's colour: a name of [`ACCENTS`] or `#RRGGBB`. Anything else, or
+/// nothing, keeps its green.
+pub fn with_accent(mut t: Tokens, accent: &str) -> Tokens {
+    let named = ACCENTS
+        .iter()
+        .find(|(name, ..)| *name == accent.trim())
+        .map(|(_, light, dark)| hex(if t.dark { *dark } else { *light }));
+    let Some(c) = named.or_else(|| parse_hex(accent)) else {
+        return t;
+    };
+    let mix = |a: Color, k: f32| Color::from_rgb(a.r + (c.r - a.r) * k, a.g + (c.g - a.g) * k, a.b + (c.b - a.b) * k);
+    t.accent = c;
+    t.accent_wash = mix(t.surface, if t.dark { 0.22 } else { 0.12 });
+    // What is written on it: dark on a light colour, light on a dark one.
+    let light = 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b > 0.55;
+    t.on_accent = if light { hex(0x0D0D0D) } else { hex(0xFCFCFC) };
+    t
+}
+
 pub const LIGHT: Tokens = Tokens {
     dark: false,
     bg: hex(0xE4E6EB),

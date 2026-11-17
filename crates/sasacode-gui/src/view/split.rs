@@ -5,7 +5,7 @@ use iced::widget::{Space, button, column, container, row, scrollable, text};
 use iced::{Alignment, Length};
 
 use super::timeline::{bubble, reply};
-use super::{BOLD, El, MONO, clip, first_line, hline, tip};
+use super::{El, bold, clip, first_line, hline, mono, tip};
 use crate::app::{App, Chat, Msg};
 use crate::icons::{Icon, icon};
 use crate::transcript::{Note, Step};
@@ -40,7 +40,7 @@ pub fn pane<'a>(app: &'a App, chat: &'a Chat) -> El<'a> {
         .push(
             text(clip(first_line(name), 48))
                 .size(13)
-                .font(BOLD)
+                .font(bold())
                 .color(t.fg)
                 .wrapping(text::Wrapping::None),
         )
@@ -76,7 +76,7 @@ pub fn pane<'a>(app: &'a App, chat: &'a Chat) -> El<'a> {
                     body = body.push(
                         text(clip(&format!("{} {}", tool.name, tool.summary), 120))
                             .size(12)
-                            .font(MONO)
+                            .font(mono())
                             .color(t.fg_3)
                             .wrapping(text::Wrapping::None),
                     )

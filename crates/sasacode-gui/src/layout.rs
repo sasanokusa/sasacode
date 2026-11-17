@@ -198,6 +198,11 @@ pub struct More {
     /// The editor files are opened in: a command and its arguments; empty, VS Code or the
     /// system's.
     pub editor: String,
+    /// sasacode's colour, over its green: a name of [`crate::theme::ACCENTS`] or `#RRGGBB`.
+    pub accent: String,
+    /// The fonts of the window's words and of code, by name; empty, the window's own.
+    pub ui_font: String,
+    pub code_font: String,
     /// No notification when a run ends, or when one waits for an answer; a sound with those sent.
     pub quiet_done: bool,
     pub quiet_wait: bool,
@@ -701,6 +706,9 @@ mod tests {
                 allowed: BTreeMap::from([("s1".into(), vec!["bash(npm test)".into()])]),
                 auto_title: true,
                 editor: "zed -n".into(),
+                accent: "blue".into(),
+                ui_font: "Noto Sans JP".into(),
+                code_font: "JetBrains Mono".into(),
                 quiet_done: true,
                 quiet_wait: false,
                 sound: true,

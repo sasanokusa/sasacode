@@ -7,7 +7,7 @@ use iced::widget::{Space, button, column, container, responsive, row, scrollable
 use iced::{Alignment, Color, Length};
 
 use super::overlay::title;
-use super::{El, MONO, tip};
+use super::{El, mono, tip};
 use crate::app::{App, Msg};
 use crate::i18n::{compact, fill};
 use crate::icons::{Icon, icon};
@@ -75,7 +75,7 @@ pub(crate) fn usage(app: &App) -> El<'_> {
         .spacing(14)
         .into();
     };
-    let heading = |label: String| text(label).size(13).font(super::BOLD).color(t.fg);
+    let heading = |label: String| text(label).size(13).font(super::bold()).color(t.fg);
     let spans = [w.usage_today, w.usage_week, w.usage_month, w.usage_ever];
     let mut overview = column![].spacing(4);
     for (label, s) in spans.iter().zip(&r.spans) {
@@ -226,7 +226,10 @@ fn graph<'a>(app: &'a App, r: &'a Report) -> El<'a> {
         }
         let (current, longest) = streaks(&r.days, r.today);
         column![
-            text(fill(w.usage_graph, "n", n)).size(13).font(super::BOLD).color(t.fg),
+            text(fill(w.usage_graph, "n", n))
+                .size(13)
+                .font(super::bold())
+                .color(t.fg),
             labels,
             columns,
             legend,
@@ -286,7 +289,7 @@ fn history<'a>(app: &'a App, r: &'a Report) -> El<'a> {
             .unwrap_or("");
         let label = text(format!("{} {name}", day.format("%m-%d")))
             .size(12)
-            .font(MONO)
+            .font(mono())
             .color(t.fg_3)
             .width(76);
         let line: El<'_> = if s.requests == 0 {
@@ -299,7 +302,7 @@ fn history<'a>(app: &'a App, r: &'a Report) -> El<'a> {
             row![
                 label,
                 bar(app, s.tokens as f64 / max as f64, 160.0),
-                text(compact(s.tokens)).size(12).font(MONO).color(t.fg).width(56),
+                text(compact(s.tokens)).size(12).font(mono()).color(t.fg).width(56),
                 text(format!("{rest}{}", cost(s.cost))).size(11.5).color(t.fg_3),
             ]
             .spacing(8)
@@ -332,12 +335,12 @@ fn models<'a>(app: &'a App, r: &'a Report) -> El<'a> {
             row![
                 text(m.model.as_str())
                     .size(12)
-                    .font(MONO)
+                    .font(mono())
                     .color(t.fg)
                     .width(Length::FillPortion(2))
                     .wrapping(text::Wrapping::WordOrGlyph),
                 bar(app, share, 100.0),
-                text(compact(m.sum.tokens)).size(12).font(MONO).color(t.fg).width(56),
+                text(compact(m.sum.tokens)).size(12).font(mono()).color(t.fg).width(56),
                 text(rest).size(11.5).color(t.fg_3).width(Length::FillPortion(3)),
             ]
             .spacing(8)
@@ -369,7 +372,7 @@ fn top<'a>(app: &'a App, r: &'a Report) -> El<'a> {
                 .wrapping(text::Wrapping::None),
             text(format!("{}{}", compact(c.sum.tokens), cost(c.sum.cost)))
                 .size(12)
-                .font(MONO)
+                .font(mono())
                 .color(t.fg_3),
         ]
         .spacing(8)
@@ -404,7 +407,7 @@ pub(crate) fn compare(app: &App) -> El<'_> {
             button(
                 row![
                     container(icon(Icon::Check, 12.0, if on { t.fg } else { Color::TRANSPARENT })).width(16),
-                    text(model.clone()).size(12.5).font(MONO).color(t.fg),
+                    text(model.clone()).size(12.5).font(mono()).color(t.fg),
                 ]
                 .spacing(8)
                 .align_y(Alignment::Center),
@@ -420,7 +423,7 @@ pub(crate) fn compare(app: &App) -> El<'_> {
             .on_input(Msg::CompareType)
             .on_submit(Msg::CompareAdd)
             .size(12.5)
-            .font(MONO)
+            .font(mono())
             .padding([5, 8])
             .style(t.input()),
         button(text(w.compare_add).size(12.5))

@@ -33,28 +33,57 @@ pub(crate) type El<'a> = Element<'a, Msg>;
 /// The font of the window's words. On macOS a font by name, so that Latin and Japanese letters are
 /// of one design and both have a bold: iced's own choice there sets the two in different fonts and
 /// leaves Latin letters light in a bold line. Elsewhere iced's choice.
-pub(crate) const UI: Font = if cfg!(target_os = "macos") {
+const UI_DEFAULT: Font = if cfg!(target_os = "macos") {
     Font::with_name("Hiragino Sans")
 } else {
     Font::DEFAULT
 };
-pub(crate) const BOLD: Font = Font {
-    weight: Weight::Semibold,
-    ..UI
-};
+
 /// The font of code, paths and output: a monospaced font by name where one is always there.
 ///
 /// `Font::MONOSPACE` is not usable on macOS: what the monospaced font lacks, cosmic-text 0.15 then
 /// takes from another monospaced font, and for kanji that is the system's GB18030 Bitmap, whose
 /// letters have no width it can read. They come out blank and endlessly wide, and a debug build
 /// panics over where to put them. A font named outright is helped out by the usual fonts.
-pub(crate) const MONO: Font = if cfg!(target_os = "macos") {
+const MONO_DEFAULT: Font = if cfg!(target_os = "macos") {
     Font::with_name("Menlo")
 } else if cfg!(target_os = "windows") {
     Font::with_name("Consolas")
 } else {
     Font::MONOSPACE
 };
+
+/// The fonts the settings name, taken once when the window starts.
+static FONTS: std::sync::OnceLock<(Font, Font)> = std::sync::OnceLock::new();
+
+/// Takes the fonts the settings name for the window's words and for code; an empty name keeps the
+/// window's own. Read once, before the window opens: one changed is used from the next window.
+pub fn set_fonts(words: &str, code: &str) {
+    let named = |name: &str, own: Font| match name.trim() {
+        "" => own,
+        // A font is named for as long as the program runs: once, so the name is kept for good.
+        name => Font::with_name(Box::leak(name.to_owned().into_boxed_str())),
+    };
+    let _ = FONTS.set((named(words, UI_DEFAULT), named(code, MONO_DEFAULT)));
+}
+
+/// The font of the window's words.
+pub(crate) fn ui() -> Font {
+    FONTS.get().map_or(UI_DEFAULT, |f| f.0)
+}
+
+/// The window's words in bold.
+pub(crate) fn bold() -> Font {
+    Font {
+        weight: Weight::Semibold,
+        ..ui()
+    }
+}
+
+/// The font of code, paths and output.
+pub(crate) fn mono() -> Font {
+    FONTS.get().map_or(MONO_DEFAULT, |f| f.1)
+}
 
 /// The conversation and the input keep to this width, centred.
 /// How wide the conversation and the input are drawn at most, as the settings say.
@@ -349,7 +378,7 @@ fn title(app: &App) -> El<'_> {
     let title_text = |label: String| {
         text(label)
             .size(14)
-            .font(BOLD)
+            .font(bold())
             .color(t.fg)
             .wrapping(text::Wrapping::None)
     };
@@ -449,7 +478,7 @@ fn status_bar(app: &App) -> El<'_> {
         } else {
             let shown = clip(branch, 28);
             rest += mono_width(&shown);
-            item(shown).font(MONO)
+            item(shown).font(mono())
         };
         rest += BAR_GAP + 8.0 + 11.0 + 4.0;
         tail = tail.push(dot()).push(tip(
@@ -474,7 +503,7 @@ fn status_bar(app: &App) -> El<'_> {
         } else {
             let shown = clip(id, 8).trim_end_matches('…').to_owned();
             rest += mono_width(&shown);
-            item(shown).font(MONO)
+            item(shown).font(mono())
         };
         rest += BAR_GAP + 8.0;
         tail = tail.push(dot()).push(tip(
@@ -495,7 +524,7 @@ fn status_bar(app: &App) -> El<'_> {
     };
     if let Some(model) = model {
         rest += BAR_GAP + mono_width(&model);
-        tail = tail.push(dot()).push(item(model).font(MONO));
+        tail = tail.push(dot()).push(item(model).font(mono()));
     }
     if let Some(mode) = app.permission {
         let color = if mode == "auto" { t.err } else { t.fg_3 };
@@ -601,9 +630,9 @@ fn status_bar(app: &App) -> El<'_> {
     let cwd = app.cwd.to_string_lossy();
     let shown = clip_start(&cwd, folder_cells(app.width, rest));
     let folder: El<'_> = if shown == cwd {
-        item(shown).font(MONO).into()
+        item(shown).font(mono()).into()
     } else {
-        tip(t, item(shown).font(MONO), cwd.into_owned(), tooltip::Position::Top)
+        tip(t, item(shown).font(mono()), cwd.into_owned(), tooltip::Position::Top)
     };
     let left = row![icon(Icon::Folder, 12.0, t.fg_3), folder, tail]
         .spacing(6)
@@ -612,7 +641,7 @@ fn status_bar(app: &App) -> El<'_> {
         row![
             container(left).width(Length::Fill).clip(true),
             right,
-            button(item(usage).font(MONO))
+            button(item(usage).font(mono()))
                 .padding([1, 6])
                 .style(t.ghost(t.fg_3, false))
                 .on_press(Msg::Tab(Tab::Usage)),
@@ -705,10 +734,10 @@ pub(crate) fn copy_button<'a>(app: &App, clip: Clip, label: &'static str) -> El<
 pub(crate) fn plus_minus<'a>(t: Tokens, added: usize, removed: usize) -> El<'a> {
     let mut out = row![].spacing(6);
     if added > 0 || removed == 0 {
-        out = out.push(text(format!("+{added}")).size(12).font(MONO).color(t.add));
+        out = out.push(text(format!("+{added}")).size(12).font(mono()).color(t.add));
     }
     if removed > 0 {
-        out = out.push(text(format!("−{removed}")).size(12).font(MONO).color(t.del));
+        out = out.push(text(format!("−{removed}")).size(12).font(mono()).color(t.del));
     }
     out.into()
 }
@@ -725,11 +754,11 @@ pub(crate) fn diff_view<'a>(t: Tokens, s: Strings, diff: &'a Diff, max: usize) -
         };
         let body = text(line.text.as_str())
             .size(12)
-            .font(MONO)
+            .font(mono())
             .color(if line.sign == Sign::Hunk { t.fg_3 } else { t.fg })
             .wrapping(text::Wrapping::WordOrGlyph);
         lines = lines.push(
-            container(row![text(mark).size(12).font(MONO).color(color).width(14), body].spacing(2))
+            container(row![text(mark).size(12).font(mono()).color(color).width(14), body].spacing(2))
                 .width(Length::Fill)
                 .padding([1, 8])
                 .style(move |_| container::Style {
@@ -760,7 +789,7 @@ pub(crate) fn output_block<'a>(t: Tokens, s: Strings, out: &str, max: usize) -> 
         body = body.push(text(fill(s.more_lines, "n", skip)).size(11.5).color(t.fg_3));
     }
     let shown: El<'a> = if lines.is_empty() {
-        text(s.no_output).size(12).font(MONO).color(t.fg_3).into()
+        text(s.no_output).size(12).font(mono()).color(t.fg_3).into()
     } else {
         let mut spans: Vec<iced::widget::text::Span<'a, String, Font>> = Vec::new();
         for (n, line) in lines[skip..].iter().enumerate() {
@@ -786,7 +815,7 @@ pub(crate) fn output_block<'a>(t: Tokens, s: Strings, out: &str, max: usize) -> 
         }
         iced::widget::rich_text(spans)
             .size(12)
-            .font(MONO)
+            .font(mono())
             .color(t.fg_2)
             .wrapping(text::Wrapping::WordOrGlyph)
             .on_link_click(Msg::OpenRef)

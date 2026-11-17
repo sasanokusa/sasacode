@@ -4,7 +4,7 @@ use iced::widget::{Space, button, column, container, row, scrollable, text, text
 use iced::{Alignment, Length};
 
 use super::overlay::title;
-use super::{BOLD, El, MONO, tip};
+use super::{El, bold, mono, tip};
 use crate::app::{App, Msg};
 use crate::automations::{AutoMsg, Automation, Every, Kind, MODES, show_at};
 use crate::i18n::fill;
@@ -87,7 +87,7 @@ pub(crate) fn automations(app: &App) -> El<'_> {
                     column![
                         text(a.name.clone())
                             .size(13)
-                            .font(BOLD)
+                            .font(bold())
                             .color(if a.on { t.fg } else { t.fg_3 }),
                         about_row(app, about),
                         text(a.prompt.lines().next().unwrap_or_default().to_owned())
@@ -154,7 +154,7 @@ fn form(app: &App) -> El<'_> {
             text_input("3", &f.hours)
                 .on_input(|h| Msg::Auto(AutoMsg::Hours(h)))
                 .size(12.5)
-                .font(MONO)
+                .font(mono())
                 .width(56)
                 .padding([4, 8])
                 .style(t.input()),
@@ -168,7 +168,7 @@ fn form(app: &App) -> El<'_> {
             .on_input(|at| Msg::Auto(AutoMsg::At(at)))
             .on_submit(Msg::Auto(AutoMsg::Save))
             .size(12.5)
-            .font(MONO)
+            .font(mono())
             .width(72)
             .padding([4, 8])
             .style(t.input())
@@ -196,7 +196,7 @@ fn form(app: &App) -> El<'_> {
             .on_press(Msg::Auto(AutoMsg::Save)),
     );
     let mut col = column![
-        text(head).size(13).font(BOLD).color(t.fg),
+        text(head).size(13).font(bold()).color(t.fg),
         text_input(w.am_name_ph, &f.name)
             .on_input(|n| Msg::Auto(AutoMsg::Name(n)))
             .size(13)

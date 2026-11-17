@@ -6,7 +6,7 @@ use iced::{Alignment, Color, Length, Padding, border};
 use sasacode_protocol::StopCause;
 
 use super::{
-    BOLD, El, MONO, UI, clip, col_w, copy_button, diff_view, first_line, output_block, plus_minus, short_path, tag,
+    El, bold, clip, col_w, copy_button, diff_view, first_line, mono, output_block, plus_minus, short_path, tag, ui,
 };
 use crate::app::{App, Clip, Msg, TIMELINE, Tab};
 use crate::i18n::fill;
@@ -138,7 +138,7 @@ fn blank(app: &App) -> El<'_> {
     container(
         column![
             icon(Icon::Leaf, 28.0, t.accent),
-            text(s.blank_h).size(20).font(BOLD).color(t.fg),
+            text(s.blank_h).size(20).font(bold()).color(t.fg),
             text(s.blank_p).size(13).color(t.fg_3),
         ]
         .spacing(10)
@@ -495,7 +495,7 @@ fn say<'a>(label: impl text::IntoFragment<'a>, color: Color) -> El<'a> {
 }
 
 fn code<'a>(label: impl text::IntoFragment<'a>, color: Color) -> El<'a> {
-    text(label).size(12.5).font(MONO).color(color).into()
+    text(label).size(12.5).font(mono()).color(color).into()
 }
 
 /// What belongs to a row, under it.
@@ -762,7 +762,7 @@ fn tool_details<'a>(app: &'a App, tool: &'a Tool) -> Option<El<'a>> {
                     container(
                         text(format!("$ {command}"))
                             .size(12)
-                            .font(MONO)
+                            .font(mono())
                             .color(t.fg)
                             .wrapping(text::Wrapping::WordOrGlyph),
                     )
@@ -971,9 +971,9 @@ pub(crate) fn reply<'a>(app: &'a App, md: &'a Markdown, copy: bool) -> El<'a> {
     style.link_color = t.link;
     // Named, like the rest of the window: the style's own default is the sans-serif family, which
     // is not the window's font and takes kanji and kana of one bold word from different fonts.
-    style.font = UI;
-    style.inline_code_font = MONO;
-    style.code_block_font = MONO;
+    style.font = ui();
+    style.inline_code_font = mono();
+    style.code_block_font = mono();
     let mut settings = markdown::Settings::with_text_size(14, style);
     settings.code_size = 12.5.into();
     markdown::view_with(md.content.items(), settings, &Reply { app, copy })
@@ -1050,7 +1050,7 @@ impl<'a> markdown::Viewer<'a, Msg> for Reply<'a> {
         .spacing(settings.spacing.0);
         let head = row![
             icon(mark, 14.0, color),
-            text(label).size(13.5).font(super::BOLD).color(color)
+            text(label).size(13.5).font(super::bold()).color(color)
         ]
         .spacing(6)
         .align_y(Alignment::Center);
@@ -1098,13 +1098,13 @@ impl<'a> markdown::Viewer<'a, Msg> for Reply<'a> {
                 }
                 iced::widget::rich_text(spans)
                     .size(settings.code_size)
-                    .font(MONO)
+                    .font(mono())
                     .wrapping(text::Wrapping::None)
                     .into()
             }
             None => text(code)
                 .size(settings.code_size)
-                .font(MONO)
+                .font(mono())
                 .color(t.fg)
                 .wrapping(text::Wrapping::None)
                 .into(),
@@ -1120,7 +1120,7 @@ impl<'a> markdown::Viewer<'a, Msg> for Reply<'a> {
                 row![
                     text(language.unwrap_or_default())
                         .size(11.5)
-                        .font(MONO)
+                        .font(mono())
                         .color(t.fg_3)
                         .wrapping(text::Wrapping::None),
                     Space::new().width(Length::Fill),
@@ -1178,7 +1178,7 @@ impl Reply<'_> {
                 row![
                     text(language.unwrap_or_default())
                         .size(11.5)
-                        .font(MONO)
+                        .font(mono())
                         .color(t.fg_3)
                         .wrapping(text::Wrapping::None),
                     Space::new().width(Length::Fill),
@@ -1260,7 +1260,7 @@ fn ending<'a>(app: &'a App, ex: &'a Exchange, end: &'a End, last: bool, copy: Op
         _ => (Icon::Alert, s.end_other.to_owned(), t.inset, t.line_2, t.fg),
     };
     let mut body = column![
-        row![icon(mark, 14.0, ink), text(title).size(13.5).font(BOLD).color(ink)]
+        row![icon(mark, 14.0, ink), text(title).size(13.5).font(bold()).color(ink)]
             .spacing(8)
             .align_y(Alignment::Center)
     ]
@@ -1269,7 +1269,7 @@ fn ending<'a>(app: &'a App, ex: &'a Exchange, end: &'a End, last: bool, copy: Op
         body = body.push(
             text(reason.as_str())
                 .size(12.5)
-                .font(MONO)
+                .font(mono())
                 .color(t.fg)
                 .wrapping(text::Wrapping::WordOrGlyph),
         );

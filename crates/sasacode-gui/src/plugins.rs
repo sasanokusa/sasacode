@@ -130,6 +130,13 @@ impl App {
             Msg::SetQuietWait(quiet) => self.set(|p| p.more.quiet_wait = quiet),
             Msg::SetSound(on) => self.set(|p| p.more.sound = on),
             Msg::SetEditor(command) => self.set(|p| p.more.editor = command),
+            Msg::SetAccent(accent) => {
+                let task = self.set(|p| p.more.accent = accent);
+                self.apply_theme();
+                task
+            }
+            Msg::SetUiFont(name) => self.set(|p| p.more.ui_font = name),
+            Msg::SetCodeFont(name) => self.set(|p| p.more.code_font = name),
             Msg::SideType(typed) => {
                 self.side_typed = typed;
                 Task::none()

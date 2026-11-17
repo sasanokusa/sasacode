@@ -123,6 +123,7 @@ fn main() -> iced::Result {
     let layout = layout_file.as_deref().map(layout::Layout::read).unwrap_or_default();
     let prefs = layout_file.as_deref().map(layout::Prefs::read).unwrap_or_default();
     let zoom = prefs.zoom;
+    view::set_fonts(&prefs.more.ui_font, &prefs.more.code_font);
     let options = app::Options {
         program: program.unwrap_or_else(|| PathBuf::from("sasacode")),
         cwd,
@@ -137,7 +138,7 @@ fn main() -> iced::Result {
         .theme(app::App::theme)
         .subscription(app::App::subscription)
         .scale_factor(app::App::scale)
-        .default_font(view::UI)
+        .default_font(view::ui())
         .window(iced::window::Settings {
             // What the system measures, as iced takes it: before the zoom it draws at.
             size: iced::Size::new(layout.size.width / zoom, layout.size.height / zoom),

@@ -7,7 +7,7 @@ use iced::widget::tooltip;
 
 use super::timeline::{command_copies, todo_list};
 use super::{
-    BOLD, El, MONO, clip, clip_start, diff_view, first_line, hline, output_block, plus_minus, short_path, tag, tip,
+    El, bold, clip, clip_start, diff_view, first_line, hline, mono, output_block, plus_minus, short_path, tag, tip,
 };
 use crate::app::{App, Msg, Tab};
 use crate::helper::Draft;
@@ -42,7 +42,7 @@ pub fn inspector(app: &App) -> El<'_> {
             content = content.push(
                 text(count)
                     .size(11.5)
-                    .font(MONO)
+                    .font(mono())
                     .color(if on { t.accent } else { t.fg_3 }),
             );
         }
@@ -119,7 +119,7 @@ fn empty<'a>(app: &App, mark: Icon, head: &'a str, body: &'a str) -> El<'a> {
     container(
         column![
             icon(mark, 22.0, t.line_2),
-            text(head).size(13.5).font(BOLD).color(t.fg_2),
+            text(head).size(13.5).font(bold()).color(t.fg_2),
             text(body).size(12.5).color(t.fg_3).align_x(Alignment::Center),
         ]
         .spacing(8)
@@ -198,7 +198,7 @@ fn changes_tab(app: &App) -> El<'_> {
                 13.0,
                 t.fg_3
             ),
-            name(text(path).size(12.5).font(MONO).color(t.fg)),
+            name(text(path).size(12.5).font(mono()).color(t.fg)),
         ]
         .spacing(8)
         .align_y(Alignment::Center);
@@ -299,7 +299,7 @@ fn git_tab(app: &App) -> El<'_> {
             row![
                 text(g.branch.as_deref().unwrap_or("HEAD"))
                     .size(12.5)
-                    .font(MONO)
+                    .font(mono())
                     .color(t.fg),
                 icon(Icon::ChevronDown, 10.0, t.fg_3),
             ]
@@ -397,9 +397,9 @@ fn git_tab(app: &App) -> El<'_> {
         let mut head = row![
             text(letters)
                 .size(11.5)
-                .font(MONO)
+                .font(mono())
                 .color(if f.staged() { t.accent } else { t.fg_3 }),
-            name(text(path).size(12.5).font(MONO).color(t.fg)),
+            name(text(path).size(12.5).font(mono()).color(t.fg)),
         ]
         .spacing(8)
         .align_y(Alignment::Center);
@@ -463,8 +463,8 @@ fn pr_part(app: &App) -> El<'_> {
         _ => tag(t, app.pr_state(pr), t.add_wash, t.add),
     };
     let mut head = row![
-        text(format!("#{}", pr.number)).size(12.5).font(MONO).color(t.fg_2),
-        name(text(pr.title.as_str()).size(12.5).font(BOLD).color(t.fg)),
+        text(format!("#{}", pr.number)).size(12.5).font(mono()).color(t.fg_2),
+        name(text(pr.title.as_str()).size(12.5).font(bold()).color(t.fg)),
         state,
     ]
     .spacing(8)
@@ -497,7 +497,7 @@ fn pr_part(app: &App) -> El<'_> {
             };
             let line = row![
                 icon(mark, 12.0, color),
-                name(text(c.name.as_str()).size(12).font(MONO).color(t.fg)),
+                name(text(c.name.as_str()).size(12).font(mono()).color(t.fg)),
                 text(said).size(11.5).color(color).wrapping(text::Wrapping::None),
             ]
             .spacing(6)
@@ -558,7 +558,7 @@ fn pr_part(app: &App) -> El<'_> {
             .align_y(Alignment::Center);
         for way in ["merge", "squash", "rebase"] {
             let on = method_of(&app.prefs.more.merge_method) == way;
-            let b = button(text(way).size(11).font(MONO))
+            let b = button(text(way).size(11).font(mono()))
                 .padding([2, 6])
                 .on_press(Msg::SetMergeMethod(way));
             ways = ways.push(if on {
@@ -573,14 +573,14 @@ fn pr_part(app: &App) -> El<'_> {
     if !pr.comments.is_empty() {
         let mut said = column![text(w.reviews).size(11.5).color(t.fg_3)].spacing(6);
         for (i, remark) in pr.comments.iter().enumerate() {
-            let mut who = row![text(remark.author.as_str()).size(12).font(BOLD).color(t.fg)]
+            let mut who = row![text(remark.author.as_str()).size(12).font(bold()).color(t.fg)]
                 .spacing(6)
                 .align_y(Alignment::Center);
             if let (Some(path), Some(line)) = (&remark.path, remark.line) {
                 who = who.push(
                     text(clip_start(&format!("{path}:{line}"), cells(app, 190.0)))
                         .size(11.5)
-                        .font(MONO)
+                        .font(mono())
                         .color(t.fg_3),
                 );
             }
@@ -727,7 +727,7 @@ fn scoped_files(app: &App) -> El<'_> {
         if here != folder {
             folder = here;
             if let Some(dir) = here {
-                col = col.push(text(format!("{dir}/")).size(11.5).font(MONO).color(t.fg_3));
+                col = col.push(text(format!("{dir}/")).size(11.5).font(mono()).color(t.fg_3));
             }
         }
         let viewed = app.viewed(&key);
@@ -741,7 +741,7 @@ fn scoped_files(app: &App) -> El<'_> {
             name(
                 text(clip_start(file_name, cells(app, 200.0)))
                     .size(12.5)
-                    .font(MONO)
+                    .font(mono())
                     .color(if viewed { t.fg_3 } else { t.fg })
             ),
             plus_minus(t, diff.added, diff.removed),
@@ -780,7 +780,7 @@ fn split_view<'a>(app: &'a App, diff: &'a crate::diff::Diff) -> El<'a> {
         container(
             text(line.text.as_str())
                 .size(11.5)
-                .font(MONO)
+                .font(mono())
                 .color(if line.sign == Sign::Hunk { t.fg_3 } else { t.fg })
                 .wrapping(text::Wrapping::WordOrGlyph),
         )
@@ -837,7 +837,7 @@ fn hunks<'a>(app: &'a App, f: &'a crate::git::File, staged: bool) -> El<'a> {
             let mut bar = row![
                 text(line.text.as_str())
                     .size(11.5)
-                    .font(MONO)
+                    .font(mono())
                     .color(t.fg_3)
                     .width(Length::Fill)
                     .wrapping(text::Wrapping::None),
@@ -875,13 +875,13 @@ fn hunks<'a>(app: &'a App, f: &'a crate::git::File, staged: bool) -> El<'a> {
             row![
                 text(n.map(|n| n.to_string()).unwrap_or_default())
                     .size(11)
-                    .font(MONO)
+                    .font(mono())
                     .color(t.fg_3)
                     .width(34),
-                text(mark).size(12).font(MONO).color(color).width(12),
+                text(mark).size(12).font(mono()).color(color).width(12),
                 text(line.text.as_str())
                     .size(12)
-                    .font(MONO)
+                    .font(mono())
                     .color(t.fg)
                     .wrapping(text::Wrapping::WordOrGlyph),
             ]
@@ -950,7 +950,7 @@ fn script_runs(app: &App) -> El<'_> {
         };
         let mut head = row![
             icon(Icon::Play, 12.0, t.fg_3),
-            name(text(clip(label, cells(app, 200.0))).size(12.5).font(MONO).color(t.fg)),
+            name(text(clip(label, cells(app, 200.0))).size(12.5).font(mono()).color(t.fg)),
             state,
         ]
         .spacing(8)
@@ -1063,7 +1063,7 @@ fn files_tab(app: &App) -> El<'_> {
                 button(
                     text(clip_start(f, cells(app, 40.0)))
                         .size(12)
-                        .font(MONO)
+                        .font(mono())
                         .color(t.fg)
                         .wrapping(text::Wrapping::None),
                 )
@@ -1111,7 +1111,7 @@ fn files_tab(app: &App) -> El<'_> {
         name(
             text(clip_start(&shown, cells(app, 30.0)))
                 .size(12.5)
-                .font(MONO)
+                .font(mono())
                 .color(t.fg)
         ),
         // Under its name, what is done to the file itself: a row of its own, never pushed out.
@@ -1143,7 +1143,7 @@ fn files_tab(app: &App) -> El<'_> {
             .unwrap_or_default();
         let editor = iced::widget::text_editor(&edit.content)
             .on_action(Msg::FileEditAction)
-            .font(MONO)
+            .font(mono())
             .size(12.5)
             .padding(8)
             .height(Length::Shrink)
@@ -1201,16 +1201,16 @@ fn files_tab(app: &App) -> El<'_> {
             .map(|(range, color)| {
                 iced::widget::span(&line[range.clone()])
                     .color_maybe(color.or(Some(t.fg)))
-                    .font(MONO)
+                    .font(mono())
             })
             .collect();
         let marked = v.line == Some(n);
         let shown = container(
             row![
-                text(n.to_string()).size(11).font(MONO).color(t.fg_3).width(40),
+                text(n.to_string()).size(11).font(mono()).color(t.fg_3).width(40),
                 iced::widget::rich_text(colored)
                     .size(12)
-                    .font(MONO)
+                    .font(mono())
                     .wrapping(text::Wrapping::WordOrGlyph),
             ]
             .spacing(4),
@@ -1308,12 +1308,12 @@ fn grep_list(app: &App) -> El<'_> {
                 column![
                     text(format!("{}:{}", clip_start(&hit.path, cells(app, 40.0)), hit.line))
                         .size(11.5)
-                        .font(MONO)
+                        .font(mono())
                         .color(t.fg_3)
                         .wrapping(text::Wrapping::None),
                     text(hit.text.as_str())
                         .size(12)
-                        .font(MONO)
+                        .font(mono())
                         .color(t.fg)
                         .wrapping(text::Wrapping::None),
                 ]
@@ -1414,11 +1414,11 @@ fn commands_tab(app: &App) -> El<'_> {
             _ => Space::new().into(),
         };
         let mut head = row![
-            text("$").size(12.5).font(MONO).color(t.fg_3),
+            text("$").size(12.5).font(mono()).color(t.fg_3),
             name(
                 text(clip(first_line(command), head_cells))
                     .size(12.5)
-                    .font(MONO)
+                    .font(mono())
                     .color(t.fg)
             ),
             state,
@@ -1440,7 +1440,7 @@ fn commands_tab(app: &App) -> El<'_> {
                 container(
                     text(command)
                         .size(12)
-                        .font(MONO)
+                        .font(mono())
                         .color(t.fg)
                         .wrapping(text::Wrapping::WordOrGlyph),
                 )
@@ -1470,7 +1470,7 @@ fn usage_tab(app: &App) -> El<'_> {
         row![
             text(label).size(13).color(t.fg_2),
             Space::new().width(Length::Fill),
-            text(value).size(13).font(MONO).color(t.fg),
+            text(value).size(13).font(mono()).color(t.fg),
         ]
         .padding([5, 2])
         .align_y(Alignment::Center)

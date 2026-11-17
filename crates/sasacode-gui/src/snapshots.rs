@@ -133,7 +133,7 @@ fn shoot(app: &App, name: &str, size: (f32, f32)) {
         }
     }
     let settings = Settings {
-        default_font: crate::view::UI,
+        default_font: crate::view::ui(),
         ..Settings::default()
     };
     let mut ui = Simulator::with_size(settings, Size::new(size.0, size.1), app.view());

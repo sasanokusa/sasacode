@@ -5,7 +5,7 @@ use std::time::SystemTime;
 use iced::widget::{Space, button, column, container, mouse_area, row, scrollable, text, text_input};
 use iced::{Alignment, Length};
 
-use super::{BOLD, El, clip, tip};
+use super::{El, bold, clip, tip};
 use crate::app::{App, Msg, SEARCH};
 use crate::i18n::fill;
 use crate::icons::{Icon, icon};
@@ -28,7 +28,7 @@ pub fn sidebar(app: &App) -> El<'_> {
 
     let head = row![
         icon(Icon::Leaf, 16.0, t.accent),
-        text("sasacode").size(14).font(BOLD).color(t.fg),
+        text("sasacode").size(14).font(bold()).color(t.fg),
         Space::new().width(Length::Fill),
         text(clip(&folder, folder_cells))
             .size(12)

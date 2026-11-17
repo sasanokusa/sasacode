@@ -733,6 +733,10 @@ pub enum Msg {
     SetQuietWait(bool),
     SetSound(bool),
     SetEditor(String),
+    /// sasacode's colour, and the fonts the window uses from its next start.
+    SetAccent(String),
+    SetUiFont(String),
+    SetCodeFont(String),
     /// A message asking for a review of the changes, put in the input.
     AskReview,
     /// A new conversation whose log goes once it is left.
@@ -1113,7 +1117,7 @@ impl App {
     }
 
     pub(crate) fn set_dark(&mut self, dark: bool) {
-        self.t = if dark { DARK } else { LIGHT };
+        self.t = crate::theme::with_accent(if dark { DARK } else { LIGHT }, &self.prefs.more.accent);
         self.theme = self.t.theme();
     }
 

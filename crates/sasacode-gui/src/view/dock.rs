@@ -8,7 +8,7 @@ use iced::{Alignment, Length};
 use sasacode_protocol::Decision;
 
 use super::{
-    BOLD, El, MOD, MONO, clip, clip_start, col_w, diff_view, first_line, plus_minus, room, short_path, tag, tip,
+    El, MOD, bold, clip, clip_start, col_w, diff_view, first_line, mono, plus_minus, room, short_path, tag, tip,
 };
 use crate::app::{App, EFFORTS, INPUT, MODEL, Msg, PERMISSIONS, shortcut};
 use crate::i18n::fill;
@@ -294,7 +294,7 @@ fn comments(app: &App) -> El<'_> {
         let place = crate::review::place(&c.path, c.line, &app.cwd);
         list = list.push(
             row![
-                text(clip_start(&place, 36)).size(12).font(MONO).color(t.fg_2),
+                text(clip_start(&place, 36)).size(12).font(mono()).color(t.fg_2),
                 text(c.text.as_str())
                     .size(12.5)
                     .color(t.fg)
@@ -339,7 +339,7 @@ fn offered(app: &App, offer: Offer) -> El<'_> {
                             icon(if folder { Icon::Folder } else { Icon::File }, 13.0, t.fg_3),
                             text(file)
                                 .size(12.5)
-                                .font(MONO)
+                                .font(mono())
                                 .color(t.fg)
                                 .wrapping(text::Wrapping::None),
                         ]
@@ -372,7 +372,7 @@ fn offered(app: &App, offer: Offer) -> El<'_> {
                         row![
                             text(format!("/{}", plugin.name))
                                 .size(12.5)
-                                .font(MONO)
+                                .font(mono())
                                 .color(t.fg)
                                 .width(110)
                                 .wrapping(text::Wrapping::None),
@@ -397,7 +397,7 @@ fn offered(app: &App, offer: Offer) -> El<'_> {
                 list = list.push(
                     button(
                         row![
-                            text(format!("/{name}")).size(12.5).font(MONO).color(t.fg).width(110),
+                            text(format!("/{name}")).size(12.5).font(mono()).color(t.fg).width(110),
                             text(command.what(&s)).size(12.5).color(t.fg_2),
                         ]
                         .spacing(10)
@@ -458,7 +458,7 @@ fn ask_card<'a>(app: &'a App, ask: &'a Ask) -> El<'a> {
         head,
         text(ask.title.as_str())
             .size(14)
-            .font(BOLD)
+            .font(bold())
             .color(t.fg)
             .wrapping(text::Wrapping::WordOrGlyph)
     ]
@@ -577,7 +577,7 @@ fn trust_card<'a>(app: &'a App, trust: &'a crate::cli::Trust) -> El<'a> {
     let mut body = column![
         row![
             icon(Icon::Shield, 15.0, t.warn),
-            text(w.trust_head).size(13).font(BOLD).color(t.fg)
+            text(w.trust_head).size(13).font(bold()).color(t.fg)
         ]
         .spacing(8)
         .align_y(Alignment::Center)
@@ -626,7 +626,7 @@ fn approval_card<'a>(app: &'a App, approval: &'a Approval) -> El<'a> {
     };
     let mut head = row![
         icon(Icon::Alert, 15.0, t.warn),
-        text(s.appr_title).size(13.5).font(BOLD).color(t.fg),
+        text(s.appr_title).size(13.5).font(bold()).color(t.fg),
         tag(t, approval.tool.as_str(), t.inset, t.fg_2),
         Space::new().width(Length::Fill),
     ]
@@ -638,11 +638,11 @@ fn approval_card<'a>(app: &'a App, approval: &'a Approval) -> El<'a> {
     head = head.push(text(chord).size(11.5).color(t.fg_3).wrapping(text::Wrapping::None));
 
     let arg = |key: &str| approval.args.get(key).and_then(|v| v.as_str());
-    let mono = |body: String| {
+    let code_block = |body: String| {
         container(
             text(body)
                 .size(12.5)
-                .font(MONO)
+                .font(mono())
                 .color(t.fg)
                 .wrapping(text::Wrapping::WordOrGlyph),
         )
@@ -652,13 +652,13 @@ fn approval_card<'a>(app: &'a App, approval: &'a Approval) -> El<'a> {
     };
     // All of what is asked, however long: nothing is approved unseen.
     let body: El<'a> = match (kind, tool.and_then(|tool| tool.change.as_ref())) {
-        (Kind::Bash, _) => mono(format!("$ {}", arg("command").unwrap_or_default())).into(),
+        (Kind::Bash, _) => code_block(format!("$ {}", arg("command").unwrap_or_default())).into(),
         (Kind::Edit | Kind::Write, Some(change)) => {
             let mut what = column![
                 row![
                     text(short_path(&change.path, &app.cwd))
                         .size(12.5)
-                        .font(MONO)
+                        .font(mono())
                         .color(t.fg),
                     plus_minus(t, change.diff.added, change.diff.removed),
                 ]
@@ -674,7 +674,7 @@ fn approval_card<'a>(app: &'a App, approval: &'a Approval) -> El<'a> {
             }
             what.into()
         }
-        _ => mono(serde_json::to_string_pretty(&approval.args).unwrap_or_default()).into(),
+        _ => code_block(serde_json::to_string_pretty(&approval.args).unwrap_or_default()).into(),
     };
 
     let always = match kind {
@@ -685,8 +685,8 @@ fn approval_card<'a>(app: &'a App, approval: &'a Approval) -> El<'a> {
     // Each on a line of its own when the card is narrow, never cut.
     let reason = row![
         text(s.appr_reason).size(12).color(t.fg_3),
-        text(approval.reason.as_str()).size(12).font(MONO).color(t.fg_2),
-        text(clip_start(&approval.cwd, 44)).size(12).font(MONO).color(t.fg_3),
+        text(approval.reason.as_str()).size(12).font(mono()).color(t.fg_2),
+        text(clip_start(&approval.cwd, 44)).size(12).font(mono()).color(t.fg_3),
     ]
     .spacing(8)
     .align_y(Alignment::Center)
@@ -966,7 +966,7 @@ fn hints(app: &App) -> El<'_> {
     let (t, s) = (app.t, app.s);
     let key = |keys: String, what: &'static str| -> El<'_> {
         row![
-            text(keys).size(11.5).font(MONO).color(t.fg_2),
+            text(keys).size(11.5).font(mono()).color(t.fg_2),
             text(what).size(11.5).color(t.fg_3).wrapping(text::Wrapping::None)
         ]
         .spacing(4)

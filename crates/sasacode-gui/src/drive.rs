@@ -17,7 +17,7 @@ use crate::transcript::{Answer, Kind, Note, Step};
 /// produced. Tall enough that nothing of the conversation is scrolled out of reach.
 fn act(app: &mut App, act: impl FnOnce(&mut Simulator<'_, Msg>)) {
     let settings = Settings {
-        default_font: crate::view::UI,
+        default_font: crate::view::ui(),
         ..Settings::default()
     };
     let produced: Vec<Msg> = {
@@ -148,7 +148,7 @@ fn the_chord_allows_only_when_nothing_is_typed() {
 /// Whether the window as it is drawn has `label` in it.
 fn says(app: &App, label: &str) -> bool {
     let settings = Settings {
-        default_font: crate::view::UI,
+        default_font: crate::view::ui(),
         ..Settings::default()
     };
     let mut ui = Simulator::with_size(settings, Size::new(app.width, 1400.0), app.view());
@@ -352,7 +352,7 @@ fn a_long_conversation_opens_on_its_newest_without_being_scrolled_there() {
     app.insp = false;
     let s = app.s;
     let settings = Settings {
-        default_font: crate::view::UI,
+        default_font: crate::view::ui(),
         ..Settings::default()
     };
     let mut ui = Simulator::with_size(settings, Size::new(1280.0, 700.0), app.view());
@@ -571,7 +571,7 @@ fn a_chord_pressed_in_the_search_is_the_windows_not_a_letter_typed() {
     let mut seen = Vec::new();
     {
         let settings = Settings {
-            default_font: crate::view::UI,
+            default_font: crate::view::ui(),
             ..Settings::default()
         };
         let mut ui = Simulator::with_size(settings, Size::new(app.width, 1400.0), app.view());
@@ -913,7 +913,7 @@ fn a_file_is_staged_by_its_button_and_discarded_only_on_the_second_press() {
     app.tab = Tab::Git;
     let pressed = |app: &App, label: &str| -> Vec<Msg> {
         let settings = Settings {
-            default_font: crate::view::UI,
+            default_font: crate::view::ui(),
             ..Settings::default()
         };
         let mut ui = Simulator::with_size(settings, Size::new(app.width, 1400.0), app.view());
@@ -943,7 +943,7 @@ fn the_paste_chord_in_the_input_asks_for_the_clipboard_and_puts_in_what_it_has()
     let mut seen = Vec::new();
     {
         let settings = Settings {
-            default_font: crate::view::UI,
+            default_font: crate::view::ui(),
             ..Settings::default()
         };
         let mut ui = Simulator::with_size(settings, Size::new(app.width, 1400.0), app.view());
@@ -2461,6 +2461,38 @@ fn the_settings_choose_the_notifications_their_sound_and_the_editor() {
     let _ = app.update(Msg::SetEditor("zed".into()));
     assert!(app.prefs.more.quiet_wait && !app.prefs.more.quiet_done && app.prefs.more.sound);
     assert_eq!(app.prefs.more.editor, "zed");
+}
+
+/// sasacode's colour is chosen by name or as #RRGGBB and shows at once, in light and in dark; the
+/// fonts are named, for the windows opened after.
+#[test]
+fn the_accent_colour_shows_at_once_and_the_fonts_are_kept_for_the_next_window() {
+    let mut app = window("ja");
+    let _ = app.update(Msg::Show(Some(crate::app::Overlay::Settings)));
+    let w = crate::words::JA;
+    assert!(says(&app, w.set_accent) && says(&app, w.accent_blue) && says(&app, w.fonts_note));
+    let green = app.t.accent;
+    let _ = app.update(Msg::SetAccent("blue".into()));
+    assert_eq!(app.t.accent, iced::Color::from_rgb8(0x25, 0x63, 0xEB));
+    let _ = app.update(Msg::SetDark(Some(true)));
+    assert_eq!(app.t.accent, iced::Color::from_rgb8(0x60, 0xA5, 0xFA));
+    let _ = app.update(Msg::SetAccent("#ff8800".into()));
+    assert_eq!(app.t.accent, iced::Color::from_rgb8(0xFF, 0x88, 0x00));
+    assert_eq!(
+        app.t.on_accent,
+        iced::Color::from_rgb8(0x0D, 0x0D, 0x0D),
+        "dark on a light colour"
+    );
+    // Half typed, it is not a colour yet: the green stays.
+    let _ = app.update(Msg::SetDark(Some(false)));
+    let _ = app.update(Msg::SetAccent("#ff8".into()));
+    assert_eq!(app.t.accent, green);
+    let _ = app.update(Msg::SetUiFont("Noto Sans JP".into()));
+    let _ = app.update(Msg::SetCodeFont("JetBrains Mono".into()));
+    assert_eq!(
+        (app.prefs.more.ui_font.as_str(), app.prefs.more.code_font.as_str()),
+        ("Noto Sans JP", "JetBrains Mono")
+    );
 }
 
 #[test]

@@ -7,7 +7,7 @@ use iced::widget::{
 use iced::{Alignment, Color, Length};
 
 use super::timeline::reply;
-use super::{BOLD, El, MOD, MONO};
+use super::{El, MOD, bold, mono};
 use crate::app::{App, GROUP, Msg, Overlay, PALETTE, PR_TITLE, RENAME};
 use crate::i18n::fill;
 use crate::icons::{Icon, icon};
@@ -77,7 +77,7 @@ pub fn over<'a>(app: &'a App, base: El<'a>) -> El<'a> {
 pub(super) fn title<'a>(app: &App, label: &'a str) -> El<'a> {
     let t = app.t;
     row![
-        text(label).size(15).font(BOLD).color(t.fg),
+        text(label).size(15).font(bold()).color(t.fg),
         Space::new().width(Length::Fill),
         button(icon(Icon::Close, 14.0, t.fg_3))
             .padding(4)
@@ -119,7 +119,7 @@ fn palette<'a>(app: &'a App, query: &'a str, at: usize, pick: Pick) -> El<'a> {
             .spacing(10)
             .align_y(Alignment::Center);
         if let Some(keys) = entry.keys {
-            line = line.push(text(keys).size(11.5).font(MONO).color(t.fg_3));
+            line = line.push(text(keys).size(11.5).font(mono()).color(t.fg_3));
         }
         list = list.push(
             button(line)
@@ -181,7 +181,7 @@ fn keys(app: &App) -> El<'_> {
         .padding(iced::Padding::ZERO.right(14));
     for (keys, what) in fixed {
         list = list.push(line(
-            text(keys).size(12).font(MONO).color(t.fg_2).into(),
+            text(keys).size(12).font(mono()).color(t.fg_2).into(),
             what,
             Space::new().into(),
         ));
@@ -225,7 +225,7 @@ fn keys(app: &App) -> El<'_> {
         list = list.push(line(
             text(shown)
                 .size(12)
-                .font(MONO)
+                .font(mono())
                 .color(if waiting {
                     t.accent
                 } else if changed {
@@ -290,6 +290,58 @@ fn settings(app: &App) -> El<'_> {
     ]
     .spacing(6);
     let w = s.w();
+    let mut accents = row![choice(
+        w.accent_own.to_owned(),
+        p.more.accent.trim().is_empty(),
+        Msg::SetAccent(String::new())
+    )]
+    .spacing(8);
+    for ((name, ..), label) in
+        crate::theme::ACCENTS
+            .iter()
+            .zip([w.accent_blue, w.accent_violet, w.accent_amber, w.accent_rose])
+    {
+        accents = accents.push(choice(
+            label.to_owned(),
+            p.more.accent.trim() == *name,
+            Msg::SetAccent((*name).to_owned()),
+        ));
+    }
+    let hex = if p.more.accent.starts_with('#') {
+        p.more.accent.as_str()
+    } else {
+        ""
+    };
+    let accent = column![
+        heading(w.set_accent),
+        accents.wrap(),
+        text_input(w.accent_ph, hex)
+            .on_input(Msg::SetAccent)
+            .size(13)
+            .font(mono())
+            .width(180)
+            .padding([6, 10])
+            .style(t.input()),
+    ]
+    .spacing(6);
+    let fonts = column![
+        heading(w.set_fonts),
+        row![
+            text_input(w.ui_font_ph, &p.more.ui_font)
+                .on_input(Msg::SetUiFont)
+                .size(13)
+                .padding([6, 10])
+                .style(t.input()),
+            text_input(w.code_font_ph, &p.more.code_font)
+                .on_input(Msg::SetCodeFont)
+                .size(13)
+                .padding([6, 10])
+                .style(t.input()),
+        ]
+        .spacing(8),
+        text(w.fonts_note).size(11.5).color(t.fg_3),
+    ]
+    .spacing(6);
     let width = column![
         heading(w.set_width),
         row![
@@ -339,7 +391,7 @@ fn settings(app: &App) -> El<'_> {
                 .on_press_maybe((p.zoom > ZOOM_MIN + 0.01).then_some(Msg::Zoom(-1))),
             text(format!("{:.0}%", p.zoom * 100.0))
                 .size(13)
-                .font(MONO)
+                .font(mono())
                 .color(t.fg)
                 .width(56)
                 .center(),
@@ -357,7 +409,7 @@ fn settings(app: &App) -> El<'_> {
                     .join(" / ")
             )
             .size(11.5)
-            .font(MONO)
+            .font(mono())
             .color(t.fg_3),
         ]
         .spacing(8)
@@ -414,7 +466,7 @@ fn settings(app: &App) -> El<'_> {
         text_input(w.editor_ph, &p.more.editor)
             .on_input(Msg::SetEditor)
             .size(13)
-            .font(MONO)
+            .font(mono())
             .padding([6, 10])
             .style(t.input()),
     ]
@@ -430,7 +482,7 @@ fn settings(app: &App) -> El<'_> {
         text_input(w.setup_ph, setup)
             .on_input(Msg::SetWorktreeSetup)
             .size(13)
-            .font(MONO)
+            .font(mono())
             .padding([6, 10])
             .style(t.input()),
     ]
@@ -440,6 +492,8 @@ fn settings(app: &App) -> El<'_> {
         enter,
         follow,
         theme,
+        accent,
+        fonts,
         zoom,
         switch(s.set_notify, p.notify, Msg::SetNotify),
         notices,
@@ -476,7 +530,7 @@ fn allowed(app: &App) -> El<'_> {
         .as_ref()
         .and_then(|id| app.prefs.more.allowed.get(id))
         .filter(|r| !r.is_empty());
-    let mut list = column![text(w.allowed_head).size(13).font(super::BOLD).color(t.fg)].spacing(4);
+    let mut list = column![text(w.allowed_head).size(13).font(super::bold()).color(t.fg)].spacing(4);
     match rules {
         None => list = list.push(text(w.allowed_none).size(12).color(t.fg_3)),
         Some(rules) => {
@@ -485,7 +539,7 @@ fn allowed(app: &App) -> El<'_> {
                     row![
                         text(rule.as_str())
                             .size(12.5)
-                            .font(MONO)
+                            .font(mono())
                             .color(t.fg_2)
                             .width(Length::Fill)
                             .wrapping(text::Wrapping::WordOrGlyph),
@@ -516,7 +570,7 @@ fn quote(app: &App) -> El<'_> {
         iced::widget::text_editor(content)
             .id(crate::talk::QUOTE)
             .on_action(Msg::QuoteEdit)
-            .font(MONO)
+            .font(mono())
             .size(13)
             .height(Length::Fixed(380.0))
             .padding(10)
@@ -593,7 +647,7 @@ fn picture<'a>(app: &'a App, path: &'a std::path::Path) -> El<'a> {
 fn extensions(app: &App) -> El<'_> {
     let (t, w) = (app.t, app.s.w());
     let l = &app.listing;
-    let heading = |label: &'static str| text(label).size(13).font(super::BOLD).color(t.fg);
+    let heading = |label: &'static str| text(label).size(13).font(super::bold()).color(t.fg);
     let none = || text(w.ext_none).size(12).color(t.fg_3);
     let mut body = column![title(app, w.ext_title)].spacing(14);
     if l.plugins.is_none() && l.skills.is_none() && l.trust.is_none() {
@@ -607,7 +661,7 @@ fn extensions(app: &App) -> El<'_> {
                 let mut line = row![
                     text(p.name.as_str())
                         .size(12.5)
-                        .font(MONO)
+                        .font(mono())
                         .color(if p.enabled { t.fg } else { t.fg_3 }),
                     text(p.version.clone().unwrap_or_default()).size(11.5).color(t.fg_3),
                     text(p.source.as_str()).size(11.5).color(t.fg_3),
@@ -631,7 +685,7 @@ fn extensions(app: &App) -> El<'_> {
             for k in list {
                 skills = skills.push(
                     column![
-                        text(format!("/{}", k.name)).size(12.5).font(MONO).color(t.fg),
+                        text(format!("/{}", k.name)).size(12.5).font(mono()).color(t.fg),
                         text(k.description.as_str())
                             .size(12)
                             .color(t.fg_2)
@@ -647,7 +701,7 @@ fn extensions(app: &App) -> El<'_> {
         None | Some([]) => mcp = mcp.push(none()),
         Some(servers) => {
             for name in servers {
-                mcp = mcp.push(text(name.as_str()).size(12.5).font(MONO).color(t.fg));
+                mcp = mcp.push(text(name.as_str()).size(12.5).font(mono()).color(t.fg));
             }
         }
     }
@@ -663,7 +717,7 @@ fn extensions(app: &App) -> El<'_> {
             .map(|p| p.display().to_string())
             .unwrap_or_else(|_| file.display().to_string());
         instr = instr.push(
-            button(text(shown).size(12.5).font(MONO).color(t.accent))
+            button(text(shown).size(12.5).font(mono()).color(t.accent))
                 .padding([2, 0])
                 .style(t.ghost(t.accent, false))
                 .on_press(Msg::OpenInstructions(file.clone())),
@@ -717,7 +771,7 @@ fn about(app: &App) -> El<'_> {
             text(label).size(12.5).color(t.fg_3).width(150),
             text(value)
                 .size(12.5)
-                .font(MONO)
+                .font(mono())
                 .color(t.fg)
                 .width(Length::Fill)
                 .wrapping(text::Wrapping::WordOrGlyph),
@@ -785,7 +839,7 @@ fn about(app: &App) -> El<'_> {
             scrollable(
                 text(all.join("\n"))
                     .size(11.5)
-                    .font(MONO)
+                    .font(mono())
                     .color(t.fg_2)
                     .wrapping(text::Wrapping::WordOrGlyph),
             )
@@ -800,7 +854,7 @@ fn about(app: &App) -> El<'_> {
     column![
         title(app, w.about_title),
         info,
-        text(w.about_log).size(13).font(super::BOLD).color(t.fg),
+        text(w.about_log).size(13).font(super::bold()).color(t.fg),
         log,
         row![
             button(text(w.about_open_home).size(13))
@@ -835,7 +889,7 @@ fn args(app: &App) -> El<'_> {
         iced::widget::text_editor(content)
             .id(crate::plugins::ARGS)
             .on_action(Msg::ArgsEdit)
-            .font(MONO)
+            .font(mono())
             .size(13)
             .height(Length::Fixed(320.0))
             .padding(10)
@@ -906,7 +960,7 @@ fn scripts(app: &App) -> El<'_> {
                     .style(t.input()),
                 text_input(w.script_command_ph, &sc.command)
                     .on_input(move |v| Msg::ScriptCommand(i, v))
-                    .font(MONO)
+                    .font(mono())
                     .size(12.5)
                     .padding([5, 8])
                     .style(t.input()),
@@ -1117,7 +1171,7 @@ fn side(app: &App) -> El<'_> {
                     answer = answer.push(
                         text(format!("{} {}", tool.name, tool.summary))
                             .size(12)
-                            .font(MONO)
+                            .font(mono())
                             .color(t.fg_3),
                     )
                 }
