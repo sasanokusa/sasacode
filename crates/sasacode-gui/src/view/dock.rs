@@ -66,6 +66,9 @@ pub fn dock(app: &App) -> El<'_> {
     if let Some(cut) = cut_short(app) {
         col = col.push(Above::Cut, cut);
     }
+    if !app.unreadable.is_empty() {
+        col = col.push(Above::Unreadable, unreadable(app));
+    }
     if !app.chat.follow.is_empty() {
         col = col.push(Above::Follow, follow_ups(app));
     }
@@ -97,6 +100,7 @@ enum Above {
     Suggestion,
     Branch,
     Cut,
+    Unreadable,
     Follow,
     Plan,
     Input,
@@ -173,6 +177,49 @@ fn planned(app: &App) -> Option<El<'_>> {
         .style(t.boxed(t.accent_wash, t.accent, crate::theme::RADIUS))
         .into(),
     )
+}
+
+/// Settings files that could not be read when the window opened, each to open and fix.
+fn unreadable(app: &App) -> El<'_> {
+    let (t, w) = (app.t, app.s.w());
+    let mut list = column![].spacing(6);
+    for (file, error) in &app.unreadable {
+        let name = file.display().to_string();
+        let said = if Some(file) == app.layout_file.as_ref() {
+            let aside = file.with_extension("json.broken").display().to_string();
+            fill(
+                &fill(&fill(w.unreadable_own, "file", &name), "error", error),
+                "aside",
+                &aside,
+            )
+        } else {
+            fill(&fill(w.unreadable, "file", &name), "error", error)
+        };
+        list = list.push(
+            row![
+                icon(Icon::Alert, 13.0, t.warn),
+                text(said)
+                    .size(12.5)
+                    .color(t.fg)
+                    .width(Length::Fill)
+                    .wrapping(iced::widget::text::Wrapping::WordOrGlyph),
+                button(text(w.unreadable_open).size(12))
+                    .padding([3, 10])
+                    .style(t.outline(t.fg))
+                    .on_press(Msg::Editor(file.clone())),
+                button(icon(Icon::Close, 11.0, t.fg_3))
+                    .padding(4)
+                    .style(t.ghost(t.fg_3, false))
+                    .on_press(Msg::UnreadableSeen(file.clone())),
+            ]
+            .spacing(8)
+            .align_y(Alignment::Center),
+        );
+    }
+    container(list)
+        .padding([6, 10])
+        .style(t.boxed(t.warn_wash, t.warn_line, crate::theme::RADIUS))
+        .into()
 }
 
 /// The conversation's run was stopped partway by closing the window, and nothing runs in it now.

@@ -63,6 +63,9 @@ words! {
     defaults_keep: "今の選択を既定にする", "Make the current choices the defaults";
     defaults_forget: "既定を消す", "Forget the defaults";
     set_auto_fix: "PRのチェックが失敗したら、ログを渡して直す会話を自動で始める（このウィンドウが開いている間、1つのPRに3回まで。autoでは走らせない）", "When a pull request's checks fail, start a conversation given their logs to fix them (while this window is open, three times a pull request at most, never in auto)";
+    unreadable: "{file}を読めません（{error}）。直すまで、その設定は使われません", "{file} cannot be read ({error}). Its settings are not used until it is fixed";
+    unreadable_own: "{file}を読めません（{error}）。中身を{aside}へ写しました。この窓は既定の設定で開いています", "{file} cannot be read ({error}). Its contents were copied to {aside}; this window opened with the default settings";
+    unreadable_open: "開く", "Open";
     cut_short: "この会話の実行は、窓を閉じたときに途中で止まりました", "This conversation's run stopped partway when the window was closed";
     cut_go_on: "続ける", "Continue";
     cut_prompt: "前回の実行は、窓を閉じたため途中で止まりました。止まったところから続けてください。", "The last run stopped partway because the window was closed. Please continue from where it stopped.";

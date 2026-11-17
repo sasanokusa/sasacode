@@ -78,6 +78,10 @@ impl App {
                 }
                 self.start_run(self.chat.key, self.s.w().cut_prompt.to_owned(), false)
             }
+            Msg::UnreadableSeen(file) => {
+                self.unreadable.retain(|(f, _)| *f != file);
+                Task::none()
+            }
             Msg::CutSeen(id) => self.set(|p| {
                 p.more.cut.remove(&id);
             }),

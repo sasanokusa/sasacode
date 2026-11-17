@@ -2680,6 +2680,37 @@ fn the_settings_choose_the_notifications_their_sound_and_the_editor() {
 }
 
 #[test]
+fn settings_files_that_cannot_be_read_are_said_when_the_window_opens_and_its_own_is_kept_aside() {
+    let w = crate::words::JA;
+    let dir = std::env::temp_dir().join(format!("sasacode-gui-unreadable-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let (home, folder) = (dir.join("home"), dir.join("project"));
+    std::fs::create_dir_all(folder.join(".sasacode")).unwrap();
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::write(home.join("config.json"), "{ \"permissions\": ").unwrap();
+    std::fs::write(home.join("gui.json"), "{ broken").unwrap();
+    // A folder's that reads, and one that holds nothing, are not said.
+    std::fs::write(folder.join(".sasacode/config.json"), "  \n").unwrap();
+    let mut app = window("ja");
+    app.home = Some(home.clone());
+    app.cwd = folder;
+    app.layout_file = Some(home.join("gui.json"));
+    app.check_settings();
+    let said: Vec<_> = app.unreadable.iter().map(|(f, _)| f.clone()).collect();
+    assert_eq!(said, vec![home.join("gui.json"), home.join("config.json")]);
+    assert_eq!(
+        std::fs::read_to_string(home.join("gui.json.broken")).unwrap(),
+        "{ broken"
+    );
+    assert!(says(&app, w.unreadable_open));
+    // Put away one by one.
+    let _ = app.update(Msg::UnreadableSeen(home.join("gui.json")));
+    let _ = app.update(Msg::UnreadableSeen(home.join("config.json")));
+    assert!(app.unreadable.is_empty() && !says(&app, w.unreadable_open));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn the_choices_made_now_become_the_defaults_of_a_folder_never_run_in() {
     let w = crate::words::JA;
     let mut app = window("ja");

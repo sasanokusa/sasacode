@@ -221,6 +221,8 @@ pub struct App {
     pub(crate) aside: Option<Chat>,
     /// A word from the window that is not about a conversation, until the next one.
     pub(crate) toast: Option<String>,
+    /// Settings files that could not be read when the window opened, with why: said until put away.
+    pub(crate) unreadable: Vec<(PathBuf, String)>,
     /// The search inside the conversation shown, while it is open.
     pub(crate) find_in: Option<String>,
     /// Which of what the search in the conversation finds is in view: an index into those found.
@@ -844,6 +846,8 @@ pub enum Msg {
     BackToBranch(String),
     /// The notice that the branch changed, put away for this conversation.
     BranchSeen(String),
+    /// The notice of a settings file that could not be read is put away.
+    UnreadableSeen(PathBuf),
     /// The run cut short when the window closed goes on, in the conversation shown: by its id.
     GoOn(String),
     /// The notice of a run cut short is put away.
@@ -968,6 +972,7 @@ impl App {
         let wanted = options.session.clone();
         let lang = options.prefs.more.lang.clone();
         let mut app = App::blank(options, App::strings_for(lang.as_deref()));
+        app.check_settings();
         // Shared with the TUI. A window made in a test has none, so tests never write to it.
         app.history_file = app.home.as_ref().map(|home| home.join("history.jsonl"));
         app.history = app
@@ -1162,6 +1167,7 @@ impl App {
             ex_hover: None,
             aside: None,
             toast: None,
+            unreadable: Vec::new(),
             resizes: 0,
             copied: None,
             copies: 0,
@@ -2038,6 +2044,28 @@ impl App {
                 self.scroll_timeline(y)
             }
             None => self.back_to_newest(),
+        }
+    }
+
+    /// The settings files this window and the CLI read, those that cannot be read said. This
+    /// window's own is copied aside first: what it writes next takes its place.
+    pub(crate) fn check_settings(&mut self) {
+        let files: Vec<PathBuf> = [
+            self.layout_file.clone(),
+            self.home.as_ref().map(|home| home.join("config.json")),
+            Some(self.cwd.join(".sasacode").join("config.json")),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        self.unreadable = crate::system::unreadable(&files);
+        if let Some(own) = &self.layout_file
+            && self.unreadable.iter().any(|(file, _)| file == own)
+        {
+            let aside = own.with_extension("json.broken");
+            if let Err(e) = std::fs::copy(own, &aside) {
+                eprintln!("sasacode-gui: could not copy {} aside: {e}", own.display());
+            }
         }
     }
 

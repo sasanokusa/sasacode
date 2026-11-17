@@ -137,6 +137,22 @@ pub fn resume_in_terminal(dir: &Path, program: &Path, id: &str) -> bool {
     }
 }
 
+/// Of the settings files `files`, those there that cannot be read as JSON, with why. One that is
+/// not there, or holds nothing, is not.
+pub fn unreadable(files: &[PathBuf]) -> Vec<(PathBuf, String)> {
+    files
+        .iter()
+        .filter_map(|file| {
+            let text = std::fs::read_to_string(file).ok()?;
+            if text.trim().is_empty() {
+                return None;
+            }
+            let error = serde_json::from_str::<serde_json::Value>(&text).err()?;
+            Some((file.clone(), error.to_string()))
+        })
+        .collect()
+}
+
 /// `rule` added to the allow rules of the CLI's settings file at `path` (`config.json`, of the
 /// home or of a folder), the rest of it kept as it is. False when it was there already. A file
 /// that cannot be read as JSON is not written over.
