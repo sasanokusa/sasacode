@@ -332,6 +332,11 @@ fn number(settings: &Value, key: &str, fallback: f64) -> f64 {
 
 pub fn plugin(api: PluginApi) -> BoxFuture<'static, anyhow::Result<()>> {
     Box::pin(async move {
+        // Build the shared client now (loading the TLS roots takes a while): checkTimeoutMs bounds
+        // each check as fetch's timeout did, and the first check must not spend it on setup.
+        drop(tokio::task::spawn_blocking(|| {
+            crate::rustxng_install::no_redirects();
+        }));
         let settings = api.settings();
         let s = Settings {
             check_url: setting_str(&settings, "checkUrl"),
