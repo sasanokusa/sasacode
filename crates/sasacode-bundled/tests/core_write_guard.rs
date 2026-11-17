@@ -122,7 +122,8 @@ async fn content_copied_from_read_with_its_line_numbers_written_without_them_and
 async fn a_fragment_over_a_long_file_is_refused_the_same_write_again_goes_through() {
     let root = temp_dir("sasacode-write-guard-");
     let file = root.path().join("edit.ts");
-    let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packages/tools/src/edit.ts");
+    // The TS edit tool's source, the file Gemma4 was editing when it sent this write.
+    let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/edit.ts");
     let text = read(&source);
     std::fs::write(&file, &text).unwrap();
     // Gemma4 e4b's write: 5 lines of edit.ts's 81, one of them changed.
