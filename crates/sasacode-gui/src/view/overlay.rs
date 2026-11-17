@@ -39,6 +39,7 @@ pub fn over<'a>(app: &'a App, base: El<'a>) -> El<'a> {
         Overlay::Quote => (quote(app), 720.0, 50.0),
         Overlay::Args => (args(app), 640.0, 60.0),
         Overlay::Extensions => (extensions(app), 640.0, 50.0),
+        Overlay::Image(path) => (picture(app, path), (app.width - 80.0).clamp(360.0, 1200.0), 30.0),
     };
     let shade = Color {
         a: if t.dark { 0.45 } else { 0.25 },
@@ -479,6 +480,56 @@ fn quote(app: &App) -> El<'_> {
                 .padding([6, 14])
                 .style(t.primary())
                 .on_press_maybe(chosen.then_some(Msg::QuoteTake)),
+        ]
+        .spacing(8),
+    ]
+    .spacing(10)
+    .into()
+}
+
+/// A picture, larger: fitted to the window, or at its own size and scrolled.
+fn picture<'a>(app: &'a App, path: &'a std::path::Path) -> El<'a> {
+    let (t, w) = (app.t, app.s.w());
+    let handle = iced::widget::image::Handle::from_path(path);
+    let shown: El<'a> = if app.image_actual {
+        scrollable(iced::widget::image(handle))
+            .direction(scrollable::Direction::Both {
+                vertical: scrollable::Scrollbar::default(),
+                horizontal: scrollable::Scrollbar::default(),
+            })
+            .style(t.scroll())
+            .width(Length::Fill)
+            .height(Length::Fixed((app.height - 220.0).max(240.0)))
+            .into()
+    } else {
+        iced::widget::image(handle)
+            .content_fit(iced::ContentFit::Contain)
+            .width(Length::Fill)
+            .height(Length::Fixed((app.height - 220.0).max(240.0)))
+            .into()
+    };
+    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or_default();
+    column![
+        title(app, name),
+        container(shown).style(t.boxed(t.inset, t.line, crate::theme::RADIUS)),
+        row![
+            button(text(if app.image_actual { w.image_fit } else { w.image_actual }).size(13))
+                .padding([6, 12])
+                .style(t.outline(t.fg))
+                .on_press(Msg::ImageActual(!app.image_actual)),
+            button(text(app.s.reveal).size(13))
+                .padding([6, 12])
+                .style(t.outline(t.fg))
+                .on_press(Msg::Reveal(path.to_owned())),
+            button(text(w.image_open).size(13))
+                .padding([6, 12])
+                .style(t.outline(t.fg))
+                .on_press(Msg::OpenPath(path.to_owned())),
+            Space::new().width(Length::Fill),
+            button(text(app.s.close).size(13))
+                .padding([6, 14])
+                .style(t.primary())
+                .on_press(Msg::Show(None)),
         ]
         .spacing(8),
     ]

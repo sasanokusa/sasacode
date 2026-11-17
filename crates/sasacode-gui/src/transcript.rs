@@ -81,7 +81,8 @@ pub enum Note {
     },
     Error(String),
     ContextFull,
-    Compacted,
+    /// The conversation was summarised to save room: the summary, once it is known.
+    Compacted(Option<String>),
     /// A reply was thrown away and is asked again.
     Retrying,
     /// A plugin's warning or error.
@@ -271,6 +272,9 @@ pub struct Transcript {
     pub status: std::collections::BTreeMap<String, String>,
 }
 
+/// How the summary compaction writes begins (`packages/bundled/src/compaction.ts`).
+pub const SUMMARY: &str = "[Summary of the earlier conversation, compacted to save context]";
+
 /// A plugin's question.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Ask {
@@ -296,6 +300,8 @@ pub struct Effect {
     pub notice: Option<(NoticeLevel, String)>,
     /// The plugins' slash commands, as they are now.
     pub commands: Option<Vec<Command>>,
+    /// The conversation was summarised: the summary is in its log.
+    pub compacted: bool,
 }
 
 impl Tool {
@@ -456,6 +462,39 @@ impl Transcript {
         self.current().steps.push(Step::Note(note));
     }
 
+    /// Whether a compaction's summary is not known yet.
+    pub fn summary_missing(&self) -> bool {
+        self.exchanges
+            .iter()
+            .flat_map(|e| &e.steps)
+            .any(|s| matches!(s, Step::Note(Note::Compacted(None))))
+    }
+
+    /// The newest compaction's summary, read from the log once the run has written it.
+    pub fn fill_summary(&mut self, entries: &[SessionEntry]) {
+        let Some(summary) = entries.iter().rev().find_map(|e| match e {
+            SessionEntry::Replace { messages } => messages.iter().find_map(|m| match m {
+                Message::User { content, .. } => said(content).strip_prefix(SUMMARY).map(|s| s.trim().to_owned()),
+                _ => None,
+            }),
+            _ => None,
+        }) else {
+            return;
+        };
+        let last = self
+            .exchanges
+            .iter_mut()
+            .rev()
+            .flat_map(|e| e.steps.iter_mut().rev())
+            .find_map(|s| match s {
+                Step::Note(Note::Compacted(text)) => Some(text),
+                _ => None,
+            });
+        if let Some(text @ None) = last {
+            *text = Some(summary);
+        }
+    }
+
     pub fn is_empty(&self) -> bool {
         self.exchanges.is_empty() && self.queued.is_empty()
     }
@@ -605,7 +644,10 @@ impl Transcript {
             }
             Event::Error { error } => self.note(Note::Error(error.clone())),
             Event::PluginError { plugin, hook, error } => self.note(Note::Error(format!("{plugin} ({hook}): {error}"))),
-            Event::MessagesReplaced => self.note(Note::Compacted),
+            Event::MessagesReplaced => {
+                self.note(Note::Compacted(None));
+                effect.compacted = true;
+            }
             Event::MessageDiscarded { .. } => {
                 // The reply that streamed in is asked again: drop what was shown of it.
                 let shown: Vec<usize> = self.streaming.drain().map(|(_, i)| i).collect();
@@ -889,6 +931,10 @@ impl Transcript {
             return self.note(Note::Harness(note));
         }
         let mut text = said(content);
+        // What compaction left in place of the earlier messages.
+        if let Some(summary) = text.strip_prefix(SUMMARY) {
+            return self.note(Note::Compacted(Some(summary.trim().to_owned())));
+        }
         if let Some((head, report)) = task_report(&text) {
             return self.note(Note::Task {
                 head: head.to_owned(),
@@ -1617,5 +1663,30 @@ mod tests {
         let long = "あ".repeat(MAX_TOOL_OUTPUT);
         let cut = tail(&long);
         assert!(cut.starts_with('…') && cut.len() <= MAX_TOOL_OUTPUT + '…'.len_utf8());
+    }
+
+    #[test]
+    fn a_compactions_summary_is_a_note_to_open_not_a_message_from_the_user() {
+        let entry = |line: &str| -> SessionEntry { serde_json::from_str(line).unwrap() };
+        let summary = format!("{SUMMARY}\n\nThe user asked for retries; done in src/net.rs.");
+        let replace = entry(
+            &serde_json::json!({"type": "replace", "messages": [
+                {"role": "user", "timestamp": 1, "content": [{"type": "text", "text": summary}]},
+                {"role": "user", "timestamp": 2, "content": [{"type": "text", "text": "次はテスト"}]}
+            ]})
+            .to_string(),
+        );
+        let t = Transcript::from_entries(std::slice::from_ref(&replace));
+        assert_eq!(t.exchanges.len(), 2);
+        assert!(t.exchanges[0].prompt.is_empty());
+        assert!(matches!(&t.exchanges[0].steps[0],
+            Step::Note(Note::Compacted(Some(s))) if s == "The user asked for retries; done in src/net.rs."));
+        assert_eq!(t.exchanges[1].prompt, "次はテスト");
+        // In a run, the summary is read from the log once the run says it compacted.
+        let mut live = Transcript::default();
+        live.apply(&sasacode_protocol::Event::MessagesReplaced, Instant::now());
+        assert!(live.summary_missing());
+        live.fill_summary(&[replace]);
+        assert!(!live.summary_missing());
     }
 }

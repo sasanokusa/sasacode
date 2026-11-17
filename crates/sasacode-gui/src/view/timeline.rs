@@ -224,7 +224,7 @@ fn exchange<'a>(app: &'a App, i: usize, ex: &'a Exchange) -> El<'a> {
                     )
                     .padding(0)
                     .style(t.ghost(t.fg, false))
-                    .on_press(Msg::OpenPath(path)),
+                    .on_press(Msg::ViewImage(path)),
                 );
             }
             said = said.push(line);
@@ -926,7 +926,8 @@ fn note_row<'a>(app: &'a App, i: usize, j: usize, note: &'a Note) -> El<'a> {
         .style(t.boxed(t.err_wash, t.err_line, RADIUS))
         .into(),
         Note::ContextFull => line(t, (Icon::Alert, t.warn), vec![say(s.context_full, t.warn)], None, None),
-        Note::Compacted => quiet(Icon::Spark, s.compacted),
+        Note::Compacted(None) => quiet(Icon::Spark, s.compacted),
+        Note::Compacted(Some(summary)) => folded(Icon::Spark, s.compacted.to_owned(), summary),
         Note::Retrying => quiet(Icon::Spark, s.discarded),
         Note::Notice(body) => container(
             row![
@@ -984,6 +985,36 @@ struct Reply<'b> {
 impl<'a> markdown::Viewer<'a, Msg> for Reply<'a> {
     fn on_link_click(url: markdown::Uri) -> Msg {
         Msg::Link(url)
+    }
+
+    /// A picture that is a file here, shown, and larger on a click; any other, its words.
+    fn image(
+        &self,
+        settings: markdown::Settings,
+        url: &'a markdown::Uri,
+        _title: &'a str,
+        alt: &markdown::Text,
+    ) -> El<'a> {
+        let t = self.app.t;
+        match crate::files::local_image(url, &self.app.cwd) {
+            Some(path) => button(
+                container(
+                    iced::widget::image(iced::widget::image::Handle::from_path(&path))
+                        .content_fit(iced::ContentFit::ScaleDown),
+                )
+                .max_width(560)
+                .max_height(320)
+                .style(t.boxed(t.raised, t.line, RADIUS)),
+            )
+            .padding(0)
+            .style(t.ghost(t.fg, false))
+            .on_press(Msg::ViewImage(path))
+            .into(),
+            None => container(iced::widget::rich_text(alt.spans(settings.style)).on_link_click(Self::on_link_click))
+                .padding(settings.spacing.0)
+                .style(t.boxed(t.inset, t.line, RADIUS))
+                .into(),
+        }
     }
 
     /// A quote; a GitHub alert, `> [!WARNING]`, under a head that names it in its color.

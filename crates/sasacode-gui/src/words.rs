@@ -291,6 +291,11 @@ words! {
     ext_reload: "読み直す", "Reload";
     c_extensions: "プラグイン・スキル・MCPを見る", "Plugins, skills and MCP";
     model_pick: "モデルを選ぶ", "Choose a model";
+    compact_at: "{n}%（{tokens}）を超えると自動で要約します", "Summarised on its own past {n}% ({tokens})";
+    compact_off: "自動の要約はオフです", "Automatic summarising is off";
+    image_actual: "等倍で見る", "Actual size";
+    image_fit: "窓に合わせる", "Fit";
+    image_open: "ほかのアプリで開く", "Open in another app";
 }
 
 #[cfg(test)]

@@ -233,7 +233,7 @@ fn attached(app: &App, images: Vec<(std::path::PathBuf, String)>) -> El<'_> {
                 button(container(picture).style(t.boxed(t.raised, t.line, crate::theme::RADIUS)))
                     .padding(0)
                     .style(t.ghost(t.fg, false))
-                    .on_press(Msg::OpenPath(path)),
+                    .on_press(Msg::ViewImage(path)),
                 container(
                     button(icon(Icon::Close, 9.0, t.fg))
                         .padding(2)

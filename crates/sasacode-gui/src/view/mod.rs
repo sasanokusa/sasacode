@@ -513,7 +513,24 @@ fn status_bar(app: &App) -> El<'_> {
         tail = tail.push(dot()).push(tip(
             t,
             item(label).color(color),
-            format!("{} / {}", compact(tr.last_input), compact(window)),
+            match app.compact_at {
+                Some(at) => format!(
+                    "{} / {}\n{}",
+                    compact(tr.last_input),
+                    compact(window),
+                    crate::i18n::fill(
+                        &crate::i18n::fill(s.w().compact_at, "n", format!("{:.0}", at * 100.0)),
+                        "tokens",
+                        compact((window as f64 * at) as u64)
+                    )
+                ),
+                None => format!(
+                    "{} / {}\n{}",
+                    compact(tr.last_input),
+                    compact(window),
+                    s.w().compact_off
+                ),
+            },
             tooltip::Position::Top,
         ));
     }

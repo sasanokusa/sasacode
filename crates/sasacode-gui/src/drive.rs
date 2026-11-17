@@ -2161,3 +2161,33 @@ fn the_models_the_cli_lists_are_picked_from_a_menu_and_the_rest_from_a_screen() 
         assert!(says(&app, said), "{said}");
     }
 }
+
+#[test]
+fn a_picture_a_reply_names_is_shown_and_opens_larger() {
+    let dir = std::env::temp_dir().join(format!("sasacode-gui-picture-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    // A PNG of one pixel.
+    let png = [
+        0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0x0d, 0x49, 0x48, 0x44, 0x52, 0, 0, 0, 1, 0, 0, 0, 1,
+        8, 6, 0, 0, 0, 0x1f, 0x15, 0xc4, 0x89, 0, 0, 0, 0x0d, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0xf8, 0xcf,
+        0xc0, 0xf0, 0x1f, 0, 0x05, 0, 0x01, 0xff, 0x89, 0x99, 0x3d, 0x1d, 0, 0, 0, 0, 0x49, 0x45, 0x4e, 0x44, 0xae,
+        0x42, 0x60, 0x82,
+    ];
+    std::fs::write(dir.join("shot.png"), png).unwrap();
+    use crate::files::local_image;
+    assert_eq!(local_image("shot.png", &dir), Some(dir.join("shot.png")));
+    let absolute = format!("file://{}", dir.join("shot.png").display());
+    assert!(local_image(&absolute, &dir).is_some());
+    assert!(local_image("https://example.com/shot.png", &dir).is_none());
+    assert!(local_image("missing.png", &dir).is_none() && local_image("notes.md", &dir).is_none());
+
+    let mut app = window("ja");
+    let _ = app.update(Msg::ViewImage(dir.join("shot.png")));
+    let w = crate::words::JA;
+    assert!(says(&app, "shot.png") && says(&app, w.image_actual));
+    act(&mut app, |ui| {
+        ui.click(w.image_actual).expect("the button is there");
+    });
+    assert!(app.image_actual && says(&app, w.image_fit));
+    let _ = std::fs::remove_dir_all(&dir);
+}

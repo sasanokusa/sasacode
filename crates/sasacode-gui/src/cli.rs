@@ -262,6 +262,34 @@ impl App {
     }
 }
 
+/// The share of the context window at which the compaction plugin summarises the conversation,
+/// as the global config and then the folder's set it (0.8 unless set); none when it is turned off.
+pub fn compaction_point(home: Option<&Path>, cwd: &Path) -> Option<f64> {
+    let read =
+        |p: PathBuf| -> Option<serde_json::Value> { serde_json::from_str(&std::fs::read_to_string(p).ok()?).ok() };
+    let configs = [
+        home.map(|h| h.join("config.json")),
+        Some(cwd.join(".sasacode").join("config.json")),
+    ];
+    let mut point = 0.8;
+    for config in configs.into_iter().flatten().filter_map(read) {
+        let off = config
+            .pointer("/plugins/disabled")
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|d| d.iter().any(|x| x == "compaction"));
+        if off {
+            return None;
+        }
+        if let Some(at) = config
+            .pointer("/plugins/settings/compaction/threshold")
+            .and_then(serde_json::Value::as_f64)
+        {
+            point = at;
+        }
+    }
+    Some(point)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -292,5 +320,24 @@ mod tests {
         });
         assert!(listing.models.is_some() && listing.untrusted().is_some());
         assert_eq!(listing.untrusted().unwrap().mcp_servers, ["db"]);
+    }
+
+    #[test]
+    fn the_compaction_point_is_read_from_the_configs_the_folders_last() {
+        let dir = std::env::temp_dir().join(format!("sasacode-gui-compact-{}", std::process::id()));
+        let (home, cwd) = (dir.join("home"), dir.join("proj"));
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::create_dir_all(cwd.join(".sasacode")).unwrap();
+        assert_eq!(compaction_point(Some(&home), &cwd), Some(0.8));
+        let settings = r#"{"plugins":{"settings":{"compaction":{"threshold":0.6}}}}"#;
+        std::fs::write(home.join("config.json"), settings).unwrap();
+        assert_eq!(compaction_point(Some(&home), &cwd), Some(0.6));
+        std::fs::write(
+            cwd.join(".sasacode").join("config.json"),
+            r#"{"plugins":{"disabled":["compaction"]}}"#,
+        )
+        .unwrap();
+        assert_eq!(compaction_point(Some(&home), &cwd), None);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

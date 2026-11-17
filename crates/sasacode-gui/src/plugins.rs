@@ -118,6 +118,15 @@ impl App {
                     }
                 }
             }
+            Msg::ViewImage(path) => {
+                self.image_actual = false;
+                self.overlay = Some(Overlay::Image(path));
+                Task::none()
+            }
+            Msg::ImageActual(actual) => {
+                self.image_actual = actual;
+                Task::none()
+            }
             Msg::ForgetAllowed(rule) => {
                 let Some(id) = self.chat.session.clone() else {
                     return Ok(Task::none());

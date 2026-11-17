@@ -221,6 +221,10 @@ pub struct App {
     pub(crate) listing: crate::cli::Listing,
     /// The folder's config is trusted for this window's runs only (`--trust-project`).
     pub(crate) trust_once: bool,
+    /// The share of the context window where the conversation is summarised, as configured.
+    pub(crate) compact_at: Option<f64>,
+    /// The picture shown larger is at its own size, not fitted.
+    pub(crate) image_actual: bool,
     /// Conversations whose notice that the branch changed was put away.
     pub(crate) branch_seen: HashSet<String>,
     /// That search's field was the last to take the keyboard: an Esc there puts it away.
@@ -621,6 +625,9 @@ pub enum Msg {
     ArgsSend,
     /// A rule "always" added for the conversation shown, taken back.
     ForgetAllowed(String),
+    /// A picture shown larger, and at its own size or to fit.
+    ViewImage(PathBuf),
+    ImageActual(bool),
     /// What the CLI listed (part of it), asked again, and the folder trusted: for good, as the
     /// CLI asks, or for this window's runs.
     Listed(Box<crate::cli::Listing>),
@@ -758,6 +765,7 @@ impl App {
         let git = app.refresh_git();
         let sweep = app.sweep();
         let listed = app.relist_cli();
+        app.compact_at = crate::cli::compaction_point(app.home.as_deref(), &app.cwd);
         (
             app,
             Task::batch([
@@ -829,6 +837,8 @@ impl App {
             plugin_commands: Vec::new(),
             listing: crate::cli::Listing::default(),
             trust_once: false,
+            compact_at: None,
+            image_actual: false,
             branch_seen: HashSet::new(),
             find_held: false,
             show_archived: false,
@@ -1929,6 +1939,8 @@ impl App {
         // A plugin's notice for the toast, and the slash commands the plugins offer now.
         let mut notice = None;
         let mut commands = None;
+        // The conversation whose log now holds a summary to show.
+        let mut compacted: Option<String> = None;
         match update {
             RunUpdate::Started(control) => run.control = Some(control),
             RunUpdate::Event(event) => {
@@ -1982,6 +1994,9 @@ impl App {
                     notice = effect.notice.map(|(_, text)| text);
                 }
                 chat.newer |= effect.commands.is_some();
+                if effect.compacted {
+                    compacted = chat.session.clone();
+                }
                 commands = effect.commands;
                 // A new conversation's log is there once its first message is: the list shows it.
                 relist = matches!(*event, sasacode_protocol::Event::MessageEnd { .. }) && chat.session.is_some();
@@ -2001,6 +2016,10 @@ impl App {
             }
             RunUpdate::Exited(code) => {
                 ended_now = true;
+                // A summary the log did not hold yet when the run said it compacted.
+                if chat.transcript.summary_missing() {
+                    compacted = chat.session.clone();
+                }
                 // A run that never got to its end says why only on stderr.
                 if !run.ended {
                     let code = code.map(|c| c.to_string()).unwrap_or_else(|| "?".into());
@@ -2047,6 +2066,13 @@ impl App {
         self.now = now;
         if let Some(text) = notice {
             self.toast = Some(text);
+        }
+        if let Some(id) = compacted
+            && let Some(log) = self.sessions.iter().find(|s| s.id == id).map(|s| s.path.clone())
+            && let Ok(entries) = sasacode_protocol::read_entries(&log)
+            && let Some(chat) = self.chat_mut(key)
+        {
+            chat.transcript.fill_summary(&entries);
         }
         if let Some(commands) = commands {
             self.plugin_commands = commands;

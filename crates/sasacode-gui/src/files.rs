@@ -146,6 +146,27 @@ fn token_of(path: &Path) -> String {
 
 /// The file a link in a reply names, and its line: a path in the project, `file://`, with `:12` or
 /// `#L12` after it. None for a web address, or for what is not a file.
+/// The picture a Markdown image names, when it is a file here: a path, absolute or from the
+/// folder, or a `file://` URL. Nothing is fetched from the network.
+pub fn local_image(url: &str, cwd: &Path) -> Option<PathBuf> {
+    const PICTURES: [&str; 7] = ["png", "jpg", "jpeg", "gif", "webp", "bmp", "ico"];
+    if url.contains("://") && !url.starts_with("file://") {
+        return None;
+    }
+    let raw = url.strip_prefix("file://").unwrap_or(url);
+    let path = Path::new(raw);
+    let path = if path.is_absolute() {
+        path.to_owned()
+    } else {
+        cwd.join(path)
+    };
+    let picture = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| PICTURES.contains(&e.to_ascii_lowercase().as_str()));
+    (picture && path.is_file()).then_some(path)
+}
+
 pub fn linked_file(uri: &str, cwd: &Path) -> Option<(PathBuf, Option<usize>)> {
     if uri.contains("://") && !uri.starts_with("file://") {
         return None;

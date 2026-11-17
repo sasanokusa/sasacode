@@ -48,6 +48,8 @@ pub enum Overlay {
     Args,
     /// The plugins, skills and MCP servers a run here can use.
     Extensions,
+    /// A picture, larger: to fit, or at its own size.
+    Image(std::path::PathBuf),
 }
 
 /// What a palette picks from.
