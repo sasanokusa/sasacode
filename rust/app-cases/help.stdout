@@ -20,7 +20,7 @@ Options:
       --no-session               do not save this session
       --append-system-prompt-file <path>
                                  add the file's text to the system prompt, after the config's instructions
-      --trust-project            trust this project's plugins, endpoints, MCP servers and
+      --trust-project            trust this project's endpoints, MCP servers, plugin settings and
                                  permission settings without asking
 
 Subcommands:

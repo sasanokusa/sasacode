@@ -162,10 +162,11 @@ fn every_string_shown_through_t_has_a_translation_with_the_same_placeholders() {
 #[test]
 fn the_tables_hold_every_ts_entry() {
     // Counted from Object.keys of the TS tables when they were generated (273 and 158), plus the
-    // three English texts 0.20 added: `plugins.enabled` in the trust list, the unknown thinking
-    // level, and `sasacode plugin` being removed.
+    // three English texts 0.20 added (`plugins.enabled` in the trust list, the unknown thinking
+    // level, `sasacode plugin` being removed) and less the one it dropped (project plugin code that
+    // could not be read for the trust decision).
     assert_eq!(TO_EN.len(), 273);
-    assert_eq!(TO_JA.len(), 158 + 3);
+    assert_eq!(TO_JA.len(), 158 + 3 - 1);
 }
 
 #[test]

@@ -2,9 +2,11 @@
 
 [English](README.en.md) · 日本語 · [ドキュメント](https://sasanokusa.com/sasacode/docs/)
 
-プラグインで組み替えられる、ターミナル向けの小さなコーディングエージェント（TypeScript / Bun）。
+同梱のプラグインを設定で組み替えられる、ターミナル向けの小さなコーディングエージェント（Rust）。
 
-コアに入っているのは、エージェントループ、プロバイダー、4つの組み込みツール（read / write / edit / bash）、TUI、セッション、権限確認だけ。それ以外の振る舞いは、すべて公開のプラグインAPIで足す。組み込みツールも同じAPIで登録している。MCPサーバーとAgent Skills（`SKILL.md`）はそのまま使える。小型モデルでも実用になるよう、形式の崩れたツール呼び出しの修復と、同じ文の繰り返しの抑止も同梱している。
+コアに入っているのは、エージェントループ、プロバイダー、4つの組み込みツール（read / write / edit / bash）、TUI、セッション、権限確認だけ。それ以外の振る舞いは、すべて同梱のプラグインがプラグインAPIを通して足す。組み込みツールも同じAPIで登録している。どのプラグインも設定で外せる。外から機能を足すには、MCPサーバーとAgent Skills（`SKILL.md`）を使う。小型モデルでも実用になるよう、形式の崩れたツール呼び出しの修復と、同じ文の繰り返しの抑止も同梱している。
+
+0.20でTypeScript / BunからRustに書き換えた。設定ファイル、キー、セッション、CLIのフラグはそのまま使える。外部のプラグインを読み込む仕組みはなくなった（[拡張のしかた](docs/plugins.md)）。
 
 図や設定の一覧を含む詳しい説明は [sasanokusa.com/sasacode/docs](https://sasanokusa.com/sasacode/docs/) にある。要件は [docs/requirements.md](docs/requirements.md)。マイルストーンM0〜M4はすべて完了した（検証の記録は [docs/milestones.md](docs/milestones.md)）。
 
@@ -33,19 +35,18 @@ irm https://sasanokusa.com/sasacode/install.ps1 | iex
 
 - Windowsでは [Git for Windows](https://git-scm.com/download/win) が必要。`bash` ツールはそのGit Bashでコマンドを実行する（`winget install --id Git.Git -e`）。標準以外の場所に入れた場合は `SASACODE_GIT_BASH_PATH` に `bash.exe` のパスを指定する。キーは `%USERPROFILE%\.sasacode\.env` に書く（OSのキーチェーンからの読み出しはmacOS / Linuxのみ）。
 - npmからも `npm install -g sasacode` で入れられる。npmのパッケージは起動用の小さなスクリプトで、初回の実行時に同じ版のバイナリをGitHub Releasesから取得してSHA256を検証し、`~/.sasacode/npm-bin` に置く。更新は `npm install -g sasacode@latest`。
-- macOS（arm64 / x64）、Linux（x64 / arm64、glibc / musl、AVX2のないCPU向けのbaseline版）、Windows（x64 / arm64、x64のbaseline版）の単一バイナリ。Bunは不要。
+- macOS（arm64 / x64）、Linux（x64 / arm64、glibc / musl）、Windows（x64 / arm64）の単一バイナリ。x64版はどれもAVX2のないCPUでも動く（0.15までのbaseline版の名前でも、同じものを置いている）。
 - インストーラーもバイナリも、[GitHub Releases](https://github.com/sasanokusa/sasacode/releases) の最新版から取得してSHA256を検証する。sasanokusa.comのURLは、最新リリースの `install.sh` / `install.ps1` へのリダイレクト。
 - SHA256が防ぐのは壊れたダウンロードまで。ファイルがこのリポジトリのGitHub Actionsでビルドされたものかは、v0.9.8以降のリリースに付けた署名つきの来歴で確かめられる（`gh attestation verify sasacode-darwin-arm64.tar.gz --repo sasanokusa/sasacode`。リリースから落としたファイルに対して。`install.sh` も同じ）。
 - `SASACODE_VERSION=v0.15.2` で版を固定でき、`SASACODE_INSTALL_DIR` で置き場所を変えられる（どちらのインストーラーでも）。
-- 更新は `sasacode update`（インストーラーと同じ検証つき。`--check` で確認だけ）。新しい版が出ていると起動時に一度だけ静かに知らせる（`"updateCheck": false` で止める）。ソースから動かしている場合は `git pull` と `bun install`。
+- 更新は`sasacode update`（インストーラーと同じ検証つき。`--check`で確認だけ）。新しい版が出ていると起動時に一度だけ静かに知らせる（`"updateCheck": false`で止める）。ソースから入れた場合は、`git pull`のあと下の`cargo install`をもう一度実行する。
 - Web検索（`web_search`）に使うRustXNGは `sasacode web-search install`（TUIでは `/web-search install`）で入る。公式リリースをチェックサムで確かめて `~/.sasacode/bin` に置き、再起動しなくても使える。もう一度実行すると最新版に更新する。
 
-ソースから使う場合（[Bun](https://bun.sh) 1.4 以上）は次のとおり。
+ソースから使う場合（[Rust](https://www.rust-lang.org/)1.88以上）は次のとおり。
 
 ```bash
 git clone https://github.com/sasanokusa/sasacode && cd sasacode
-bun install
-ln -s "$PWD/packages/cli/src/main.ts" ~/.local/bin/sasacode
+cargo install --locked --path crates/sasacode-cli   # ~/.cargo/bin/sasacode に入る
 ```
 
 ## 使い方
@@ -62,18 +63,26 @@ sasacode -r <id> -p "続き"            # セッション ID を指定して続�
 
 | オプション | 内容 |
 | --- | --- |
-| `-m <provider/model>` | モデル（例 `anthropic/claude-opus-5`、`openai/gpt-5.5`、`ollama/gemma4:e4b`）。プロバイダーのモデル一覧にない名前なら、近い名前を示してエラーで終わる（一覧を取れないときは確かめない） |
+| `-p, --print <prompt>` | ヘッドレスで実行する（パイプした入力はプロンプトの後ろに付く） |
+| `--stdin` | `-p`と併用。パイプした入力を、時間がかかっても終わりまで待つ |
+| `--output <text\|jsonl>` | ヘッドレスの出力の形式（既定`text`） |
+| `--control stdio` | `-p --output jsonl`と併用。親プロセスがstdinで承認に答え、メッセージを送り、実行を中断できる（[ヘッドレスの制御](#ヘッドレスの制御)） |
+| `-m, --model <provider/model>` | モデル（例`anthropic/claude-opus-5`、`openai/gpt-5.5`、`ollama/gemma4:e4b`）。プロバイダーのモデル一覧にない名前なら、近い名前を示してエラーで終わる（一覧を取れないときは確かめない） |
 | `--permission <edits\|ask\|agent\|auto>` | 権限モード（既定 `edits`） |
 | `--thinking <off\|low\|medium\|high\|xhigh\|max>` | 推論の深さ |
 | `--max-turns <n>` | 1回の実行のターン数の上限（既定 200、0 で無制限） |
-| `--control stdio` | `-p --output jsonl` と併用。親プロセスがstdinで承認に答え、メッセージを送り、実行を中断できる（[ヘッドレスの制御](#ヘッドレスの制御)） |
+| `-c, --continue` / `-r, --resume <id>` / `--no-session` | 再開 / IDを指定して再開 / 保存しない |
 | `--append-system-prompt-file <path>` | ファイルの中身（UTF-8）を、設定の `instructions` の後ろにシステムプロンプトとして足す。読めないファイルはエラーで終わり、空のファイルは何も足さない。TUIでも使える |
-| `-c` / `-r <id>` / `--no-session` | 再開 / IDを指定して再開 / 保存しない |
 | `--trust-project` | プロジェクトを確認なしで信頼する（ヘッドレス向け。[プロジェクトの信頼](#プロジェクトの信頼)） |
-| `sasacode plugin search\|install\|update\|remove\|list\|publish` | プラグインを探す・入れる（npmかgit URL）・更新する・npmに公開する（[共有](#プラグインを共有する)） |
-| `sasacode endpoint add\|remove\|list` | 自前のサーバーの追加（形式は自動判別） |
+| `sasacode endpoint add <name> <url> [--key-env VAR] [--project]` | 自前のサーバーを足す（形式は自動判別。`--project`ならプロジェクトの設定に書く） |
+| `sasacode endpoint remove <name> [--project]` / `sasacode endpoint list` | 足したサーバーを外す / 一覧 |
 | `sasacode login [status\|logout]` | ChatGPTプランでログイン（`openai-codex/…` のモデル用） |
+| `sasacode update [--check] [tag]` | 最新のリリースを取得して入れ替える（チェックサムを検証。`--check`なら確認だけ） |
+| `sasacode web-search install [tag]` | `web_search`が使うRustXNGを入れる（チェックサムを検証） |
+| `sasacode gui [folder]` | デスクトップGUIをフォルダで開く（`sasacode-gui`が要る。[docs/gui.md](docs/gui.md)） |
 | `-h, --help` / `-v, --version` | 使い方 / 版を出す |
+
+`sasacode plugin`は0.20でなくなった。実行すると、プラグインはsasacodeに同梱になったこと（既定で無効のものは`plugins.enabled`で有効にする）と、ツールはMCPサーバーかSkillsで足すこと（[拡張のしかた](docs/plugins.md)）を示して、エラーで終わる。
 
 ### ヘッドレスの制御
 
@@ -135,7 +144,7 @@ stdinは1行1件のJSON（JSON Lines）で読む。
 | `/language` | 画面の言語を切り替える（`ja` / `en`。引数なしなら一覧から選ぶ）。その場で切り替わり、`~/.sasacode/config.json` の `lang` にも保存する。切り替え前に表示された文はそのまま |
 | `/copy` | 直前の応答をクリップボードにコピー（pbcopy / wl-copy / xclip、なければ端末経由） |
 | `/permission` `/help` `/exit`（`/quit`） | 権限モード / ヘルプ / 終了 |
-| `/usage` `/goal` `/bg` `/reconnect` `/compact` `/mcp` `/skills` `/skill:<name>` `/presets` `/browsr` `/web-search` `/undo` `/gui` | 同梱プラグインのコマンド |
+| `/usage` `/goal` `/bg` `/reconnect` `/compact` `/mcp` `/skills` `/skill:<name>` `/presets` `/browsr` `/web-search` `/undo` `/gui` | 同梱プラグインのコマンド（既定で無効のプラグインを有効にすれば`/jev` `/checks` `/workflow`も） |
 
 フッターには、モデル、推論の深さ、権限モード、コンテキストの使用量（`ctx 77.6k/256k (30%)`）、セッションIDと、プラグインのステータス（MCPの接続数、TODOの進捗など）を出す。30 秒以上かかった実行が終わると、端末のベルを鳴らす（別の作業をしていても気づけるように。`"tui": { "bell": false }` で止める）。
 
@@ -145,7 +154,7 @@ stdinは1行1件のJSON（JSON Lines）で読む。
 
 | provider | API形式 | キー |
 | --- | --- | --- |
-| `anthropic` | Anthropic Messages | `ANTHROPIC_API_KEY`（空ならSDKが `ant auth login` のプロファイルを使う） |
+| `anthropic` | Anthropic Messages | `ANTHROPIC_API_KEY`（空なら環境変数`ANTHROPIC_AUTH_TOKEN`をBearerトークンとして、それもなければ`ant auth login`のプロファイルを使う） |
 | `openai` / `openai-chat` | OpenAI Responses / Chat Completions | `OPENAI_API_KEY` |
 | `openrouter` | Chat Completions | `OPENROUTER_API_KEY` |
 | `commandcode` / `commandcode-responses` / `commandcode-anthropic` | Command CodeのChat Completions / Responses / Messages | `CMD_API_KEY` |
@@ -163,17 +172,17 @@ sasacode endpoint list
 sasacode -m llama/<モデル名>
 ```
 
-`GET /v1/models` の応答から、OpenAI形式（Chat Completionsで呼ぶ）かAnthropic形式（Messagesで呼ぶ）かを自動で判別し、URLも各形式のSDKに合わせて整える。llama.cpp、Ollama、LM Studio（0.3.6以降）は、それぞれ `/props`、`/api/show`、`/api/v0/models` から実際のコンテキスト長も取る（LM Studioを見分けなかった以前のバージョンで追加したサーバーも、モデル一覧を取るときに見分ける）。追加したサーバーのモデルは、`/model` の一覧に自動で出る。設定ファイルに `"providers": { "llama": { "baseUrl": "http://…" } }` とURLだけ書いた場合も、起動時に判別する（結果は `~/.sasacode/endpoints.json` にキャッシュする）。
+`GET /v1/models`の応答から、OpenAI形式（Chat Completionsで呼ぶ）かAnthropic形式（Messagesで呼ぶ）かを自動で判別し、URLも各形式に合わせて整える。llama.cpp、Ollama、LM Studio（0.3.6以降）は、それぞれ`/props`、`/api/show`、`/api/v0/models`から実際のコンテキスト長も取る（LM Studioを見分けなかった以前のバージョンで追加したサーバーも、モデル一覧を取るときに見分ける）。追加したサーバーのモデルは、`/model`の一覧に自動で出る。設定ファイルに`"providers": { "llama": { "baseUrl": "http://…" } }`とURLだけ書いた場合も、起動時に判別する（結果は`~/.sasacode/endpoints.json`にキャッシュする）。
 
 プロジェクトの `.sasacode/config.json` に書いたエンドポイントは、そのプロジェクトを信頼するまで使わない（[プロジェクトの信頼](#プロジェクトの信頼)）。キーを使わないサーバーでも、会話とコードが送られるため。
 
 **モデル一覧の自動取得**：TUIの起動時に、キーのあるプロバイダー（とOllama）のModels API（`GET /v1/models`）をバックグラウンドで呼び、`/model` に一覧とコンテキスト長を出す。取得したコンテキスト長は、フッターの使用率や圧縮のしきい値にも使う（設定の `modelOverrides` があればそちらが優先）。Ollamaは独自の `/api/show` から読み、Modelfileの `num_ctx` があればそれを実際の長さとして使い、なければモデルの最大長を参考として表示する（メモリに載っているモデルは `/api/ps` の実際の長さを使う）。LM Studioも同じで、ロード済みのモデルはロードしたときの長さ（`/api/v0/models` の `loaded_context_length`）を使い、未ロードのモデルは最大長を参考として表示する（LM Studioは最大長ではなく自分の既定の長さでロードするため）。長さがまだ分からないOllamaとLM Studioのモデルは、応答の後にサーバーに聞き直し（分からなければ次の応答の後にも聞き、3回まで）、実際にロードされた長さに切り替える。それまでは既定の128Kで計画する（最大長がそれより短ければ最大長で）。`num_ctx` のないOllamaのモデルを選ぶと、Ollamaが既定の長さを超えた入力を気づかないうちに切り詰めることを一度だけ警告する。ヘッドレス（`-p`）でも、ローカルのサーバー（Ollama、LM Studio、llama.cpp）や追加したOpenAI形式のサーバーなら、実行の前に現在のモデルの長さを聞き、同じ警告を標準エラーに出す。OpenAIのModels APIはコンテキスト長を返さないので、組み込みのモデル表の値で補う。Command Codeのように1つのキーで複数のAPI形式を提供するサービスでは、モデルごとに対応する形式のプロバイダーへ自動で振り分ける（例：Claude系は `commandcode-anthropic/…`）。
 
-**APIキー**は次の順で探す：シェルの環境変数 → `~/.sasacode/.env` → OSキーチェーン（macOS: `security add-generic-password -s sasacode -a <provider> -w`、Linux: `secret-tool store --label sasacode service sasacode account <provider>`）。どこでも空欄は無視する。作業ディレクトリの `.env` と `bunfig.toml` は読まない（リポジトリが `ANTHROPIC_BASE_URL` などで接続先を差し替えたり、起動時にスクリプトを実行させたりできないようにするため）。セッションのログには、使用中のキーを `[REDACTED]` に置き換えてから書く。`~/.sasacode/.env` にだけ書いたキーは、エージェントが実行するコマンド（bash、バックグラウンドジョブ）には渡さない。`~/.sasacode`（セッションのログ、入力履歴、長い出力の保存先 `tmp/`）は本人しか読めない権限（0700）にする。
+**APIキー**は次の順で探す：シェルの環境変数 → `~/.sasacode/.env` → OSキーチェーン（macOS: `security add-generic-password -s sasacode -a <provider> -w`、Linux: `secret-tool store --label sasacode service sasacode account <provider>`）。どこでも空欄は無視する。作業ディレクトリの`.env`は読まない（リポジトリが`ANTHROPIC_BASE_URL`などで接続先を差し替えられないようにするため）。セッションのログには、使用中のキーを`[REDACTED]`に置き換えてから書く。`~/.sasacode/.env`にだけ書いたキーは、エージェントが実行するコマンド（bash、バックグラウンドジョブ）には渡さない。`~/.sasacode`（セッションのログ、入力履歴、長い出力の保存先`tmp/`）は本人しか読めない権限（0700）にする。
 
 ## 設定
 
-`~/.sasacode/config.json`（全体）と `<project>/.sasacode/config.json`（プロジェクト）をマージし、プロジェクトが優先する。ただし、プロジェクト設定のうち信頼が必要な部分は、信頼するまで使わない（下記）。権限ルールと `disabled`（ツール・プラグイン）の配列は両方を合わせ、全体設定のdeny / askや無効化をプロジェクト側から消すことはできない。型の合わない値や未知のキーは、警告を出して無視する。
+`~/.sasacode/config.json`（全体）と`<project>/.sasacode/config.json`（プロジェクト）をマージし、プロジェクトが優先する。ただし、プロジェクト設定のうち信頼が必要な部分は、信頼するまで使わない（下記）。権限ルールと`disabled`（ツール・プラグイン）、`plugins.enabled`の配列は両方を合わせ、全体設定のdeny / askや無効化をプロジェクト側から消すことはできない。型の合わない値や未知のキーは、警告を出して無視する。
 
 ```json
 {
@@ -191,7 +200,7 @@ sasacode -m llama/<モデル名>
   },
   "instructions": "システムプロンプトに追記するテキスト",
   "mcpServers": { "github": { "command": "npx", "args": ["-y", "@modelcontextprotocol/server-github"] } },
-  "plugins": { "disabled": ["web-fetch"], "settings": { "permission-presets": { "presets": ["guard", "tests"] } } },
+  "plugins": { "enabled": ["git-context"], "disabled": ["web-fetch"], "settings": { "permission-presets": { "presets": ["guard", "tests"] } } },
   "tools": { "disabled": [] },
   "toolSearch": { "mode": "auto", "percent": 10, "count": 30 },
   "tui": { "altScreen": true, "bell": true },
@@ -214,14 +223,14 @@ sasacode -m llama/<モデル名>
 
 | モード | 動作 |
 | --- | --- |
-| `edits`（既定） | 作業ディレクトリ内のread / write / editは自動で許可し、bashやディレクトリ外への操作は確認する。`.git`と`.sasacode`の中への書き込みは確認する（gitのフックや設定、sasacodeのプラグインや権限ルールは、次のgitの実行や起動でコードを動かせるため） |
+| `edits`（既定） | 作業ディレクトリ内のread / write / editは自動で許可し、bashやディレクトリ外への操作は確認する。`.git`と`.sasacode`の中への書き込みは確認する（gitのフックや設定は次のgitの実行でコードを動かせ、sasacodeの設定や権限ルールは次の起動で効くため） |
 | `ask` | 読み取りを含む、すべてのツール実行を確認する |
 | `agent` | 作業ディレクトリ内のreadは自動で許可し、それ以外は現在のモデルに危険度を判定させる。安全なら許可、そうでなければ確認する。判定には、設定の `judgeModel`（`"provider/model"`）で別のモデルを使える。速くて安いモデルにすると、確認の待ち時間と費用が減る。判定するモデルは呼び出しの引数も読むため、モデルを誘導する文が判定も誘導しうる。利便のための機能で、プロンプトインジェクションへの防御ではない（それにはdeny / askルールと `guard` プリセットを使う） |
 | `auto` | すべて許可する（denyとaskのルールは効く）。TUIのフッターでは赤字で表示する |
 
 - ルールは `ツール名` か `ツール名(パターン)`。bashはコマンド文字列を `*` のワイルドカードで、read / write / editはパスをglobで照合する。`*` そのものは `\*` と書く。パスのルールは書いたツールにだけ効くので、`.env` を守るならread / edit / writeを並べ、サブディレクトリも含めるには `**/` を付ける（`edit(.env)` は作業ディレクトリ直下の `.env` のeditだけを止める）。コマンドのルールはコマンドの文字列に合わせるだけなので、オプションの順を変えたり絶対パスで呼んだりすれば当たらない。間違いを防ぐ柵であって、完全な防御ではない。
 - 確認の「常に許可」で足すルールは、見たものより広くならない。コマンドはそのまま（中の `*` はワイルドカードにしない）、ファイルを触るツールはそのパスだけを許可する。ルールはsasacodeを終了するまで残る（`/clear` をまたぐ）。
-- 判定の順番はdeny → softDeny → ask → allow → モード → `permission` フック（プラグイン）。`softDeny` はdenyと同じく拒否するが、`jev-guard` などのプラグインが「ユーザーに確認」まで下げられる（確認なしに実行されることはない）。広すぎて正当な操作も巻き込むパターン向け。allowルールで通るのは、`&&` `;` `|` でつないだコマンドの**すべて**が許可されている場合だけ。`$(…)`、バッククォート、`>` を含むコマンドは、allowルールでは通らない。
+- 判定の順番はdeny → softDeny → ask → allow → モード → `permission`フック（同梱プラグイン）。`softDeny`はdenyと同じく拒否するが、`jev-guard`などのプラグインが「ユーザーに確認」まで下げられる（確認なしに実行されることはない）。広すぎて正当な操作も巻き込むパターン向け。allowルールで通るのは、`&&` `;` `|`でつないだコマンドの**すべて**が許可されている場合だけ。`$(…)`、バッククォート、`>`を含むコマンドは、allowルールでは通らない。
 - 同梱の `permission-presets` が、既定で `guard`（sudo、`rm -rf /`、ディスク操作、`| sh` などを常に拒否。ホーム配下の `rm -rf ~…` とforce pushはsoftDeny。`ssh`、`scp`、`sftp`、リモートへの `rsync` は `auto` モードでも常に確認）を有効にしている。
 - ヘッドレスでは確認できる人がいないので、確認が必要な呼び出しは実行せず、その理由をモデルに返す。`--control stdio` を付けると、親プロセスがstdinとstdoutで答える（[ヘッドレスの制御](#ヘッドレスの制御)）。
 - パスは、シンボリックリンクをたどった先（実パス）で判定する。作業ディレクトリ内のリンクが外を指していれば、リンク先がまだ存在しなくても外への操作として扱う。プロジェクト内のリンクで、ルールの対象をすり替えることもできない。リンクの循環などで行き先が決まらないパスは、モードによらず確認する。
@@ -229,30 +238,29 @@ sasacode -m llama/<モデル名>
 - 中断（esc）した後は、承認済みでもまだ始まっていないツールは実行しない。
 - 確認の画面でescを押すと、その呼び出しを拒否して実行全体を中断する。「代わりの指示を伝える」の入力中のescは、選択肢に戻る。確認するコマンドが画面に収まらないときは、shift+↑↓で全文をスクロールできる（選択肢はいつも表示したまま）。
 
-### Jevによる実行前判断（配布プラグイン `jev-guard`）
+### Jevによる実行前判断（同梱・既定で無効の`jev-guard`）
 
-ルールと権限モードの判定の後に、判断専用モデル [Jev](https://commandcode.ai/models/jev)（TypeSafe）の判定を重ねるプラグイン。0.9.5 までは同梱していたが、既定で無効でキーも要るので、配布プラグインに分けた。
+ルールと権限モードの判定の後に、判断専用モデル[Jev](https://commandcode.ai/models/jev)（TypeSafe）の判定を重ねるプラグイン。既定で無効でキーも要るので、0.9.6から0.15までは別に入れるプラグインだった。0.20から再び同梱し、既定では読み込まない。いつも使うなら、設定に次のとおり書く（これまでの設定がそのまま使える）。
 
-```bash
-sasacode plugin install sasacode-plugin-jev-guard
+```json
+{ "plugins": { "settings": { "jev-guard": { "enabled": true } } } }
 ```
 
-入れた後は `/jev on` でそのセッションで有効になり、いつも使うなら設定に `{ "plugins": { "settings": { "jev-guard": { "enabled": true } } } }` と書く（0.9.5 までの設定はそのまま使える。設定があるのにプラグインが入っていなければ、起動時に入れ方を知らせる）。接続先、判定の変え方、閾値などは [plugins/jev-guard/README.md](plugins/jev-guard/README.md) にある。
+`"plugins": { "enabled": ["jev-guard"] }`と書いた場合は、読み込むだけで判定は止まったままになる。TUIで`/jev on`と打つと、そのセッションで有効になる。接続先、判定の変え方、閾値などは[docs/plugins.md](docs/plugins.md#jev-guard)にある。
 
 ### プロジェクトの信頼
 
 クローンしたリポジトリは、そのままでは「制限を強める」ことしかできない。次のものは、コードを実行するか、データの送り先を変えうるので、プロジェクトを信頼するまで使わない。
 
-- `.sasacode/plugins` のプラグイン
-- `.sasacode/config.json` の `providers`（エンドポイント）、`modelOverrides`、`plugins`（無効化と設定）、`mcpServers`、`allow` ルール、全体設定より緩い権限モード、全体設定より大きい `maxTurns`（0 は上限なし）と `maxRetries`、そのプロジェクトにしかないプロバイダーを指す `model`
+- `.sasacode/config.json`の`providers`（エンドポイント）、`modelOverrides`、`plugins`（有効化・無効化と設定）、`mcpServers`、`allow`ルール、全体設定より緩い権限モード、全体設定より大きい`maxTurns`（0は上限なし）と`maxRetries`、そのプロジェクトにしかないプロバイダーを指す`model`・`models`・`judgeModel`
 
-これらがあるプロジェクトで起動すると、最初に一覧を出して信頼するかを尋ねる（ヘッドレスでは `--trust-project`）。答えは `~/.sasacode/trust.json` に保存し、上の設定かプラグインのコード（`.sasacode/plugins` 以下のファイル。依存パッケージの中身は除く）が変わったら再び尋ねる。全体設定の `trustedProjects` に入れたプロジェクトは、尋ねずに信頼する。モデルの選択、`thinking`、`instructions`、deny / askルールやツール無効化の追加、より厳しい権限モードや小さい上限などは、信頼しなくても使う。
+これらがあるプロジェクトで起動すると、最初に一覧を出して信頼するかを尋ねる（ヘッドレスでは`--trust-project`）。答えは`~/.sasacode/trust.json`に保存し、上の設定が変わったら再び尋ねる。全体設定の`trustedProjects`に入れたプロジェクトは、尋ねずに信頼する。モデルの選択、`thinking`、`instructions`、deny / askルールやツール無効化の追加、より厳しい権限モードや小さい上限などは、信頼しなくても使う。0.15までは`.sasacode/plugins`のプラグインも信頼の対象だったが、0.20からはそのフォルダを読み込まないので、対象から外した（プロジェクトのプラグインがなく、0.15で信頼したプロジェクトは、そのまま信頼される）。
 
 ## プラグイン・MCP・Skills
 
 ### 同梱プラグイン（`plugins.disabled` で外せる）
 
-`~/.sasacode/plugins` やプロジェクトに同じ名前のプラグインがあれば、同梱版の代わりにそちらを読み込む。
+どれも`plugins.disabled`に名前を書けば読み込まない。設定は`plugins.settings.<名前>`に書く。0.15まで`~/.sasacode/plugins`やプロジェクトの`.sasacode/plugins`に置いたプラグインは、0.20からは読み込まない（同じ名前の同梱版の代わりに読み込む仕組みもなくなった）。
 
 | 名前 | 内容 |
 | --- | --- |
@@ -283,6 +291,21 @@ sasacode plugin install sasacode-plugin-jev-guard
 | `diagnostics` | APIの診断（既定で無効）。`/diagnostics on` で、リクエストの成否・停止理由・トークン数などのメタデータだけを記録し、`show` で直近100件を見る。本文や秘密値は記録しない |
 | `skills` / `mcp` | Agent SkillsとMCPのアダプタ |
 
+次の6つも同梱しているが、既定では読み込まない（0.15までは別に入れるプラグインだった）。`plugins.enabled`に名前を書くと読み込む。`plugins.disabled`にも書いてあれば、そちらが優先する。プロジェクトの設定に書いた`plugins.enabled`は、プロジェクトを信頼するまで使わない。
+
+```json
+{ "plugins": { "enabled": ["git-context", "project-checks"] } }
+```
+
+| 名前 | 内容 |
+| --- | --- |
+| `ask-user` | `ask_user`ツール。モデルが推測で進めずに、選択肢つきの質問（1回に1〜4問）であなたに判断を仰ぐ。ヘッドレスでは尋ねず、モデルに自分で決めて前提を書くよう返す（[詳しく](docs/plugins.md#ask-user)） |
+| `git-context` | `git_context`ツール。レビューに要るGitの状態・変更の統計・パッチを、1回の呼び出しで返す。読み取りだけで、Gitが要る（[詳しく](docs/plugins.md#git-context)） |
+| `project-checks` | `project_checks`・`project_check`ツールと`/checks`。テスト・lint・型検査などを名前で実行し、PASS / FAIL、終了コード、時間、ログを返す。bashと同じ権限ルールで判定する（[詳しく](docs/plugins.md#project-checks)） |
+| `workflows` | `/workflow`。レビュー・失敗の調査・公開前の確認など、繰り返し使う依頼を呼び出す。設定で足す・上書きする・外すことができる（[詳しく](docs/plugins.md#workflows)） |
+| `jev-guard` | 実行前のツール呼び出しをJevに判定させる。有効にする方法は上の「Jevによる実行前判断」にある（[詳しく](docs/plugins.md#jev-guard)） |
+| `free-search` | MCPサーバー`uvx free-search-mcp`を`free-search`という名前でつなぐ（キー不要でローカルで動くWeb検索。複数の検索エンジン、ページの取得、文書の読み取り）。ツールは`mcp__free-search__<tool>`になる。[uv](https://docs.astral.sh/uv/)が要る（[詳しく](docs/plugins.md#free-search)） |
+
 ### MCP
 
 ```json
@@ -294,55 +317,26 @@ sasacode plugin install sasacode-plugin-jev-guard
 }
 ```
 
-stdioとStreamable HTTPに対応する。ツールは `mcp__<server>__<tool>` という名前になり、通常のツールと同じ権限確認とフックを通る。promptsはスラッシュコマンドになる。サーバーはバックグラウンドで接続するので、起動を待たせない。`${VAR}` は環境変数から展開する。落ちたサーバーは自動で再接続する（間隔を空けて数回まで。`/mcp reconnect [name]` で手動に）。サーバーのツールの一覧が変わったら、外れたツールはモデルに渡さなくなる。
+stdioとStreamable HTTPに対応する。ツールは`mcp__<server>__<tool>`という名前になり、通常のツールと同じ権限確認とフックを通る。promptsはスラッシュコマンドになる。サーバーはバックグラウンドで接続するので、起動を待たせない。`${VAR}`は環境変数から展開する。落ちたサーバーは自動で再接続する（間隔を空けて数回まで。`/mcp reconnect [name]`で手動に）。サーバーのツールの一覧が変わったら、外れたツールはモデルに渡さなくなる。プロジェクトの`.sasacode/config.json`に書いたサーバーは、プロジェクトを信頼するまで起動しない（[プロジェクトの信頼](#プロジェクトの信頼)）。サーバーごとの`cwd`、`disabled`、`alwaysLoad`、`timeout`、`toolNames`は[docs/plugins.md](docs/plugins.md)にある。
 
 ### Skills
 
-`~/.sasacode/skills/<name>/SKILL.md`、`.sasacode/skills/<name>/SKILL.md`、プラグインの `skills` ディレクトリから、標準のAgent Skills形式（frontmatterの `name` と `description`）を読む。システムプロンプトには名前・説明・パスだけを載せ、本文はモデルが必要なときにreadツールで読む。`/skill:<name> <依頼>` で明示的に使わせることもできる。
+`~/.sasacode/skills/<name>/SKILL.md`と`.sasacode/skills/<name>/SKILL.md`から、標準のAgent Skills形式（frontmatterの`name`と`description`）を読む。同じ名前なら、プロジェクトのものが優先する。システムプロンプトには名前・説明・パスだけを載せ、本文はモデルが必要なときにreadツールで読む。`/skill:<name> <依頼>`で明示的に使わせることもでき、`/skills`で一覧を出す。0.15まで読んでいたプラグインの`skills`ディレクトリは、0.20からはない。
 
-組み込みのSkillとして `tool-authoring`（sasacodeのツールとプラグインの作り方）を同梱している。`/skill:tool-authoring 天気を返すツールを作って` のように使う。
+組み込みのSkill `tool-authoring`も同梱している（`~/.sasacode/builtin-skills`に書き出す）。
 
 ### ツールの遅延ロード
 
-MCPとプラグインのツールの定義が、合計でコンテキストの 10% 以上か 30 個以上になると、定義を全部は送らない。名前と説明の一覧を持つ `tool_search` ツールだけを渡し、モデルが必要なものを検索して読み込む。組み込みの4ツールと `alwaysLoad` 付きのツールは常に送る。
+MCPと同梱プラグインのツールの定義が、合計でコンテキストの10%以上か30個以上になると、定義を全部は送らない。名前と説明の一覧を持つ`tool_search`ツールだけを渡し、モデルが必要なものを検索して読み込む。組み込みの4ツールと`alwaysLoad`付きのツールは常に送る。
 
-### プラグインを書く
+### MCPとSkillsで拡張する
 
-`~/.sasacode/plugins/hello.ts` に置くだけで読み込む（ビルドは不要）。エディタで型補完を使うなら `npm install --save-dev @sasacode/plugin-api`（[npm](https://www.npmjs.com/package/@sasacode/plugin-api)）。
+0.15までの`~/.sasacode/plugins`に置くTypeScriptのプラグインと、`sasacode plugin`による検索・インストール・公開は、0.20でなくなった。npmの`@sasacode/plugin-api`も0.20からは公開しない。1.xのプラグインAPI（最後の版は1.15.0）は0.20で終わり、同梱プラグインのためのRustの内部API（`crates/sasacode-plugin-api`）として残っている。自分のツールやコマンドを足すには、次のどちらかを使う。
 
-```ts
-import { text, type Plugin } from "@sasacode/plugin-api";
+- **コードを動かすもの**：MCPサーバーにして`mcpServers`に書く。stdioのサーバーなら言語は問わない。サーバーのツールはモデルに渡り、promptsはスラッシュコマンドになる。
+- **手順や知識**：Skillにして`~/.sasacode/skills/<name>/SKILL.md`か、プロジェクトの`.sasacode/skills/<name>/SKILL.md`に置く。
 
-export default ((api) => {
-  api.registerTool({
-    name: "hello",
-    description: "Greet someone by name.",
-    parameters: { type: "object", properties: { name: { type: "string" } }, required: ["name"] },
-    kind: "read",
-    execute: async ({ name }) => ({ content: [text(`Hello, ${name}!`)] }),
-  });
-}) satisfies Plugin;
-```
-
-公開API（現在 1.15.0。1.4.0 で締め切り、1.xの間は追加だけ。[互換性の約束](docs/plugins.md#互換性の約束140-で確定)）でできることは次のとおり。
-
-- **登録**：ツール（別のツールの権限ルールを当てる `permissionsAs` つき）、スラッシュコマンド（引数の補完つき）、プロバイダー（モデル一覧の取得、通信の差し替え）、権限ルール（`softDeny` を含む）
-- **フック**：`session_start/end`、`user_prompt`、`system_prompt`、`before_request`、`stream_delta`、`assistant_message`、`tool_call_raw`、`tool_call`、`permission`、`tool_result`、`turn_end`、`agent_end`、`context_limit`
-- **UI**：通知・確認・選択（単一・複数）・自由入力・長文表示・ステータス行、ツール結果の描画
-- **セッション**：状態の保存、履歴の差し替え、メッセージの差し込み
-- **エージェント**：サブエージェント、単発の呼び出し
-
-詳しくは [docs/plugins.md](docs/plugins.md)。
-
-### プラグインを共有する
-
-```bash
-sasacode plugin search 天気                          # おすすめ一覧（sasanokusa.com）と npm から探す
-sasacode plugin install sasacode-plugin-weather     # 入れる前に中身を見せて確認する
-sasacode plugin publish weather.ts --license MIT    # 1ファイルのプラグインを npm に公開する
-```
-
-公開すると、npmのキーワード `sasacode-plugin` で誰の `search` にも出る（語なしの `search` で全部）。sasanokusa.comの一覧（`site/plugins.json`）はおすすめを載せるだけの数KBのJSONで、プラグインの本体はnpmやGitHubから直接取る。一覧に載せたいときは `site/plugins.json` に1件足すpull requestを送る。入れるのも公開するのもsasacodeに内蔵のBunを使うので、Bunやnpmを入れる必要はない（公開だけはnpmが要る）。端末のないスクリプトから `plugin install` するときは `--yes` を付ける。詳しくは [docs/plugins.md](docs/plugins.md#公開する)。
+設定のキー、`SKILL.md`の形式、同梱プラグインの設定、同梱プラグインの書き方（開発者向け）は[docs/plugins.md](docs/plugins.md)にある。
 
 ## セッション
 
@@ -351,27 +345,33 @@ sasacode plugin publish weather.ts --license MIT    # 1ファイルのプラグ�
 ## 開発
 
 ```bash
-bun test            # LLM なしの E2E を含む全テスト（応答の再生と、テスト用の MCP サーバーを使う）
-bun run typecheck
-bun run improve     # 改善ループの信号（検査の合否、コアの行数、リポジトリの規模）
-bun run build       # dist/sasacode（このマシン向け）。--all で全ターゲット
+cargo test --workspace --locked   # LLMなしのテスト（応答の再生、偽のモデルサーバー、テスト用のMCPサーバーを使う）
+cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo xtask checks                # リポジトリの検査（コアの行数、READMEとCLIの対応など）
+cargo xtask improve               # 改善ループの信号（検査の合否、コアの行数、リポジトリの規模）
+cargo xtask build                 # 配布用のバイナリ
 ```
 
-**リリースの手順**：`v*` のタグをpushすると、GitHub ActionsがバイナリをビルドしてGitHub Releaseを作る。タグと `packages/cli/package.json` の版が合っているかと型チェックを確かめ、macOS版はmacOSのランナーでビルドし、7種類のバイナリをすべて動く環境で起動してから（x64のmacOSはRosetta、muslはAlpineのコンテナ）、署名つきの来歴を付けて公開する。sasanokusa.comからのインストールも、それだけで新しい版になる。案内ページを変えたときと、新しい版を出した後に `scripts/publish-site.sh <ホスト>`（または環境変数 `SASACODE_SITE_HOST`）を実行する。ページの版の表記は、`packages/cli/package.json` の版で実行時に埋める。リリースが公開されたら `cd npm/sasacode && npm publish` でnpmの `sasacode` も同じ版にする（`npm/sasacode/package.json` の版は `packages/cli` と合わせておく。合っていないとリリースのワークフローが止まる）。
+開発に要るのはRustのツールチェーン（cargo）だけで、0.20からBunは使わない。
 
-| パッケージ | 役割 |
+**リリースの手順**：`v*`のタグをpushすると、GitHub ActionsがバイナリをビルドしてGitHub Releaseを作る。版はルートの`Cargo.toml`（`[workspace.package]`の`version`）で、`sasacode --version`もこの版を出す。タグとこの版が合っているかを確かめ、macOS版はmacOSのランナーでビルドし、すべてのバイナリを動く環境で起動してから（x64のmacOSはRosetta、muslはAlpineのコンテナ）、署名つきの来歴を付けて公開する。リリースのファイル名は0.15から変えていない。sasanokusa.comからのインストールも、それだけで新しい版になる。案内ページを変えたときと、新しい版を出した後に`scripts/publish-site.sh <ホスト>`（または環境変数`SASACODE_SITE_HOST`）を実行する。ページの版の表記は、実行時に埋める。リリースが公開されたら`cd npm/sasacode && npm publish`でnpmの`sasacode`も同じ版にする（`npm/sasacode/package.json`の版はルートの`Cargo.toml`と合わせておく。合っていないとリリースのワークフローが止まる）。
+
+| クレート | 役割 |
 | --- | --- |
-| `@sasacode/ai` | 正規化したメッセージ型、Anthropic / OpenAI Chat / OpenAI Responsesのアダプタ、料金の計算 |
-| `@sasacode/agent` | ループ、フック、ツール実行（修復・検証・権限）、ツールの遅延ロード、セッション、プラグインのホスト |
-| `@sasacode/plugin-api` | プラグインが依存する唯一の公開API（npmで公開） |
-| `@sasacode/tools` | read / write / edit / bash（プラグインAPIで登録） |
-| `@sasacode/tui` | pi-tuiの上に作った対話UI |
-| `@sasacode/cli` | 引数、設定、キー、モデル一覧、プラグインの検出・読み込み・信頼確認、ヘッドレス実行 |
-| `@sasacode/mcp` / `@sasacode/skills` / `@sasacode/bundled` | MCPとSkillsのアダプタ、同梱プラグイン |
-| `@sasacode/host` | TUI・CLI・同梱プラグインが共有するもの：画面の言語（訳の表）、組み込みのプロバイダーと既知のモデル（価格・コンテキスト長）、セッションの索引 |
+| `sasacode-ai` | プロバイダーに依存しないメッセージ型、Anthropic / OpenAI Chat / OpenAI Responsesのアダプタ、料金の計算 |
+| `sasacode-agent` | ループ、フック、ツール実行（修復・検証・権限）、ツールの遅延ロード、セッション、プラグインのホスト |
+| `sasacode-plugin-api` | 同梱プラグインが使うAPI（ツール、コマンド、プロバイダー、フック、UI、セッション、エージェント）。0.20からは内部のAPIで、公開しない |
+| `sasacode-tools` | read / write / edit / bash（プラグインAPIで登録） |
+| `sasacode-tui` | ratatuiとcrosstermで作った全画面の対話UI |
+| `sasacode-cli` | `sasacode`コマンド：引数、設定、キー、モデル一覧、信頼確認、同梱プラグインの読み込み、ヘッドレス実行 |
+| `sasacode-mcp` / `sasacode-skills` / `sasacode-bundled` | MCPのクライアント（stdioとStreamable HTTP）、Agent Skills、同梱プラグイン |
+| `sasacode-host` | TUI・CLI・同梱プラグインが共有するもの：画面の言語（ja / enの訳）、組み込みのプロバイダーと既知のモデル（価格・コンテキスト長）、セッションの索引 |
+| `sasacode-protocol` / `sasacode-gui` | JSONLのイベント・`--control stdio`のメッセージ・セッションログの型（GUIが読む）、デスクトップGUI |
+| `sasacode-testing` | テスト用：応答を再生するプロバイダーと、偽のモデルサーバー |
+| `xtask` | リポジトリの作業：ビルド、検査、改善ループの計測、配布物の梱包 |
 
 デスクトップGUI（Rust、開発中）は `crates/` にある。`cargo run -p sasacode-gui -- <フォルダ>` で開き、入力ごとに `sasacode -p … --output jsonl --control stdio` をそのフォルダで動かす（`SASACODE_BIN` か `--sasacode` で実行ファイルを指定できる）。`cargo install --locked --path crates/sasacode-gui` で入れておけば、`sasacode gui [フォルダ]` と、TUIの `/gui`（進行中の会話を読み込んだ状態で開く）でも開ける。`cargo test` で、CLIの出力とセッションログを読めるかも確かめる。設計と段階は [docs/gui.md](docs/gui.md)。
 
-コア（ai・agent・plugin-api・tools）の行数の上限は 5,000 行で、1行は120桁まで（文字列だけの行を除く）。どちらかを超えるとテストが落ちる。いまの行数は `bun run improve` が出す。
+コア（`sasacode-ai`・`sasacode-agent`・`sasacode-plugin-api`・`sasacode-tools`）の行数の上限は12,500行で、1行は120桁まで（rustfmtの`max_width = 120`。ほとんどが1つの文字列リテラルの行は除く）。どちらかを超えると`cargo xtask checks`が落ちる。いまの行数は`cargo xtask improve`が出す。
 
-リポジトリのドキュメント：[要件](docs/requirements.md)、[マイルストーンの検証](docs/milestones.md)、[実行時依存の記録](docs/dependencies.md)、[プラグインAPI](docs/plugins.md)、[API互換性の確認表](docs/api-compatibility.md)、[ベンチマーク](docs/benchmarks.md)、[改善の回し方](docs/improvement.md)。改善は1周ずつ小さく積む。手順と観点、これまでの記録は [docs/improvement.md](docs/improvement.md) にある。
+リポジトリのドキュメント：[要件](docs/requirements.md)、[マイルストーンの検証](docs/milestones.md)、[実行時依存の記録](docs/dependencies.md)、[拡張のしかた（MCP・Skills・同梱プラグイン）](docs/plugins.md)、[API互換性の確認表](docs/api-compatibility.md)、[ベンチマーク](docs/benchmarks.md)、[改善の回し方](docs/improvement.md)。改善は1周ずつ小さく積む。手順と観点、これまでの記録は[docs/improvement.md](docs/improvement.md)にある。

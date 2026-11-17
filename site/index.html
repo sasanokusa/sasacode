@@ -255,7 +255,7 @@
       <ul class="chips" aria-label="組み込みツール">
         <li data-stage="0">read</li><li data-stage="1">write</li><li data-stage="2">edit</li><li data-stage="3">bash</li>
       </ul>
-      <p class="more fine">コアは 5,000 行未満（1行は120桁まで）に保っていて、超えるとテストが落ちる。組み込みの4ツールも、プラグインと同じ公開APIで登録している。</p>
+      <p class="more fine">コアは 12,500 行未満（1行は120桁まで）に保っていて、超えると検査が落ちる。組み込みの4ツールも、同梱のプラグインと同じAPIで登録している。</p>
     </article></div></div>
   </section>
 
@@ -263,9 +263,9 @@
     <div class="stick"><div class="card-wrap"><article class="card">
       <p class="kicker"><span class="seal">二</span>プラグイン</p>
       <h2><span class="ph">吊るして、</span><span class="ph">組み替える</span></h2>
-      <p>コアの外の振る舞いは、すべて公開のプラグインAPIで足す。<code>~/.sasacode/plugins/</code> にTypeScriptのファイルを置けば、ビルドなしで読み込む。</p>
-      <p class="more">MCPサーバーとAgent Skills（<code>SKILL.md</code>）はそのまま使える。使用量のグラフ（<code>/usage</code>）、ゴール（<code>/goal</code>）、長いコマンドのバックグラウンド実行なども同梱のプラグインで、<code>plugins.disabled</code> で外せる。</p>
-      <p class="fine">Plugin API 1.7.0 · <code>npm i -D @sasacode/plugin-api</code></p>
+      <p>コアの外の振る舞いは、すべて同梱のプラグインで足している。外からは、MCPサーバーでツールを、Agent Skills（<code>SKILL.md</code>）で手順を足す。</p>
+      <p class="more">使用量のグラフ（<code>/usage</code>）、ゴール（<code>/goal</code>）、長いコマンドのバックグラウンド実行なども同梱のプラグインで、<code>plugins.disabled</code> で外せる。Gitの文脈やプロジェクトの検査などは同梱で既定は無効、<code>plugins.enabled</code> で入れる。</p>
+      <p class="fine">MCP · Agent Skills · <code>plugins.enabled</code></p>
     </article></div></div>
   </section>
 
@@ -340,7 +340,7 @@
         <a href="docs/">ドキュメント</a>
         <a href="https://github.com/sasanokusa/sasacode">GitHub</a>
         <a href="latest">最新バージョン</a>
-        <a href="https://github.com/sasanokusa/sasacode/blob/main/docs/plugins.md">プラグインを書く</a>
+        <a href="https://github.com/sasanokusa/sasacode/blob/main/docs/plugins.md">拡張のしかた</a>
       </nav>
       <p class="colophon">sasacode {{VERSION}} · Apache-2.0</p>
     </article></div></div>

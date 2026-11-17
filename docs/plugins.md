@@ -1,387 +1,332 @@
-# プラグインの書き方
+# 拡張のしかた
 
-sasacodeのツール・コマンド・フックはすべてプラグインから足す。組み込みのread / write / edit / bash、コアのスラッシュコマンド、MCP、Skills、同梱プラグインも、ここで説明するのと同じ公開API（`@sasacode/plugin-api`）で登録している。特権APIはない。
+sasacodeのツール・コマンド・フックは、どれもプラグインが登録している。組み込みのread / write / edit / bash、MCP、Skills、同梱プラグインも、同じプラグインAPI（`crates/sasacode-plugin-api`）を通す。0.20からは外部のプラグインを読み込まないので、自分で機能を足す方法は次の2つになる。
 
-## 最小のプラグイン
+- **MCPサーバー**：コードを動かすツール。設定の`mcpServers`に書く。
+- **Agent Skills**：手順や知識。`SKILL.md`を決まったフォルダに置く。
 
-`~/.sasacode/plugins/hello.ts`（全プロジェクト共通）または`<project>/.sasacode/plugins/hello.ts`に置くだけで読み込まれる。ビルドは不要で、TypeScriptをそのまま実行する。
+同梱プラグインは、設定で外したり、既定で無効のものを有効にしたり、設定を渡したりできる。
 
-```ts
-import { text, type Plugin } from "@sasacode/plugin-api";
+## MCPサーバー
 
-const plugin: Plugin = (api) => {
-  api.registerTool({
-    name: "hello",
-    description: "Greet someone by name.",
-    parameters: { type: "object", properties: { name: { type: "string" } }, required: ["name"] },
-    kind: "read",
-    execute: async ({ name }) => ({ content: [text(`Hello, ${name}!`)] }),
-  });
-};
-export default plugin;
-```
-
-`@sasacode/plugin-api`はインストールしなくてもimportできる（ホストが自分の実装を渡す）。型補完が欲しければ、npmの [`@sasacode/plugin-api`](https://www.npmjs.com/package/@sasacode/plugin-api) をdevDependencyとして入れる。パッケージの版はプラグインAPIの版と同じ。
-
-```bash
-npm install --save-dev @sasacode/plugin-api
-```
-
-npmのパッケージは`bun run pack:plugin-api`で`dist/plugin-api`に作る（型と小さな関数だけで、プロバイダーのSDKは含まない）。APIの版を上げたら作り直して公開する。
-
-## パッケージにする
-
-複数のファイルやSkills・MCPサーバーをまとめて配るときは、ディレクトリに`plugin.json`を置くか、`package.json`に`sasacode`フィールドを書く。
+`~/.sasacode/config.json`か、プロジェクトの`.sasacode/config.json`の`mcpServers`に、サーバーの名前ごとに書く。
 
 ```json
 {
-  "name": "my-plugin",
-  "version": "1.0.0",
-  "apiVersion": "^1.4.0",
-  "extensions": ["src/index.ts"],
-  "skills": "skills",
   "mcpServers": {
-    "github": { "command": "npx", "args": ["-y", "@modelcontextprotocol/server-github"], "env": { "GITHUB_TOKEN": "${GITHUB_TOKEN}" } }
+    "github": { "command": "npx", "args": ["-y", "@modelcontextprotocol/server-github"], "env": { "GITHUB_TOKEN": "${GITHUB_TOKEN}" } },
+    "remote": { "url": "https://example.com/mcp", "headers": { "Authorization": "Bearer ${REMOTE_TOKEN}" }, "timeout": 60000 }
   }
 }
 ```
 
-- `apiVersion`がホストのAPI（現在1.15.0）と互換でなければ、警告を出して読み込まない。
-- `skills`は`SKILL.md`を含むフォルダが並ぶディレクトリ。
-- `mcpServers`は設定ファイルの`mcpServers`と同じ形式。`${VAR}`は環境変数から展開される。
-
-## 探す・入れる
-
-```bash
-sasacode plugin search [語]                         # sasanokusa.com のおすすめ一覧と npm から探す（語なしで全部）
-sasacode plugin install sasacode-plugin-foo         # npm
-sasacode plugin install https://github.com/you/plugin  # git
-sasacode plugin install ./my-plugin                 # 手元のパッケージ（公開前の確認に）
-sasacode plugin install <spec> --project            # .sasacode/plugins へ
-sasacode plugin update [名前]                        # npm は最新版へ、git は差分を見せてから更新
-sasacode plugin list
-sasacode plugin remove <名前>
-```
-
-- `search`は、sasanokusa.comに置いた小さな一覧（`plugins.json`、数KB）と、npmのキーワード`sasacode-plugin`の検索を合わせて出す。一覧に載っているものには ★ が付く。どちらかに届かなくても、もう一方の結果は出る。本体はnpmやGitHubから直接取るので、sasanokusa.comを通るのは一覧だけ。
-- `install`は、入れる前に中身を見せて確認を取る。npmなら版、公開者、公開日、ファイル数と大きさ、依存パッケージ、installスクリプトの有無（実行はしない）。gitならURLを見せ、入れた後にコミットを出す。端末がないとき（スクリプトなど）は`--yes`が要る。
-- sasacodeのプラグインでないもの（`package.json`に`sasacode`フィールドがなく、`plugin.json`もない）は入れない。npmは取得する前、gitはcloneした後に確かめる（cloneは消す）。プラグインは`sasacode-plugin-`を省いた名前で呼ばれることが多く、省いた名前のnpmパッケージは大抵まったく違うものなので、`sasacode plugin install jev-guard`は断ったうえで`sasacode-plugin-jev-guard`を案内する。以前に入ってしまったものは`plugin list`が知らせる。
-- パッケージの取得にはsasacodeに内蔵のBunを使うので、Bunやnpmを入れていなくても動く。
-- `update`は、gitのプラグインなら新しいコミットの一覧と変更の規模（`git diff --stat`）を見せてから更新する。
-
-## 公開する
-
-1ファイルのプラグインは、そのままnpmに出せる。
-
-```bash
-sasacode plugin publish my-tool.ts --license MIT --dry-run   # 中身の確認
-sasacode plugin publish my-tool.ts --license MIT             # npm publish（npm へのログインが必要）
-```
-
-- `~/.sasacode/publish/<パッケージ名>/`にnpmのパッケージを組み立てて、`npm publish --access public`を実行する。npmの2段階認証は、その場でワンタイムパスワードを聞かれる（`--otp <コード>`で先に渡してもよい）。パッケージ名は既定で`sasacode-plugin-<ファイル名>`（`--name @you/my-tool`で変えられる）。
-- `package.json`には、`sasacode`フィールド（マニフェスト）、検索用のキーワード`sasacode-plugin`、ピア依存の`@sasacode/plugin-api`を入れる。READMEはファイル先頭のコメントから作る。
-- 版は、npmに出ている最新版の次のパッチ（初回は0.1.0）。`--version`で指定できる。
-- 説明文は、ファイルの最初のコメントから取る（`--description`で指定できる）。
-- `apiVersion`は、使っている機能から決める（`ModelInfo.server`なら ^1.15.0、`agent_end`の`error`なら ^1.14.0、`usage`フックなら ^1.13.0、`ui.onPaste`なら ^1.12.0、`before_request.fetch`なら ^1.11.0、`ui.input`・`ui.selectMany`なら ^1.10.0、`callTool`・`showText`・`defineSettings`なら ^1.9.0、フックの`ctx`や`session_end`の`reason`なら ^1.8.0、`permission`フックや`softDeny`なら ^1.7.0、`permissionsAs`なら ^1.6.0、など）。`--api`で指定できる。
-- 同じフォルダのほかのファイルをimportしていると、それは含まれない（注意を出す）。そういうプラグインは、`package.json`に`sasacode`フィールドを書いたディレクトリごと`sasacode plugin publish <ディレクトリ>`で出す（キーワードがなければ足す）。
-- ライセンスを付けないと、ほかの人は再利用できない。`--license MIT`のように付ける。
-
-sasanokusa.comのおすすめ一覧に載せたいときは、[リポジトリ](https://github.com/sasanokusa/sasacode)の`site/plugins.json`に1件足すpull requestを送る。
-
-```json
-{ "name": "my-tool", "source": "sasacode-plugin-my-tool", "description": "何をするか", "author": "you" }
-```
-
-`source`は`sasacode plugin install`に渡すもの（npmのパッケージ名かgitのURL）。
-
-## API リファレンス
-
-公開APIは`@sasacode/plugin-api`の`PluginAPI`で、現在の版は1.15.0。変更の履歴は[最後の表](#api-の版)にある。
-
-### PluginAPI
-
-| API | できること |
+| キー | 意味 |
 | --- | --- |
-| `version` / `name` / `cwd` | ホストのAPIの版 / このプラグインの名前 / 作業ディレクトリ |
-| `settings` | 設定ファイルの`plugins.settings.<名前>` |
-| `defineSettings({schema, defaults?})` | 設定を既定値とマージし、JSON Schemaの対応範囲で検証する。型変換せず、不正なら例外（1.9.0〜） |
-| `registerTool(def)` | ツールを追加する。同名を登録すると置き換わる（組み込みの`read`なども上書きできる） |
-| `unregisterTool(name)` | このプラグインが登録したツールを外す。ほかのプラグインのツールには触れない（1.8.0〜） |
-| `registerCommand(def)` | スラッシュコマンドを追加する |
-| `registerProvider(name, config, impl?)` | プロバイダーを追加する。`impl`を渡すと、新しいAPI形式も足せる |
-| `on(hook, handler)` | フックを登録する（[フック](#フック)） |
-| `ready(promise)` | 起動時の非同期処理（サーバーへの接続など）をホストに知らせる。ヘッドレス実行はこれを待ってから最初のリクエストを送り、TUIは待たない（1.1.0〜） |
-| `permissions.addRules({allow, ask, deny, softDeny})` | 権限ルールを足す。`softDeny`はdenyと同じく拒否するが、`permission`フックが「ユーザーに確認」まで下げられる（1.7.0〜） |
-| `ui.interactive` | TUIならtrue。ヘッドレスではfalseで、`confirm`はfalse、`select`・`input`・`selectMany`はundefinedを返す |
-| `ui.lang` | ユーザーが読む言語（`"ja"` / `"en"`）。通知やコマンドの説明をこの言語で出す（1.8.0〜） |
-| `ui.notify(msg, level?)` / `ui.confirm(title, msg?)` / `ui.select(title, options)` | 通知 / 確認 / 選択 |
-| `ui.input(title, {message?, placeholder?, initial?})` | 1行の自由入力。入力された文字列（空文字もありうる）を返し、escならundefined（1.10.0〜） |
-| `ui.selectMany(title, options, {selected?})` | 複数選択。spaceで切り替え、enterで決定。選ばれた値を選択肢の順で返し（0個もありうる）、escならundefined。渡した選択肢にない値は返さない（1.10.0〜） |
-| `ui.showText({title, text, format?})` | 長文の閲覧パネル。スクロール・検索・ユーザー操作によるコピー。閉じるまで待つ。ヘッドレスはstderrに表示（1.9.0〜） |
-| `ui.setStatus(key, text)` | フッターのステータス行に出す（`undefined`で消す） |
-| `ui.registerToolRenderer(tool, fn)` | ツール結果の表示を差し替える。`fn(call, result, {expanded, width})`が行の配列を返す |
-| `ui.onPaste(fn)` | 貼り付け・ドロップされた文字列が入力欄に入る前に`fn(text, input)`を呼ぶ（`input`はその時点の入力欄の中身）。ctrl+vや文字のない貼り付け（クリップボードが画像だけのとき）は`""`。文字列を返すとそれを代わりに入れ、undefinedなら次のプラグインに回す。ヘッドレスでは呼ばれない（1.12.0〜） |
-| `session.id` | セッションID（`--no-session`ならundefined） |
-| `session.append(kind, data)` / `session.entries(kind)` | セッションに独自の状態を保存し、再開時に読み戻す |
-| `session.messages()` / `session.replaceMessages(msgs)` | 会話を読む / 差し替える（圧縮など。差し替えもセッションに記録される） |
-| `session.inject(text, "next" \| "now")` | ユーザーメッセージを差し込む。`next`は次のターンか次の入力で、`now`は実行中でなければすぐ実行する |
-| `agent.model()` / `agent.tools()` | 現在のモデル / 登録済みのツール |
-| `agent.run({prompt, systemPrompt?, tools?, excludeTools?, model?, signal?, onProgress?, onStart?})` | 独立した履歴でサブループを実行し、`{text, messages, cause, error?}`を返す（サブエージェント）。`onStart`は実行中のループへの`send(text)`（次のターンで届く）と`stop()`を受け取る。`error`は`cause`が`"error"`のときの理由（1.8.0〜） |
-| `agent.complete({system, messages, model?, maxTokens?, signal?})` | ツールなしで1回だけモデルを呼び、本文を返す。`maxTokens`（既定8192）は、そのモデルのコンテキスト長に残る余地と`maxOutput`を超えないように抑える（残る余地は、送る`system`と`messages`の文字数から見積もる） |
-| `log(...args)` | `SASACODE_DEBUG`が設定されているときだけstderrに出す |
+| `command` / `args` | stdioのサーバーを起動するコマンドと引数。`command`があればstdioのサーバー、なければ`url`のサーバーとして読む |
+| `env` | stdioのサーバーに渡す環境変数。サーバーが受け取るのは、`HOME`・`LOGNAME`・`PATH`・`SHELL`・`TERM`・`USER`（Windowsでは`APPDATA`・`PATH`・`USERPROFILE`など）と、ここに書いたものだけ。値の`${VAR}`は起動時に環境変数から展開する |
+| `cwd` | stdioのサーバーの作業ディレクトリ。既定はsasacodeの作業ディレクトリ |
+| `url` / `headers` | Streamable HTTPのサーバー。どちらも`${VAR}`を展開する |
+| `disabled` | `true`なら接続しない |
+| `alwaysLoad` | ツールの遅延ロードが有効でも、このサーバーのツールの定義を常に送る |
+| `timeout` | 1回のツール呼び出しの上限（ミリ秒）。既定は600000（10分） |
+| `toolNames` | `"plain"`なら、ツールをサーバーが付けた名前のまま登録する（同じ名前のツールがあれば置き換わる）。既定は`mcp__<server>__<tool>`で、英数字・`_`・`-`以外の文字は`_`になり、64文字で切る |
 
-`api`のほかに、`@sasacode/plugin-api`から関数として使えるもの（1.8.0〜）：`sasacodeHome()`（`$SASACODE_HOME`か`~/.sasacode`）、`childEnv(extra?)`（コマンドを実行するときの環境変数。`~/.sasacode/.env`から読んだキーを除く）、`saveOutput(prefix, text)`（長い出力を`~/.sasacode/tmp`に本人だけが読める権限で保存し、パスを返す。1週間より古いものは消す）。コマンドを実行するプラグインは`process.env`ではなく`childEnv()`を渡す。
+- サーバーはバックグラウンドで接続するので、TUIの起動を待たせない。ヘッドレスでは、接続を待ってから最初のリクエストを送る。
+- ツールは通常のツールと同じ権限確認とフックを通る。種類は`other`なので、editsモードでも実行の前に確認する（allowルールで許可できる）。サーバーが`readOnlyHint`を付けたツールは、ほかのツールと並行して実行する。
+- サーバーのpromptsは`mcp__<server>__<prompt>`という名前のスラッシュコマンドになる。
+- 落ちたサーバーは、間隔を空けて5回まで自動で再接続する（`plugins.settings.mcp.reconnectDelayMs`で間隔を縮められる）。`/mcp`で接続の状態を見て、`/mcp reconnect [name]`で手動でつなぎ直す。フッターには`MCP <接続中>/<全体>`を出す。
+- サーバーのツールの一覧が変わったら、一覧から外れたツールはモデルに渡さなくなる。
+- プロジェクトの`.sasacode/config.json`に書いたサーバーは、プロジェクトを信頼するまで起動しない（[README](../README.md#プロジェクトの信頼)）。信頼したあとでサーバーの設定が変わると、また確認を出す。
+- `plugins.disabled`に`mcp`と書くと、`mcpServers`のサーバーを1つもつながない。
 
-### ツールの定義（`registerTool`）
+## Skills
 
-| フィールド | 意味 |
-| --- | --- |
-| `name` / `description` / `parameters` | 名前、説明、引数のJSON Schema。引数は実行前にスキーマで検証される |
-| `kind` | `read` / `edit` / `exec` / `other`。権限の判定に使う。既定のモード`edits`で自動で許可されるのは、作業ディレクトリ内のread / editだけ |
-| `paths(args, cwd)` | 触るファイル。パスのルール（`edit(src/**)`）の照合と、作業ディレクトリの内側かどうかの判定に使う。絶対パスで返すのが基本で、相対パスは作業ディレクトリから解決される |
-| `matchTarget(args)` | パターンのルール（`bash(git *)`）で照合する文字列 |
-| `permissionsAs` | 別のツール名のルールも当てる（1.6.0〜）。シェルのコマンドを別の方法で動かすツール（バックグラウンド実行、リモート実行など）に`"bash"`と書けば、利用者の`bash(sudo *)`などのdeny / ask / allowルールと`guard`プリセットが、このツールの`matchTarget`に対してそのまま適用される。自分の名前のルールも引き続き適用される |
-| `concurrent` | 同じターンの、ほかのconcurrentなツールと並行して実行してよい |
-| `alwaysLoad` | ツールの遅延ロードが有効でも、常に定義を送る |
-| `summary(args)` | UIに出す1行の要約 |
-| `execute(args, ctx)` | 本体。`ctx`は`{cwd, signal, onUpdate(text), callTool(name, args)}`（`callTool`は1.9.0〜）。`{content, isError?, details?}`を返す（`details`は表示用で、モデルには送らない） |
+標準のAgent Skills形式のフォルダを、次の順に読む。同じ名前のSkillは、後から読んだものが優先する。
 
-ツールが例外を投げると、エラーのtool_resultとしてモデルに返る。ループは止まらない。
+1. 組み込みのSkill（`~/.sasacode/builtin-skills`。起動時にsasacodeが書き出す。いまは`tool-authoring`）
+2. `~/.sasacode/skills/<フォルダ>/SKILL.md`
+3. プロジェクトの`.sasacode/skills/<フォルダ>/SKILL.md`
 
-### 別のツールを呼ぶ（1.9.0〜）
+```markdown
+---
+name: release-notes
+description: Write release notes from the commits since the last tag.
+---
 
-`execute`の`ctx.callTool(name, args)`は、現在のエージェントに登録されているツールを通常の実行経路で呼び、`ToolResult`（`details`を含む）を返す。たとえば名前付き検査を作るプラグインは、プロセス実行を実装し直さず`bash`を利用できる。
-
-```ts
-execute: async (_args, ctx) => {
-  if (!ctx.callTool) throw new Error("plugin API 1.9+ is required");
-  return await ctx.callTool("bash", { command: "bun run typecheck", timeout: 120 });
-}
+1. `git describe --tags --abbrev=0`で前のタグを調べる。
+2. …
 ```
 
-- 子ツールは、引数検証 → `tool_call` → 書き換え後の再検証 → 権限ルール・`permission`・必要に応じユーザー確認 → 実行 → `tool_result`を通る。構造化済みの呼び出しなので、モデル出力の修復用`tool_call_raw`は通らない。
-- 親への許可は子への許可にならない。親と子の両方に確認が必要なら、それぞれ確認する。拒否、未登録・無効化・サブエージェント対象外のツール、不正な引数はエラー結果。ヘッドレスで必要な確認を省略することはない。
-- cwd、キャンセル、サブエージェントの識別は親と同じ。確認待ちの中断も実行せずに終了する。終了後のコンテキストでは呼べない。型定義では古いホストや直接実行用のコンテキストとの互換性のため省略可能だが、1.9.0以降のホストは必ず提供する。
-- 同じ`execute`からの呼び出しは順番に実行する。呼び出し元と同じツールに戻る循環と、親を含め8段を超える入れ子は拒否する。返ったPromiseは必ずawaitする。ホストも開始済みの子の完了を待ってから親を終了する。
-- 子の出力は親の戻り値を通じてモデルに渡す。対応するassistant呼び出しがないtoolメッセージを履歴に追加しない。実行イベントには`parentCallId`が付き、セッションを保存している場合は`core`の`nested_tool_call` / `nested_tool_execute`（実際の引数）/ `nested_tool_result`に記録する。
+- 使うのはfrontmatterの`name`と`description`だけで、どちらかが空のフォルダは読まない。値は、そのままの文字列、引用符で囲んだ文字列、`>` / `|`（`>-` / `|-`も）で折り返した複数行のどれでもよい。`license`や`allowed-tools`などほかのキーは読み飛ばす（ツールを制限する機能はない）。
+- システムプロンプトには名前・説明・`SKILL.md`のパスだけを載せ、本文はモデルが必要なときにreadツールで読む。Skillのフォルダを読むときは確認しない（`read(<フォルダ>/**)`のallowルールを足す）。
+- `/skill:<name> [依頼]`で明示的に使わせる。依頼を付ければすぐに、付けなければ次のメッセージと一緒に`SKILL.md`を送る。`/skills`で一覧を出す。
+- プロジェクトのSkillは、信頼の確認なしで読む。
+- `plugins.disabled`に`skills`と書くと、Skillを1つも読まない。0.15まで読んでいたプラグインの`skills`ディレクトリは、0.20からはない。
 
-### 設定を宣言する（1.9.0〜）
-
-ツールやフックを登録する前に`api.defineSettings()`を呼ぶ。プロジェクト設定の既存の信頼確認は引き続き適用され、スキーマ検証によって権限を追加することはない。
-
-```ts
-const settings = api.defineSettings<{ timeout: number; enabled: boolean }>({
-  schema: {
-    type: "object",
-    properties: {
-      timeout: { type: "integer", minimum: 1, maximum: 3600 },
-      enabled: { type: "boolean" },
-    },
-    required: ["timeout", "enabled"],
-    additionalProperties: false,
-  },
-  defaults: { timeout: 120, enabled: true },
-});
-```
-
-オブジェクトは再帰的にマージし、配列とnullは設定側で置き換える。返す値はコピーで、`api.settings`や`defaults`を変更しない。文字列から数値への変換はしない。不正な場合はプラグイン名と`plugins.settings.<名前>.<項目>`を含む例外になり、ホストが読み込み失敗として表示する。入力された値そのものは診断に含めない。
-
-対応するスキーマはルートが`type: "object"`の次の範囲：`type`（型の配列も可）、`properties`、`required`、`additionalProperties`（真偽値またはスキーマ）、`items`、`enum`、`const`、`anyOf` / `oneOf` / `allOf`、`minimum` / `maximum` / `exclusiveMinimum` / `exclusiveMaximum`、`minLength` / `maxLength` / `pattern`、`minItems` / `maxItems`、`minProperties` / `maxProperties`。文字数はUnicodeコードポイント、patternはJavaScriptのUnicode正規表現。`title` / `description` / `$comment` / `examples`は注釈として受け入れる。未対応のキーワード（`$ref`、`format`、スキーマ内の`default`など）や不正なスキーマは明示的にエラーにし、外部参照は取得しない。既定値は上記の`defaults`に指定する。
-
-### 長文を表示する（1.9.0〜）
-
-```ts
-await api.ui.showText({ title: "検査結果", text: report, format: "markdown" });
-```
-
-`format`は`text`（既定）または`markdown`。TUIは矢印・PageUp/PageDownで移動、`/`で検索、`n` / `N`で次／前、`y`で内容をコピー、Escで閉じる。検索中のEscは検索入力を閉じる。表示とコピーに使う内容の端末制御文字を無害化し、HTML・スクリプト・リンクの実行はしない。モデル呼び出しや履歴への追加はなく、コピーはユーザー操作時だけ行う。確認・選択ダイアログと順番待ちを共有し、表示中の確認を上書きしない。
-
-ヘッドレスでは内容をstderrに表示して直ちに完了する。独自のUIブリッジは省略可能な`showText(options)`を実装でき、未実装の場合は`notify`にタイトルと本文を渡す。
-
-### コマンドの定義（`registerCommand`）
-
-| フィールド | 意味 |
-| --- | --- |
-| `name` / `description` / `argumentHint` | `/name`で呼ぶ。説明と引数のヒントは補完の一覧に出る |
-| `run({args})` | 本体。`args`は名前より後ろの文字列 |
-| `complete(prefix)` | 引数の候補（`{value, label, description?}`の配列）を返すと、tabで補完できる（1.3.0〜） |
-
-### フック
-
-`api.on(フック名, handler)`で登録する。
-
-- ハンドラは登録した順に直列で実行する。前のハンドラが返した値は、後のハンドラが受け取る値に反映される。
-- 例外を投げたハンドラは、プラグインのエラーとして表示して飛ばす。ループは止まらない。
-
-1回の応答では、次の順に呼ばれる。
-
-```
-before_request → stream_delta（生成中、差分ごと） → assistant_message
-  → ツール呼び出しごとに: tool_call_raw → 検索・検証 → tool_call → ルールとモードの判定 → permission → （agent モードのモデル判定） → 実行 → tool_result（途中で止まった呼び出しも、tool_result は呼ばれる）
-  → turn_end
-```
-
-| フック | いつ | 受け取るもの | 返せるもの |
-| --- | --- | --- | --- |
-| `session_start` | セッションを始めた・再開したとき | `{sessionId?, resumed}` | なし（状態の復元に使う） |
-| `session_end` | `/clear`・`/resume`・`/fork`・終了の前 | `{sessionId?, reason?}`。`reason`は、次のセッションが続く（`/clear`など）なら`"switch"`、sasacodeが終わるなら`"exit"`（1.8.0〜。古いホストでは付かないので、ないときは`"exit"`とみなす） | なし（後片付けに使う。外部との接続のようにセッションをまたいで使うものは`"exit"`のときだけ閉じる） |
-| `user_prompt` | ユーザー入力をモデルに送る前 | `{content}` | `{content}`で書き換える。`{handled: true}`にするとモデルに渡さない |
-| `system_prompt` | リクエストごと | `{prompt}` | `{prompt}`で書き換える（普通は追記する） |
-| `before_request` | モデルを呼ぶ直前 | `{messages, model, sampling, fetch?}` | `{messages}`でこのリクエストのメッセージを変える（保存される履歴は変わらない）。`{sampling}`でtemperature・topP・frequencyPenalty・presencePenalty・`extraBody`（プロバイダー固有の値）を変える（1.2.0〜）。`{fetch}`は既存のfetchと合成して、SDKが実際に送るリクエストと再試行を観測できる（1.11.0〜） |
-| `stream_delta` | 生成中、テキスト・thinking・ツール引数の差分ごと | `{kind, index, delta, text, message}`（`text`はそのブロックの累積） | `{stop: 理由}`で生成を止める。**同期のみ**で、Promiseを返すとエラーとして無視される（1.2.0〜） |
-| `assistant_message` | 応答が確定し、保存する前 | `{message, stopped?}`（`stopped`は途中で止めたプラグインと理由） | `{message}`で書き換える。`{retry: true}`で捨てて取り直す（1回の応答につき最大2回）。`{inject}`でユーザーメッセージを足して続ける（1.2.0〜） |
-| `tool_call_raw` | ツールの検索と引数の検証の前 | `{call, name, input, rawInput?, tools, stopReason}`（`rawInput`はJSONとして不正だったときの生の文字列） | `{name, input, note}`で修復する。`note`はtool_resultの先頭でモデルに伝わる（呼び出しを変えない`note`だけでも伝わり、そのときは履歴の呼び出しもそのまま）。履歴には修復後の呼び出しを残し、元の出力はセッションに`tool_repair`として残る（署名付きのthinkingを含む応答は、履歴を書き換えずに実行時だけ直す）。`max_tokens`で途切れた呼び出しでは呼ばれない（1.2.0〜） |
-| `tool_call` | 検証の後、権限判定の前 | `{call, tool, args}` | `{args}`で引数を書き換える。`{decision: "allow" \| "ask" \| "deny", reason}`で判定する（複数あればdeny > ask > allowの強いほう）。プラグインの判定が置き換えるのは権限モードの既定の判定だけで、ユーザーのdeny / askルールは常に適用される |
-| `permission` | ルール・権限モード・`tool_call`の判定の後、ユーザーに確認する前 | `{call, tool, args, cwd, mode, verdict: {decision, reason, source}, lowest}`。`source`は`rule`（ユーザーやプラグインのallow / ask / denyルール）、`soft`（softDenyルール）、`mode`（権限モードの既定）、`plugin`（`tool_call`の判定）。`lowest`は変えられる下限 | `{decision, reason}`で判定を変える。厳しくするのはいつでもできるが、緩められるのは`lowest`まで（モードの既定はallowまで、softDenyはaskまで、ルールと`tool_call`の判定は緩められない）。`reason`は確認ダイアログとモデルへの拒否理由に出る。agentモードでどのハンドラも判定しなかった呼び出しは、この後モデルが判定する（1.7.0〜） |
-| `tool_result` | 呼び出しごとの結果が決まったとき | `{call, result, ran}`。`ran: false`は実行されなかった呼び出し（未知のツール、引数の不備、拒否、中断）。1.4.0より前は、実行された呼び出しでしか呼ばれなかった | `{result}`で結果を書き換える・追記する |
-| `turn_end` | 1ターン（応答とツールの実行）の後 | `{turn, message}` | `{inject}`でユーザーメッセージを足してループを続ける。`{stop: 理由}`で実行を終える（1.4.0〜）。コアは権限・中断・コンテキスト上限でしか止まらないので、それ以外の理由で止めるのはプラグインの役割 |
-| `usage` | 会話に残らない応答が返った後（サブエージェント、`agent.complete`、捨てられた応答） | `{t, model, usage, source}`（`source`は`"subagent"` / `"side"` / `"discarded"`） | なし。使用量の集計用。メインのエージェントでだけ呼ばれ、サブエージェントの分もここに来る（1.13.0〜） |
-| `agent_end` | ループが止まったとき | `{cause}`（`done` / `aborted` / `error` / `refusal` / `context_limit` / `max_turns` / `stopped`）。`stopped`のときは`stopped: {plugin, reason}`、`error`のときはエラーの文`error`（1.14.0〜）も付く | `{inject}`で次の実行を始める |
-| `context_limit` | コンテキストが上限に達したとき | `{tokens, contextWindow}` | `session.replaceMessages`で空けてから`{retry: true}`で続ける（連続2回まで） |
-
-サブエージェント（`agent.run`）は、`system_prompt` / `before_request` / `stream_delta` / `assistant_message` / `tool_call_raw` / `tool_call` / `permission` / `tool_result`のハンドラを共有する。どのエージェントの呼び出しかは、ハンドラの第2引数`ctx`の`ctx.agent`でわかる（メインのエージェントでは`undefined`、サブエージェントでは実行ごとに違う値。1.8.0〜）。並列に動くサブエージェントを区別して状態を持つプラグイン（loop-guardなど）は、これで分ける。セッション系のフック（`session_*`、`user_prompt`、`turn_end`、`agent_end`、`context_limit`）は、サブエージェントでは呼ばれない。
-
-### API の版
-
-| 版 | 追加されたもの |
-| --- | --- |
-| 1.0.0 | 最初の公開版（ツール、コマンド、プロバイダー、基本のフック、ui / session / agent） |
-| 1.1.0 | `ready(promise)` |
-| 1.2.0 | `stream_delta`、`assistant_message`、`tool_call_raw`の各フック。`before_request`の`sampling` |
-| 1.3.0 | コマンドの`complete(prefix)`（引数の補完） |
-| 1.4.0 | `tool_result`が実行されなかった呼び出しでも呼ばれる（`ran`で区別）。`turn_end`の`stop`で実行を終えられる（停止理由`stopped`） |
-| 1.5.0 | `Provider.listModels`（プロバイダーが自分のモデル一覧を返す）と`Request.fetch`（通信の差し替え）。別のプロバイダーを包むプロバイダーを書ける |
-| 1.6.0 | ツールの`permissionsAs`（別のツール名の権限ルールも当てる） |
-| 1.7.0 | `permission`フック（ルールとモードの判定の後に、決められた範囲で判定を変える）、`PermissionRules.softDeny`、型`PermissionMode`と`VerdictSource` |
-| 1.8.0 | フックのハンドラの第2引数`ctx`（型`HookContext`。`ctx.agent`でサブエージェントを区別する）、`session_end`の`reason`（`"switch"` / `"exit"`）、関数`sasacodeHome`・`childEnv`・`hideFromChildren`・`saveOutput`、`unregisterTool`、`ui.lang`、`agent.run`の`onStart`（実行中のサブエージェントへの`send`と`stop`）と結果の`error` |
-| 1.9.0 | `ToolContext.callTool`（権限・フック・中断を共有するツール呼び出し）、`PluginAPI.defineSettings`、`PluginUI.showText`、型`SettingsDefinition` / `ShowTextOptions`。引数の制約検証と`tool_call`書き換え後の再検証も強化 |
-| 1.10.0 | `PluginUI.input`（1行の自由入力）、`PluginUI.selectMany`（複数選択）、型`InputOptions` / `SelectManyOptions` |
-| 1.11.0 | `before_request.fetch`の受け渡し。従来のイベントと結果にoptionalフィールドを追加 |
-| 1.12.0 | `PluginUI.onPaste`（貼り付け・ドロップの差し替え）、型`PasteHandler` |
-| 1.13.0 | `usage`フック（サブエージェント・`agent.complete`・捨てられた応答の使用量）、型`Spend` |
-| 1.14.0 | `agent_end`の`error`（エラーで止まったときのエラーの文） |
-| 1.15.0 | `ModelInfo.server`（OpenAI形式のエンドポイントの裏にあるローカルサーバー：`"ollama"` / `"llamacpp"` / `"lmstudio"`。プロバイダーの設定から入り、`modelOverrides`でも指定できる）と`ProviderConfig.lmstudio` |
-
-どれも既存のプラグインを壊さない追加。ただし1.4.0から、`tool_result`を「実行された」合図として数えているプラグインは`ran`を見る必要がある。
-
-### 互換性の約束（1.4.0 で確定）
-
-1.4.0でAPIを締め切った。以降、1.xの間は次を守る。
-
-- 公開するのは`@sasacode/plugin-api`がexportする型・関数・定数と、ここに書いたフックの呼ばれ方だけ。`@sasacode/agent`などの内部パッケージを直接使うコードは対象外。
-- 1.xの変更は追加だけにする（新しいフック、イベントや結果の省略可能なフィールド、`StopCause`などの新しい値）。プラグインは、知らないフィールドや値を無視すること。
-- 既存のものを変える・消すのは2.0だけ。その前に少なくとも1つのマイナー版で非推奨と告知し、ドキュメントと型に`@deprecated`を付ける。
-- 挙動の不具合の修正（例：呼ばれるべきフックが呼ばれていなかった）は、互換を壊す変更とはみなさない。修正の内容は上の表に書く。`apiVersion`に`^1.0.0`と書いたプラグインは、そのまま動く。
-
-## 信頼と安全
-
-インプロセスプラグインはsasacodeと同じ権限で動く。`sasacode plugin install`は入れる前に中身を見せて確認を取る。`~/.sasacode/plugins`のものはユーザーが自分で入れたものとして、そのまま読み込む。プロジェクトの`.sasacode/plugins`は、プロジェクト設定の信頼が必要な部分（エンドポイント、MCPサーバー、プラグインの設定など）とまとめて、起動時に1回だけ信頼の確認を出す。構成が変わると、また確認を出す。ヘッドレスでは、`--trust-project`を付けたときだけ読み込む。確認の結果は`~/.sasacode/trust.json`に保存する。
-
-## 無効化・上書き
+## 同梱プラグインの設定
 
 ```json
 {
-  "plugins": { "disabled": ["todo", "web-fetch"], "settings": { "compaction": { "threshold": 0.7 } } },
+  "plugins": {
+    "enabled": ["git-context", "project-checks"],
+    "disabled": ["todo", "web-fetch"],
+    "settings": { "compaction": { "threshold": 0.7 } }
+  },
   "tools": { "disabled": ["bash"] }
 }
 ```
 
-同梱プラグインの名前は`tool-repair`、`text-tool-calls`、`repetition-guard`、`loop-guard`、`write-guard`、`agents-md`、`compaction`、`subagent`、`todo`、`progress-notes`、`web-fetch`、`web-search`、`permission-presets`、`agent-judge`、`browsr`、`openai-codex`、`usage`、`goal`、`background-sessions`、`auto-reconnect`、`checkpoints`、`gui`、`image-attach`、`image-slim`、`diagnostics`、`skills`、`mcp`。同じ名前のユーザー・プロジェクトのプラグインがあれば、同梱版は読み込まない。
+| キー | 意味 |
+| --- | --- |
+| `plugins.enabled` | 既定で無効のプラグインを読み込む |
+| `plugins.disabled` | プラグインを読み込まない。`enabled`にも書いてあれば、こちらが優先する |
+| `plugins.settings.<名前>` | そのプラグインの設定 |
+| `tools.disabled` | ツールを名前で外す（どのプラグインが登録したものでも） |
 
-プラグインを作るときは、組み込みのSkillを使うのが早い。TUIで`/skill:tool-authoring <作りたいもの>`と打つと、このリファレンスを読んだうえでモデルがプラグインを書く。
+- `enabled`・`disabled`・`tools.disabled`は、グローバルとプロジェクトの両方を合わせる。プロジェクトの設定に書いた`plugins`（`enabled`・`disabled`・`settings`）は、プロジェクトを信頼するまで使わない。
+- 既定で読み込むもの：`tool-repair`、`text-tool-calls`、`repetition-guard`、`loop-guard`、`write-guard`、`agents-md`、`compaction`、`diagnostics`、`subagent`、`todo`、`progress-notes`、`web-fetch`、`web-search`、`permission-presets`、`agent-judge`、`browsr`、`openai-codex`、`usage`、`goal`、`background-sessions`、`auto-reconnect`、`checkpoints`、`gui`、`image-attach`、`image-slim`、`skills`、`mcp`。それぞれの内容は[README](../README.md)の同梱プラグインの表にある。
+- 既定で無効のもの：`ask-user`、`git-context`、`project-checks`、`workflows`、`jev-guard`、`free-search`。0.15までは別に入れるプラグインだった。名前も設定も当時のままなので、`enabled`に名前を足せば、それまでの`plugins.settings`がそのまま使える。
+- 0.15まで`~/.sasacode/plugins`やプロジェクトの`.sasacode/plugins`に置いたプラグインは読み込まない。同梱版と同じ名前のプラグインで置き換える仕組みもなくなった。
 
-## API 診断プラグイン
+以下は、既定で無効の6つ。
 
-同梱の`diagnostics`は既定で無効。`/diagnostics on` / `off`でこの起動中だけ切り替え、`show`で直近100件を表示、`clear`で消去する。設定は`plugins.settings.diagnostics: {enabled: false, persist: false}`。`persist: true`を明示した場合だけセッションログへ診断メタデータを追加する。`plugins.disabled`にも対応する。
+### ask-user
 
-記録するのは、実際のリクエストのUTF-8バイト数・system/toolsのバイト数・メッセージ/推論/署名付きブロック件数、同じモデル呼び出し内のHTTP試行番号と同一本文かどうか、HTTPステータス、完了/中断、APIの使用量・キャッシュ数値、Anthropicの`input_transformations`件数と既知の破棄理由の件数、ツールが実行されたか・エラーか・変更を報告したか。本文・URL・ヘッダー・APIキー・署名・暗号化推論・任意のエラーメッセージは記録しない。未知の破棄理由は件数だけにする。数値はAPIが返した情報で、欠落を0として計上しない。
+`ask_user`ツールを足す。モデルが推測で進めずに、選択肢つきの質問であなたに判断を仰ぐ。
 
-`before_request`のoptional `fetch`は前のハンドラが渡したtransportを受け取り、それを包んで返す。未指定ならホストの標準fetchを使う。リクエストごとのラッパーなので並列サブエージェントの試行は混ざらない。SDK内部の再試行も観測するが、診断自身は再試行しない。同一本文という記録だけで429等の原因を断定しない。Codexの本文調整後もこのtransportへ委譲する。SSEは先読みせず元のバイト列を渡し、キャンセルを下流へ伝える。本文が文字列でない独自transportやSSE以外は、観測できた範囲に限られる。
+- 1回で1〜4問を尋ねる。1問あたりの選択肢は2〜6個で、質問は順に選択パネルに出る。
+- 選択肢が排他的でない質問では、モデルが`multiSelect`を指定できる。spaceで複数を選び、enterで決める。
+- どの質問にも最後に「その他（自分で答える）」が付き、その場で答えを入力できる。
+- Escで閉じたとき、空のまま入力を確定したとき、複数選択で何も選ばずに確定したときは、そこで打ち切る。モデルには、答えを推測しないよう伝える。実行中に中断すると、ツールはエラーで終わる。
+- ヘッドレスでは何も尋ねない。モデルに、自分で決めて置いた前提を返信に書くよう返す。
+- 質問するための承認は意味がないので、`ask_user`のallowルールを足す。askモードでも確認なしで出る。止めたいときは`permissions.deny`に`ask_user`と書く（ユーザーのdenyルールが優先する）。
+
+### git-context
+
+`git_context`ツールを足す。レビューの初めに要るGitの状態・変更の統計・パッチを、1回の呼び出しで返す。読み取りだけで、Gitが要る。設定はない。
+
+| 引数 | 既定 | 意味 |
+| --- | --- | --- |
+| `scope` | `working` | `working`：HEADと作業ツリーの差分（ステージ済みと未ステージ）。`staged`：HEADとindex。`branch`：merge-baseとHEAD |
+| `base` | `@{upstream}` | `branch`の比較元（`main`、`origin/main`など）。リモート追跡ブランチは、ローカルにある版を使う |
+| `patch` | `true` | `false`なら状態と統計だけを返す |
+| `maxChars` | `16000` | 出力全体の文字数の上限。1000〜60000 |
+
+- 作業ディレクトリの中だけを読む。Gitの外部diff・textconv・fsmonitorは使わず、変更もfetchもしない。権限は通常のreadとして判定する。
+- 作業ツリーの状態はどの`scope`でも出すので、branchのパッチに入らない未コミットの変更もわかる。
+- 未追跡のファイルは名前だけで、サブモジュールの差分は対象外。ステージで変えて作業ツリーで戻した箇所は`working`では相殺されるので、要るなら`staged`も調べる。
+- 上限を超えた出力は、省いたことを明記する。Gitの各プロセスは15秒・8 MiBまでで、超える差分はエラーになる（`patch: false`か、ファイルを個別に読む）。upstreamがなければ`base`を指定する。
+
+### project-checks
+
+テスト・lint・型検査などを名前で実行し、PASS / FAIL、終了コード、実行時間、ログを返す。
+
+- `project_checks`ツールで一覧を読み、`project_check`ツール（`{"name": "types"}`）で1つずつ実行する。`/checks`は同じ一覧を長文のパネルに出す（コマンドは実行しない）。
+- 設定がなければ、作業ディレクトリの`package.json`から`test`・`lint`・`typecheck`・`check`・`build`のスクリプトを拾う。パッケージマネージャーはルートのlockfileで選び（bun / pnpm / yarn / npm、lockfileがなければnpm）、複数見つかったら設定を求める。monorepoの親ディレクトリは探さない。
+- 設定の`checks`を書くと、自動の検出の代わりにそれを使う（空の`{}`なら検査なし）。JavaScript以外のプロジェクトにも使える。名前は英小文字で始まる40字以内の英小文字・数字・ハイフン。`timeout`は秒で、既定は120、範囲は1〜3600。設定は起動時に読むので、変えたら再起動する。
+
+```json
+{
+  "plugins": {
+    "enabled": ["project-checks"],
+    "settings": {
+      "project-checks": {
+        "checks": {
+          "test": { "command": "cargo test", "timeout": 600 },
+          "lint": "ruff check ."
+        }
+      }
+    }
+  }
+}
+```
+
+- `project_check`は実行のツールで、`bash`のルールを実際のコマンドに当てる（`permissionsAs: "bash"`に当たる）。たとえば`bash(cargo test*)`のdeny / askがそのまま効く。allowルールは足さない。検査のスクリプトがファイルを書き換えることもあるので、読み取りとは扱わない。
+- 実行は`bash`ツールに任せるので、引数の検証・フック・権限の判定は通常のbashと同じ。`bash`を外していると実行できない。時間には承認を待った時間も入る。タイムアウト・中断・拒否・0以外の終了はFAIL。
+
+### workflows
+
+繰り返し使う依頼を`/workflow`で呼び出す。
+
+```text
+/workflow
+/workflow show review
+/workflow review 認証まわりを重点的に
+/workflow diagnose 決済のテストがタイムアウトする
+```
+
+- 組み込みは3つ。`review`は差分と周りのコードを読み、根拠と再現の条件を付けてレビューする（コードは変えない）。`diagnose`は失敗を再現し、観測と仮説を分けて修正案を出す（まだ適用しない）。`release-check`は公開の前に版・配布物・ライセンス・依存・検査を確かめる（公開や版の変更はしない）。文面は画面の言語（ja / en）に合わせる。
+- `/workflow`か`/workflow list`で一覧、`/workflow show <名前> [追加の依頼]`で展開した結果を長文のパネルに出す（モデルは呼ばない）。`/workflow <名前> [追加の依頼]`は、通常のユーザーメッセージとして今のセッションに送る。
+- git-contextやproject-checksがあれば使うよう頼む文面だが、なくても使える。プロンプトの集まりで、行動や権限を縛るものではない。
+- 設定で足す・上書きする・外す（`false`）ことができる。プレースホルダーは`{{input}}`だけで、省けば追加の依頼を末尾に付ける。シェル、環境変数、ファイルの読み込みは展開しない。名前は英小文字で始まる40字以内の英小文字・数字・ハイフンで、`list`と`show`は使えない。説明は200字、プロンプトは20,000字まで。
+
+```json
+{
+  "plugins": {
+    "enabled": ["workflows"],
+    "settings": {
+      "workflows": {
+        "workflows": {
+          "release-check": false,
+          "explain": {
+            "description": "コードの処理経路を説明する",
+            "prompt": "{{input}}の処理経路を調べ、入口から出口までファイルと関数名を添えて説明してください。コードは変更しないでください。"
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+### jev-guard
+
+ルールと権限モードの判定の後に、判断用のモデル[Jev](https://commandcode.ai/models/jev)（TypeSafe）の判定を重ねる。Jevは文章を返さず、型付きの質問に確率で答えるモデルで、1回あたり数百ミリ秒で済む。0.9.5までは同梱、0.9.6から0.15までは別に入れるプラグインで、0.20からはまた同梱になった（既定で無効）。
+
+有効にする方法は2つある。
+
+- `plugins.settings["jev-guard"].enabled: true`：読み込んで、いつも判定する（0.15までの設定もそのまま使える）。
+- `plugins.enabled`に`jev-guard`：読み込むだけで、判定は止まっている。TUIで`/jev on`と打つと、そのセッションで有効になる（`/jev off`で無効。`/resume`した後も保たれる）。
+
+```json
+{ "plugins": { "settings": { "jev-guard": { "enabled": true } } } }
+```
+
+- Jevへの接続先は`backend`で選ぶ。指定がなければ、`CMD_API_KEY`か`TYPESAFE_API_KEY`のある方を使う（どちらもキーチェーンの`commandcode` / `typesafe`でもよい）。
+
+  | `backend` | 接続先 | キー | 既定の`model` |
+  | --- | --- | --- | --- |
+  | `commandcode` | Command CodeのProvider API（GOAT以上のプラン） | `CMD_API_KEY` | `typesafe/jev` |
+  | `typesafe` | TypeSafeのAPI | `TYPESAFE_API_KEY` | `jev-latest` |
+  | `openrouter` | OpenRouterのDecisions API（alpha） | `OPENROUTER_API_KEY` | `~typesafe/jev-latest` |
+  | `vercel` | Vercel AI Gateway | `AI_GATEWAY_API_KEY` | `typesafe-ai/jev` |
+  | `chat` | sasacodeの任意のモデル（`model`に`"<provider>/<model>"`、省けば今のモデル） | そのプロバイダーのキー | — |
+
+  OpenRouterとVercelは、チャット用にキーを持っているだけの人に判定を送らないよう、名前を指定したときだけ使う。`endpoint`と`apiKeyEnv`で接続先のURLとキーの変数を変えられる（プロキシなど）。実際のAPIで確かめたのは`commandcode`と`chat`だけで、`typesafe` / `openrouter` / `vercel`は公開されている仕様どおりの形で送る（テストは模擬サーバー）。
+- `chat`はJevの代わりにチャットモデルへ同じ質問をし、JSONで答えさせる。確率が較正されていない代用品で、遅い。実際のコマンドで比べると、DeepSeek V4.1 Flashは止めるべき呼び出しをJevより多く通した（[ベンチマーク](benchmarks.md)）。ローカルモデルは1回に数十秒かかり、実用的でない。Jevに接続できない環境で、判定の仕組みだけを使いたいとき向け。
+- 有効にすると、ツール呼び出しの内容（コマンド、変更されうるパスとそのgitの状態、ユーザーの直近の依頼）が接続先に送られる。APIキーやトークンらしき文字列は、送る前に伏せる（ベストエフォート）。
+- 判定を変えるのは次の場合だけ。
+  - 確認なしで実行されるはずだった呼び出し（allowルール、`auto`モード）：危険なら拒否、要確認なら確認に回す。
+  - `agent`モードで確認に回るはずだった呼び出し：安全なら確認なしで実行する（モデルによる判定の代わり）。Jevが判断を保留したときは、これまでどおりモデルが判定する。
+  - softDenyの呼び出し：安全なら、拒否せずにユーザーに確認する。
+- ユーザーに確認するはずの呼び出しを、Jevが拒否に変えることはない（確認のダイアログにJevの判定を添える）。denyルールの呼び出しはJevに送らない。
+- Jevに渡すのは、ハーネスが集めた事実とユーザー自身の依頼だけで、ツールの出力やファイルの中身は渡さない（Jevは状態に紛れ込んだ誘導文に影響されうるため）。
+- 読み取りと、作業ディレクトリ内の編集は判定しない。Jevに届かないとき（キーがない、通信エラー、タイムアウト）は、Jevなしの判定のまま続ける。
+- 閾値は`thresholds`（`allow` 0.8、ヘッドレスでの`headlessAllow` 0.9、`deny` 0.85、`confidence` 0.6、`risk` 0.6、`flag` 0.7、`clear` 0.3）で変えられる。ほかの設定は`timeoutMs`（既定は5秒、`chat`は60秒）と`skip`（判定しないツール。既定は`todo_write`と`task`）。
+- `/jev`で状態と直近の判定を見る。キーがなければ`/jev on`でも有効にせず、理由を示す。判定はセッションにも記録する。
+- Jevはコマンドの文字列から判断するので、`ssh host 'ps aux'`のような他のマシンでの読み取りは安全と見る。`make clean`のようにスクリプトの中身が見えない呼び出しは、中身が危険でも気づけない。他のマシンへの操作は`guard`プリセットが常に確認に回す。スクリプト経由の呼び出しも必ず確認したいなら、ルールで決める（例：`"permissions": { "ask": ["bash(npm run *)", "bash(make *)"] }`）。
+- 実際のセッションログ5,135件での結果：安全な呼び出しの92%がautoで止められず、agentモードでは71%が確認なしで通る。要確認のものがagentで確認なしに通ったのは1%（ローカル）。詳しくは[ベンチマーク](benchmarks.md)。
+
+### free-search
+
+キー不要でローカルで動くWeb検索のMCPサーバー（複数の検索エンジン、ページの取得、文書の読み取り）。有効にすると、`uvx free-search-mcp`を`free-search`という名前のstdioのMCPサーバーとしてつなぐ。ツールは`mcp__free-search__<tool>`になり、ほかのMCPのツールと同じ権限確認を通る。[uv](https://docs.astral.sh/uv/)が入っていないと接続できない。設定はない。
+
+```json
+{ "plugins": { "enabled": ["free-search"] } }
+```
+
+## API診断プラグイン
+
+同梱の`diagnostics`は、読み込むが記録は止まっている。`/diagnostics on` / `off`でこの起動中だけ切り替え、`show`で直近100件を出し、`clear`で消す。設定は`plugins.settings.diagnostics: {enabled: false, persist: false}`。`persist: true`を明示したときだけ、セッションログに診断のメタデータを足す。
+
+記録するのは、実際のリクエストのUTF-8のバイト数・system / toolsのバイト数・メッセージ / 推論 / 署名付きブロックの件数、同じモデル呼び出しの中でのHTTPの試行番号と本文が同じかどうか、HTTPのステータス、完了 / 中断、APIの使用量・キャッシュの数値、Anthropicの`input_transformations`の件数と既知の破棄理由の件数、ツールが実行されたか・エラーか・変更を報告したか。本文・URL・ヘッダー・APIキー・署名・暗号化された推論・任意のエラーメッセージは記録しない。未知の破棄理由は件数だけにする。数値はAPIが返したもので、欠けた値を0として数えない。
+
+`before_request`の`fetch`は、前のハンドラが渡したtransportを受け取り、それを包んで返す。指定がなければ標準のHTTPクライアントを使う。リクエストごとのラッパーなので、並列のサブエージェントの試行は混ざらない。診断自身は再試行しない。本文が同じという記録だけで、429などの原因を断定しない。Codexの本文の調整の後も、このtransportに任せる。SSEは先読みせず元のバイト列を渡し、キャンセルを下流に伝える。
 
 ## テキストで書かれたツール呼び出し
 
-同梱の`text-tool-calls`（既定で有効）は、`assistant_message`で応答を書き換え、本文に書かれた呼び出しを`tool_call`ブロックにする（`stopReason`は`tool_use`、idは`textcall`で始まる）。引数のJSONは書かれたままパースし、崩れていれば`rawInput`に入れて、`tool_call_raw`でtool-repairに直させる。名前のまわりまで崩れている（Python風の単一引用符など）ときは、tool-repairと同じ`repairJson`で全体を直してから読む。拾ったことは、その呼び出しの`tool_call_raw`の`note`でモデルに伝える。引数のJSONが直せずに実行されなかったときも、エラーと一緒に伝わる。前の文に残った呼び出し（後ろに文が続くので拾わなかったもの）があれば、実行しなかったその数も`note`に書く。コードブロックやインラインコードの中の例と、ほかの呼び出しの引数の中に書かれたものは数えない。元の本文はセッションに`text_tool_call`（`{text, calls, agent?}`、`calls`は呼び出しのid）として残る。
+同梱の`text-tool-calls`（既定で有効）は、`assistant_message`で応答を書き換え、本文に書かれた呼び出しを`tool_call`ブロックにする（停止理由は`tool_use`、idは`textcall`で始まる）。引数のJSONは書かれたままパースし、崩れていれば`raw_input`に入れて、`tool_call_raw`でtool-repairに直させる。名前のまわりまで崩れている（Python風の単一引用符など）ときは、tool-repairと同じ`repair_json`で全体を直してから読む。拾ったことは、その呼び出しの`tool_call_raw`の`note`でモデルに伝える。引数のJSONが直せずに実行されなかったときも、エラーと一緒に伝わる。前の文に残った呼び出し（後ろに文が続くので拾わなかったもの）があれば、実行しなかったその数も`note`に書く。コードブロックやインラインコードの中の例と、ほかの呼び出しの引数の中に書かれたものは数えない。元の本文はセッションに`text_tool_call`（`{text, calls, agent?}`、`calls`は呼び出しのid）として残る。
 
-拾った呼び出しのうち`kind`が`read`でないもの（`asksFirst`）は、autoモード以外で判定が権限モードの既定によるとき、`permission`フックで`ask`にする。editsモードでの作業ディレクトリ内の書き込みや編集も確認に回る。agentモードでは、後で動く`agent-judge`がこの呼び出しを判定しない（`text-tool-calls`が`ask`を返しても`source`は`mode`のままなので、判定させると`allow`に緩められてしまう）。例を書いただけの応答で、ファイルが黙って書き換わらないようにするため。autoモード、ユーザーやプラグインのallowルール、`tool_call`の判定は変えない。確認できないヘッドレス（`sasacode -p`、既定はeditsモード）では、その呼び出しは実行されない。
+拾った呼び出しのうち種類が`read`でないもの（`asks_first`）は、autoモード以外で判定が権限モードの既定によるとき、`permission`フックで`ask`にする。editsモードでの作業ディレクトリ内の書き込みや編集も確認に回る。agentモードでは、後で動く`agent-judge`がこの呼び出しを判定しない（`text-tool-calls`が`ask`を返しても判定の出どころは`mode`のままなので、判定させると`allow`に緩められてしまう）。例を書いただけの応答で、ファイルが黙って書き換わらないようにするため。autoモード、ユーザーやプラグインのallowルール、`tool_call`の判定は変えない。確認できないヘッドレス（`sasacode -p`、既定はeditsモード）では、その呼び出しは実行されない。
 
 拾うのは、次をすべて満たす応答だけ。どれかが外れれば、応答はそのまま残す。
 
-- メインのエージェントのモデルと同じプロバイダーの応答で、その`baseUrl`のホストが、このマシンかローカルネットワークのもの（`privateAddress`が認めるIPアドレス、`localhost`などドットのない名前、`.localhost` / `.local` / `.lan` / `.internal`で終わる名前）。クラウドのAPIのモデルはネイティブに呼び出せるので、本文の呼び出しは例とみなす。設定`always: true`なら、どのモデルの応答も対象にする
-- 自然に終わった（`stopReason`が`stop`で、プラグインが止めていない）。ネイティブの`tool_call`も、署名付きのthinkingもない（書き換えると、署名付きの推論は次のリクエストで再生できない）
+- メインのエージェントのモデルと同じプロバイダーの応答で、その`baseUrl`のホストが、このマシンかローカルネットワークのもの（`private_address`が認めるIPアドレス、`localhost`などドットのない名前、`.localhost` / `.local` / `.lan` / `.internal`で終わる名前）。クラウドのAPIのモデルはネイティブに呼び出せるので、本文の呼び出しは例とみなす。設定`always: true`なら、どのモデルの応答も対象にする
+- 自然に終わった（停止理由が`stop`で、プラグインが止めていない）。ネイティブの`tool_call`も、署名付きのthinkingもない（書き換えると、署名付きの推論は次のリクエストで再生できない）
 - 最後のtextブロックが呼び出しで終わり、最後の呼び出しの後ろと呼び出しの間には空白しかない。前の文は残す。後ろに説明が続く例や、コードブロック・インラインコードの中の例は、閉じる記号が後ろに来るので拾わない。前の文の` ``` `が奇数個（コードブロックが閉じていない）なら、呼び出しはその中にあるとみなして拾わない
 - `json`のコードフェンスを含むときは、前の文が300字以内で、ほかのコードブロックを含まない（普通の回答も、長い説明の最後にJSONの例を置くことがあるため）。中身は`name`と`arguments`（または`parameters`）の2つのキーだけのオブジェクトで、`description`などを持つツール定義は呼び出しとみなさない
-- ツール名がすべて、既知のツールか、`resolveToolName`（tool-repairと同じ規則：接頭辞の除去、MCPの接頭辞を省いた名前、ほかのハーネスでの名前）で1つに決まるもの。typoは数えない（`head`や`hash`のような普通の語が`read`や`bash`になってしまうため）
+- ツール名がすべて、既知のツールか、`resolve_tool_name`（tool-repairと同じ規則：接頭辞の除去、MCPの接頭辞を省いた名前、ほかのハーネスでの名前）で1つに決まるもの。typoは数えない（`head`や`hash`のような普通の語が`read`や`bash`になってしまうため）
 
-## 公開APIの詳細な契約
+## 同梱プラグインを書く（開発者向け）
 
-coreの行数の上限（当時4,000行。いまは5,000行）を守るため、以下の詳細な契約説明は型定義から移した。公開APIの動作は変えない。型の短い注釈と併せて参照する。
+同梱プラグインは`crates/sasacode-bundled/src`のRustのモジュールで、`sasacode-plugin-api`の`PluginApi`だけを通して登録する。外部のプラグインはないので、このAPIは公開しない内部のAPIで、版ごとの互換も約束しない。
 
-Call another registered tool through validation, hooks and its own permission check.
-Inherits cwd, agent and cancellation. Available only while execute is running; await it.
-Cycles and chains deeper than 8 tools return an error. No permission bypass. (since 1.9.0)
+1. モジュールに`pub fn plugin(api: PluginApi) -> BoxFuture<'static, anyhow::Result<()>>`を書く。
+2. `crates/sasacode-bundled/src/lib.rs`の`PLUGINS`に加える。既定で読み込むなら`on("名前", モジュール::plugin)`、既定で無効なら`off(…)`。並びが読み込みの順で、フックもこの順に呼ばれる。
+3. 名前は`plugins.enabled` / `plugins.disabled` / `plugins.settings.<名前>`で使われる。READMEの同梱プラグインの表（日本語と英語）にも足す。
 
-Also judged by the permission rules written for this tool name, e.g. "bash" for a tool that
-runs shell commands another way (in the background, remotely): the user's `bash(sudo *)`
-deny rules, the guard preset and `bash(git status*)` allow rules then cover it too, matched
-against this tool's matchTarget / paths. Its own rules still apply. (since 1.6.0)
+例：`git-context`（`crates/sasacode-bundled/src/git_context.rs`。説明文は略した）。
 
-Each hook: the payload handlers receive and what they may return. Handlers run in registration order.
-Order around one model response:
-  before_request → [stream_delta …] → assistant_message → tool_call_raw (per call)
-  → validation → tool_call → rules and mode → permission → execute → tool_result
+```rust
+pub fn plugin(api: PluginApi) -> BoxFuture<'static, anyhow::Result<()>> {
+    Box::pin(async move {
+        api.register_tool(
+            ToolDef::new(
+                "git_context",
+                "Read a bounded Git review context: …",
+                json!({
+                    "type": "object", "properties": {
+                        "scope": { "type": "string", "enum": ["working", "staged", "branch"] },
+                        "base": { "type": "string", "minLength": 1, "maxLength": 256 },
+                        "patch": { "type": "boolean" },
+                        "maxChars": { "type": "integer", "minimum": 1000, "maximum": 60_000 },
+                    }, "additionalProperties": false,
+                }),
+                ToolKind::Read,
+                |args, ctx| async move { collect_context(&args, &ctx).await },
+            )
+            .concurrent(true)
+            .paths(|_args, cwd| vec![cwd.to_string_lossy().into_owned()])
+            .into_ref(),
+        );
+        Ok(())
+    })
+}
+```
 
-`reason` (since 1.8.0): "switch" when another session follows (/clear, /resume, /fork), "exit" when
-sasacode quits. Undefined from older hosts; treat it as "exit".
+```rust
+// crates/sasacode-bundled/src/lib.rs
+pub const PLUGINS: &[Bundled] = &[
+    on("tool-repair", tool_repair::plugin),
+    // …
+    off("git-context", git_context::plugin),
+    // …
+];
+```
 
-Called for every streamed delta. Must be synchronous and cheap (it runs on the stream).
-`text` is the block's accumulated text so far. Return `stop` to end generation early. (since 1.2.0)
+`PluginApi`（`crates/sasacode-plugin-api/src/api.rs`）でできること：
 
-The finished response, before it is stored. `stopped` says which plugin ended it and why.
-Rewrite it (`message`), drop it and ask again (`retry`), or keep it and add a user
-message so the loop continues (`inject`). (since 1.2.0)
+| メソッド | できること |
+| --- | --- |
+| `name()` / `cwd()` / `version()` | このプラグインの名前 / 作業ディレクトリ / APIの版（記録のために残した`1.15.0`） |
+| `settings()` / `define_settings(schema, defaults)` | `plugins.settings.<名前>`を読む / JSON Schemaで検証して既定値とまとめる（不正ならエラー） |
+| `register_tool(ToolRef)` / `unregister_tool(name)` | ツールを足す（同じ名前のツールは置き換わる） / このプラグインのツールを外す |
+| `register_command(Command)` | スラッシュコマンドを足す（`Command::new(名前, 説明, 本体).hint(…).complete(…)`） |
+| `register_provider(name, config, implementation)` | プロバイダーを足す。`implementation`を渡せば、新しいAPI形式も足せる |
+| `on::<hook::X, _, _>(f)` / `on_sync::<hook::X, _>(f)` | フックを登録する（`on_sync`は`stream_delta`のような同期のフック用） |
+| `ready(future)` | 起動時の非同期の処理を知らせる。ヘッドレスはこれを待ってから最初のリクエストを送り、TUIは待たない |
+| `add_permission_rules(PermissionRules { allow, ask, deny, soft_deny })` | 権限ルールを足す |
+| `ui()` | `interactive`、`lang`、`notify`、`confirm`、`select`、`select_many`、`input`、`show_text`、`set_status`、`register_tool_renderer`、`on_paste` |
+| `session()` | `id`、`append` / `entries`（独自の状態の保存と読み戻し）、`messages` / `replace_messages`、`inject` / `inject_text` |
+| `agent()` | `model`、`tools`、`run`（サブエージェント）、`complete`（ツールなしで1回だけモデルを呼ぶ） |
+| `log(message)` | `SASACODE_DEBUG`があるときだけstderrに出す |
 
-A tool call as the model produced it, before the tool is looked up and arguments validated.
-`rawInput` is set when the arguments were not valid JSON. Return a corrected `name` / `input`
-and a short `note`; the model is told about the repair. Truncated calls (stopReason
-max_tokens) never reach this hook. (since 1.2.0)
+- ツールは`ToolDef::new(名前, 説明, 引数のJSON Schema, ToolKind, 本体)`で作り、`.concurrent`・`.always_load`・`.summary`・`.match_target`・`.paths`・`.permissions_as`を足して`.into_ref()`で渡す（`Tool`トレイトを直接実装してもよい）。`ToolKind`は`Read` / `Edit` / `Exec` / `Other`で、既定のeditsモードで確認なしに動くのは作業ディレクトリ内のRead / Editだけ。本体が`Err`を返すと、エラーの結果としてモデルに返り、ループは止まらない。
+- 本体の`ToolContext`には`cwd`、`signal`（中断）、`on_update`、`call_tool`（ほかのツールを、検証・フック・権限の判定を通して呼ぶ）がある。
+- フックは`crates/sasacode-plugin-api/src/hooks.rs`の`hook`にある：`SessionStart`、`SessionEnd`、`UserPrompt`、`SystemPrompt`、`BeforeRequest`、`StreamDelta`、`AssistantMessage`、`ToolCallRaw`、`ToolCall`、`Permission`、`ToolResult`、`TurnEnd`、`Usage`、`AgentEnd`、`ContextLimit`。ハンドラは登録の順に呼ばれ、`Ok(None)`なら変えず、`Ok(Some(結果))`で変え、`Err`はプラグインのエラーとして表示して次のハンドラに進む。第2引数の`HookContext`の`agent`は、メインのエージェントなら`None`、サブエージェントなら実行ごとに違う値になる。
+- コマンドを実行するプラグインは、`child_env`か`apply_child_env`で環境変数を渡す（`~/.sasacode/.env`から読んだキーを子プロセスに渡さないため）。長い出力は`save_output`で`~/.sasacode/tmp`に保存できる。
 
-The verdict of the rules, the permission mode and tool_call hooks, before the user is asked.
-Return a `decision` to change it: stricter is always accepted; looser only down to `lowest`
-(a mode default may go to "allow", a softDeny rule to "ask", the user's rules and tool_call
-decisions only stricter). In agent mode, a call no handler decided goes to the model judge.
-(since 1.7.0)
+1回の応答では、フックが次の順に呼ばれる。
 
-Every call's result, including calls that never ran (`ran: false`: unknown tool, invalid
-arguments, denied, interrupted), so a plugin can see a model repeating the same mistake.
-(`ran` since 1.4.0; before that, only calls that ran reached this hook.)
+```
+before_request → stream_delta（生成中、差分ごと） → assistant_message
+  → ツール呼び出しごとに: tool_call_raw → 検索・検証 → tool_call → ルールとモードの判定 → permission → （agentモードのモデル判定） → 実行 → tool_result
+  → turn_end
+```
 
-Return `inject` to add a user message and keep the loop going, or `stop` (a reason) to end the
-run here, e.g. when it makes no progress (`stop` since 1.4.0). The core itself only stops for
-permission, interrupts and the context limit (principle A6); anything else is a plugin's call.
+## これまでの経緯
 
-Undefined for the main agent. Each subagent run (agent.run, the task tool) has its own id,
-so a plugin keeping per-conversation state can keep parallel subagents apart.
-
-Read-only text viewer. Resolves when closed; headless writes sanitized text to stderr.
-Does not change messages or call a model. Copy requires a user gesture. (since 1.9.0)
-
-One line of free text. Resolves with what was typed (possibly empty), or undefined when
-cancelled or headless. (since 1.10.0)
-
-Check any number of options. Resolves with the checked values in option order (possibly none),
-or undefined when cancelled or headless. (since 1.10.0)
-
-Validate trusted plugin settings against a schema and defaults. Throws on invalid settings
-with a plugin-qualified field path. Call before registering tools/hooks. (since 1.9.0)
-
-Take one of this plugin's tools off the model's list again (an MCP server dropped it).
-Another plugin's tool is left alone. (since 1.8.0)
-
-Report background startup work (e.g. connecting a server). Headless runs wait for it before
-the first request; the TUI does not block on it. (since 1.1.0)
-
-The environment for commands the agent runs (bash, background jobs): this process's, without the
-variables hidden with hideFromChildren, plus `extra`. (since 1.8.0)
-
-Save a long tool output the model is shown only part of, and return its path. Files go to
-~/.sasacode/tmp (owner-only, not a shared /tmp); ones older than a week are removed. (since 1.8.0)
+- 0.15まではTypeScriptのプラグインを`~/.sasacode/plugins`やプロジェクトの`.sasacode/plugins`に置いて読み込み、`sasacode plugin search|install|update|remove|list|publish`で探す・入れる・公開することができた。型はnpmの`@sasacode/plugin-api`で配っていた。
+- 1.xの公開プラグインAPI（1.4.0で互換を約束し、最後の版は1.15.0）は、0.20のRustへの書き換えで終わった。外部のプラグインを使う人がいなかったため、プラグインのローダー、`sasacode plugin`、npmの`@sasacode/plugin-api`をなくし、外からの拡張はMCPとSkillsだけにした（`rust/DECISIONS.md`のADR-002）。
+- 同じAPIは、同梱プラグインのための内部のAPIとして残っている。組み込みのツールやコマンドも、これまでどおりこのAPIで登録する。`PLUGIN_API_VERSION`は記録のために`1.15.0`のまま置いている。
+- 公式プラグイン（ask-user、git-context、project-checks、workflows）とjev-guard、free-searchは、既定で無効の同梱プラグインになった（ADR-011）。

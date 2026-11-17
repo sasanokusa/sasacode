@@ -20,7 +20,7 @@ sasacode — 小さく、プラグインで組み替えられるコーディン�
       --no-session               このセッションを保存しない
       --append-system-prompt-file <path>
                                  ファイルの中身を、config の instructions の後ろにシステムプロンプトとして足す
-      --trust-project            このプロジェクトのプラグイン、エンドポイント、MCP サーバー、
+      --trust-project            このプロジェクトのエンドポイント、MCP サーバー、プラグインの設定、
                                  権限設定を確認なしで信頼する
 
 サブコマンド:

@@ -22,9 +22,6 @@ pub struct ProjectTrust {
     /// What trusting would enable; empty when the project needs no trust.
     pub items: Vec<String>,
     pub fingerprint: String,
-    /// False when what the decision covers could not all be read; a remembered decision then
-    /// cannot vouch for it. Always true now that no plugin code is hashed.
-    pub complete: bool,
     /// Read for this check and handed on to setup, so startup reads them once.
     pub files: ConfigFiles,
     pub warnings: Vec<String>,
@@ -50,9 +47,16 @@ pub fn assess_files(cwd: &Path, files: ConfigFiles) -> ProjectTrust {
     };
     let items = describe_elevated(&elevated);
     let manifests: Vec<Value> = Vec::new();
-    let digest = Sha256::digest(sasacode_ai::json::stringify(&json!({ "elevated": elevated, "manifests": manifests })));
+    let digest = Sha256::digest(sasacode_ai::json::stringify(
+        &json!({ "elevated": elevated, "manifests": manifests }),
+    ));
     let fingerprint: String = digest.iter().map(|b| format!("{b:02x}")).collect::<String>()[..16].to_string();
-    ProjectTrust { items, fingerprint, complete: true, files, warnings: Vec::new() }
+    ProjectTrust {
+        items,
+        fingerprint,
+        files,
+        warnings: Vec::new(),
+    }
 }
 
 pub fn is_trusted(cwd: &str, trust: &ProjectTrust) -> bool {
@@ -69,7 +73,7 @@ pub fn is_trusted_in(home: &Path, cwd: &str, trust: &ProjectTrust) -> bool {
         .get("trustedProjects")
         .and_then(Value::as_array)
         .is_some_and(|a| a.iter().any(|p| p.as_str() == Some(cwd)));
-    listed || (trust.complete && read_trust(home).get(cwd) == Some(&trust.fingerprint))
+    listed || read_trust(home).get(cwd) == Some(&trust.fingerprint)
 }
 
 pub fn save_trust(cwd: &str, trust: &ProjectTrust) -> std::io::Result<()> {
@@ -87,13 +91,14 @@ pub async fn ask_trust(cwd: &str, trust: &ProjectTrust) -> bool {
     let mut text = format!(
         "\n{}\n{}\n{}\n",
         t!("This project wants to use:"),
-        trust.items.iter().map(|i| format!("  - {i}")).collect::<Vec<_>>().join("\n"),
-        t!("Plugins and MCP servers run code as you; endpoints receive your conversation and code.")
+        trust
+            .items
+            .iter()
+            .map(|i| format!("  - {i}"))
+            .collect::<Vec<_>>()
+            .join("\n"),
+        t!("MCP servers run code as you; endpoints receive your conversation and code.")
     );
-    if !trust.complete {
-        text.push_str(&t!("The plugins' code could not all be read (too many files, unreadable, or a link loop), so you will be asked every time."));
-        text.push('\n');
-    }
     text.push_str(&t!("Trust {cwd}? [y/N] ", cwd = cwd));
     eprint!("{text}");
     let answer = tokio::task::spawn_blocking(|| {
@@ -125,7 +130,11 @@ mod tests {
         std::fs::create_dir_all(proj.join(".sasacode")).unwrap();
         std::fs::create_dir_all(&home).unwrap();
         let cwd = proj.to_string_lossy().to_string();
-        std::fs::write(proj.join(".sasacode/config.json"), r#"{"mcpServers":{"fx":{"command":"true"}}}"#).unwrap();
+        std::fs::write(
+            proj.join(".sasacode/config.json"),
+            r#"{"mcpServers":{"fx":{"command":"true"}}}"#,
+        )
+        .unwrap();
         let t = assess(&home, &proj);
         assert_eq!(t.items.len(), 1);
         assert!(t.items[0].ends_with("fx"));
@@ -133,11 +142,18 @@ mod tests {
         save_trust_in(&home, &cwd, &t).unwrap();
         assert!(is_trusted_in(&home, &cwd, &assess(&home, &proj)));
         // A change to what the project would turn on changes the fingerprint: asked again.
-        std::fs::write(proj.join(".sasacode/config.json"), r#"{"mcpServers":{"fx":{"command":"false"}}}"#).unwrap();
+        std::fs::write(
+            proj.join(".sasacode/config.json"),
+            r#"{"mcpServers":{"fx":{"command":"false"}}}"#,
+        )
+        .unwrap();
         assert!(!is_trusted_in(&home, &cwd, &assess(&home, &proj)));
         // The legacy trustedProjects list in the global config still counts.
-        std::fs::write(home.join("config.json"), serde_json::to_string(&json!({ "trustedProjects": [cwd] })).unwrap())
-            .unwrap();
+        std::fs::write(
+            home.join("config.json"),
+            serde_json::to_string(&json!({ "trustedProjects": [cwd] })).unwrap(),
+        )
+        .unwrap();
         assert!(is_trusted_in(&home, &cwd, &assess(&home, &proj)));
         // A project with nothing risky needs no trust.
         let plain = dir.path().join("plain");
