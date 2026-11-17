@@ -64,7 +64,11 @@ impl SetupOptions {
 pub fn read_prompt_file(path: &str) -> anyhow::Result<String> {
     std::fs::read(path)
         .map(|b| String::from_utf8_lossy(&b).into_owned())
-        .map_err(|e| anyhow::anyhow!(t!("failed to read {path}: {error}", path = path, error = e)))
+        // Worded as Node words it (`ENOENT: no such file or directory, open 'x'`), as before.
+        .map_err(|e| {
+            let error = sasacode_tools::util::fs_error(&e, "open", path);
+            anyhow::anyhow!(t!("failed to read {path}: {error}", path = path, error = error))
+        })
 }
 
 type Resolve = Arc<dyn Fn(&str) -> anyhow::Result<ModelInfo> + Send + Sync>;

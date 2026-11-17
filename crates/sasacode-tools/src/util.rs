@@ -158,7 +158,7 @@ pub(crate) fn truthy_arg(a: &JsonObject, key: &str) -> bool {
 
 /// A file-system error worded as Node/Bun word it (`EACCES: permission denied, open '/x'`): the
 /// text becomes "Tool failed: ..." for the model.
-pub(crate) fn fs_error(e: &std::io::Error, syscall: &str, path: &str) -> anyhow::Error {
+pub fn fs_error(e: &std::io::Error, syscall: &str, path: &str) -> anyhow::Error {
     match errno_text(e) {
         Some((code, desc)) => anyhow::anyhow!("{code}: {desc}, {syscall} '{path}'"),
         None => anyhow::anyhow!("{e}"),
