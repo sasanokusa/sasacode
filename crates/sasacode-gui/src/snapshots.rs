@@ -577,4 +577,72 @@ fn snapshots_of_screens() {
     app.insp = true;
     let _ = app.update(Msg::FileEditStart);
     shoot(&app, "40-file-edit", WIDE);
+
+    // The folder's automations, and one being written.
+    use crate::automations::{AutoMsg, Automation, Every};
+    let mut app = window("ja");
+    let now = chrono::Local::now().timestamp();
+    for (id, name, prompt, every, mode, on) in [
+        (
+            "a1",
+            "朝のCI確認",
+            "昨夜のCIで落ちたテストをまとめて、原因の見当をつけて",
+            Every::Weekdays { at: 510 },
+            "plan",
+            true,
+        ),
+        (
+            "a2",
+            "依存の確認",
+            "古くなった依存を調べて、上げる順番を提案して",
+            Every::Daily { at: 1080 },
+            "ask",
+            true,
+        ),
+        (
+            "a3",
+            "TODOの棚卸し",
+            "TODOコメントを集めて、古いものから並べて",
+            Every::Hours { hours: 6 },
+            "plan",
+            false,
+        ),
+    ] {
+        app.prefs.more.automations.insert(
+            id.into(),
+            Automation {
+                name: name.into(),
+                folder: app.folder_key(),
+                prompt: prompt.into(),
+                every,
+                mode: mode.into(),
+                on,
+                since: now - 86_400,
+                last: Some(now - 3 * 3600),
+            },
+        );
+    }
+    let _ = app.update(Msg::Command(crate::input::Command::Automations));
+    let _ = app.update(Msg::Auto(AutoMsg::Name("週次のリリースノート".into())));
+    app.auto_form.prompt =
+        iced::widget::text_editor::Content::with_text("先週マージされたPRから、リリースノートの下書きを書いて");
+    shoot(&app, "43-automations", WIDE);
+
+    // A plan written in plan mode, to go ahead with.
+    let mut app = window("ja");
+    let at = Instant::now();
+    app.chat.session = Some("0a1b2c3d-0".into());
+    app.chat
+        .transcript
+        .send("注文一覧のページングが2ページ目で重複するのを直す計画を立てて", at);
+    for line in [
+        r###"{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"## 計画\n\n1. `src/orders/list.ts`のクエリに`ORDER BY created_at, id`を足し、同じ時刻の行の順番を決める\n2. `src/orders/cursor.ts`のカーソルを`(created_at, id)`の組にする\n3. `test/orders.test.ts`に、同じ時刻の注文が3件ある場合のテストを足す\n\n## 危ないところ\n\n- 古いカーソルを持つクライアント：一度だけ読み替える\n\n## 確かめ方\n\n- `npm test -- orders`"}],"provider":"fake","model":"m","usage":{"input":4200,"output":160},"stopReason":"stop"}}"###,
+        r#"{"type":"agent_end","cause":"done"}"#,
+    ] {
+        app.chat.transcript.apply(&parse_event(line).unwrap(), at);
+    }
+    app.permission = Some("plan");
+    app.before_plan = Some("edits");
+    app.chat.planned = true;
+    shoot(&app, "44-plan-ready", WIDE);
 }

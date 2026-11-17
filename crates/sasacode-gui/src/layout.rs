@@ -204,6 +204,8 @@ pub struct More {
     pub folders: BTreeMap<String, Folder>,
     /// What was typed and not sent in each conversation, by its id, kept over a restart.
     pub drafts: BTreeMap<String, String>,
+    /// The automations of every folder, by id.
+    pub automations: BTreeMap<String, crate::automations::Automation>,
 }
 
 /// What a folder's window starts with.
@@ -710,6 +712,19 @@ mod tests {
                     },
                 )]),
                 drafts: BTreeMap::from([("s1".into(), "途中".into())]),
+                automations: BTreeMap::from([(
+                    "a1".into(),
+                    crate::automations::Automation {
+                        name: "朝のCI確認".into(),
+                        folder: "/w".into(),
+                        prompt: "昨夜の失敗をまとめて".into(),
+                        every: crate::automations::Every::Weekdays { at: 510 },
+                        mode: "ask".into(),
+                        on: false,
+                        since: 1_763_000_000,
+                        last: Some(1_763_100_000),
+                    },
+                )]),
             },
         };
         write(&file, &Layout::default(), &prefs).unwrap();

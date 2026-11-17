@@ -4,6 +4,7 @@
 //! and the input under it, and the inspector (changes, plan, commands, usage). A status bar runs
 //! along the bottom.
 
+mod automations;
 mod chords;
 pub(crate) mod dock;
 mod inspector;

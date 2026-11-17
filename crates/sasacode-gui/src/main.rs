@@ -4,6 +4,7 @@
 
 mod about;
 mod app;
+mod automations;
 mod cli;
 mod compare;
 mod composer;

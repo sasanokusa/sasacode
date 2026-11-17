@@ -187,7 +187,7 @@ pub struct App {
     pub(crate) width: f32,
     pub(crate) height: f32,
     /// Where how the window is laid out is kept, and what was last read from it or written to it.
-    layout_file: Option<PathBuf>,
+    pub(crate) layout_file: Option<PathBuf>,
     kept: Layout,
     /// What was chosen in the settings, and what was last kept of it.
     pub(crate) prefs: Prefs,
@@ -249,6 +249,8 @@ pub struct App {
     pub(crate) worktree_list: Option<Vec<crate::worktrees::Tree>>,
     /// The permission mode before plan mode was chosen.
     pub(crate) before_plan: Option<&'static str>,
+    /// The automation being written.
+    pub(crate) auto_form: crate::automations::Form,
     /// The next side question, as it is typed.
     pub(crate) side_typed: String,
     /// Conversations whose title the model is writing.
@@ -390,6 +392,10 @@ pub(crate) struct Chat {
     pub(crate) model: Option<String>,
     /// Its last run, in plan mode, ended with a plan: to go ahead with.
     pub(crate) planned: bool,
+    /// The permission mode its runs use, over the window's: an automation's.
+    pub(crate) mode: Option<&'static str>,
+    /// The automation it was started by, by id.
+    pub(crate) automation: Option<String>,
 }
 
 impl Chat {
@@ -414,6 +420,8 @@ impl Chat {
             log_seen: None,
             model: None,
             planned: false,
+            mode: None,
+            automation: None,
         }
     }
 
@@ -720,6 +728,8 @@ pub enum Msg {
     UsageRead(bool, Box<crate::usage::Report>),
     /// What of it the usage screen shows (`/usage graph` and the others), opened if it is not.
     UsagePart(crate::usage::Part),
+    /// The automations' screen, and their clock.
+    Auto(crate::automations::AutoMsg),
     /// The models the next message goes to at once: one chosen or not, one typed, added; sent.
     CompareToggle(String),
     CompareType(String),
@@ -969,6 +979,7 @@ impl App {
             usage_part: crate::usage::Part::All,
             worktree_list: None,
             before_plan: None,
+            auto_form: crate::automations::Form::default(),
             side_typed: String::new(),
             titling: Default::default(),
             back: Vec::new(),
@@ -1090,6 +1101,12 @@ impl App {
         // The conversation shown is read again when another continues it.
         if self.watches_log() {
             all.push(iced::time::every(Duration::from_secs(2)).map(|_| Msg::WatchLog));
+        }
+        // Automations, while any of this folder is on.
+        if self.watches_automations() {
+            all.push(
+                iced::time::every(crate::automations::LOOK_EVERY).map(|_| Msg::Auto(crate::automations::AutoMsg::Look)),
+            );
         }
         // A pull request's checks, while they run.
         if self.watches_checks() {
@@ -2053,13 +2070,20 @@ impl App {
             .find(|c| c.key == key)
             .and_then(|c| c.model.clone());
         let model = own.as_deref().unwrap_or(self.model.trim());
+        // An automation's conversation runs in its own mode; it is not the user's choice either.
+        let (mode, automated) = std::iter::once(&self.chat)
+            .chain(&self.parked)
+            .find(|c| c.key == key)
+            .map_or((self.permission, false), |c| {
+                (c.mode.or(self.permission), c.automation.is_some())
+            });
         let mut spec = RunSpec {
             program: self.program.clone(),
             cwd: self.cwd.clone(),
             prompt: String::new(),
             resume: None,
             model: (!model.is_empty()).then(|| model.to_owned()),
-            permission: self.permission.map(str::to_owned),
+            permission: mode.map(str::to_owned),
             thinking: self.effort.map(str::to_owned),
             no_session: key == SIDE,
             lang: self.prefs.more.lang.clone(),
@@ -2078,7 +2102,7 @@ impl App {
         {
             spec.allow = rules.clone();
         }
-        let plan = key != SIDE && self.permission == Some(crate::plan::MODE);
+        let plan = key != SIDE && mode == Some(crate::plan::MODE);
         if plan {
             crate::plan::shape(&mut spec, self.plan_file());
         }
@@ -2086,7 +2110,7 @@ impl App {
             // A side question reads; what would change something is asked, and denied.
             spec.permission = Some("ask".into());
         }
-        if key != SIDE {
+        if key != SIDE && !automated {
             self.keep_choices();
             if let Some(draft) = self.draft_key_of(key) {
                 self.forget_draft(draft);

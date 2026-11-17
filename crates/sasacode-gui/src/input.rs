@@ -45,6 +45,7 @@ pub enum Command {
     Usage,
     OpenFolder,
     Worktrees,
+    Automations,
 }
 
 impl Command {
@@ -76,6 +77,7 @@ impl Command {
         ("usage", Command::Usage),
         ("open", Command::OpenFolder),
         ("worktrees", Command::Worktrees),
+        ("automations", Command::Automations),
     ];
 
     pub fn what(self, s: &Strings) -> &'static str {
@@ -109,6 +111,7 @@ impl Command {
             Command::Usage => s.w().c_usage,
             Command::OpenFolder => s.w().c_open_folder,
             Command::Worktrees => s.w().c_worktrees,
+            Command::Automations => s.w().c_automations,
         }
     }
 
@@ -421,6 +424,7 @@ impl App {
             Command::Worktrees => {
                 return self.update(Msg::Show(Some(Overlay::picker(crate::overlay::Pick::Worktrees))));
             }
+            Command::Automations => return self.show_automations(),
             Command::Settings => self.overlay = Some(Overlay::Settings),
             Command::Keys => self.overlay = Some(Overlay::Keys),
             Command::Usage => return self.update(Msg::UsagePart(crate::usage::Part::All)),

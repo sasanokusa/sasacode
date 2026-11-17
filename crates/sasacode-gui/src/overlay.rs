@@ -42,6 +42,8 @@ pub enum Overlay {
     Quit(iced::window::Id),
     /// `auto` asked for the first time.
     ConfirmAuto,
+    /// The automations of the folder, and the form one is written in.
+    Automations,
     /// A reply whose text is being chosen to quote, `App::quoting`.
     Quote,
     /// The waiting call's arguments being edited, `App::editing_args`.
@@ -189,6 +191,11 @@ impl App {
                 s.w().c_worktrees,
                 Some("/worktrees".into()),
                 Msg::Command(Command::Worktrees),
+            ),
+            entry(
+                s.w().c_automations,
+                Some("/automations".into()),
+                Msg::Command(Command::Automations),
             ),
             entry(s.settings, key(Act::Settings), Msg::Show(Some(Overlay::Settings))),
             entry(s.c_keys, key(Act::Keys), Msg::Show(Some(Overlay::Keys))),

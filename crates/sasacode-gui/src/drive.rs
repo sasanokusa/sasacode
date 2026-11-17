@@ -2855,3 +2855,115 @@ fn plan_mode_is_not_taken_up_again_when_the_folder_is_opened() {
     app.restore_folder(true);
     assert_eq!(app.permission, None);
 }
+
+/// Automations: written in their screen, kept for the folder, and run when due in a conversation
+/// of their own beside the one shown, in their own mode. What the user typed for a new
+/// conversation is left as it is, and a run once started is not started again.
+#[test]
+fn an_automation_runs_when_due_in_a_conversation_of_its_own_and_in_its_own_mode() {
+    use crate::automations::{AutoMsg, Every, Kind as Sched};
+    let auto = |m: AutoMsg| Msg::Auto(m);
+    let mut app = window("ja");
+    let _ = app.update(Msg::Command(Command::Automations));
+    assert!(matches!(app.overlay, Some(crate::overlay::Overlay::Automations)));
+    assert!(says(&app, "まだありません") && says(&app, "新しい自動実行"));
+    let _ = app.update(auto(AutoMsg::Save));
+    assert!(says(&app, "名前とメッセージを書いてください"));
+
+    let _ = app.update(auto(AutoMsg::Name("朝のCI確認".into())));
+    app.auto_form.prompt = text_editor::Content::with_text("昨夜のCIの失敗をまとめて");
+    let _ = app.update(auto(AutoMsg::Kind(Sched::Weekdays)));
+    let _ = app.update(auto(AutoMsg::At("25:00".into())));
+    let _ = app.update(auto(AutoMsg::Save));
+    assert!(says(&app, "時刻は09:00のように書いてください"));
+    let _ = app.update(auto(AutoMsg::At("08:30".into())));
+    // auto is no mode of an automation.
+    let _ = app.update(auto(AutoMsg::Mode("auto")));
+    assert_eq!(app.auto_form.mode, "plan");
+    let _ = app.update(auto(AutoMsg::Mode("ask")));
+    let _ = app.update(auto(AutoMsg::Save));
+    let here = app.automations_here();
+    assert_eq!(here.len(), 1);
+    let (id, made) = (here[0].0.clone(), here[0].1.clone());
+    assert_eq!(made.every, Every::Weekdays { at: 8 * 60 + 30 });
+    assert_eq!((made.mode.as_str(), made.on), ("ask", true));
+    assert!(says(&app, "朝のCI確認") && says(&app, "平日08:30"));
+    assert!(app.watches_automations());
+
+    // Made a week ago, it is due now.
+    let now = chrono::Local::now().timestamp();
+    app.prefs.more.automations.get_mut(&id).unwrap().since = now - 7 * 86_400;
+    let folder = app.folder_key();
+    app.prefs.more.drafts.insert(folder.clone(), "書きかけ".into());
+    let (shown, parked) = (app.chat.key, app.parked.len());
+    let _ = app.look_at_automations(now);
+    assert_eq!(app.parked.len(), parked + 1);
+    let chat = app.parked.last().unwrap();
+    assert_eq!(
+        (chat.mode, chat.automation.as_deref()),
+        (Some("ask"), Some(id.as_str()))
+    );
+    assert!(chat.running());
+    assert_eq!(app.chat.key, shown, "the conversation shown stays");
+    assert_eq!(app.prefs.more.automations[&id].last, Some(now));
+    assert_eq!(app.prefs.more.drafts.get(&folder).map(String::as_str), Some("書きかけ"));
+    assert_eq!(app.toast.as_deref(), Some("自動実行「朝のCI確認」を始めました"));
+    // Looked at again, it has run.
+    let _ = app.look_at_automations(now + 60);
+    assert_eq!(app.parked.len(), parked + 1);
+
+    // Changed: kept as one, counted from now.
+    let _ = app.update(auto(AutoMsg::Edit(id.clone())));
+    assert!(says(&app, "編集：朝のCI確認"));
+    assert_eq!(app.auto_form.at, "08:30");
+    let _ = app.update(auto(AutoMsg::Kind(Sched::Hours)));
+    let _ = app.update(auto(AutoMsg::Hours("6".into())));
+    let _ = app.update(auto(AutoMsg::Save));
+    assert_eq!(app.automations_here().len(), 1);
+    assert_eq!(app.prefs.more.automations[&id].every, Every::Hours { hours: 6 });
+    assert!(says(&app, "6時間ごと"));
+
+    let _ = app.update(auto(AutoMsg::Toggle(id.clone())));
+    assert!(!app.watches_automations() && says(&app, "止めています"));
+    let _ = app.update(auto(AutoMsg::Delete(id)));
+    assert!(app.automations_here().is_empty());
+}
+
+/// An automation in plan mode runs as a plan run does: asked, with what writes denied.
+#[test]
+fn an_automation_in_plan_mode_has_its_writes_denied() {
+    use crate::automations::{AutoMsg, Automation, Every};
+    let mut app = window("ja");
+    let now = chrono::Local::now().timestamp();
+    app.prefs.more.automations.insert(
+        "a1".into(),
+        Automation {
+            name: "依存の確認".into(),
+            folder: app.folder_key(),
+            prompt: "古くなった依存を調べて".into(),
+            every: Every::Hours { hours: 24 },
+            since: now - 2 * 86_400,
+            ..Automation::default()
+        },
+    );
+    let _ = app.update(Msg::Auto(AutoMsg::RunNow("a1".into())));
+    let key = app.parked.last().unwrap().key;
+    let (tx, mut written) = tokio::sync::mpsc::unbounded_channel();
+    let _ = app.update(Msg::Run(key, crate::runner::RunUpdate::Started(tx)));
+    let event = sasacode_protocol::parse_event(
+        &serde_json::json!({"type": "approval_request", "id": "ap-1", "callId": "c-1", "tool": "write",
+            "args": {"path": "Cargo.toml"}, "reason": "", "cwd": "/Users/me/src/orders-api"})
+        .to_string(),
+    )
+    .unwrap();
+    let _ = app.update(Msg::Run(key, crate::runner::RunUpdate::Event(Box::new(event))));
+    assert!(matches!(
+        written.try_recv().ok(),
+        Some(ControlMessage::Approval {
+            decision: Decision::Deny,
+            ..
+        })
+    ));
+    // The window's own mode is not changed by it.
+    assert_eq!(app.permission, None);
+}
