@@ -1041,7 +1041,10 @@ async fn results_and_errors_as_the_ts_wrote_them() {
         .unwrap_err();
     assert_eq!(
         e.to_string(),
-        format!("ENOTDIR: not a directory, mkdir '{}'", s(&dir.join("afile/sub")))
+        format!(
+            "ENOTDIR: not a directory, mkdir '{}'",
+            s(&dir.join("afile").join("sub"))
+        )
     );
     let r = run(
         &EditTool,

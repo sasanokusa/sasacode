@@ -65,9 +65,14 @@ impl Tool for WriteTool {
             return Ok(ToolResult::text(format!("Unchanged {path}; nothing was written.")).with_details(details));
         }
         if let Some(dir) = Path::new(&path).parent().filter(|d| !d.as_os_str().is_empty()) {
-            tokio::fs::create_dir_all(dir)
-                .await
-                .map_err(|e| fs_error(&e, "mkdir", &dir.display().to_string()))?;
+            tokio::fs::create_dir_all(dir).await.map_err(|e| {
+                // Windows says "already exists" for a file anywhere in the way; Node's mkdir
+                // says ENOTDIR when it is above the folder.
+                if cfg!(windows) && e.kind() == std::io::ErrorKind::AlreadyExists && !dir.exists() {
+                    return anyhow::anyhow!("ENOTDIR: not a directory, mkdir '{}'", dir.display());
+                }
+                fs_error(&e, "mkdir", &dir.display().to_string())
+            })?;
         }
         if ctx.signal.is_cancelled() {
             return interrupted();

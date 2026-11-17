@@ -219,7 +219,8 @@ fn repo(root: &Path) -> tempfile::TempDir {
 fn fake_home(root: &Path) -> String {
     let h = root.join("home");
     std::fs::create_dir_all(&h).unwrap();
-    path_str(&std::fs::canonicalize(&h).unwrap())
+    // As the home directory is spelled: no `\\?\` on Windows.
+    sasacode_plugin_api::win32_path::without_verbatim(&path_str(&std::fs::canonicalize(&h).unwrap()))
 }
 
 async fn state(command: &str, cwd: &str, user_request: Option<&str>, home: &str) -> serde_json::Map<String, Value> {

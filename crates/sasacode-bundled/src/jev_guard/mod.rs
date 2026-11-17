@@ -552,8 +552,9 @@ fn real(p: &str) -> String {
         rest.insert(0, basename(&head));
         head = paths::dirname(&head);
     }
+    // Spelled as realpathSync.native does: no `\\?\` on Windows (its `?` would read as a glob).
     if let Ok(r) = std::fs::canonicalize(&head) {
-        head = r.to_string_lossy().into_owned();
+        head = sasacode_plugin_api::win32_path::without_verbatim(&r.to_string_lossy());
     }
     if rest.is_empty() {
         head

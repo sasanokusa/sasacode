@@ -2,6 +2,18 @@
 //! a drive (`\tmp`) takes the drive of what it is resolved against. Written for every system so its
 //! tests run everywhere.
 
+/// A path from `fs::canonicalize` as Node's realpath spells it: Windows' `\\?\C:\…` and
+/// `\\?\UNC\server\…` without the verbatim prefix. Other paths are returned as they are.
+pub fn without_verbatim(p: &str) -> String {
+    if let Some(rest) = p.strip_prefix(r"\\?\UNC\") {
+        format!(r"\\{rest}")
+    } else if let Some(rest) = p.strip_prefix(r"\\?\") {
+        rest.to_string()
+    } else {
+        p.to_string()
+    }
+}
+
 /// `path.win32.resolve` against this process's working directory, and the per-drive ones Windows
 /// keeps in the environment (`=C:`).
 pub fn win32_resolve_here(parts: &[&str]) -> String {
@@ -132,7 +144,7 @@ pub fn win32_resolve(parts: &[&str], cwd: &str, drive_cwd: impl Fn(&str) -> Opti
 /// system: the function takes the directory it resolves against).
 #[cfg(test)]
 mod win32_tests {
-    use super::win32_resolve;
+    use super::{win32_resolve, without_verbatim};
 
     #[test]
     fn resolves_as_node_win32_does() {
@@ -159,5 +171,12 @@ mod win32_tests {
         let drive = |d: &str| (d == "E:").then(|| "E:\\envdir".to_string());
         assert_eq!(win32_resolve(&["E:rel"], "D:\\a\\proj", drive), "E:\\envdir\\rel");
         assert_eq!(win32_resolve(&["F:rel"], "D:\\a\\proj", drive), "F:\\rel");
+    }
+
+    #[test]
+    fn verbatim_prefixes_are_dropped_as_node_realpath_spells_paths() {
+        assert_eq!(without_verbatim(r"\\?\C:\x"), r"C:\x");
+        assert_eq!(without_verbatim(r"\\?\UNC\server\share\x"), r"\\server\share\x");
+        assert_eq!(without_verbatim("/tmp/x"), "/tmp/x");
     }
 }
