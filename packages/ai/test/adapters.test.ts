@@ -184,6 +184,68 @@ test("a stream cut before the reply finished is an error with what arrived, not 
   expect(m3.content).toEqual([{ type: "text", text: "par" }]);
 });
 
+test("a reply the user interrupted is aborted, not cut off, when the stream then ends without an error (all three formats)", async () => {
+  // Sends `head`, then waits; the abort ends the body without an error, as the SDKs end an aborted stream.
+  const stalled = (head: string) =>
+    (async (_url: string, init?: RequestInit) => {
+      const body = new ReadableStream<Uint8Array>({
+        start(c) {
+          c.enqueue(new TextEncoder().encode(head));
+          init?.signal?.addEventListener("abort", () => {
+            try {
+              c.close();
+            } catch {} // the SDK cancelled the body first
+          });
+        },
+      });
+      return new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } });
+    }) as unknown as typeof globalThis.fetch;
+  const interrupt = async (provider: typeof openaiChatProvider, req: Request) => {
+    const ac = new AbortController();
+    let message: AssistantMessage | undefined;
+    for await (const e of provider.stream({ ...req, signal: ac.signal })) {
+      if (e.type === "text_delta") ac.abort(); // Esc after the first words
+      if (e.type === "done") message = e.message;
+    }
+    return message!;
+  };
+  const req = (model: ModelInfo, head: string): Request => ({ model, apiKey: "k", system: "", messages: [user("x")], tools: [], fetch: stalled(head), maxRetries: 0 });
+
+  const chat: ModelInfo = { id: "m", provider: "p", api: "openai-chat", baseUrl: "http://x/v1", contextWindow: 1e5, maxOutput: 1000 };
+  const m1 = await interrupt(openaiChatProvider, req(chat, sse([chatChunk({ content: "par" })]).replace("data: [DONE]\n\n", "")));
+  const responses: ModelInfo = { id: "gpt-r", provider: "openai", api: "openai-responses", baseUrl: "http://x/v1", contextWindow: 1e5, maxOutput: 1000 };
+  const m2 = await interrupt(
+    openaiResponsesProvider,
+    req(
+      responses,
+      sse(
+        [
+          { type: "response.output_item.added", output_index: 0, item: { type: "message", id: "m1", role: "assistant", content: [] } },
+          { type: "response.output_text.delta", item_id: "m1", output_index: 0, content_index: 0, delta: "par" },
+        ],
+        true,
+      ),
+    ),
+  );
+  const claude: ModelInfo = { id: "claude-x", provider: "anthropic", api: "anthropic", baseUrl: "http://x", contextWindow: 1e5, maxOutput: 1000 };
+  const m3 = await interrupt(
+    anthropicProvider,
+    req(
+      claude,
+      sse(
+        [
+          { type: "message_start", message: { id: "m", type: "message", role: "assistant", model: "claude-x", content: [], stop_reason: null, usage: { input_tokens: 5, output_tokens: 0 } } },
+          { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+          { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "par" } },
+        ],
+        true,
+      ),
+    ),
+  );
+  expect([m1, m2, m3].map((m) => [m.stopReason, m.errorMessage])).toEqual(Array(3).fill(["aborted", undefined]));
+  for (const m of [m1, m2, m3]) expect(m.content).toEqual([{ type: "text", text: "par" }]);
+});
+
 const reqFor = (model: ModelInfo, fetch: typeof globalThis.fetch, extra: Partial<Request> = {}): Request => ({ model, system: "", messages: [user("x")], tools, fetch, maxRetries: 0, ...extra });
 const chatChunk = (delta: object, finish: string | null = null) => ({ id: "1", object: "chat.completion.chunk", created: 0, model: "m", choices: [{ index: 0, delta, finish_reason: finish }] });
 

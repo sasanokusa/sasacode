@@ -181,7 +181,7 @@ export const openaiResponsesProvider: Provider = {
       else if (!droppedMidReply(e)) throw e;
     }
     out.content = out.content.filter((c) => !(c.type === "text" && !c.text));
-    markIfCut(out, ended); // neither response.completed nor response.incomplete
+    markIfCut(out, ended, req.signal); // neither response.completed nor response.incomplete
     if (out.stopReason === "stop" && out.content.some((c) => c.type === "tool_call")) out.stopReason = "tool_use";
     // A cost reported with the usage stands; otherwise estimate from the price table.
     if (!out.usage.cost) out.usage.cost = computeCost(model, out.usage);

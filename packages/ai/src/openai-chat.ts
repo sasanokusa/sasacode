@@ -225,7 +225,7 @@ export const openaiChatProvider: Provider = {
       else if (isContextOverflow(e)) throw new ContextOverflowError((e as Error).message);
       else if (!droppedMidReply(e)) throw e;
     }
-    markIfCut(out, ended); // neither a finish reason nor the usage chunk
+    markIfCut(out, ended, req.signal); // neither a finish reason nor the usage chunk
     for (const c of calls.values()) Object.assign(c.block, parseToolInput(c.json));
     if (out.stopReason === "stop" && calls.size) out.stopReason = "tool_use";
     yield { type: "done", message: out };

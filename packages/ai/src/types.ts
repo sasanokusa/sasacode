@@ -62,10 +62,14 @@ export function droppedMidReply(e: unknown): boolean {
   );
 }
 
-/** Marks `out` as cut off unless the provider said it was done (`ended`) or the user aborted. */
-export function markIfCut(out: AssistantMessage, ended: boolean): void {
-  if (!ended && out.stopReason !== "aborted")
-    Object.assign(out, { stopReason: "error", errorMessage: INCOMPLETE_STREAM });
+/**
+ * Marks `out` as cut off unless the provider said it was done (`ended`) or the user aborted. An abort can end the
+ * stream without an error (the OpenAI SDK returns from an aborted stream), so a set `signal` also means aborted.
+ */
+export function markIfCut(out: AssistantMessage, ended: boolean, signal?: AbortSignal): void {
+  if (ended || out.stopReason === "aborted") return;
+  if (signal?.aborted) out.stopReason = "aborted";
+  else Object.assign(out, { stopReason: "error", errorMessage: INCOMPLETE_STREAM });
 }
 
 export interface Usage {
