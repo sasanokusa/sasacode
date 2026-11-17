@@ -21,7 +21,7 @@ State: `open`, `claimed by <who> <date>`, `done (<evidence>)`.
 | 1 | mcp; skills | done (13+4 TS tests ported; 8722613) |
 | 1 | agent/session → `sasacode-agent::session`; host: i18n, messages, models, notes, sessions | done (8,932 real log lines round-trip; cbe65f5) |
 | 1 | testing: replay provider, fake model server; e2e harness `SASACODE_E2E_BIN` | done (11 unit + 17 e2e vs TS CLI; 5271490) |
-| 1 | agent: agent, events, tool-exec, permission, plugins host, tool-search, system-prompt | done; permission globs = Bun.Glob on 2,303 recorded pairs (79b82b6); remaining TS tests claimed by subagent G 2026-11-18 |
+| 1 | agent: agent, events, tool-exec, permission, plugins host, tool-search, system-prompt | done; permission globs = Bun.Glob on 2,303 recorded pairs (79b82b6); all TS tests ported (ecdb8eb) |
 | 2 | headless vertical slice: cli main/config/headless/control + builtin tools, e2e green | done: e2e 17/17 Rust, 17/18 TS (the 18th is ADR-002), app cases 34/34 (ae4d9bc) |
 | 3 | bundled table and ADR-011 switch (`sasacode-bundled/src/lib.rs`) | done by coordinator |
 | 3 | bundled: web-fetch, web-search, rustxng, browsr, openai-codex, usage, background-sessions, auto-reconnect, goal, gui, image-attach, image-slim, free-search | claimed by subagent N 2026-11-18 |
@@ -45,9 +45,8 @@ Dropped:
 - plugin-api v19/v110: the asserts that check runtime argument types (Rust checks them at compile time).
 
 Still to port (owner: coordinator):
-- skills `authoring-doc`: "a plugin's allow replaces the mode default but not the user's deny rules" → agent tests.
-- agent.test (28), boundaries (9 minus 3 in session.rs), permission-hook (5), pipeline (5), plugins (8),
-  session-switch (3): need the builtin tools.
+- ~~agent tests~~: done (ecdb8eb). Three symlink tests are `#[cfg(unix)]`; the TS ran one on Windows with a junction.
+- cli tests (control, context-refresh, commands, cli headless parts): claimed by subagent C 2026-11-18.
 - npm-launcher on Windows: the TS used a `bun build --compile` stand-in; needs a Windows CI job.
 
 ## Open checks (block the TS removal)
