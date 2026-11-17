@@ -17,7 +17,7 @@ use sasacode_plugin_api::{
     ToolResult, error_result, hook,
 };
 
-use crate::web_fetch::util::{js_trim, utf16_len, utf16_prefix};
+use crate::net_util::{js_trim, utf16_len, utf16_prefix};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]

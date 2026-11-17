@@ -20,6 +20,7 @@ pub mod gui;
 pub mod image_attach;
 pub mod image_slim;
 pub mod loop_guard;
+pub(crate) mod net_util;
 pub mod openai_codex;
 pub mod permission_presets;
 pub mod progress_notes;
@@ -54,11 +55,19 @@ pub struct Bundled {
 }
 
 const fn on(name: &'static str, plugin: PluginFn) -> Bundled {
-    Bundled { name, plugin, on_by_default: true }
+    Bundled {
+        name,
+        plugin,
+        on_by_default: true,
+    }
 }
 
 const fn off(name: &'static str, plugin: PluginFn) -> Bundled {
-    Bundled { name, plugin, on_by_default: false }
+    Bundled {
+        name,
+        plugin,
+        on_by_default: false,
+    }
 }
 
 /// Every shipped plugin, in load order. Hooks run in load order, so the order matters.
