@@ -4507,7 +4507,6 @@ dependencies = [
  "anyhow",
  "async-trait",
  "chrono",
- "dirs",
  "futures",
  "globset",
  "indexmap",
@@ -4533,7 +4532,6 @@ dependencies = [
  "anyhow",
  "async-trait",
  "axum",
- "base64 0.22.1",
  "bytes",
  "chrono",
  "futures",
@@ -4562,7 +4560,6 @@ dependencies = [
  "bytes",
  "chrono",
  "crossterm",
- "dirs",
  "encoding_rs",
  "fancy-regex 0.20.2",
  "flate2",
@@ -4645,8 +4642,6 @@ name = "sasacode-host"
 version = "0.20.0"
 dependencies = [
  "anyhow",
- "chrono",
- "dirs",
  "indexmap",
  "regex",
  "sasacode-agent",
@@ -4654,9 +4649,7 @@ dependencies = [
  "sasacode-plugin-api",
  "serde",
  "serde_json",
- "sha2 0.10.9",
  "tempfile",
- "tokio",
 ]
 
 [[package]]
@@ -4678,7 +4671,6 @@ dependencies = [
  "tempfile",
  "tokio",
  "tokio-util",
- "url",
  "which",
 ]
 
@@ -4715,12 +4707,9 @@ version = "0.20.0"
 dependencies = [
  "anyhow",
  "async-trait",
- "dirs",
  "futures",
  "indexmap",
- "sasacode-ai",
  "sasacode-plugin-api",
- "serde",
  "serde_json",
  "tempfile",
  "tokio",
@@ -4753,17 +4742,14 @@ dependencies = [
  "async-trait",
  "base64 0.22.1",
  "encoding_rs",
- "futures",
  "libc",
  "nix 0.31.4",
  "sasacode-ai",
  "sasacode-plugin-api",
- "serde",
  "serde_json",
  "tempfile",
  "tokio",
  "tokio-util",
- "which",
 ]
 
 [[package]]
@@ -4779,7 +4765,6 @@ dependencies = [
  "futures",
  "indexmap",
  "nix 0.31.4",
- "percent-encoding",
  "pulldown-cmark 0.13.6",
  "ratatui",
  "regex",
@@ -4796,7 +4781,6 @@ dependencies = [
  "tokio",
  "tokio-util",
  "unicode-segmentation",
- "unicode-width",
  "url",
 ]
 

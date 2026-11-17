@@ -31,7 +31,6 @@ uuid.workspace = true
 chrono.workspace = true
 image.workspace = true
 unicode-width.workspace = true
-dirs.workspace = true
 which.workspace = true
 indexmap.workspace = true
 # web/net plugins (web_fetch, web_search, image-*, openai-codex)
