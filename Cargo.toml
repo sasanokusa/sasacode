@@ -27,7 +27,6 @@ repository = "https://github.com/sasanokusa/sasacode"
 rust-version = "1.88"
 
 [workspace.dependencies]
-sasacode-protocol = { path = "crates/sasacode-protocol" }
 sasacode-ai = { path = "crates/sasacode-ai" }
 sasacode-plugin-api = { path = "crates/sasacode-plugin-api" }
 sasacode-agent = { path = "crates/sasacode-agent" }
@@ -61,12 +60,10 @@ chrono = { version = "0.4", default-features = false, features = ["std", "clock"
 base64 = "0.22"
 indexmap = { version = "2", features = ["serde"] }
 dirs = "6"
-similar = "2"
 unicode-width = "0.2"
 unicode-segmentation = "1"
 unicode-normalization = "0.1"
 encoding_rs = "0.8"
-clap = { version = "4.5", features = ["derive", "string"] }
 ratatui = { version = "0.30", default-features = false, features = ["crossterm_0_29", "underline-color", "layout-cache", "macros"] }
 crossterm = { version = "0.29", features = ["bracketed-paste", "event-stream"] }
 pulldown-cmark = { version = "0.13", default-features = false }

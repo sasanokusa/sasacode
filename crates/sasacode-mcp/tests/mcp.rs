@@ -18,17 +18,19 @@ use support::{FakeHost, until};
 /// The stdio fixture, built by `cargo test` as an example of this crate.
 fn fixture_bin() -> PathBuf {
     let exe = std::env::current_exe().expect("test binary path");
-    // target/<profile>/deps/<test> → target/<profile>/examples/mcp-fixture
-    let profile = exe.parent().and_then(Path::parent).expect("target dir");
-    let bin = profile
-        .join("examples")
-        .join(format!("mcp-fixture{}", std::env::consts::EXE_SUFFIX));
-    assert!(
-        bin.exists(),
-        "{} is missing: `cargo test -p sasacode-mcp` builds it (or cargo build -p sasacode-mcp --example mcp-fixture)",
-        bin.display()
-    );
-    bin
+    // The examples sit in target/<profile>/examples. The test binary is in target/<profile>/deps,
+    // or, with the build-dir layout of newer cargo, deeper (target/<profile>/build/<pkg>/<hash>/out).
+    let file = format!("mcp-fixture{}", std::env::consts::EXE_SUFFIX);
+    exe.ancestors()
+        .skip(1)
+        .map(|dir| dir.join("examples").join(&file))
+        .find(|bin| bin.exists())
+        .unwrap_or_else(|| {
+            panic!(
+                "examples/{file} is missing near {}: `cargo test -p sasacode-mcp` builds it (or cargo build -p sasacode-mcp --example mcp-fixture)",
+                exe.display()
+            )
+        })
 }
 
 fn fx(env: &[(&str, &str)]) -> McpServerConfig {

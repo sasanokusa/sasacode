@@ -707,11 +707,6 @@ pub fn free_port() -> u16 {
         .unwrap_or_else(|e| panic!("local_addr: {e}"))
 }
 
-/// A server that answers every request with "ok".
-pub async fn ok_server_on(port: u16) -> Server {
-    serve_on(port, axum::Router::new().fallback(|| async { "ok" })).await
-}
-
 /// A port held by a socket that is bound but does not listen: connections to it are refused, and
 /// no other server (another test's, another process's) can take it before `serve_ok`, as one freed
 /// by `free_port` and bound again later could be.
@@ -745,20 +740,19 @@ impl ReservedPort {
 /// An example of this crate, built by `cargo test -p sasacode-bundled`.
 pub fn example_bin(name: &str) -> PathBuf {
     let exe = std::env::current_exe().unwrap_or_else(|e| panic!("test binary path: {e}"));
-    // target/<profile>/deps/<test> → target/<profile>/examples/<name>
-    let profile = exe
-        .parent()
-        .and_then(Path::parent)
-        .unwrap_or_else(|| panic!("target dir"));
-    let bin = profile
-        .join("examples")
-        .join(format!("{name}{}", std::env::consts::EXE_SUFFIX));
-    assert!(
-        bin.exists(),
-        "{} is missing: `cargo test -p sasacode-bundled` builds it (or cargo build -p sasacode-bundled --example {name})",
-        bin.display()
-    );
-    bin
+    // The examples sit in target/<profile>/examples. The test binary is in target/<profile>/deps,
+    // or, with the build-dir layout of newer cargo, deeper (target/<profile>/build/<pkg>/<hash>/out).
+    let file = format!("{name}{}", std::env::consts::EXE_SUFFIX);
+    exe.ancestors()
+        .skip(1)
+        .map(|dir| dir.join("examples").join(&file))
+        .find(|bin| bin.exists())
+        .unwrap_or_else(|| {
+            panic!(
+                "examples/{file} is missing near {}: `cargo test -p sasacode-bundled` builds it (or cargo build -p sasacode-bundled --example {name})",
+                exe.display()
+            )
+        })
 }
 
 /// fake-browsr as a command; with `env`, a wrapper script that sets it first (unix).

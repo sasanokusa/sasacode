@@ -10,6 +10,8 @@ const PIPE_WAIT: Duration = Duration::from_millis(5000);
 
 enum Source {
     None,
+    /// A regular file (only told apart from a pipe on unix).
+    #[cfg_attr(not(unix), allow(dead_code))]
     File,
     Pipe,
 }

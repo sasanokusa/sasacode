@@ -197,15 +197,16 @@ async fn auto_reconnect_after_an_error_while_the_endpoint_is_down_it_waits_and_r
     );
     assert_eq!(a.status_len(), 0);
     back.stop().await;
-    // Online and failing for another reason (a bad key): nothing to wait for.
+    // Online and failing for another reason (a bad key): nothing to wait for. A server of its own:
+    // the port just freed may already be taken again (as a client's local port) on a busy machine.
+    let up = serve(Router::new().fallback(|| async { "ok" })).await;
     let b = fake(
         auto_reconnect::plugin,
         root.path(),
-        json!({ "checkUrl": url, "checkIntervalMs": 30 }),
+        json!({ "checkUrl": format!("http://127.0.0.1:{}/", up.port), "checkIntervalMs": 30 }),
         Entries::default(),
     )
     .await;
-    let up = ok_server_on(port).await;
     b.agent_end(StopCause::Error, None).await;
     sleep(100).await;
     assert!(b.injected().is_empty(), "{:?}", b.injected());
