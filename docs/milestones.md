@@ -122,6 +122,23 @@ Anthropicネイティブのtool search（Should）は未対応で、全プロバ
 - 小型モデルがファイルを壊す形への対策（v0.15.0）：`write-guard`（`read`の行番号付きの内容から行番号を外す。既存のファイルの大部分を消す上書きを一度止める）、`progress-notes`。履歴の画像を小さく送る`image-slim`（v0.15.1）。
 - 不具合の報告（#82〜#139）への修正：権限ルールの照合（大文字小文字、NFD、`..`、`[` `{` `+(`を含むフォルダ）、editsモードで`.git`と`.sasacode`への書き込みを確認する（#127）、中断、圧縮、UTF-8でないファイル、TUIの表示など。どれも回帰テストを付けた。
 
+## 0.20 Rustへの書き換え
+
+TypeScript（Bun）版のすべてをRustに書き換えた。進め方は[rust-anything](https://github.com/erkamyaman/rust-anything)に沿い、対応表は`rust/MAP.md`、決めたことは`rust/DECISIONS.md`にある。設定、`.env`、キーチェーン、信頼、セッションログ、`-p`のJSONL、`--control stdio`、CLIのフラグとサブコマンド、インストーラー、npmの起動用パッケージ、リリースの成果物名は互換。外部プラグインの読み込みはやめた（ADR-002）。
+
+| 確かめたこと | 方法 | 結果 |
+| --- | --- | --- |
+| CLIの出力 | TS 0.15.2で録画した34ケース（ヘルプ、版、設定、エンドポイント、ログインなど）を、rust-anythingでRust版に再生 | 34/34（意図して変えた出力は`rust/app-cases/README.md`） |
+| ヘッドレスと制御 | TSのe2e（`packages/e2e`）をRust版のバイナリに向けて実行。Rust側の`cli_e2e` | TSのe2eは17/18（残る1件は外部プラグインのインストール）、`cli_e2e`は17/17 |
+| イベントの形 | GUIとプロトコルのフィクスチャをRust版のCLIで作り直し、TS版の出力と比べた | `message_discarded`に`role`がなかったのを直した。ほかは一致 |
+| 権限ルールの照合 | Bun.Globの答えを2,303組記録し、Rust版と比べた | 一致（`/`で終わるパスの`**/*`だけ違うが、ルールには来ない） |
+| テスト | TSの単体テストをRustに移した（外部プラグインのものは除く。`rust/MAP.md`） | `cargo test --workspace`で908件 |
+| M0（ヘッドレス） | `sasacode -p "bun testが失敗しています。原因を調べて直してください。"`、DeepSeek V4.1 Flash（commandcode） | 自分で調査・修正・再テストして成功 |
+| M0（Gemma4） | ollama/gemma4:e4b、手順を具体的に指示、`agent`モード | 成功。`edit`はagent-judgeが危険と判定して止め、`write`で直した（振り分けはTS版と同じ） |
+| TUI（実端末） | tmuxの110×36で、DeepSeek V4.1 FlashにM0を解かせた。承認、差分の表示、`/model`の一覧と絞り込み、shift+tabでの権限モード切替、ctrl+c 2回での終了、`-r`での再開、ctrl+dでの終了 | すべて動いた。終了後は元の画面に戻り、終了コード0、端末の設定も元どおり |
+
+このマシン向けのリリースビルドは22.7MBで、`sasacode --version`の起動は中央値8ms。TUIの起動から入力可能までの時間は測っていない。実端末で確かめていないのは、kittyキーボードプロトコル、マウス、IME、CJK幅の端末、Windowsのコンソール。
+
 ## GUI（G0〜G4、進行中）
 
 Rust製のデスクトップGUIを段階的に作る。設計は [gui.md](gui.md)。sasacode本体をRustに書き換える前の先駆けとして、CLIと共有する型を `crates/sasacode-protocol` に置く。
