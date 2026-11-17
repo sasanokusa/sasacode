@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use iced::keyboard::{self, Key, key::Named};
 use iced::widget::operation::{self, AbsoluteOffset};
 use iced::widget::{markdown, text_editor};
-use iced::{Element, Size, Subscription, Task, Theme, event, task, theme, window};
+use iced::{Element, Point, Size, Subscription, Task, Theme, event, task, theme, window};
 use sasacode_protocol::{ControlMessage, Decision, SessionSummary, StopCause, list_sessions, read_entries};
 use tokio::sync::mpsc::UnboundedSender;
 
@@ -79,6 +79,8 @@ const FOLD_PAST: f32 = 60.0;
 const SWEEP_EVERY: Duration = Duration::from_secs(600);
 /// How long the window's size is left alone before it is kept: a resize is many sizes in a row.
 const RESIZE_REST: Duration = Duration::from_millis(500);
+/// Where a window kept on a screen that is gone is put: near the main screen's top left corner.
+const ON_SCREEN: Point = Point::new(80.0, 80.0);
 
 /// The inner edge of a side panel, which a drag moves.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -186,6 +188,9 @@ pub struct App {
     pub(crate) now: Instant,
     pub(crate) width: f32,
     pub(crate) height: f32,
+    /// Where the window's top left corner is, as the system measures it, once it has been moved or
+    /// was kept from the last launch.
+    pub(crate) at: Option<Point>,
     /// Where how the window is laid out is kept, and what was last read from it or written to it.
     pub(crate) layout_file: Option<PathBuf>,
     kept: Layout,
@@ -944,6 +949,8 @@ pub enum Msg {
     Rested(u64),
     /// The size of the screen the window opened on.
     Screen(window::Id, Option<Size>),
+    /// The window was moved: where its top left corner is now, less the zoom.
+    Moved(Point),
 }
 
 impl App {
@@ -1043,6 +1050,7 @@ impl App {
             // The window's size as it is drawn: what the system measures, less the zoom.
             width: layout.size.width / options.prefs.zoom,
             height: layout.size.height / options.prefs.zoom,
+            at: layout.at,
             layout_file: options.layout_file,
             kept: layout,
             prefs: {
@@ -1644,6 +1652,17 @@ impl App {
                     Msg::Rested(n)
                 });
             }
+            // Each step of a drag of the window is a move: kept once it has rested, as a resize is.
+            // iced gives where it is less the zoom; the system measures it whole.
+            Msg::Moved(at) => {
+                let zoom = self.prefs.zoom;
+                self.at = Some(Point::new(at.x * zoom, at.y * zoom));
+                self.resizes += 1;
+                let n = self.resizes;
+                return Task::perform(async { tokio::time::sleep(RESIZE_REST).await }, move |()| {
+                    Msg::Rested(n)
+                });
+            }
             Msg::Rested(n) => {
                 if n == self.resizes {
                     self.keep_layout();
@@ -1654,7 +1673,12 @@ impl App {
                     return window::resize(id, size);
                 }
             }
-            Msg::Screen(_, None) => {}
+            // On no screen: kept where a screen was that is gone now. Brought back to the main one.
+            Msg::Screen(id, None) => {
+                if self.at.is_some() {
+                    return window::move_to(id, ON_SCREEN);
+                }
+            }
             // Handled by `update_more`.
             _ => {}
         }
@@ -1668,6 +1692,7 @@ impl App {
             size: Size::new(self.width * zoom, self.height * zoom),
             side: self.side_w,
             inspector: self.insp_w,
+            at: self.at,
         }
     }
 
@@ -2605,13 +2630,15 @@ fn capture_key(event: iced::Event, _status: event::Status, _window: window::Id) 
     Some(Msg::KeyCaptured(key, modifiers))
 }
 
-/// What the window hears of itself: whether it is in front, and files held over it or dropped.
+/// What the window hears of itself: whether it is in front, where it was moved, and files held over
+/// it or dropped.
 fn window_event(event: iced::Event, _status: event::Status, _window: window::Id) -> Option<Msg> {
     match event {
         iced::Event::Window(window::Event::Focused) => Some(Msg::Focus(true)),
         iced::Event::Window(window::Event::Unfocused) => Some(Msg::Focus(false)),
         iced::Event::Window(window::Event::FileHovered(_)) => Some(Msg::Hover(true)),
         iced::Event::Window(window::Event::FilesHoveredLeft) => Some(Msg::Hover(false)),
+        iced::Event::Window(window::Event::Moved(at)) => Some(Msg::Moved(at)),
         iced::Event::Window(window::Event::FileDropped(path)) => Some(Msg::Dropped(path)),
         iced::Event::Keyboard(keyboard::Event::ModifiersChanged(m)) => Some(Msg::Modifiers(m)),
         _ => None,

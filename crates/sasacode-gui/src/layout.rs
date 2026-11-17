@@ -9,7 +9,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io;
 use std::path::Path;
 
-use iced::Size;
+use iced::{Point, Size};
 use serde_json::{Value, json};
 
 use crate::app::{INSP_MAX, INSP_MIN, INSP_W, SIDE_MAX, SIDE_MIN, SIDE_W};
@@ -32,6 +32,9 @@ pub struct Layout {
     pub size: Size,
     pub side: f32,
     pub inspector: f32,
+    /// Where the window's top left corner was, as the system measures it: where it opens again.
+    /// `None` the first time, and the system puts it.
+    pub at: Option<Point>,
 }
 
 impl Default for Layout {
@@ -40,6 +43,7 @@ impl Default for Layout {
             size: SIZE,
             side: SIDE_W,
             inspector: INSP_W,
+            at: None,
         }
     }
 }
@@ -66,6 +70,9 @@ impl Layout {
             ),
             side: number(&held["side"]).unwrap_or(start.side),
             inspector: number(&held["inspector"]).unwrap_or(start.inspector),
+            at: number(&held["window"]["x"])
+                .zip(number(&held["window"]["y"]))
+                .map(|(x, y)| Point::new(x, y)),
         }
         .within()
     }
@@ -80,6 +87,7 @@ impl Layout {
             ),
             side: self.side.clamp(SIDE_MIN, SIDE_MAX),
             inspector: self.inspector.clamp(INSP_MIN, INSP_MAX),
+            at: self.at,
         }
     }
 }
@@ -456,8 +464,13 @@ pub fn write(file: &Path, layout: &Layout, prefs: &Prefs) -> io::Result<()> {
         Some(false) => "light",
         Some(true) => "dark",
     };
+    let mut window = json!({ "width": whole(layout.size.width), "height": whole(layout.size.height) });
+    if let Some(at) = layout.at {
+        window["x"] = json!(whole(at.x));
+        window["y"] = json!(whole(at.y));
+    }
     let mut all = json!({
-        "window": { "width": whole(layout.size.width), "height": whole(layout.size.height) },
+        "window": window,
         "side": whole(layout.side),
         "inspector": whole(layout.inspector),
         "enterSends": prefs.enter_sends,
@@ -589,6 +602,7 @@ mod tests {
             size: Size::new(width, height),
             side,
             inspector,
+            at: None,
         }
     }
 
@@ -810,5 +824,43 @@ mod tests {
         assert_eq!(fit(Size::new(2560.0, 700.0), screen), Some(Size::new(1440.0, 700.0)));
         // Never under the smallest the window can be made.
         assert_eq!(fit(Size::new(2000.0, 1000.0), Size::new(600.0, 400.0)), Some(MIN_SIZE));
+    }
+
+    #[test]
+    fn where_the_window_was_moved_is_where_it_opens_again() {
+        let home = home("moved");
+        let file = home.join(FILE);
+        // Kept with its place, read back with it; only half a place is none.
+        let at = Layout {
+            at: Some(iced::Point::new(120.0, -40.0)),
+            ..layout(1440.0, 900.0, 300.0, 420.0)
+        };
+        write(&file, &at, &Prefs::default()).unwrap();
+        assert_eq!(Layout::read(&file), at);
+        std::fs::write(&file, r#"{"window":{"width":1440,"height":900,"x":10}}"#).unwrap();
+        assert_eq!(Layout::read(&file).at, None);
+
+        // A drag of the window is many moves: the last is kept once it rests, as the system
+        // measures it (iced gives it less the zoom).
+        let options = Options {
+            program: "sasacode".into(),
+            cwd: "/tmp".into(),
+            session: None,
+            layout: layout(1440.0, 900.0, 300.0, 420.0),
+            prefs: Prefs {
+                zoom: 1.25,
+                ..Prefs::default()
+            },
+            layout_file: Some(file.clone()),
+        };
+        let mut app = App::blank(options, Strings::get("ja"));
+        assert_eq!(app.at, None);
+        let _ = app.update(Msg::Moved(iced::Point::new(100.0, 50.0)));
+        let _ = app.update(Msg::Moved(iced::Point::new(200.0, 80.0)));
+        let _ = app.update(Msg::Rested(1));
+        assert_eq!(Layout::read(&file).at, None);
+        let _ = app.update(Msg::Rested(2));
+        assert_eq!(Layout::read(&file).at, Some(iced::Point::new(250.0, 100.0)));
+        std::fs::remove_dir_all(home).unwrap();
     }
 }

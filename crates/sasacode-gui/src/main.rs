@@ -148,12 +148,37 @@ fn main() -> iced::Result {
             // What the system measures, as iced takes it: before the zoom it draws at.
             size: iced::Size::new(layout.size.width / zoom, layout.size.height / zoom),
             min_size: Some(layout::MIN_SIZE),
-            position: at.map_or(iced::window::Position::Default, iced::window::Position::Specific),
+            // Where this launch said, else where the window was last, while a screen shows it: the
+            // system's own place the first time. One on no screen is brought back (`Msg::Screen`).
+            position: at
+                .or(layout.at.filter(|&kept| on_a_screen(kept, layout.size)))
+                .map_or(iced::window::Position::Default, iced::window::Position::Specific),
             // Asked first while something runs: `Msg::CloseAsked`.
             exit_on_close_request: false,
             ..iced::window::Settings::default()
         })
         .run()
+}
+
+/// Whether some screen shows the top of a window put at `at`: its title bar, by which it is moved.
+/// macOS brings a window on no screen back itself.
+#[cfg(windows)]
+fn on_a_screen(at: iced::Point, size: iced::Size) -> bool {
+    use windows_sys::Win32::Foundation::RECT;
+    use windows_sys::Win32::Graphics::Gdi::{MONITOR_DEFAULTTONULL, MonitorFromRect};
+    let top = RECT {
+        left: at.x as i32,
+        top: at.y as i32,
+        right: (at.x + size.width) as i32,
+        bottom: at.y as i32 + 32,
+    };
+    // SAFETY: the rectangle is only read, while the call lasts.
+    unsafe { MonitorFromRect(&top, MONITOR_DEFAULTTONULL) != 0 }
+}
+
+#[cfg(not(windows))]
+fn on_a_screen(_at: iced::Point, _size: iced::Size) -> bool {
+    true
 }
 
 /// `x,y`, as a point.
