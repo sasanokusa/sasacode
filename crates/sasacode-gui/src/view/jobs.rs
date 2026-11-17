@@ -77,6 +77,7 @@ pub(crate) fn jobs(app: &App) -> El<'_> {
                     .anchor_bottom()
                     .style(t.scroll()),
                 )
+                .width(Length::Fill)
                 .max_height(220)
                 .padding(8)
                 .style(t.boxed(t.inset, t.line, 6.0)),

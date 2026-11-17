@@ -236,7 +236,11 @@ impl App {
         }
         // The other folders sasacode was used in: each opens in a window of its own.
         if let Some(home) = &self.home {
-            for project in system::projects(home).into_iter().filter(|p| *p != self.cwd).take(12) {
+            for project in system::projects(home)
+                .into_iter()
+                .filter(|p| !system::same_dir(p, &self.cwd))
+                .take(12)
+            {
                 all.push(Entry {
                     label: crate::i18n::fill(s.c_project, "path", project.display()),
                     keys: None,
@@ -505,14 +509,14 @@ impl App {
             }
             Msg::OpenProject(path) => self.new_window(path, None),
             Msg::Others(mut found) => {
-                found.retain(|p| *p != self.cwd);
+                found.retain(|p| !system::same_dir(p, &self.cwd));
                 found.truncate(12);
                 self.others = found;
                 Task::none()
             }
             Msg::FoldFolders => self.set(|p| p.more.folders_open = !p.more.folders_open),
             Msg::FolderPicked(path) => match path.filter(|p| p.is_dir()) {
-                Some(path) if path != self.cwd => self.new_window(path, None),
+                Some(path) if !system::same_dir(&path, &self.cwd) => self.new_window(path, None),
                 _ => Task::none(),
             },
             Msg::NewWindow(cwd, session, at) => {

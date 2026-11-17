@@ -549,13 +549,27 @@ pub fn projects(home: &Path) -> Vec<PathBuf> {
                 .max_by_key(|(when, _)| *when)?;
             let first = std::fs::read_to_string(&newest.1).ok()?;
             let head: serde_json::Value = serde_json::from_str(first.lines().next()?).ok()?;
-            let cwd = PathBuf::from(head["cwd"].as_str()?);
+            // The CLI writes the folder by its real path: one reached through a link (`/var` on
+            // macOS is `/private/var`) is the same folder.
+            let cwd = std::fs::canonicalize(head["cwd"].as_str()?).ok()?;
             cwd.is_dir().then_some((newest.0, cwd))
         })
         .collect();
     found.sort_by_key(|a| std::cmp::Reverse(a.0));
-    found.dedup_by(|a, b| a.1 == b.1);
-    found.into_iter().map(|(_, cwd)| cwd).collect()
+    let mut seen = std::collections::HashSet::new();
+    found
+        .into_iter()
+        .map(|(_, cwd)| cwd)
+        .filter(|cwd| seen.insert(cwd.clone()))
+        .collect()
+}
+
+/// Whether `a` and `b` are the same folder, one reached through a link or not.
+pub fn same_dir(a: &Path, b: &Path) -> bool {
+    a == b
+        || std::fs::canonicalize(a)
+            .ok()
+            .is_some_and(|a| std::fs::canonicalize(b).is_ok_and(|b| a == b))
 }
 
 #[cfg(test)]
@@ -654,14 +668,23 @@ mod tests {
         let home = std::env::temp_dir().join(format!("sasacode-gui-projects-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&home);
         let (old, new) = (home.join("old"), home.join("new"));
-        for (n, cwd) in [(0, &old), (1, &new)] {
-            std::fs::create_dir_all(cwd).unwrap();
+        std::fs::create_dir_all(&old).unwrap();
+        std::fs::create_dir_all(&new).unwrap();
+        let mut logs = vec![(600, old.clone()), (0, new.clone())];
+        // The same folder as `new` reached through a link, in a conversation older than both: one
+        // folder, listed once.
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(&new, home.join("link")).unwrap();
+            logs.push((1200, home.join("link")));
+        }
+        for (n, (age, cwd)) in logs.iter().enumerate() {
             let dir = home.join("sessions").join(format!("d{n}"));
             std::fs::create_dir_all(&dir).unwrap();
             let log = dir.join("x.jsonl");
             let head = serde_json::json!({ "type": "session", "id": "x", "cwd": cwd });
             std::fs::write(&log, format!("{head}\n")).unwrap();
-            let then = std::time::SystemTime::now() - std::time::Duration::from_secs(600 * (1 - n));
+            let then = std::time::SystemTime::now() - std::time::Duration::from_secs(*age);
             std::fs::File::options()
                 .write(true)
                 .open(&log)
@@ -670,14 +693,17 @@ mod tests {
                 .unwrap();
         }
         // One whose folder is gone is left out.
-        let gone = home.join("sessions").join("d2");
+        let gone = home.join("sessions").join("gone");
         std::fs::create_dir_all(&gone).unwrap();
         std::fs::write(
             gone.join("y.jsonl"),
             "{\"type\":\"session\",\"cwd\":\"/no/such/folder\"}\n",
         )
         .unwrap();
-        assert_eq!(projects(&home), vec![new, old]);
+        let real = |p: &Path| std::fs::canonicalize(p).unwrap();
+        assert_eq!(projects(&home), vec![real(&new), real(&old)]);
+        assert!(same_dir(&home.join("link"), &new) || cfg!(not(unix)));
+        assert!(!same_dir(&old, &new));
         std::fs::remove_dir_all(home).unwrap();
     }
 }

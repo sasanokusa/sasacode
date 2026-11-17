@@ -451,18 +451,21 @@ fn settings(app: &App) -> El<'_> {
     };
     // Which ones, under the switch that sends them at all.
     let indent = |e: El<'static>| -> El<'static> { container(e).padding(iced::Padding::ZERO.left(28)).into() };
-    let notices: El<'_> = if p.notify {
-        column![
-            indent(switch(w.set_notify_done, !p.more.quiet_done, |on| Msg::SetQuietDone(!on)).into()),
-            indent(switch(w.set_notify_wait, !p.more.quiet_wait, |on| Msg::SetQuietWait(!on)).into()),
-            indent(switch(w.set_sound, p.more.sound, Msg::SetSound).into()),
-            indent(switch(w.set_notify_always, p.more.notify_always, Msg::SetNotifyAlways).into()),
-        ]
-        .spacing(10)
-        .into()
-    } else {
-        Space::new().into()
-    };
+    // Nothing in their place while it is off, not even the gap between rows.
+    let mut notices = column![switch(s.set_notify, p.notify, Msg::SetNotify)].spacing(10);
+    if p.notify {
+        notices = notices
+            .push(indent(
+                switch(w.set_notify_done, !p.more.quiet_done, |on| Msg::SetQuietDone(!on)).into(),
+            ))
+            .push(indent(
+                switch(w.set_notify_wait, !p.more.quiet_wait, |on| Msg::SetQuietWait(!on)).into(),
+            ))
+            .push(indent(switch(w.set_sound, p.more.sound, Msg::SetSound).into()))
+            .push(indent(
+                switch(w.set_notify_always, p.more.notify_always, Msg::SetNotifyAlways).into(),
+            ));
+    }
     let editor = column![
         heading(w.set_editor),
         text_input(w.editor_ph, &p.more.editor)
@@ -507,7 +510,6 @@ fn settings(app: &App) -> El<'_> {
         accent,
         fonts,
         zoom,
-        switch(s.set_notify, p.notify, Msg::SetNotify),
         notices,
         switch(s.set_awake, p.awake, Msg::SetAwake),
         switch(s.set_steps, p.steps, Msg::SetSteps),
