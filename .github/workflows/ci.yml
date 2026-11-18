@@ -21,6 +21,15 @@ jobs:
       - run: rustup update stable && rustup default stable && rustup component add rustfmt clippy
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      # The GUI's tests draw Japanese. With no font that has it, cosmic-text shapes each line again
+      # with every font installed before giving up, and the tests took minutes instead of seconds.
+      # Noto Sans CJK is the font it asks for by name on Linux; macOS and Windows have their own.
+      # Bounded and allowed to fail: apt once hung here for a quarter of an hour, and without the
+      # font the tests still pass, only slowly.
+      - if: runner.os == 'Linux'
+        timeout-minutes: 3
+        continue-on-error: true
+        run: sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends fonts-noto-cjk
       # Every crate runs even after one fails, so one run shows every failure (Windows above all).
       - run: cargo test --workspace --locked --no-fail-fast
       # The CLI end to end: the tests start the binary SASACODE_E2E_BIN names, and skip (passing)
