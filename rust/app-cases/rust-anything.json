@@ -1,0 +1,11 @@
+{
+  "schema": "rust-anything/app-cases@1",
+  "name": "sasacode",
+  "run": [
+    "bun",
+    "--no-env-file",
+    "--config=scripts/no-bunfig.toml",
+    "packages/cli/src/main.ts"
+  ],
+  "timeout_secs": 30
+}

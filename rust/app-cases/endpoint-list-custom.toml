@@ -1,0 +1,7 @@
+bin.name = "sasacode"
+args = ["endpoint", "list"]
+env.add.SASACODE_HOME = "home"
+env.add.SASACODE_LANG = "en"
+status.code = 0
+fs.sandbox = true
+fs.base = "endpoint-list-custom.in"

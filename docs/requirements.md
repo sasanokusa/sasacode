@@ -4,7 +4,7 @@ Sep 24, 2026 · @ささのくさ
 
 ## 1. 概要・目的
 
-sasa-code-harnessはTypeScript (Bun) で作るターミナル向けコーディングエージェントのハーネスである。コアは「エージェントループ・最小ツール・TUI」に限り、それ以外の振る舞いはすべてプラグインで足す。
+sasa-code-harnessはRustで作るターミナル向けコーディングエージェントのハーネスである（0.15まではTypeScript（Bun）で作り、0.20でRustに書き換えた）。コアは「エージェントループ・最小ツール・TUI」に限り、それ以外の振る舞いはすべてプラグインで足す。
 
 **目的**
 
@@ -16,8 +16,8 @@ sasa-code-harnessはTypeScript (Bun) で作るターミナル向けコーディ�
 
 **成功の目安**
 
-- コア（ループ・プロバイダー・組み込みツール）が5,000行程度に収まっている。1行は120桁まで（当初3,000行。tool-call修復・生成中フックの追加に合わせて2026-09-24に4,000行に改訂。4,000行は文を1行に詰めることで守られていたため、2026-11-11に1行の幅を揃えて5,000行に改訂）
-- 組み込みツールを含む全機能が、サードパーティと同じ公開プラグインAPIで実装されている
+- コア（ループ・プロバイダー・組み込みツール・プラグインAPI）が12,500行程度に収まっている。1行は120桁まで（TypeScript版では当初3,000行。tool-call修復・生成中フックの追加に合わせて2026-09-24に4,000行に改訂。4,000行は文を1行に詰めることで守られていたため、2026-11-11に1行の幅を揃えて5,000行に改訂。0.20でRustに書き換えた後、Rustのコアを測り直して決め直した。`rust/DECISIONS.md`のADR-005）
+- 組み込みツールを含む全機能が、同梱プラグインと同じプラグインAPIで実装されている（0.15まではサードパーティと同じ公開API。0.20からは外部のプラグインがなく、外からの拡張はMCPとSkills）
 - 日常のコーディング作業をこのハーネスだけで完結できる
 
 ## 2. 設計思想
@@ -29,8 +29,8 @@ sasa-code-harnessはTypeScript (Bun) で作るターミナル向けコーディ�
 | ID | 原則 | 具体的な意味 |
 | --- | --- | --- |
 | P1 | コアは「無いと動かないもの」だけ | 外してもコードの読み書き・実行ができる機能はプラグインにする |
-| P2 | 特権APIを作らない | 組み込みツール・コマンドも公開プラグインAPI経由で登録する（ドッグフーディング） |
-| P3 | すべて差し替え可能 | 組み込みツール・同梱プラグインは設定で無効化・同名上書きできる |
+| P2 | 特権APIを作らない | 組み込みツール・コマンドも、同梱プラグインと同じプラグインAPI経由で登録する（ドッグフーディング）。0.20からは、バイナリの中に特権の経路を作らないという意味で読む（ADR-002） |
+| P3 | すべて差し替え可能 | 組み込みツール・同梱プラグインは設定で無効化できる。同名のツールは後から登録したものが置き換える（利用者はMCPの`toolNames: "plain"`で置き換えられる） |
 | P4 | 既存規格に乗る | ツール拡張はMCP、手順・知識はSKILL.mdをそのまま読めるようにする |
 
 ### 2.2 エージェントファースト
@@ -83,7 +83,7 @@ sasa-code-harnessはTypeScript (Bun) で作るターミナル向けコーディ�
 | FR-P03 | OpenAI Responses API（reasoningの引き継ぎを含む） | Must |
 | FR-P04 | 内部メッセージは正規化形式で持ち、セッション途中でモデル・プロバイダーを切り替えられる | Must |
 | FR-P05 | トークン使用量（入力 / 出力 / キャッシュ）と概算コストを記録する | Should |
-| FR-P06 | プロバイダー追加も公開プラグインAPI（registerProvider）で行える | Should |
+| FR-P06 | プロバイダー追加もプラグインAPI（`register_provider`）で行える。利用者は設定の`providers`で足す | Should |
 
 ### 4.3 組み込みツール
 
@@ -130,7 +130,11 @@ sasa-code-harnessはTypeScript (Bun) で作るターミナル向けコーディ�
 
 プラグインは1つのパッケージに3種類の拡張をまとめて持てる単位とする。インプロセスモジュールが最も強力で、MCPとSkillsはその上に載るアダプタ（これ自体も内部プラグイン）として実装する。
 
-### 5.1 プラグインパッケージ
+0.20からは、インプロセスのプラグインは同梱のものだけになり、利用者が足せるのはMCPサーバーとSkillsになった（ADR-002）。同梱プラグインは`crates/sasacode-bundled`の`PLUGINS`に並び、`plugins.disabled`で外し、既定で無効のものは`plugins.enabled`で読み込む（ADR-011）。5.1は0.15までの仕様として残す。
+
+### 5.1 プラグインパッケージ（0.15まで）
+
+0.20で、外部のプラグインの読み込み・インストール・公開と、`@sasacode/plugin-api`の公開をやめた。以下は0.15までの仕様。
 
 - 配置場所: `~/.sasacode/plugins/`、`.sasacode/plugins/`
 - インストール元: npmパッケージとgit URLの両方に対応する
@@ -140,14 +144,14 @@ sasa-code-harnessはTypeScript (Bun) で作るターミナル向けコーディ�
 
 ### 5.2 インプロセスプラグインAPI
 
-プラグインは`export default (api: PluginAPI) => { ... }`の形で書く。
+同梱プラグインは`fn plugin(api: PluginApi) -> BoxFuture<'static, anyhow::Result<()>>`の形で書く（`crates/sasacode-plugin-api`。0.15まではTypeScriptの`export default (api: PluginAPI) => { ... }`）。
 
 | API | できること | 優先度 |
 | --- | --- | --- |
-| registerTool | JSON Schema（またはzod）付きのツールを追加・同名で上書き | Must |
-| registerCommand | スラッシュコマンドを追加（引数の補完候補も返せる） | Must |
+| register\_tool | JSON Schema付きのツールを追加・同名で上書き | Must |
+| register\_command | スラッシュコマンドを追加（引数の補完候補も返せる） | Must |
 | on(event) | ライフサイクルイベントを購読し、値を変更・ブロック（5.3） | Must |
-| registerProvider | LLMプロバイダーを追加 | Should |
+| register\_provider | LLMプロバイダーを追加 | Should |
 | ui.\* | confirm / select / notify、ツール結果レンダラー、ステータス行の追加 | Should |
 | session.\* | セッションへの独自エントリ書き込み・読み出し、メッセージの注入 | Should |
 | agent.\* | サブループの起動（サブエージェントをプラグインで実装するため） | Should |
@@ -176,9 +180,9 @@ sasa-code-harnessはTypeScript (Bun) で作るターミナル向けコーディ�
 
 - stdioとStreamable HTTPのトランスポートに対応する（Must）
 - MCPツールは`mcp__<server>__<tool>`として通常ツールと同じ権限・フックを通る（Must）
-- サーバー定義は設定ファイルとプラグインマニフェストの両方に書ける（Must）
+- サーバー定義は設定ファイルに書く（Must。0.15まではプラグインのマニフェストにも書けた）
 - 遅延ロード: 対象ツールの定義合計がコンテキストウィンドウの **10% 以上**、または対象ツールが **30個以上**になったら、名前と説明の一覧だけを渡し、モデルが検索ツール経由で定義を読み込む（Must）
-  - 対象はMCPツールとプラグインのツール。組み込み4ツールと`alwaysLoad`指定のツールは常に先読みし、計算に含めない
+  - 対象はMCPツールと同梱プラグインのツール。組み込み4ツールと`alwaysLoad`指定のツールは常に先読みし、計算に含めない
   - 閾値は割合と件数の両方を設定で変えられ、常に有効 / 無効も選べる
   - 根拠: Claude Codeのautoモードの既定が10%。また同ドキュメントによると、ツール選択の精度は30〜50個を超えると落ちる。200Kコンテキストでは10% = 約20Kトークン（ツール50〜100個分）なので、精度のために件数条件を併用する（[出典](https://code.claude.com/docs/en/agent-sdk/tool-search)）
 - Anthropicではネイティブのtool searchを使い、それ以外のプロバイダーではハーネス側の検索ツールで代替する（Should）
@@ -187,7 +191,7 @@ sasa-code-harnessはTypeScript (Bun) で作るターミナル向けコーディ�
 ### 5.5 Skills
 
 - 標準のAgent Skills形式（`SKILL.md`、frontmatterにname / description）のみに対応し、Claude固有の配置や拡張は扱わない（Must）
-- `~/.sasacode/skills/`、`.sasacode/skills/`、プラグインから検出する（Must）
+- `~/.sasacode/skills/`、`.sasacode/skills/`から検出する（Must。0.15まではプラグインのskillsディレクトリからも）
 - システムプロンプトにはnameとdescriptionとパスだけを載せ、本文はモデルがreadツールで必要時に読む（段階的開示、原則A3）（Must）
 - ユーザーが`/skill:<name>`で明示的に読み込ませることもできる（Should）
 
@@ -201,45 +205,48 @@ sasa-code-harnessはTypeScript (Bun) で作るターミナル向けコーディ�
 | 性能 | ストリーミング中のTUI再描画で入力遅延を体感させない（差分描画） |
 | シンプルさ | コアの実行時依存パッケージを最小限にし、追加時は理由を記録する |
 | 安全性 | 既定は作業ディレクトリ内の読み取り・編集のみ自動許可し、bash等は承認制。APIキーやシークレットをセッションログ・デバッグログに残さない |
-| 安全性 | インプロセスプラグインはフル権限で動くことを明記し、プロジェクトローカルのプラグイン・MCPは初回読み込み時に信頼確認を出す |
+| 安全性 | プロジェクトの設定のうち、MCPサーバー・エンドポイント・プラグインの設定・緩める権限設定は、初回読み込み時に信頼確認を出す（0.15まではプロジェクトローカルのプラグインも対象で、インプロセスプラグインはフル権限で動くことを明記していた） |
 | 耐障害性 | プラグインの例外・MCPサーバーの落ちでループ全体を止めない。セッションはイベントごとに追記し、強制終了でも失わない |
 | 可搬性 | macOS / Linux / Windows（ネイティブ。bashツールはGit for WindowsのGit Bashを使う） |
-| 配布 | npmパッケージと`bun build --compile`による単一バイナリの2形態 |
+| 配布 | Rustの単一バイナリと、それを取得するnpmの起動用パッケージの2形態（0.15までは`bun build --compile`の単一バイナリ） |
 | 観測性 | 送受信した全メッセージとツール入出力をセッションに残し、後から再現・検証できる。外部送信（OTel等）はプラグイン |
 | テスト容易性 | プロバイダー応答の録画・再生で、LLMなしにループとプラグインをE2Eテストできる |
-| 拡張性 | プラグインAPIの破壊的変更はメジャーバージョンでのみ行い、古いプラグインは警告付きで読み飛ばす |
+| 拡張性 | 外からの拡張はMCPとSkillsの標準に従う。設定ファイル・セッションログ・ヘッドレスの出力・CLIのフラグは互換を保つ（ADR-003。0.15までは、プラグインAPIの破壊的変更をメジャーバージョンでのみ行い、古いプラグインは警告付きで読み飛ばすとしていた） |
 
 ## 7. アーキテクチャ概要
 
-Bun workspacesのモノレポで、依存は上から下への一方向のみ。組み込みツール・MCP・Skillsはすべてplugin-apiだけに依存し、コア内部には触れない。
+Cargoのworkspace（`crates/`）で、依存は上から下への一方向のみ。組み込みツール・MCP・Skillsは`sasacode-plugin-api`（と`sasacode-ai`）だけに依存し、コア内部には触れない。同梱プラグインは、ほかのクレートの公開の関数（パスの解決、権限の照合、MCPの接続など）も使う。0.15までは同じ構成をBun workspacesの`packages/`で作っていた。
 
 ```mermaid
 flowchart TD
-  CLI["cli<br/>起動・設定・ローダー"] --> TUI["tui<br/>入力・描画"]
-  CLI --> AGENT["agent<br/>ループ・イベント・セッション"]
+  CLI["sasacode-cli<br/>起動・設定・信頼確認"] --> TUI["sasacode-tui<br/>入力・描画"]
+  CLI --> AGENT["sasacode-agent<br/>ループ・フック・セッション・プラグインのホスト"]
+  CLI --> HOST["sasacode-host<br/>画面の言語・モデル一覧・セッションの索引"]
   TUI --> AGENT
-  AGENT --> AI["ai<br/>プロバイダー抽象"]
-  AGENT --> API["plugin-api<br/>型と公開API"]
-  CLI --> TOOLS["tools<br/>read/write/edit/bash"]
-  CLI --> MCP["mcp adapter"]
-  CLI --> SK["skills loader"]
-  CLI --> EXT["同梱・サードパーティ<br/>プラグイン"]
+  AGENT --> AI["sasacode-ai<br/>プロバイダー抽象"]
+  AGENT --> API["sasacode-plugin-api<br/>プラグインAPI"]
+  CLI --> TOOLS["sasacode-tools<br/>read/write/edit/bash"]
+  CLI --> MCP["sasacode-mcp"]
+  CLI --> SK["sasacode-skills"]
+  CLI --> EXT["sasacode-bundled<br/>同梱プラグイン"]
   TOOLS --> API
   MCP --> API
   SK --> API
   EXT --> API
 ```
 
-パッケージの責務は下表のとおり。
+クレートの責務は下表のとおり。
 
-| パッケージ | 責務 |
+| クレート | 責務 |
 | --- | --- |
-| `@sasacode/ai` | 正規化メッセージ型、Anthropic / OpenAI（Chat Completions・Responses）アダプタ、ストリーム変換、使用量計測 |
-| `@sasacode/agent` | ループ、イベントバス、ツール実行と権限判定の呼び出し、ツール遅延ロード、セッションJSONL |
-| `@sasacode/plugin-api` | プラグインが依存する唯一の公開型とインターフェース |
-| `@sasacode/tools` | 組み込み4ツール（プラグインとして実装） |
-| `@sasacode/tui` | pi-tui（第一候補）の上に、エディタ・メッセージ描画・承認ダイアログ・プラグイン用UI差し込み口を載せる |
-| `@sasacode/cli` | `sasacode`コマンド。引数解析、設定マージ、プラグイン・MCP・Skillsの検出とロード、ヘッドレス実行 |
+| `sasacode-ai` | 正規化メッセージ型、Anthropic / OpenAI（Chat Completions・Responses）アダプタ、ストリーム変換、使用量計測 |
+| `sasacode-agent` | ループ、フック、ツール実行と権限判定の呼び出し、ツール遅延ロード、セッションJSONL、プラグインのホスト |
+| `sasacode-plugin-api` | 組み込みツールと同梱プラグインが使う型とインターフェース（0.20からは公開しない） |
+| `sasacode-tools` | 組み込み4ツール（プラグインとして実装） |
+| `sasacode-tui` | ratatuiとcrosstermの上に、エディタ・メッセージ描画・承認ダイアログ・プラグイン用UI差し込み口を載せる |
+| `sasacode-cli` | `sasacode`コマンド。引数解析、設定マージ、信頼確認、同梱プラグイン・MCP・Skillsのロード、ヘッドレス実行 |
+| `sasacode-mcp` / `sasacode-skills` / `sasacode-bundled` | MCPのクライアント、Agent Skills、同梱プラグイン |
+| `sasacode-host` | TUI・CLI・同梱プラグインが共有するもの（画面の言語、組み込みのプロバイダーと既知のモデル、セッションの索引） |
 
 ## 8. 決定事項とマイルストーン
 
@@ -251,11 +258,13 @@ flowchart TD
 | プロジェクト指示・Skillsの互換 | AGENTS.mdに対応し、CLAUDE.mdは読まない。SkillsはClaude固有形式ではなく標準のAgent Skills形式（5.5） |
 | 権限の既定 | 4モードを用意し、既定は「読み取り・編集のみ許可」。`/permission`で変更（FR-A03・A04） |
 | ツールの遅延ロード | 対象ツールの定義がコンテキストの10%以上、または30個以上で遅延ロードする仕組みをコアに持つ（5.4） |
-| TUI実装 | 自作せず、pi-tuiを第一候補として流用する（8.2、Bunでの動作は要検証） |
-| プラグイン配布 | npmとgit URLの両方を許可（5.1） |
-| CLIコマンド名 | `sasacode`（設定ディレクトリ`.sasacode/`、パッケージスコープ`@sasacode/`） |
+| TUI実装 | 0.15までは自作せず、pi-tuiを流用した（8.2）。0.20からはratatuiとcrossterm（ADR-010） |
+| プラグイン配布 | 0.15まではnpmとgit URLの両方を許可した（5.1）。0.20で外部のプラグインをやめた（ADR-002） |
+| CLIコマンド名 | `sasacode`（設定ディレクトリ`.sasacode/`、クレート名`sasacode-*`。0.15まではパッケージスコープ`@sasacode/`） |
 
 ### 8.2 TUI の流用元
+
+TypeScript版（0.15まで）のときの検討。0.20のRust版はratatuiとcrosstermで作り直した（ADR-010）。
 
 **pi-tuiを推奨する。** 最小主義のコーディングエージェントpiの描画層だけを切り出したライブラリで、思想が近く、依存が2つしかない。コンポーネントがrender() だけの単純な形なので、プラグインがUIを差し込むAPI（FR-U05）も設計しやすい。
 

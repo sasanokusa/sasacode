@@ -1,0 +1,34 @@
+{"name": "version", "args": ["--version"], "env": {"SASACODE_HOME": "home", "SASACODE_LANG": "en"}, "files": {"home/.keep": ""}}
+{"name": "version-short", "args": ["-v"], "env": {"SASACODE_HOME": "home", "SASACODE_LANG": "en"}, "files": {"home/.keep": ""}}
+{"name": "help", "args": ["--help"], "env": {"SASACODE_HOME": "home", "SASACODE_LANG": "en"}, "files": {"home/.keep": ""}}
+{"name": "help-ja", "args": ["-h"], "env": {"SASACODE_HOME": "home", "SASACODE_LANG": "ja"}, "files": {"home/.keep": ""}}
+{"name": "unknown-flag", "args": ["--foo"], "env": {"SASACODE_HOME": "home", "SASACODE_LANG": "en"}, "files": {"home/.keep": ""}}
+{"name": "unknown-short", "args": ["-x"], "env": {"SASACODE_HOME": "home", "SASACODE_LANG": "en"}, "files": {"home/.keep": ""}}
+{"name": "print-missing", "args": ["-p"], "env": {"SASACODE_HOME": "home", "SASACODE_LANG": "en"}, "files": {"home/.keep": ""}}
+{"name": "model-ambiguous", "args": ["--model", "-x"], "env": {"SASACODE_HOME": "home", "SASACODE_LANG": "en"}, "files": {"home/.keep": ""}}
+{"name": "continue-arg", "args": ["--continue=1"], "env": {"SASACODE_HOME": "home", "SASACODE_LANG": "en"}, "files": {"home/.keep": ""}}
+{"name": "control-tcp", "args": ["--control", "tcp"], "env": {"SASACODE_HOME": "home", "SASACODE_LANG": "en"}, "files": {"home/.keep": ""}}
+{"name": "control-no-print", "args": ["--control", "stdio"], "env": {"SASACODE_HOME": "home", "SASACODE_LANG": "en"}, "files": {"home/.keep": ""}}
+{"name": "control-text", "args": ["--control", "stdio", "-p", "hi"], "env": {"SASACODE_HOME": "home", "SASACODE_LANG": "en"}, "files": {"home/.keep": ""}}
+{"name": "control-ja", "args": ["--control", "tcp"], "env": {"SASACODE_HOME": "home", "SASACODE_LANG": "ja"}, "files": {"home/.keep": ""}}
+{"name": "login-bogus", "args": ["login", "bogus"], "env": {"SASACODE_HOME": "home", "SASACODE_LANG": "en"}, "files": {"home/.keep": ""}}
+{"name": "login-status", "args": ["login", "status"], "env": {"SASACODE_HOME": "home", "SASACODE_LANG": "en"}, "files": {"home/.keep": ""}}
+{"name": "web-search-bogus", "args": ["web-search", "bogus"], "env": {"SASACODE_HOME": "home", "SASACODE_LANG": "en"}, "files": {"home/.keep": ""}}
+{"name": "web-search-none", "args": ["web-search"], "env": {"SASACODE_HOME": "home", "SASACODE_LANG": "en"}, "files": {"home/.keep": ""}}
+{"name": "gui-usage", "args": ["gui", "-x"], "env": {"SASACODE_HOME": "home", "SASACODE_LANG": "en"}, "files": {"home/.keep": ""}}
+{"name": "gui-two", "args": ["gui", "a", "b"], "env": {"SASACODE_HOME": "home", "SASACODE_LANG": "en"}, "files": {"home/.keep": ""}}
+{"name": "gui-missing", "args": ["gui", "nope"], "env": {"SASACODE_HOME": "home", "SASACODE_LANG": "en"}, "files": {"home/.keep": ""}}
+{"name": "endpoint-list", "args": ["endpoint", "list"], "env": {"SASACODE_HOME": "home", "SASACODE_LANG": "en"}, "files": {"home/.keep": ""}}
+{"name": "endpoint-none", "args": ["endpoint"], "env": {"SASACODE_HOME": "home", "SASACODE_LANG": "en"}, "files": {"home/.keep": ""}}
+{"name": "endpoint-remove-missing", "args": ["endpoint", "remove", "nope"], "env": {"SASACODE_HOME": "home", "SASACODE_LANG": "en"}, "files": {"home/.keep": ""}}
+{"name": "endpoint-add-usage", "args": ["endpoint", "add"], "env": {"SASACODE_HOME": "home", "SASACODE_LANG": "en"}, "files": {"home/.keep": ""}}
+{"name": "endpoint-bogus", "args": ["endpoint", "bogus"], "env": {"SASACODE_HOME": "home", "SASACODE_LANG": "en"}, "files": {"home/.keep": ""}}
+{"name": "update-bogus", "args": ["update", "--bogus"], "env": {"SASACODE_HOME": "home", "SASACODE_LANG": "en"}, "files": {"home/.keep": ""}}
+{"name": "plugin-list", "args": ["plugin", "list"], "env": {"SASACODE_HOME": "home", "SASACODE_LANG": "en"}, "files": {"home/.keep": ""}}
+{"name": "append-missing-file", "args": ["--append-system-prompt-file", "nope.md", "-p", "hi"], "env": {"SASACODE_HOME": "home", "SASACODE_LANG": "en"}, "files": {"home/.keep": ""}}
+{"name": "max-turns-word", "args": ["-p", "hi", "--max-turns", "abc"], "env": {"SASACODE_HOME": "home", "SASACODE_LANG": "en"}, "files": {"home/.keep": ""}}
+{"name": "max-turns-negative", "args": ["-p", "hi", "--max-turns=-1"], "env": {"SASACODE_HOME": "home", "SASACODE_LANG": "en"}, "files": {"home/.keep": ""}}
+{"name": "max-turns-fraction", "args": ["-p", "hi", "--max-turns", "1.5"], "env": {"SASACODE_HOME": "home", "SASACODE_LANG": "en"}, "files": {"home/.keep": ""}}
+{"name": "endpoint-list-custom", "args": ["endpoint", "list"], "env": {"SASACODE_HOME": "home", "SASACODE_LANG": "en"}, "files": {"home/.keep": "", "home/config.json": "{\"providers\": {\"llama\": {\"baseUrl\": \"http://192.168.1.20:8080\", \"api\": \"openai-chat\", \"apiKeyEnv\": \"LLAMA_KEY\"}, \"plain\": {\"baseUrl\": \"http://x:1\"}}}"}}
+{"name": "endpoint-remove", "args": ["endpoint", "remove", "llama"], "env": {"SASACODE_HOME": "home", "SASACODE_LANG": "en"}, "files": {"home/.keep": "", "home/config.json": "{\"providers\": {\"llama\": {\"baseUrl\": \"http://192.168.1.20:8080\", \"api\": \"openai-chat\", \"apiKeyEnv\": \"LLAMA_KEY\"}, \"plain\": {\"baseUrl\": \"http://x:1\"}}}"}}
+{"name": "endpoint-remove-ja", "args": ["endpoint", "remove", "plain"], "env": {"SASACODE_HOME": "home", "SASACODE_LANG": "ja"}, "files": {"home/.keep": "", "home/config.json": "{\"providers\": {\"llama\": {\"baseUrl\": \"http://192.168.1.20:8080\", \"api\": \"openai-chat\", \"apiKeyEnv\": \"LLAMA_KEY\"}, \"plain\": {\"baseUrl\": \"http://x:1\"}}}"}}

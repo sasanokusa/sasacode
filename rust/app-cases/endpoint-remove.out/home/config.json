@@ -1,0 +1,7 @@
+{
+  "providers": {
+    "plain": {
+      "baseUrl": "http://x:1"
+    }
+  }
+}

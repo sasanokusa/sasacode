@@ -1,0 +1,7 @@
+bin.name = "sasacode"
+args = ["login", "status"]
+env.add.SASACODE_HOME = "home"
+env.add.SASACODE_LANG = "en"
+status.code = 1
+fs.sandbox = true
+fs.base = "login-status.in"

@@ -1,0 +1,1 @@
+sasacode: `sasacode plugin` was removed in 0.20: the plugins now ship with sasacode (turn the optional ones on with plugins.enabled in config.json); add tools with MCP servers or Skills

@@ -2,9 +2,11 @@
 
 English · [日本語](README.md) · [Documentation (Japanese)](https://sasanokusa.com/sasacode/docs/)
 
-A small coding agent for the terminal that you reshape with plugins (TypeScript / Bun).
+A small coding agent for the terminal whose bundled plugins you reshape in the config (Rust).
 
-The core holds only the agent loop, the providers, four built-in tools (read / write / edit / bash), the TUI, sessions and permission checks. Everything else is added through the public plugin API, and the built-in tools are registered through that same API. MCP servers and Agent Skills (`SKILL.md`) work as they are. To make small models usable, it also ships repair of broken tool calls and a stop for repeated sentences.
+The core holds only the agent loop, the providers, four built-in tools (read / write / edit / bash), the TUI, sessions and permission checks. Everything else is added by the bundled plugins through the plugin API, and the built-in tools are registered through that same API. Every plugin can be switched off in the config. To add features from outside, use MCP servers and Agent Skills (`SKILL.md`). To make small models usable, it also ships repair of broken tool calls and a stop for repeated sentences.
+
+0.20 is a rewrite from TypeScript / Bun to Rust. Config files, keys, sessions and the CLI flags work as before. Loading external plugins is gone ([extending sasacode](docs/plugins.md)).
 
 The requirements are in [docs/requirements.md](docs/requirements.md) and the milestone log in [docs/milestones.md](docs/milestones.md) (both in Japanese). The detailed guide with diagrams and full setting tables is at [sasanokusa.com/sasacode/docs](https://sasanokusa.com/sasacode/docs/) (Japanese).
 
@@ -33,19 +35,18 @@ irm https://sasanokusa.com/sasacode/install.ps1 | iex
 
 - Windows needs [Git for Windows](https://git-scm.com/download/win): the `bash` tool runs commands with its Git Bash (`winget install --id Git.Git -e`). If it is somewhere unusual, set `SASACODE_GIT_BASH_PATH` to its `bash.exe`. Keys go in `%USERPROFILE%\.sasacode\.env` (the OS keychain lookup is macOS / Linux only).
 - Also on npm: `npm install -g sasacode`. The npm package is a small launcher: its first run downloads the binary of the same version from GitHub Releases, checks its SHA256 and keeps it in `~/.sasacode/npm-bin`. Update with `npm install -g sasacode@latest`.
-- Single binaries for macOS (arm64 / x64), Linux (x64 / arm64, glibc / musl, and a baseline build for CPUs without AVX2) and Windows (x64 / arm64, and an x64 baseline build). Bun is not needed.
+- Single binaries for macOS (arm64 / x64), Linux (x64 / arm64, glibc / musl) and Windows (x64 / arm64). Every x64 build runs on CPUs without AVX2 (the same file is also published under the baseline names used up to 0.15).
 - The installer and the binary come from the latest [GitHub release](https://github.com/sasanokusa/sasacode/releases) and are checked against SHA256. The sasanokusa.com URLs redirect to the latest release's `install.sh` / `install.ps1`.
 - SHA256 only catches a broken download. That a file was built by this repository's GitHub Actions is proved by the signed provenance attached to releases from v0.9.8: `gh attestation verify sasacode-darwin-arm64.tar.gz --repo sasanokusa/sasacode` (on a file downloaded from the release; `install.sh` too).
 - `SASACODE_VERSION=v0.15.2` pins a version and `SASACODE_INSTALL_DIR` changes where it goes (both installers).
-- `sasacode update` updates in place (the same checks as the installer; `--check` only reports). A newer version is mentioned quietly once at startup (`"updateCheck": false` turns it off). From a source checkout, use `git pull` and `bun install`.
+- `sasacode update` updates in place (the same checks as the installer; `--check` only reports). A newer version is mentioned quietly once at startup (`"updateCheck": false` turns it off). Installed from source, run `git pull` and the `cargo install` below again.
 - RustXNG, which web search (`web_search`) uses, installs with `sasacode web-search install` (`/web-search install` in the TUI): the official release, checksum-checked, into `~/.sasacode/bin`, usable without a restart. Running it again updates to the newest release.
 
-From source ([Bun](https://bun.sh) 1.4 or later):
+From source ([Rust](https://www.rust-lang.org/) 1.88 or later):
 
 ```bash
 git clone https://github.com/sasanokusa/sasacode && cd sasacode
-bun install
-ln -s "$PWD/packages/cli/src/main.ts" ~/.local/bin/sasacode
+cargo install --locked --path crates/sasacode-cli   # installs ~/.cargo/bin/sasacode
 ```
 
 ## Usage
@@ -62,23 +63,31 @@ sasacode -r <id> -p "go on"          # continue a session by id (a conversation 
 
 | Option | Meaning |
 | --- | --- |
-| `-m <provider/model>` | Model (e.g. `anthropic/claude-opus-5`, `openai/gpt-5.5`, `ollama/gemma4:e4b`). A name the provider's model list does not have is an error that names close ones (not checked when the list cannot be had) |
+| `-p, --print <prompt>` | Run headless (piped input is appended to the prompt) |
+| `--stdin` | With `-p`: wait for piped input to end, however long it takes |
+| `--output <text\|jsonl>` | Headless output format (default `text`) |
+| `--control stdio` | With `-p --output jsonl`: a parent process answers approvals, sends messages on stdin and can abort the run ([Headless control](#headless-control)) |
+| `-m, --model <provider/model>` | Model (e.g. `anthropic/claude-opus-5`, `openai/gpt-5.5`, `ollama/gemma4:e4b`). A name the provider's model list does not have is an error that names close ones (not checked when the list cannot be had) |
 | `--permission <edits\|ask\|agent\|auto>` | Permission mode (default `edits`) |
 | `--thinking <off\|low\|medium\|high\|xhigh\|max>` | Reasoning effort |
 | `--max-turns <n>` | Limit on requests per run (default 200, 0 = no limit) |
-| `--control stdio` | With `-p --output jsonl`: a parent process answers approvals, sends messages on stdin and can abort the run ([Headless control](#headless-control)) |
+| `-c, --continue` / `-r, --resume <id>` / `--no-session` | Resume / resume by id / do not save |
 | `--append-system-prompt-file <path>` | Add the file's text (UTF-8) to the system prompt, after the config's `instructions`. A file that cannot be read is an error; an empty file adds nothing. Works in the TUI too |
-| `-c` / `-r <id>` / `--no-session` | Resume / resume by id / do not save |
 | `--trust-project` | Trust the project without asking (for headless runs; see [Project trust](#project-trust)) |
 | `--allow <rule>` | Allow calls matching a permission rule for this run, as answering "always" does. Repeatable. The form is that of `rules` in `approval_request` (e.g. `bash(npm test)`): a GUI that starts a process per message carries "always allow" over to the next message with it |
-| `--slash` | With `-p`: a prompt that starts with `/<command> args` runs that plugin command instead of going to the model (`/goal …` in a conversation continued with `-r <id>`, say). An unknown command is an error. What the command shows comes as `plugin_notify` and similar lines with `--control stdio`, on stderr otherwise |
-| `sasacode plugin search\|install\|update\|remove\|list\|publish` | Find, install (npm or git URL), update and publish plugins ([Sharing](#sharing-plugins)) |
-| `sasacode endpoint add\|remove\|list` | Add your own server (the format is detected) |
-| `sasacode list models\|commands\|skills [--json]` | What a run in this folder can use. `models` is the TUI's `/model` list (`[{"id":"provider/model","contextWindow"?,"maxContext"?,"server"?,"current"?}]`), `skills` is `[{"name","description","path"}]`, `commands` the TUI's commands and the skills' (`[{"name","description","argumentHint"?,"owner","headless"}]`). Other plugins' commands are not listed here, since loading a plugin runs its startup work: a `--control stdio` run reports them in its `commands` line |
-| `sasacode plugin list --json` | Every plugin, bundled ones included, as `[{"name","version"?,"source":"bundled"\|"global"\|"project","dir"?,"enabled","error"?}]`. `error` is why it would not load, as far as can be told without running its code (API version, missing files) |
-| `sasacode trust [--yes] [--json]` | Whether this folder is trusted, and what trust would enable (`{"cwd","trusted","needed","complete","items","plugins","mcpServers","endpoints","allow","mode"}`). `--yes` saves the trust, as answering "y" at the start-up question does. When `complete` is `false` (the plugins' code could not all be read) a saved answer does not hold, and every run needs `--trust-project` |
+| `--slash` | With `-p`: a prompt that starts with `/<command> args` runs that command (a bundled plugin's or a skill's) instead of going to the model (`/goal …` in a conversation continued with `-r <id>`, say). An unknown command is an error. What the command shows comes as `plugin_notify` and similar lines with `--control stdio`, on stderr otherwise |
+| `sasacode endpoint add <name> <url> [--key-env VAR] [--project]` | Add your own server (the format is detected; `--project` writes it to the project's config) |
+| `sasacode endpoint remove <name> [--project]` / `sasacode endpoint list` | Remove an added server / list them |
+| `sasacode list models\|commands\|skills [--json]` | What a run in this folder can use. `models` is the TUI's `/model` list (`[{"id":"provider/model","contextWindow"?,"maxContext"?,"server"?,"current"?}]`), `skills` is `[{"name","description","path"}]`, `commands` the TUI's commands and the skills' (`[{"name","description","argumentHint"?,"owner","headless"}]`). The bundled plugins' commands are not listed here, since loading a plugin runs its startup work: a `--control stdio` run reports them in its `commands` line |
+| `sasacode plugin list --json` | The bundled plugins, as `[{"name","source":"bundled","enabled"}]`. `enabled` follows the config (`plugins.enabled` and `plugins.disabled`). It is all that is left of `sasacode plugin` in 0.20, kept for the GUI |
+| `sasacode trust [--yes] [--json]` | Whether this folder is trusted, and what trust would enable (`{"cwd","trusted","needed","complete","items","plugins","mcpServers","endpoints","allow","mode"}`). `--yes` saves the trust, as answering "y" at the start-up question does. 0.20 does not load project plugins, so `plugins` is empty and `complete` is always `true` |
 | `sasacode login [status\|logout]` | Sign in with a ChatGPT plan (for `openai-codex/…` models) |
+| `sasacode update [--check] [tag]` | Download and install the newest release (checksum-verified; `--check` only reports) |
+| `sasacode web-search install [tag]` | Install RustXNG for the `web_search` tool (checksum-verified) |
+| `sasacode gui [folder]` | Open the desktop GUI on a folder (needs `sasacode-gui`; [docs/gui.md](docs/gui.md)) |
 | `-h, --help` / `-v, --version` | Print the usage / the version |
+
+`sasacode plugin` is gone in 0.20. Run, it says that the plugins now ship with sasacode (the optional ones are turned on with `plugins.enabled`) and that tools are added with MCP servers or Skills ([extending sasacode](docs/plugins.md)), and exits with an error.
 
 ### Headless control
 
@@ -119,7 +128,7 @@ stdin is read as JSON Lines.
 - `rules` in `approval_request` are the allow rules an `always` adds. Given to the next process one by one with `--allow`, "always allow" lasts across runs.
 - `allow` and `always` may carry `args`: the call runs with those arguments (same tool). They are checked as the model's are; when they do not fit, or a deny rule matches, the call is denied and the model told why. The model is told, with the result, that the arguments were edited and what ran. An `always` rule is then the edited call's.
 - `abort` with a `callId` stops that running tool call alone (a subagent, a long command): its result is an error, and the run goes on. An id that is not running draws a `control_error`. It stops tools that heed the abort signal (bash, subagents, MCP and others).
-- The plugins' `api.ui` reaches the parent. `confirm` / `select` / `input` / `selectMany` write a `ui_request` and wait for the `ui_response` with its `id`; `null` dismisses it, answered as a headless run answers (`false` or `undefined`). When the run is aborted (`abort` or Ctrl+C), each question still open gets a `ui_cancelled` and is dismissed; once stdin closes, every question is dismissed. Notices come as `plugin_notify`, shown text as `plugin_text`, status items as `plugin_status` (keyed `plugin:key`). To plugins the run is interactive (`api.ui.interactive` is `true`, `false` once stdin closes).
+- The bundled plugins' questions and notices (`api.ui`) reach the parent. A confirm, select, input or multiple-choice question writes a `ui_request` and waits for the `ui_response` with its `id`; `null` dismisses it, answered as a headless run answers (no for a confirm, no answer otherwise). When the run is aborted (`abort` or Ctrl+C), each question still open gets a `ui_cancelled` and is dismissed; once stdin closes, every question is dismissed. Notices come as `plugin_notify`, shown text as `plugin_text`, status items as `plugin_status` (keyed `plugin:key`). To plugins the run is interactive until stdin closes.
 - `commands` comes once the plugins have loaded, and again whenever it changes: the slash commands the run can use, each of which `--slash` can run.
 - `judged` comes when the `agent` mode's judge (the bundled `agent-judge` plugin) decides a call: `allow` runs it, `ask` (risky, or the judge failed) is followed by an `approval_request`.
 - `message` works like input typed while the TUI is busy: the model sees it at its next turn. Use it to add to or redirect the work in progress. `text` must be a non-empty string.
@@ -159,7 +168,7 @@ At start it asks the terminal how many cells it draws East Asian Ambiguous chara
 | `/language` | Switch the interface language (`ja` / `en`; without an argument, pick from a list). It switches at once and is saved as `lang` in `~/.sasacode/config.json`. Text already on screen stays as it was |
 | `/copy` | Copy the last answer (pbcopy / wl-copy / xclip, else through the terminal) |
 | `/permission` `/help` `/exit` (`/quit`) | Permission mode / help / quit |
-| `/usage` `/goal` `/bg` `/reconnect` `/compact` `/mcp` `/skills` `/skill:<name>` `/presets` `/browsr` `/web-search` `/undo` `/gui` | Commands of bundled plugins |
+| `/usage` `/goal` `/bg` `/reconnect` `/compact` `/mcp` `/skills` `/skill:<name>` `/presets` `/browsr` `/web-search` `/undo` `/gui` | Commands of bundled plugins (with the optional ones turned on, also `/jev` `/checks` `/workflow`) |
 
 The footer shows the model, the reasoning effort, the permission mode, context use (`ctx 77.6k/256k (30%)`), the session id and plugin statuses (MCP connections, TODO progress, …). When a run that took 30 seconds or more finishes, the terminal bell rings (`"tui": { "bell": false }` turns it off).
 
@@ -169,7 +178,7 @@ Models are named `<provider>/<model>`.
 
 | provider | API | Key |
 | --- | --- | --- |
-| `anthropic` | Anthropic Messages | `ANTHROPIC_API_KEY` (empty: the SDK uses the `ant auth login` profile) |
+| `anthropic` | Anthropic Messages | `ANTHROPIC_API_KEY` (empty: `ANTHROPIC_AUTH_TOKEN` from the environment as a bearer token, else the `ant auth login` profile) |
 | `openai` / `openai-chat` | OpenAI Responses / Chat Completions | `OPENAI_API_KEY` |
 | `openrouter` | Chat Completions | `OPENROUTER_API_KEY` |
 | `commandcode` / `commandcode-responses` / `commandcode-anthropic` | Command Code's Chat Completions / Responses / Messages | `CMD_API_KEY` |
@@ -187,17 +196,17 @@ sasacode endpoint list
 sasacode -m llama/<model>
 ```
 
-From `GET /v1/models` it tells OpenAI-style servers (called with Chat Completions) from Anthropic-style ones (called with Messages) and adjusts the URL to what each SDK expects. For llama.cpp, Ollama and LM Studio (0.3.6 or later) it also reads the real context length (from `/props`, `/api/show` and `/api/v0/models`; a server added with an earlier version, which did not tell LM Studio apart, is recognised when its models are listed). Models of an added server appear in `/model`. A config entry with only a URL, `"providers": { "llama": { "baseUrl": "http://…" } }`, is detected at start too (the result is cached in `~/.sasacode/endpoints.json`).
+From `GET /v1/models` it tells OpenAI-style servers (called with Chat Completions) from Anthropic-style ones (called with Messages) and adjusts the URL to what each format expects. For llama.cpp, Ollama and LM Studio (0.3.6 or later) it also reads the real context length (from `/props`, `/api/show` and `/api/v0/models`; a server added with an earlier version, which did not tell LM Studio apart, is recognised when its models are listed). Models of an added server appear in `/model`. A config entry with only a URL, `"providers": { "llama": { "baseUrl": "http://…" } }`, is detected at start too (the result is cached in `~/.sasacode/endpoints.json`).
 
 Endpoints in a project's `.sasacode/config.json` are not used until you trust the project ([Project trust](#project-trust)): even a server without a key receives the conversation and the code.
 
 **Model lists**: when the TUI starts, it calls the Models API (`GET /v1/models`) of every provider with a key (and Ollama) in the background, and shows the models and their context lengths in `/model`. The context length is also used for the footer and the compaction threshold (`modelOverrides` in the config wins). Ollama is read through `/api/show`: the Modelfile's `num_ctx` is used as the real length when set, otherwise the model's maximum is shown for reference (a model already in memory uses the real length from `/api/ps`). LM Studio works the same way: a loaded model uses the length it was loaded with (`loaded_context_length` in `/api/v0/models`), and for one not loaded yet the maximum is shown for reference (LM Studio loads a model with its own default length, not the maximum). An Ollama or LM Studio model whose length is still unknown is asked about again after its reply (and after the next ones while it stays unknown, three times in all), and switches to the length it was actually loaded with. Until then it plans with the default 128K (or with its maximum, when that is smaller). Choosing an Ollama model without `num_ctx` brings one warning that Ollama silently cuts input longer than its default. Headless runs (`-p`) on a local server (Ollama, LM Studio, llama.cpp) or another added OpenAI-style server also ask for the current model's length before they start, and print the same warning on stderr. OpenAI's Models API gives no context length, so the built-in model table fills it in. Services that offer several API formats on one key, such as Command Code, have each model routed to the provider of the matching format (Claude models go to `commandcode-anthropic/…`, for example).
 
-**API keys** are looked up in this order: shell environment → `~/.sasacode/.env` → OS keychain (macOS: `security add-generic-password -s sasacode -a <provider> -w`, Linux: `secret-tool store --label sasacode service sasacode account <provider>`). Blank values are ignored everywhere. The working directory's `.env` and `bunfig.toml` are never read (so a repository cannot redirect keys with `ANTHROPIC_BASE_URL` or run code at start). Keys in use are replaced with `[REDACTED]` before a session log is written. Keys set only in `~/.sasacode/.env` are not passed to the commands the agent runs (bash, background jobs). `~/.sasacode` (session logs, input history, saved long outputs in `tmp/`) is kept private to the user (0700).
+**API keys** are looked up in this order: shell environment → `~/.sasacode/.env` → OS keychain (macOS: `security add-generic-password -s sasacode -a <provider> -w`, Linux: `secret-tool store --label sasacode service sasacode account <provider>`). Blank values are ignored everywhere. The working directory's `.env` is never read (so a repository cannot redirect keys with `ANTHROPIC_BASE_URL`). Keys in use are replaced with `[REDACTED]` before a session log is written. Keys set only in `~/.sasacode/.env` are not passed to the commands the agent runs (bash, background jobs). `~/.sasacode` (session logs, input history, saved long outputs in `tmp/`) is kept private to the user (0700).
 
 ## Configuration
 
-`~/.sasacode/config.json` (global) and `<project>/.sasacode/config.json` (project) are merged, the project winning, except that the parts of a project config that need trust are ignored until the project is trusted (below). Permission rules and the `disabled` lists (tools, plugins) are combined from both, so a project can never remove a global deny / ask rule or re-enable something switched off globally. Values of the wrong type and unknown keys are dropped with a warning.
+`~/.sasacode/config.json` (global) and `<project>/.sasacode/config.json` (project) are merged, the project winning, except that the parts of a project config that need trust are ignored until the project is trusted (below). Permission rules, the `disabled` lists (tools, plugins) and `plugins.enabled` are combined from both, so a project can never remove a global deny / ask rule or re-enable something switched off globally. Values of the wrong type and unknown keys are dropped with a warning.
 
 ```json
 {
@@ -215,7 +224,7 @@ Endpoints in a project's `.sasacode/config.json` are not used until you trust th
   },
   "instructions": "Text appended to the system prompt",
   "mcpServers": { "github": { "command": "npx", "args": ["-y", "@modelcontextprotocol/server-github"] } },
-  "plugins": { "disabled": ["web-fetch"], "settings": { "permission-presets": { "presets": ["guard", "tests"] } } },
+  "plugins": { "enabled": ["git-context"], "disabled": ["web-fetch"], "settings": { "permission-presets": { "presets": ["guard", "tests"] } } },
   "tools": { "disabled": [] },
   "toolSearch": { "mode": "auto", "percent": 10, "count": 30 },
   "tui": { "altScreen": true, "bell": true },
@@ -238,14 +247,14 @@ Endpoints in a project's `.sasacode/config.json` are not used until you trust th
 
 | Mode | Behavior |
 | --- | --- |
-| `edits` (default) | read / write / edit inside the working directory run without asking; bash and anything outside ask. Writing under `.git` or `.sasacode` asks too (git's hooks and config, and sasacode's plugins and rules, can run code at the next git command or start) |
+| `edits` (default) | read / write / edit inside the working directory run without asking; bash and anything outside ask. Writing under `.git` or `.sasacode` asks too (git's hooks and config can run code at the next git command, and sasacode's config and rules take effect at the next start) |
 | `ask` | Every tool call asks, reads included |
 | `agent` | Reads inside the working directory run; everything else is judged by the current model: safe runs, anything else asks. `judgeModel` in the config (`"provider/model"`) picks another model to judge, e.g. a fast, cheap one to cut the wait and the cost. The judge reads the call's arguments, so text written to steer the model can steer the judgment too; this is a convenience, not protection against prompt injection (use deny / ask rules and the `guard` preset for that) |
 | `auto` | Everything runs (deny and ask rules still apply). Shown in red in the TUI footer |
 
 - A rule is `tool` or `tool(pattern)`. bash matches the command string with `*` wildcards; read / write / edit match paths with globs. Write `\*` for a literal `*`. A path rule only applies to the tool it names, so to protect `.env` list read, edit and write, and add `**/` to include subdirectories (`edit(.env)` only stops edits of the `.env` directly in the working directory). Command rules match the text of the command, so reordered options or a full path to the binary slip past them: they are a guard against mistakes, not a complete defense.
 - "Always allow" in the approval prompt adds a rule no wider than what was shown: the command as written (its `*` are not wildcards), or, for a file tool, just that path. The rule lasts until sasacode exits (across `/clear`).
-- The order is deny → softDeny → ask → allow → mode → the `permission` hook (plugins). `softDeny` refuses like deny, but a plugin such as `jev-guard` may lower it to "ask the user" (never to running without asking); it is meant for broad patterns that also catch legitimate calls. An allow rule only lets a command through when **every** part joined with `&&`, `;` or `|` is allowed. Commands with `$(…)`, backticks or `>` never pass by an allow rule.
+- The order is deny → softDeny → ask → allow → mode → the `permission` hook (bundled plugins). `softDeny` refuses like deny, but a plugin such as `jev-guard` may lower it to "ask the user" (never to running without asking); it is meant for broad patterns that also catch legitimate calls. An allow rule only lets a command through when **every** part joined with `&&`, `;` or `|` is allowed. Commands with `$(…)`, backticks or `>` never pass by an allow rule.
 - The bundled `permission-presets` enables `guard` by default: sudo, `rm -rf /`, disk operations, `| sh` and the like are always denied; `rm -rf ~…` under home and force pushes are softDeny; `ssh`, `scp`, `sftp` and `rsync` to another machine always ask, in `auto` mode too.
 - Headless runs have nobody to ask, so a call that needs approval is not run, and the model is told why. With `--control stdio` a parent process answers over stdin and stdout ([Headless control](#headless-control)).
 - Paths are judged by where symbolic links lead (the real path). A link inside the working directory that points outside counts as outside, even before its target exists, and links inside a project cannot swap what a rule applies to. A path whose target cannot be determined (a link loop, for example) always asks.
@@ -253,30 +262,29 @@ Endpoints in a project's `.sasacode/config.json` are not used until you trust th
 - After an interrupt (esc), tools that were approved but not yet started do not run.
 - Esc at an approval prompt refuses the call and interrupts the whole run. Esc while typing instructions for the model goes back to the choices. A command too long for the screen scrolls with shift+↑↓ (the choices stay on screen).
 
-### Judging calls with Jev (the `jev-guard` plugin)
+### Judging calls with Jev (`jev-guard`, bundled and off by default)
 
-A plugin that adds the judgment of [Jev](https://commandcode.ai/models/jev) (TypeSafe), a model made for decisions, after the rules and the permission mode. It was bundled up to 0.9.5; it is off by default and needs a key, so it is now a plugin of its own.
+A plugin that adds the judgment of [Jev](https://commandcode.ai/models/jev) (TypeSafe), a model made for decisions, after the rules and the permission mode. It is off by default and needs a key, so from 0.9.6 to 0.15 it was a plugin installed separately. Since 0.20 it is bundled again and not loaded by default. To have it always, put this in the config (settings written before keep working):
 
-```bash
-sasacode plugin install sasacode-plugin-jev-guard
+```json
+{ "plugins": { "settings": { "jev-guard": { "enabled": true } } } }
 ```
 
-Then `/jev on` turns it on for the session; to have it always, put `{ "plugins": { "settings": { "jev-guard": { "enabled": true } } } }` in the config (settings from 0.9.5 and earlier keep working, and a config that turns it on without the plugin installed gets a notice at startup saying how to install it). Backends, what it changes and the thresholds are in [plugins/jev-guard/README.md](plugins/jev-guard/README.md).
+With `"plugins": { "enabled": ["jev-guard"] }` instead, it is only loaded and the judging stays off; `/jev on` in the TUI turns it on for the session. Backends, what it changes and the thresholds are in [docs/plugins.md](docs/plugins.md#jev-guard).
 
 ### Project trust
 
 A cloned repository can, by itself, only make things stricter. The following can run code or change where data goes, so they are ignored until you trust the project:
 
-- plugins in `.sasacode/plugins`
-- in `.sasacode/config.json`: `providers` (endpoints), `modelOverrides`, `plugins` (disabling and settings), `mcpServers`, `allow` rules, a permission mode looser than the global one, a `maxTurns` (0 = unlimited) or `maxRetries` above the global one, and a `model` that points at a provider only the project defines
+- in `.sasacode/config.json`: `providers` (endpoints), `modelOverrides`, `plugins` (enabling, disabling and settings), `mcpServers`, `allow` rules, a permission mode looser than the global one, a `maxTurns` (0 = unlimited) or `maxRetries` above the global one, and a `model`, `models` or `judgeModel` that points at a provider only the project defines
 
-In such a project, sasacode lists them at start and asks whether to trust it (headless: `--trust-project`). The answer is saved in `~/.sasacode/trust.json` and asked again when those settings or the plugin code (files under `.sasacode/plugins`, not installed dependencies) change. Projects in the global `trustedProjects` are trusted without asking. The model choice, `thinking`, `instructions`, added deny / ask rules and disabled tools, a stricter permission mode and lower limits apply without trust.
+In such a project, sasacode lists them at start and asks whether to trust it (headless: `--trust-project`). The answer is saved in `~/.sasacode/trust.json` and asked again when those settings change. Projects in the global `trustedProjects` are trusted without asking. The model choice, `thinking`, `instructions`, added deny / ask rules and disabled tools, a stricter permission mode and lower limits apply without trust. Up to 0.15 the plugins in `.sasacode/plugins` were covered too; 0.20 does not load that folder, so they are no longer part of the decision (a project without project plugins that was trusted under 0.15 stays trusted).
 
 ## Plugins, MCP and Skills
 
 ### Bundled plugins (switch off with `plugins.disabled`)
 
-A plugin of the same name in `~/.sasacode/plugins` or the project is loaded instead of the bundled one.
+Each is left unloaded when its name is in `plugins.disabled`, and its settings go in `plugins.settings.<name>`. Plugins put in `~/.sasacode/plugins` or a project's `.sasacode/plugins` up to 0.15 are not loaded from 0.20 (nor is there a way to load one in place of the bundled plugin of the same name).
 
 | Name | What it does |
 | --- | --- |
@@ -307,6 +315,21 @@ A plugin of the same name in `~/.sasacode/plugins` or the project is loaded inst
 | `diagnostics` | API diagnostics (off by default). `/diagnostics on` records metadata only (whether requests succeeded, stop reasons, token counts), and `show` lists the last 100. No contents or secrets are recorded |
 | `skills` / `mcp` | Adapters for Agent Skills and MCP |
 
+These six are bundled too but not loaded by default (up to 0.15 they were installed separately). A name in `plugins.enabled` loads it; a name also in `plugins.disabled` stays unloaded. A `plugins.enabled` in a project's config is not used until the project is trusted.
+
+```json
+{ "plugins": { "enabled": ["git-context", "project-checks"] } }
+```
+
+| Name | What it does |
+| --- | --- |
+| `ask-user` | The `ask_user` tool: instead of guessing, the model asks you to decide, with choices (1 to 4 questions at a time). Headless runs ask nothing: the model is told to decide and state what it assumed ([more](docs/plugins.md#ask-user)) |
+| `git-context` | The `git_context` tool: the Git state, the change statistics and the patch a review needs, in one call. Read-only; needs Git ([more](docs/plugins.md#git-context)) |
+| `project-checks` | The `project_checks` and `project_check` tools and `/checks`: run tests, lint, type checks and so on by name and get PASS / FAIL, the exit code, the time and the log. Judged by the same permission rules as bash ([more](docs/plugins.md#project-checks)) |
+| `workflows` | `/workflow`: call up requests you make again and again, such as a review, looking into a failure or a check before release. The config can add, override and remove them ([more](docs/plugins.md#workflows)) |
+| `jev-guard` | Has Jev judge tool calls before they run. How to turn it on is in "Judging calls with Jev" above ([more](docs/plugins.md#jev-guard)) |
+| `free-search` | Connects the MCP server `uvx free-search-mcp` under the name `free-search` (web search that runs locally with no key: several search engines, fetching pages, reading documents). Its tools are `mcp__free-search__<tool>`. Needs [uv](https://docs.astral.sh/uv/) ([more](docs/plugins.md#free-search)) |
+
 ### MCP
 
 ```json
@@ -318,55 +341,26 @@ A plugin of the same name in `~/.sasacode/plugins` or the project is loaded inst
 }
 ```
 
-stdio and Streamable HTTP are supported. Tools are named `mcp__<server>__<tool>` and go through the same permission checks and hooks as any tool. Prompts become slash commands. Servers connect in the background, so startup does not wait. `${VAR}` is expanded from the environment. A server that drops is reconnected on its own (a few times, further apart; `/mcp reconnect [name]` by hand), and a tool that leaves the server's list leaves the model's.
+stdio and Streamable HTTP are supported. Tools are named `mcp__<server>__<tool>` and go through the same permission checks and hooks as any tool. Prompts become slash commands. Servers connect in the background, so startup does not wait. `${VAR}` is expanded from the environment. A server that drops is reconnected on its own (a few times, further apart; `/mcp reconnect [name]` by hand), and a tool that leaves the server's list leaves the model's. Servers in a project's `.sasacode/config.json` do not start until the project is trusted ([Project trust](#project-trust)). The per-server `cwd`, `disabled`, `alwaysLoad`, `timeout` and `toolNames` are in [docs/plugins.md](docs/plugins.md).
 
 ### Skills
 
-Standard Agent Skills (frontmatter `name` and `description`) are read from `~/.sasacode/skills/<name>/SKILL.md`, `.sasacode/skills/<name>/SKILL.md` and plugins' `skills` directories. Only the name, description and path go into the system prompt; the model reads the body with the read tool when it needs it. `/skill:<name> <request>` makes it use one explicitly.
+Standard Agent Skills (frontmatter `name` and `description`) are read from `~/.sasacode/skills/<name>/SKILL.md` and `.sasacode/skills/<name>/SKILL.md`. For the same name, the project's wins. Only the name, description and path go into the system prompt; the model reads the body with the read tool when it needs it. `/skill:<name> <request>` makes it use one explicitly, and `/skills` lists them. Plugins' `skills` directories, read up to 0.15, are gone in 0.20.
 
-The built-in skill `tool-authoring` (how to write sasacode tools and plugins) is included: `/skill:tool-authoring make a tool that returns the weather`.
+The built-in skill `tool-authoring` is included too (written out to `~/.sasacode/builtin-skills`).
 
 ### Deferred tool loading
 
-When the definitions of MCP and plugin tools add up to 10% of the context or 30 tools, not all are sent. The model gets a `tool_search` tool with the names and descriptions, and loads what it needs. The four built-in tools and tools with `alwaysLoad` are always sent.
+When the definitions of MCP and bundled plugin tools add up to 10% of the context or 30 tools, not all are sent. The model gets a `tool_search` tool with the names and descriptions, and loads what it needs. The four built-in tools and tools with `alwaysLoad` are always sent.
 
-### Writing a plugin
+### Extending with MCP and Skills
 
-Put it at `~/.sasacode/plugins/hello.ts` and it is loaded (no build step). For type completion in an editor, `npm install --save-dev @sasacode/plugin-api` ([npm](https://www.npmjs.com/package/@sasacode/plugin-api)).
+TypeScript plugins put in `~/.sasacode/plugins` up to 0.15, and finding, installing and publishing them with `sasacode plugin`, are gone in 0.20. The npm package `@sasacode/plugin-api` is not published from 0.20 either. The 1.x plugin API (last version 1.15.0) ended with 0.20 and lives on as the internal Rust API for the bundled plugins (`crates/sasacode-plugin-api`). To add your own tools or commands, use one of these:
 
-```ts
-import { text, type Plugin } from "@sasacode/plugin-api";
+- **Something that runs code**: make it an MCP server and put it in `mcpServers`. A stdio server can be written in any language. Its tools go to the model, and its prompts become slash commands.
+- **Steps or knowledge**: make it a Skill and put it in `~/.sasacode/skills/<name>/SKILL.md` or the project's `.sasacode/skills/<name>/SKILL.md`.
 
-export default ((api) => {
-  api.registerTool({
-    name: "hello",
-    description: "Greet someone by name.",
-    parameters: { type: "object", properties: { name: { type: "string" } }, required: ["name"] },
-    kind: "read",
-    execute: async ({ name }) => ({ content: [text(`Hello, ${name}!`)] }),
-  });
-}) satisfies Plugin;
-```
-
-What the public API (now 1.15.0; frozen at 1.4.0, so 1.x only adds; [compatibility promise](docs/plugins.md#互換性の約束140-で確定)) offers:
-
-- **Registration**: tools (with `permissionsAs` to apply another tool's permission rules), slash commands (with argument completion), providers (model lists, custom fetch), permission rules (including `softDeny`)
-- **Hooks**: `session_start/end`, `user_prompt`, `system_prompt`, `before_request`, `stream_delta`, `assistant_message`, `tool_call_raw`, `tool_call`, `permission`, `tool_result`, `turn_end`, `agent_end`, `context_limit`
-- **UI**: notices, confirmations, single and multiple choice, free-text input, a long-text viewer, status line, custom rendering of tool results
-- **Session**: saving state, replacing the history, injecting messages
-- **Agent**: subagents, single model calls
-
-More in [docs/plugins.md](docs/plugins.md) (Japanese).
-
-### Sharing plugins
-
-```bash
-sasacode plugin search weather                      # the curated list (sasanokusa.com) and npm; no words lists all
-sasacode plugin install sasacode-plugin-weather     # shows what it is and asks first
-sasacode plugin publish weather.ts --license MIT    # publishes a single-file plugin to npm
-```
-
-A published plugin shows up in everyone's `search` through the npm keyword `sasacode-plugin`. The list on sasanokusa.com (`site/plugins.json`) is a few KB of JSON for recommendations only; plugins themselves come straight from npm or GitHub. To get one listed, send a pull request that adds it to `site/plugins.json`. Installing and publishing use the Bun built into sasacode, so neither Bun nor npm has to be installed (except npm for publishing). Without a terminal (scripts), `plugin install` needs `--yes`.
+The config keys, the `SKILL.md` format, the bundled plugins' settings and how a bundled plugin is written (for contributors) are in [docs/plugins.md](docs/plugins.md) (Japanese).
 
 ## Sessions
 
@@ -375,27 +369,33 @@ Saved to `~/.sasacode/sessions/<working directory>-<hash>/<date>_<id>.jsonl`, on
 ## Development
 
 ```bash
-bun test            # all tests, including LLM-free end-to-end tests (replayed responses, a test MCP server)
-bun run typecheck
-bun run improve     # the improvement loop's signals (checks, core lines, repository size)
-bun run build       # dist/sasacode for this machine; --all for every target
+cargo test --workspace --locked   # LLM-free tests (replayed responses, a fake model server, a test MCP server)
+cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo xtask checks                # repository checks (core lines, README matching the CLI, …)
+cargo xtask improve               # the improvement loop's signals (checks, core lines, repository size)
+cargo xtask build                 # the release binaries
 ```
 
-**Releasing**: pushing a `v*` tag makes GitHub Actions build the binaries and create the GitHub release: it checks that the tag matches `packages/cli/package.json` and runs the typecheck, builds the macOS binaries on macOS runners, starts all seven binaries where they run (x64 macOS under Rosetta, musl in an Alpine container), and attaches signed provenance. Installs from sasanokusa.com pick up the new version by themselves. Run `scripts/publish-site.sh <host>` (or set `SASACODE_SITE_HOST`) when the site changes and after a release: the version text on the pages is filled in at that time from `packages/cli/package.json`. Once the release is out, `cd npm/sasacode && npm publish` brings the npm `sasacode` to the same version (keep `npm/sasacode/package.json` at the version of `packages/cli`; the release workflow stops if they differ).
+Development needs only the Rust toolchain (cargo); Bun is not used from 0.20.
 
-| Package | Role |
+**Releasing**: pushing a `v*` tag makes GitHub Actions build the binaries and create the GitHub release. The version is the root `Cargo.toml`'s (`version` under `[workspace.package]`), and `sasacode --version` prints it. The workflow checks that the tag matches it, builds the macOS binaries on macOS runners, starts all the binaries where they run (x64 macOS under Rosetta, musl in an Alpine container), and attaches signed provenance. The release file names are the same as in 0.15. Installs from sasanokusa.com pick up the new version by themselves. Run `scripts/publish-site.sh <host>` (or set `SASACODE_SITE_HOST`) when the site changes and after a release: the version text on the pages is filled in at that time. Once the release is out, `cd npm/sasacode && npm publish` brings the npm `sasacode` to the same version (keep `npm/sasacode/package.json` at the root `Cargo.toml`'s version; the release workflow stops if they differ).
+
+| Crate | Role |
 | --- | --- |
-| `@sasacode/ai` | Normalized message types, Anthropic / OpenAI Chat / OpenAI Responses adapters, cost computation |
-| `@sasacode/agent` | Loop, hooks, tool execution (repair, validation, permissions), deferred tool loading, sessions, plugin host |
-| `@sasacode/plugin-api` | The only public API plugins depend on (published on npm) |
-| `@sasacode/tools` | read / write / edit / bash (registered through the plugin API) |
-| `@sasacode/tui` | The interactive UI, built on pi-tui |
-| `@sasacode/cli` | Arguments, configuration, keys, model lists, finding, loading and trusting plugins, headless runs |
-| `@sasacode/mcp` / `@sasacode/skills` / `@sasacode/bundled` | MCP and Skills adapters, bundled plugins |
-| `@sasacode/host` | What the TUI, the CLI and the bundled plugins share: the interface language (the translation tables), the built-in providers and known models (prices, context windows), and the session index |
+| `sasacode-ai` | Provider-neutral message types, Anthropic / OpenAI Chat / OpenAI Responses adapters, cost computation |
+| `sasacode-agent` | Loop, hooks, tool execution (repair, validation, permissions), deferred tool loading, sessions, plugin host |
+| `sasacode-plugin-api` | The API the bundled plugins use (tools, commands, providers, hooks, UI, session, agent). Internal from 0.20, not published |
+| `sasacode-tools` | read / write / edit / bash (registered through the plugin API) |
+| `sasacode-tui` | The full-screen interactive UI, built on ratatui and crossterm |
+| `sasacode-cli` | The `sasacode` command: arguments, configuration, keys, model lists, the trust check, loading the bundled plugins, headless runs |
+| `sasacode-mcp` / `sasacode-skills` / `sasacode-bundled` | The MCP client (stdio and Streamable HTTP), Agent Skills, bundled plugins |
+| `sasacode-host` | What the TUI, the CLI and the bundled plugins share: the interface language (ja / en translations), the built-in providers and known models (prices, context windows), and the session index |
+| `sasacode-protocol` / `sasacode-gui` | Types of the JSONL events, the `--control stdio` messages and session logs (read by the GUI), the desktop GUI |
+| `sasacode-testing` | For tests: a provider that replays responses, and a fake model server |
+| `xtask` | Repository tasks: building, checks, the improvement loop's measurements, packing the release files |
 
 The desktop GUI (Rust, in progress) lives in `crates/`. `cargo run -p sasacode-gui -- <folder>` opens it; each prompt runs `sasacode -p … --output jsonl --control stdio` in that folder (`SASACODE_BIN` or `--sasacode` names the executable). Once it is installed with `cargo install --locked --path crates/sasacode-gui`, `sasacode gui [folder]` opens it too, and so does `/gui` in the TUI (with the conversation under way loaded). `cargo test` also checks that the CLI's output and session logs still read. Design and stages: [docs/gui.md](docs/gui.md); how it compares with other agents' windows: [docs/gui-parity.md](docs/gui-parity.md).
 
-The core (ai, agent, plugin-api, tools) has a ceiling of 5,000 lines of at most 120 columns (a line that is only a string may run longer): `bun test` fails past either, and `bun run improve` prints what it is now.
+The core (`sasacode-ai`, `sasacode-agent`, `sasacode-plugin-api`, `sasacode-tools`) has a ceiling of 12,500 lines of at most 120 columns (rustfmt's `max_width = 120`; a line that is mostly one string literal may run longer): `cargo xtask checks` fails past either, and `cargo xtask improve` prints what it is now.
 
-Repository docs: [requirements](docs/requirements.md), [milestone checks](docs/milestones.md), [runtime dependencies](docs/dependencies.md), [plugin API](docs/plugins.md), [API compatibility](docs/api-compatibility.md), [benchmarks](docs/benchmarks.md) and [how the improvement loop runs](docs/improvement.md). Improvements are kept small and stacked one round at a time: the procedure, the lenses and the record of what was done are in [docs/improvement.md](docs/improvement.md).
+Repository docs: [requirements](docs/requirements.md), [milestone checks](docs/milestones.md), [runtime dependencies](docs/dependencies.md), [extending sasacode (MCP, Skills, bundled plugins)](docs/plugins.md), [API compatibility](docs/api-compatibility.md), [benchmarks](docs/benchmarks.md) and [how the improvement loop runs](docs/improvement.md). Improvements are kept small and stacked one round at a time: the procedure, the lenses and the record of what was done are in [docs/improvement.md](docs/improvement.md).

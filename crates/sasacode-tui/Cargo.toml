@@ -1,0 +1,40 @@
+[package]
+name = "sasacode-tui"
+description = "The full-screen terminal UI"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+sasacode-ai.workspace = true
+sasacode-plugin-api.workspace = true
+sasacode-agent.workspace = true
+sasacode-host.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+futures.workspace = true
+async-trait.workspace = true
+anyhow.workspace = true
+ratatui.workspace = true
+crossterm.workspace = true
+unicode-segmentation.workspace = true
+pulldown-cmark.workspace = true
+regex.workspace = true
+base64.workspace = true
+url.workspace = true
+indexmap.workspace = true
+dirs.workspace = true
+chrono.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+nix = { version = "0.31", default-features = false, features = ["poll"] }
+
+[dev-dependencies]
+sasacode-tools.workspace = true
+sasacode-testing.workspace = true
+sasacode-bundled.workspace = true
+serde.workspace = true
+tokio-util.workspace = true
+tempfile.workspace = true

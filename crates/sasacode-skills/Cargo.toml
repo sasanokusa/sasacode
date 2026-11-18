@@ -1,0 +1,20 @@
+[package]
+name = "sasacode-skills"
+description = "Agent Skills (SKILL.md) discovery and the skill commands"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+sasacode-plugin-api.workspace = true
+tokio.workspace = true
+anyhow.workspace = true
+indexmap.workspace = true
+
+[dev-dependencies]
+async-trait.workspace = true
+futures.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true

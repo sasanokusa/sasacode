@@ -1,13 +1,13 @@
-{"type":"session","id":"1d5919fb","path":"/var/folders/4n/9pdgw8nx7t18h088dwcj6n000000gn/T/sasacode-e2e-thL3ey/home/sessions/vate-var-folders-4n-9pdgw8nx7t18h088dwcj6n000000gn-T-sasacode-e2e-thL3ey-project-004eca09/2026-11-16T01-19-31-428Z_1d5919fb.jsonl"}
-{"type":"message_end","message":{"role":"user","content":[{"type":"text","text":"ファイルを消して"}],"timestamp":1794791971457}}
+{"type":"session","id":"17cae3ae","path":"/tmp/sasacode-e2e-jq3oaP/home/sessions/private-tmp-sasacode-e2e-jq3oaP-project-dd71b685/2026-11-17T20-30-45-326Z_17cae3ae.jsonl"}
+{"type":"message_end","message":{"role":"user","content":[{"type":"text","text":"ファイルを消して"}],"timestamp":1794947445346}}
 {"type":"agent_start"}
 {"type":"turn_start","turn":1}
 {"type":"message_start"}
-{"type":"message_update","event":{"type":"toolcall_start","index":0,"id":"call_0_1dsw1r","name":"bash"}}
+{"type":"message_update","event":{"type":"toolcall_start","index":0,"id":"call_0_000001","name":"bash"}}
 {"type":"message_update","event":{"type":"toolcall_delta","index":0,"delta":"{\"command\":\"rm -f made.txt\"}"}}
-{"type":"message_end","message":{"role":"assistant","content":[{"type":"tool_call","id":"call_0_1dsw1r","name":"bash","input":{"command":"rm -f made.txt"}}],"api":"openai-chat","provider":"fake","model":"m","usage":{"input":100,"output":20,"cacheRead":0,"cacheWrite":0,"cost":0},"stopReason":"tool_use","timestamp":1794791971461,"replayScope":"0f8f5cb8f36d01c05a7b139dec6ae0a6f9c414db784d0f9f2fc2f50a373b8f15"}}
-{"type":"approval_request","id":"approval-1","callId":"call_0_1dsw1r","tool":"bash","args":{"command":"rm -f made.txt"},"reason":"mode edits","cwd":"/private/var/folders/4n/9pdgw8nx7t18h088dwcj6n000000gn/T/sasacode-e2e-thL3ey/project"}
+{"type":"message_end","message":{"role":"assistant","content":[{"type":"tool_call","id":"call_0_000001","name":"bash","input":{"command":"rm -f made.txt"}}],"api":"openai-chat","provider":"fake","model":"m","usage":{"input":100,"output":20,"cacheRead":0,"cacheWrite":0,"cost":0},"stopReason":"tool_use","timestamp":1794947445348,"replayScope":"6ecc7fb7b34eb3af47d33dc674e3d6e951403c4f1fe5967385c1cec1a114f2f1"}}
+{"type":"approval_request","id":"approval-1","callId":"call_0_000001","tool":"bash","args":{"command":"rm -f made.txt"},"reason":"mode edits","cwd":"/private/tmp/sasacode-e2e-jq3oaP/project"}
 {"type":"approval_cancelled","id":"approval-1"}
-{"type":"message_end","message":{"role":"tool","toolCallId":"call_0_1dsw1r","toolName":"bash","content":[{"type":"text","text":"Interrupted by the user before this tool ran."}],"isError":true,"timestamp":1794791971469}}
+{"type":"message_end","message":{"role":"tool","toolCallId":"call_0_000001","toolName":"bash","content":[{"type":"text","text":"Interrupted by the user before this tool ran."}],"isError":true,"timestamp":1794947445363}}
 {"type":"turn_end","turn":1}
 {"type":"agent_end","cause":"aborted"}

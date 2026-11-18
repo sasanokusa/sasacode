@@ -1,0 +1,32 @@
+[package]
+name = "sasacode-ai"
+description = "Provider-neutral messages and the model API adapters (Anthropic, OpenAI Chat, OpenAI Responses)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+futures.workspace = true
+async-trait.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+reqwest.workspace = true
+rustls.workspace = true
+bytes.workspace = true
+url.workspace = true
+sha2.workspace = true
+regex.workspace = true
+chrono.workspace = true
+# Only to tell a broken connection (hyper::Error) from other body errors; reqwest already builds it.
+hyper = "1"
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
+axum.workspace = true
+http = "1"

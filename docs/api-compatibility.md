@@ -2,6 +2,8 @@
 
 確認日: 2026-10-01。登録済みのAPI実装はAnthropic Messages、OpenAI Chat Completions、OpenAI Responsesと、同梱プラグインのCodex Responses。プロバイダー名やモデル一覧は設定と`/models`により増えるため、この表は全モデルの実通信保証ではない。HTTP/SSEモックで契約を検証し、実APIを検証した範囲は末尾に分けている。
 
+0.20のRust版は各社のSDKを使わず、HTTPとSSEを自前で扱う（`rust/DECISIONS.md`のADR-010。SDKが暗黙にしていた再試行・タイムアウト・ヘッダーは`rust/research/llm-sdks.md`）。この表の契約は2026-10-01にTypeScript版で確かめたもので、モックでの検証はRust版のテスト（`crates/sasacode-ai/tests`）に移した（ADR-004）。
+
 ## 対応経路と保存する状態
 
 | 経路 | 思考・履歴・ストリーム | キャッシュ/互換性と検証範囲 |
@@ -13,12 +15,12 @@
 | Command Code Chat / `commandcode` | OpenAI互換Chat。対応modelのDeepSeek/MiMo履歴を保持 | `/provider/v1`。実効機能はrouter/モデルに依存。旧Claude403はこの経路の問題を公式Anthropicの問題と同一視しない。新規実通信は未検証 |
 | Command Code Responses / `commandcode-responses` | 上記Responses契約と同じ | `/provider/v1`。phaseや暗号化推論を下流が通すかは未検証。unsupported明示エラーだけ狭くfallback |
 | Command Code Messages / `commandcode-anthropic` | Anthropic互換signed replayとbinding-error fallback | `/provider`。公式限定disabled/eager/betaを送らない。公式機能の下流保証は未検証 |
-| Codex / `openai-codex`同梱plugin | Responses実装へ委譲。plan認証/session header、未対応body field除去、session prompt_cache_keyをpluginで適用 | `chatgpt.com/backend-api/codex`。公開fetch hookと合成して調整後の実wireを診断。auth/model list/body/retryをモック検証。新規ログインやplan実通信なし |
+| Codex / `openai-codex`同梱plugin | Responses実装へ委譲。plan認証/session header、未対応body field除去、session prompt_cache_keyをpluginで適用 | `chatgpt.com/backend-api/codex`。`before_request`の`fetch`と合成して調整後の実wireを診断。auth/model list/body/retryをモック検証。新規ログインやplan実通信なし |
 | Ollama / `ollama` | Chatの`reasoning`と`reasoning_content`を読み、同一送信先で実際に観測したfieldを再送。`max_tokens`使用（プロバイダー名ではなく`ollama: true`で判定するので、`endpoint add`で別名を付けたOllamaも同じ） | `/v1`。対応effort/modelは`/models`等のメタデータ依存。公式のResponsesは0.13.3以降のstateless互換。通常経路はChat。コンテキスト長は`/api/show`の`num_ctx`か`/api/ps`の実効値。未ロードで分からないモデルは応答の後に取り直す（分かるまで3回まで）。モック検証。出力上限と`/api/ps`の`context_length`だけ実機で確認（2026-11-05、0.40.14、`gemma4:e4b`）：`max_completion_tokens: 16`は無視されて1214トークン・`stop`、`max_tokens: 16`は16トークン・`length` |
 | vLLM / llama.cpp / LM Studio / その他custom OpenAI互換 | Chatの両reasoning fieldに対応。同じendpointで観測したplain fieldだけを保存・再送。Responsesを選んだ場合は上記contract。llama.cppとLM Studioは`max_tokens`、vLLMとその他は`max_completion_tokens`。LM Studioは、検出（`/api/v0/models`が答える）で`lmstudio: true`が付いたプロバイダーか、`modelOverrides`で`server: "lmstudio"`を指定したモデルが対象。llama.cppで`off`のときは、`reasoning_effort: "none"`に加えて`chat_template_kwargs: {"enable_thinking": false}`を送る（b10121より前のllama-serverは`reasoning_effort`を読まず、Qwen3などのテンプレートは`enable_thinking`を読む。`--jinja`のテンプレートが対象。extraBodyの`chat_template_kwargs`があればそちらが優先） | server/template/versionの依存あり。vLLMは旧reasoning_contentからreasoningへ変更。全バージョンへの共通パラメーターを追加しない。llama.cppのコンテキスト超過は400、`type: "exceed_context_size_error"`で、文言は「request (N tokens) exceeds the available context size (M tokens), try increasing it」（古い版は「the request exceeds the available context size. try increasing the context size or enable context shift」）。型と`context size`の文言のどちらでも`ContextOverflowError`にし、圧縮に回す。コンテキスト長はllama.cppが`/props`、LM Studioが`/api/v0/models`の`loaded_context_length`。LM Studioの`max_context_length`は参考表示だけで、応答の後に取り直す。フラグのない追加済みOpenAI形式サーバー（LM Studioを見分ける前の設定）も、一覧取得のときに`/api/v0/models`で見分ける（一覧を取れなかったときや、使っているモデルが一覧になかったときは、応答の後に一度だけ取り直して見分ける。それでも見分けられないサーバーは、ほかのモデルに切り替えても取り直さない。使っているモデルを一覧に出したのに見分けられないサーバーも、取り直さない）。見分ける前に送った要求（TUIで起動時の一覧が届く前の最初の要求など）は`max_completion_tokens`になる。モック検証。llama-serverでは、超過エラーの形（2026-11-05、b9860、100Mモデル）と、`off`で思考が止まること（2026-11-06、b9860、Gemma4 e2b、サーバー側の既定を`enable_thinking: true`にして、Qwen3のように既定で思考するモデルとして扱った）を実機で確認した。`reasoning_effort: "none"`だけでは思考が続き（v0.13.11、311〜336字）、`chat_template_kwargs`も送る今の版では0字になる。LM Studioは未起動 |
 | DeepSeek native互換 / GOATの`deepseek/deepseek-v4.1-flash` | toolを送るとき全assistant reasoning_contentを保持、plain assistantや次user turnを跨いでも残す。native `deepseek-flash` / `deepseek-v4-flash` / `deepseek-v4.1-flash`も対象 | toolsなしはサーバーが無視するreasoningを省く。native hit/miss usage aliasも読む。GOATは以前の修正版実行でmulti-turn再送を確認。native直結は未検証 |
 | MiMo互換 / GOATの`xiaomi/mimo-v2.6-flash` | tool-call assistantのreasoning_contentを全て保持。次user turnやtoolsを外した後にも履歴を残す | native docsには「推奨」と「必須」の記述差があるためtool-call continuityを保守的に保持。GOATは以前の修正版実行で再送を確認。native直結は未検証 |
-| Gemini / Azure / Bedrock固有API | 固有transportは未登録。互換routerまたは利用者のProvider plugin経由 | native認証・専用schemaの動作保証なし |
+| Gemini / Azure / Bedrock固有API | 固有transportは未登録。互換routerまたは設定の`providers`経由 | native認証・専用schemaの動作保証なし |
 
 ## 再送の範囲
 
@@ -26,11 +28,11 @@
 
 Anthropicのprefix bindingはsystem/tools/historyや組織変更にも依存する。安定したprefixを保ち、`drop_block`が成功しても推論再利用を保証しない。診断で`prefix_binding_mismatch` / `organization_binding_mismatch`の破棄件数を確認できる。Claude Mythos 5.1はprefix checkを持つモデルとして扱わない。Sonnet 5.5のoffはbetween_tools、それ以外の対応モデルはdisabledまたはlow effortにする。APIがその制御を拒否した場合だけ交渉する。
 
-base systemは短いidentityと環境事実だけに保つ。append/AGENTS.mdの指示は環境より先、変動するcwdは末尾。任意のsystem_prompt pluginは自分で順序を管理する。prefixが安定しても、キャッシュの最小長・routing・期限によりhitするとは限らない。明示breakpoint/retention/provider固定の新しい設定はこの修正では導入しない。
+base systemは短いidentityと環境事実だけに保つ。append/AGENTS.mdの指示は環境より先、変動するcwdは末尾。`system_prompt`フックを使う同梱プラグインは自分で順序を管理する。prefixが安定しても、キャッシュの最小長・routing・期限によりhitするとは限らない。明示breakpoint/retention/provider固定の新しい設定はこの修正では導入しない。
 
 ## 任意のJev guard経路
 
-`plugins/jev-guard`はstatelessの判断で、signed思考を再送しない。
+同梱（既定で無効）の`jev-guard`はstatelessの判断で、signed思考を再送しない。
 
 | サービス | 送信先 / モデル | 特有の契約 |
 | --- | --- | --- |
@@ -40,7 +42,7 @@ base systemは短いidentityと環境事実だけに保つ。append/AGENTS.mdの
 | Vercel AI Gateway | `/v4/ai/evaluation-model` / `typesafe-ai/jev` | modelはheader、noulはboolean/probability、confidenceはproviderMetadata。欠落時は0として自動許可しない |
 | chat stand-in | `api.agent.complete` / 選択model | 通常chatの自己申告confidenceはcalibratedではない |
 
-429/529/5xxは一回まで、Retry-AfterとcallerのAbortSignalに従う。待ちが30秒を超える場合は早期再送せずcallerの失敗ポリシーへ返す。validation/authの4xxは再試行しない。全経路をモック検証、Jev課金APIは実行していない。
+429/529/5xxは一回まで、Retry-Afterと呼び出し元の中断に従う。待ちが30秒を超える場合は早期再送せずcallerの失敗ポリシーへ返す。validation/authの4xxは再試行しない。全経路をモック検証、Jev課金APIは実行していない。
 
 ## 検証の限界とベンチマーク
 

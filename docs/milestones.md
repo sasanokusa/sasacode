@@ -2,6 +2,8 @@
 
 M0〜M4のすべてで完了条件を満たした。各段階の検証方法と結果を以下にまとめる。実モデルでの検証には主にCommand Codeの`deepseek/deepseek-v4-flash`と、ローカルの`ollama/gemma4:e4b`を使った。
 
+M0〜M4とv0.15.2までの記録は、TypeScript（Bun）版のもの。0.20でRustに書き換えた（移植の対応表は`rust/MAP.md`、決めたことは`rust/DECISIONS.md`）。ファイルのパスやコマンドは、当時のものを残している。
+
 ## M0 骨格（完了）
 
 完了条件「`sasacode -p`で小さなバグ修正が完了できる」。題材は、`mean()`のoff-by-oneで`bun test`が落ちる小さなプロジェクト。
@@ -36,6 +38,8 @@ M0〜M4のすべてで完了条件を満たした。各段階の検証方法と�
 - プラグインのパッケージ（5.1）：`plugin.json`または`package.json`の`sasacode`フィールドに書く。npmとgit URLからのインストール、ビルド不要のTS読み込み、`apiVersion`によるsemver互換チェック、`@sasacode/plugin-api`のimport解決に対応。
 - FR-S02（分岐）は`/fork`、FR-S03（プラグインの状態の保存）は`session.append` / `entries`。
 
+0.20から、外部のプラグインのパッケージ、npmとgit URLからのインストール、`@sasacode/plugin-api`はなくなった。組み込みのツールとコマンド、同梱プラグインは、Rustの`sasacode-plugin-api`で同じように登録している（ADR-002）。
+
 ## M3 エコシステム（完了）
 
 完了条件「既存のMCPサーバーとSKILL.mdがそのまま動く」。
@@ -56,7 +60,7 @@ Anthropicネイティブのtool search（Should）は未対応で、全プロバ
 
 - `bun run build`で`dist/sasacode`（約65MB）ができる。`node_modules`のない場所で次の点を確認した：ヘッドレス実行、`~/.sasacode/plugins`のTSプラグイン（`@sasacode/plugin-api`のimportを含む）、MCP stdioサーバー、パイプ入力、TUIの起動。
 - `.github/workflows/release.yml`：`v*`タグをpushすると、10種類のバイナリ（darwin-arm64 / darwin-x64 / linux-x64 / linux-x64-baseline / linux-arm64 / linux-x64-musl / linux-arm64-musl / windows-x64 / windows-x64-baseline / windows-arm64）をビルドしてGitHub Releaseに添付する。M4の時点では、Windowsを除く7種類だった（Windows版はv0.10.1から）。どのバイナリも、そのOSとCPUのランナー（darwin-x64はRosetta、muslはAlpine）で起動を確かめてから公開する。
-- npm：M4の時点では梱包の確認までだった。v0.9.7（2026-09-29）から、マシンに合うバイナリを取ってくるランチャー`sasacode`をnpmで公開している（`npm install -g sasacode`、`npx sasacode`）。`@sasacode/plugin-api`も公開している。
+- npm：M4の時点では梱包の確認までだった。v0.9.7（2026-09-29）から、マシンに合うバイナリを取ってくるランチャー`sasacode`をnpmで公開している（`npm install -g sasacode`、`npx sasacode`）。`@sasacode/plugin-api`も0.15まで公開していた（0.20からは公開しない）。
 - 同梱プラグイン：`agents-md`、`compaction`、`subagent`、`todo`、`web-fetch`、`permission-presets`。どれもテストがあり、TUIで実モデルを使って確認した（TODOの表示とステータス行、サブエージェント、`/compact`の後も内容を覚えていること）。
 
 ### M4 以降の追加
@@ -99,15 +103,15 @@ Anthropicネイティブのtool search（Should）は未対応で、全プロバ
 - 全画面のTUI：会話は上でスクロールし、入力欄とフッターは下に固定する。終了すると端末は元に戻り、使用量と再開コマンドの要約だけが残る。検索、自分の入力への移動、ドラッグでのコピー（OSC 52に対応しない端末でも、pbcopyなどで確実にコピーする）、30秒以上の実行が終わったときのベル。余白は端末のブロック表示に合わせて左右2桁・上下1行。改行などカーソルを動かす文字は、描画の前に取り除く（複数行のコマンドで画面が崩れないように）。
 - ChatGPTプラン：`sasacode login`でChatGPTアカウントにログインし、`openai-codex/…`のモデルをAPIキーなしで使う（Codex CLIと同じ公開クライアントとPKCE）。
 - 推論の深さ：`/effort`で切り替える。OpenAI形式のサーバーには`reasoning_effort`を送り、`off`は`none`として送る。受け付けない値は近い値に替えて送り直し、その結果を覚える。vLLM（受け付けない値をストリームの最初のイベントで返す）、Command Code、Ollama、ChatGPTプランで確認した。
-- Jevによる実行前判断：同梱の`jev-guard`（既定は無効。0.9.6で配布プラグイン`sasacode-plugin-jev-guard`に分けた）。実際のセッションログ5,135件で質問と閾値を調整した（[benchmarks.md](benchmarks.md)）。`guard`プリセットは、ほかのマシンへのssh / scp / sftp / rsyncを`auto`モードでも確認に回す。
-- 利用者のプラグインから同梱へ：`usage`（使用量、ChatGPTプランの残り、Contributions Graph風の日別グラフ）、`goal`（セッションのゴール）、`background-sessions`（長いコマンドのバックグラウンド実行と終了通知）、`auto-reconnect`（接続が切れたら復旧を待って再開）。後の3つは、sasacode自身の上で他のモデルに書かせたプラグインを見直して取り込んだ。同じ名前のユーザー・プロジェクトのプラグインがあれば、同梱版の代わりにそちらを読み込む。
+- Jevによる実行前判断：同梱の`jev-guard`（既定は無効。0.9.6で配布プラグイン`sasacode-plugin-jev-guard`に分け、0.20でまた同梱に戻した）。実際のセッションログ5,135件で質問と閾値を調整した（[benchmarks.md](benchmarks.md)）。`guard`プリセットは、ほかのマシンへのssh / scp / sftp / rsyncを`auto`モードでも確認に回す。
+- 利用者のプラグインから同梱へ：`usage`（使用量、ChatGPTプランの残り、Contributions Graph風の日別グラフ）、`goal`（セッションのゴール）、`background-sessions`（長いコマンドのバックグラウンド実行と終了通知）、`auto-reconnect`（接続が切れたら復旧を待って再開）。後の3つは、sasacode自身の上で他のモデルに書かせたプラグインを見直して取り込んだ。0.15までは、同じ名前のユーザー・プロジェクトのプラグインがあれば、同梱版の代わりにそちらを読み込んだ。
 - 圧縮：`/compact`の実行中はフッターに表示し、要約が空で返ってきたら履歴を置き換えない。
 
 ### v0.9.4〜v0.15.2（プラグイン API 1.8.0〜1.15.0）
 
 各版の内容はタグの注記にある。大きなものだけを挙げる。
 
-- プラグインの共有：`sasacode plugin search` / `install` / `update` / `publish`。インストールの前に、何が入るか（版、公開者、依存、インストールスクリプトの有無）を見せる。公式プラグイン`ask-user`、`git-context`、`project-checks`、`workflows`。
+- プラグインの共有：`sasacode plugin search` / `install` / `update` / `publish`。インストールの前に、何が入るか（版、公開者、依存、インストールスクリプトの有無）を見せる。公式プラグイン`ask-user`、`git-context`、`project-checks`、`workflows`。0.20でプラグインの共有をやめ、公式プラグインは既定で無効の同梱プラグインになった。
 - Windowsのネイティブ対応（v0.10.1）：PowerShellのインストーラー、`bash`ツールはGit Bashで動かす。CIはubuntuとwindowsで回す。
 - 入力と表示：スクリーンショットの貼り付けと画像ファイルのドロップ（`image-attach`、v0.9.9とv0.11.0）、手元のファイルへのリンクをクリックで開く、生成速度の表示、承認画面と貼り付けの不具合の修正（#18〜#41）。
 - 使用量：サブエージェント、判定などの副リクエスト、捨てられた応答も数える（v0.12.0）。
@@ -117,6 +121,23 @@ Anthropicネイティブのtool search（Should）は未対応で、全プロバ
 - ローカルLLM（v0.14.0〜）：Ollama、llama.cpp、LM Studioの実際の挙動（出力上限のパラメーター、コンテキスト超過のエラー、読み込まれたコンテキスト長）に合わせた。8K〜16Kの小さい窓でも圧縮が動く。本文に書いたツール呼び出しを拾う`text-tool-calls`、ほかのハーネスのツール名の読み替え、editのゆるい一致。
 - 小型モデルがファイルを壊す形への対策（v0.15.0）：`write-guard`（`read`の行番号付きの内容から行番号を外す。既存のファイルの大部分を消す上書きを一度止める）、`progress-notes`。履歴の画像を小さく送る`image-slim`（v0.15.1）。
 - 不具合の報告（#82〜#139）への修正：権限ルールの照合（大文字小文字、NFD、`..`、`[` `{` `+(`を含むフォルダ）、editsモードで`.git`と`.sasacode`への書き込みを確認する（#127）、中断、圧縮、UTF-8でないファイル、TUIの表示など。どれも回帰テストを付けた。
+
+## 0.20 Rustへの書き換え
+
+TypeScript（Bun）版のすべてをRustに書き換えた。進め方は[rust-anything](https://github.com/erkamyaman/rust-anything)に沿い、対応表は`rust/MAP.md`、決めたことは`rust/DECISIONS.md`にある。設定、`.env`、キーチェーン、信頼、セッションログ、`-p`のJSONL、`--control stdio`、CLIのフラグとサブコマンド、インストーラー、npmの起動用パッケージ、リリースの成果物名は互換。外部プラグインの読み込みはやめた（ADR-002）。
+
+| 確かめたこと | 方法 | 結果 |
+| --- | --- | --- |
+| CLIの出力 | TS 0.15.2で録画した34ケース（ヘルプ、版、設定、エンドポイント、ログインなど）を、rust-anythingでRust版に再生 | 34/34（意図して変えた出力は`rust/app-cases/README.md`） |
+| ヘッドレスと制御 | TSのe2e（`packages/e2e`）をRust版のバイナリに向けて実行。Rust側の`cli_e2e` | TSのe2eは17/18（TSを消す直前のテストを、消した後のバイナリ（5e50ceb）に向けて実行。残る1件は外部プラグインのインストール）、`cli_e2e`は17/17 |
+| イベントの形 | GUIとプロトコルのフィクスチャをRust版のCLIで作り直し、TS版の出力と比べた | `message_discarded`に`role`がなかったのを直した。ほかは一致 |
+| 権限ルールの照合 | Bun.Globの答えを2,303組記録し、Rust版と比べた | 一致（`/`で終わるパスの`**/*`だけ違うが、ルールには来ない） |
+| テスト | TSの単体テストをRustに移した（外部プラグインのものは除く。`rust/MAP.md`） | `cargo test --workspace`で908件 |
+| M0（ヘッドレス） | `sasacode -p "bun testが失敗しています。原因を調べて直してください。"`、DeepSeek V4.1 Flash（commandcode） | 自分で調査・修正・再テストして成功 |
+| M0（Gemma4） | ollama/gemma4:e4b、手順を具体的に指示、`agent`モード | 成功。`edit`はagent-judgeが危険と判定して止め、`write`で直した（振り分けはTS版と同じ） |
+| TUI（実端末） | tmuxの110×36で、DeepSeek V4.1 FlashにM0を解かせた。承認、差分の表示、`/model`の一覧と絞り込み、shift+tabでの権限モード切替、ctrl+c 2回での終了、`-r`での再開、ctrl+dでの終了 | すべて動いた。終了後は元の画面に戻り、終了コード0、端末の設定も元どおり |
+
+このマシン向けのリリースビルドは22.7MBで、`sasacode --version`の起動は中央値8ms。TUIの起動から入力可能までの時間は測っていない。実端末で確かめていないのは、kittyキーボードプロトコル、マウス、IME、CJK幅の端末、Windowsのコンソール。
 
 ## GUI（G0〜G4、進行中）
 
@@ -132,6 +153,8 @@ Rust製のデスクトップGUIを段階的に作る。設計は [gui.md](gui.md
 
 ## 非機能要件の実測（起動時間はM4時点、行数とテストはv0.15.2）
 
+この表はTypeScript版の値。Rust版（0.20）のコアの上限は12,500行（ADR-005）で、起動時間とテストの数はこの表に入れていない。
+
 | 項目 | 目標 | 実測 |
 | --- | --- | --- |
 | 起動から入力可能まで（プラグイン0個） | 300 ms以内 | 単一バイナリで86 ms、ソースから`bun`で約100 ms |
@@ -141,10 +164,10 @@ Rust製のデスクトップGUIを段階的に作る。設計は [gui.md](gui.md
 
 ## 未検証・既知の制限
 
-- 実際のAnthropic API：[api-compatibility.md](api-compatibility.md)には、2026-10-01の修正（07f7d33）の前の版で、公式APIでの署名付きthinkingの再送・prefixの破棄・キャッシュ・推論の深さを確かめたとある。ただし、手順や結果の記録はリポジトリに残っていない。それ以降の版では、本物のAPIでは確かめていない（モックでの検証だけ）。実APIで確かめるテスト`packages/ai/test/live.test.ts`（`SASACODE_LIVE=1`とキーが要る）はあるが、走らせた記録はない。Command CodeのClaude系モデルは、当時のプランでは403だった。
+- 実際のAnthropic API：[api-compatibility.md](api-compatibility.md)には、2026-10-01の修正（07f7d33）の前の版で、公式APIでの署名付きthinkingの再送・prefixの破棄・キャッシュ・推論の深さを確かめたとある。ただし、手順や結果の記録はリポジトリに残っていない。それ以降の版では、本物のAPIでは確かめていない（モックでの検証だけ）。実APIで確かめるテスト`crates/sasacode-ai/tests/live.rs`（0.15までは`packages/ai/test/live.test.ts`。`SASACODE_LIVE=1`とキーが要る）はあるが、走らせた記録はない。Command CodeのClaude系モデルは、当時のプランでは403だった。
 - IMEの候補ウィンドウの位置：実端末での手動確認が必要。
 - OAuthが必要なリモートMCPサーバー：未対応。ヘッダーでトークンを渡す方式だけ使える。
 - MCPのresources（Could）：一覧取得と参照は未実装。ツール結果に含まれるresourceは扱える。
-- クロスコンパイル：ローカルではこのマシン向けのビルドだけを確認している。ほかの9種類は、releaseワークフローでビルドし、それぞれのランナーで起動を確かめる。CIのテストはubuntuとwindowsで走る。macOSでは、リリースのときにバイナリの起動を確かめるだけで、テストは手元で走らせている。
+- クロスコンパイル：ローカルではこのマシン向けのビルドだけを確認している。ほかの9種類は、releaseワークフローでビルドし、それぞれのランナーで起動を確かめる。CIのテストはubuntu、windows、macOSで走る（0.15まではubuntuとwindowsだけで、macOSはリリースのときにバイナリの起動を確かめるだけだった）。
 - 権限の承認フロー：1ターンに複数のツール呼び出しがあるときは、全部の承認を先に取ってから実行する。
 - 小型モデルでの効果：修復と抑止の機能が実際に働いたかは、Gemma4 e4b / e2bの短い課題で数回測っただけ（[benchmarks.md](benchmarks.md)）。

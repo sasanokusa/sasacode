@@ -1,0 +1,66 @@
+[package]
+name = "sasacode-bundled"
+description = "The plugins shipped with sasacode"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+sasacode-ai.workspace = true
+sasacode-plugin-api.workspace = true
+sasacode-agent.workspace = true
+sasacode-tools.workspace = true
+sasacode-mcp.workspace = true
+sasacode-host.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+futures.workspace = true
+async-trait.workspace = true
+anyhow.workspace = true
+reqwest.workspace = true
+url.workspace = true
+regex.workspace = true
+fancy-regex.workspace = true
+base64.workspace = true
+sha2.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+image.workspace = true
+unicode-width.workspace = true
+which.workspace = true
+indexmap.workspace = true
+# web/net plugins (web_fetch, web_search, image-*, openai-codex)
+encoding_rs.workspace = true
+unicode-normalization.workspace = true
+percent-encoding.workspace = true
+rand.workspace = true
+lol_html = "3.0.3"
+flate2 = "1"
+# /usage: the terminal's width (process.stdout.columns)
+crossterm.workspace = true
+# diagnostics: rebuilds the observed response around its byte stream
+http = "1"
+bytes.workspace = true
+# jev-guard: what a glob argument names (Bun.Glob scanSync)
+globset.workspace = true
+
+[dev-dependencies]
+sasacode-testing.workspace = true
+tempfile.workspace = true
+tokio = { workspace = true, features = ["test-util"] }
+# net_* tests: local HTTP fakes, and canned responses for an injected Fetch
+axum.workspace = true
+http = "1"
+
+# net_* tests: stand-ins for browsr-agent and rustxng (test/fake-browsr.ts, test/fake-rustxng.ts)
+[[example]]
+name = "net-fake-browsr"
+test = false
+
+[[example]]
+name = "net-fake-rustxng"
+test = false

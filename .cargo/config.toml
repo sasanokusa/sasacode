@@ -1,0 +1,4 @@
+# `cargo xtask <task>`: the repository's own tasks (build, checks, improve), written in Rust so that
+# nothing but cargo is needed (rust/DECISIONS.md ADR-009).
+[alias]
+xtask = "run --package xtask --"
