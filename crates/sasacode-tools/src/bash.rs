@@ -205,6 +205,9 @@ async fn run(args: &JsonObject, ctx: &ToolContext) -> ToolResult {
             );
         }
     };
+    // Stopped with the rest when the command is killed; left alone when it ends by itself.
+    #[cfg(windows)]
+    let job = crate::shell::job_for(&child);
     let pid = child.id();
     let signal_group = |s: KillSignal| {
         if let Some(pid) = pid {
@@ -261,6 +264,8 @@ async fn run(args: &JsonObject, ctx: &ToolContext) -> ToolResult {
     }
     if killed_by.is_some() {
         signal_group(KillSignal::Kill);
+        #[cfg(windows)]
+        crate::shell::end_job(job);
     }
     // Background jobs may keep the pipes open; stop listening once the shell itself is gone. What
     // was read already still counts.

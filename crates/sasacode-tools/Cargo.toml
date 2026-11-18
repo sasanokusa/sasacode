@@ -23,5 +23,9 @@ base64.workspace = true
 # Signals to a process group without `unsafe` (libc::kill would need it).
 nix = { version = "0.31", default-features = false, features = ["signal", "process"] }
 
+[target.'cfg(windows)'.dependencies]
+# Job objects without `unsafe`: stopping a command reaches the processes taskkill /T misses.
+win32job = "2.1"
+
 [dev-dependencies]
 tempfile.workspace = true

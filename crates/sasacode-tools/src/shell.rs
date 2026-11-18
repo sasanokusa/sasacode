@@ -70,6 +70,23 @@ pub enum KillSignal {
     Kill,
 }
 
+/// Windows: a job holding `child` and all it starts. After `taskkill /T /F`, a process the command
+/// started was seen still running and holding its output; [`end_job`] ends what is left.
+#[cfg(windows)]
+pub(crate) fn job_for(child: &tokio::process::Child) -> Option<win32job::Job> {
+    let job = win32job::Job::create().ok()?;
+    job.assign_process(child.raw_handle()? as isize).ok()?;
+    Some(job)
+}
+
+/// Ends every process left in `job`: its only handle is closed with kill-on-close set.
+#[cfg(windows)]
+pub(crate) fn end_job(job: Option<win32job::Job>) {
+    if let Some(job) = job {
+        let _ = job.set_extended_limit_info(win32job::ExtendedLimitInfo::new().limit_kill_on_job_close());
+    }
+}
+
 /// Stop a process and everything it started. On macOS and Linux the process must have been spawned
 /// in its own process group (`process_group(0)`) and the group gets `signal`; Windows has no
 /// signals or process groups, so the whole tree is ended at once with taskkill.
