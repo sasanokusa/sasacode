@@ -474,7 +474,7 @@ async fn run(req: Request, y: Yielder) -> anyhow::Result<()> {
         }
     }
     let o = Arc::make_mut(&mut out);
-    o.mark_if_cut(ended); // neither a finish reason nor the usage chunk
+    o.mark_if_cut(ended, req.signal.is_cancelled()); // neither a finish reason nor the usage chunk
     for c in &calls {
         #[cfg(test)]
         if c.json.len() > 4096 {

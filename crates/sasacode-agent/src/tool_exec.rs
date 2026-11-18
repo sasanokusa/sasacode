@@ -42,11 +42,14 @@ pub enum ApprovalDecision {
     Deny,
 }
 
+/// `args`: what the user edited the call to (allow / always only); it runs with them, checked again.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ApprovalAnswer {
     pub decision: ApprovalDecision,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub feedback: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub args: Option<JsonObject>,
 }
 
 impl ApprovalAnswer {
@@ -54,6 +57,7 @@ impl ApprovalAnswer {
         ApprovalAnswer {
             decision,
             feedback: None,
+            args: None,
         }
     }
 }
@@ -64,6 +68,8 @@ pub type FindTool = Arc<dyn Fn(&str) -> Option<ToolRef> + Send + Sync>;
 pub type AllTools = Arc<dyn Fn() -> Vec<ToolRef> + Send + Sync>;
 /// Where a finished result goes (the agent stores it); an `Err` (the log could not be written) ends the run.
 pub type OnResult = Arc<dyn Fn(ToolResultMessage) -> anyhow::Result<()> + Send + Sync>;
+/// The tool calls running now, each with its own token (Agent::abort_call).
+pub type RunningCalls = Arc<Mutex<HashMap<String, CancellationToken>>>;
 
 pub struct ToolRunContext {
     pub cwd: String,
@@ -75,6 +81,8 @@ pub struct ToolRunContext {
     pub find_tool: FindTool,
     /// Every tool the model could call, deferred ones included (repair candidates).
     pub all_tools: AllTools,
+    /// Where each running call's own token is kept while it runs.
+    pub calls: Option<RunningCalls>,
 }
 
 impl ToolRunContext {
@@ -223,7 +231,8 @@ pub struct ExecOptions {
 struct Job {
     call: ToolCall,
     name: String,
-    note: Option<String>,
+    /// Told to the model before the result: what was repaired, or edited.
+    note: Mutex<Option<String>>,
 }
 
 /// What every finish of one execute_tools shares: results are stored here and flushed in call order.
@@ -269,10 +278,10 @@ async fn finish(ctx: &ToolRunContext, ex: &Exec, i: usize, result: ToolResult, d
     if let Some(f) = &ex.on_tool_result {
         f(result.clone());
     }
-    // Tell the model briefly what was fixed, so it can produce the right form next time.
+    // Tell the model briefly what was fixed (or edited), so it can produce the right form next time.
     let mut content: Vec<UserContent> = Vec::new();
-    if let Some(note) = &job.note {
-        content.push(UserContent::text(format!("[harness repaired this call: {note}]")));
+    if let Some(note) = job.note.lock().unwrap_or_else(|e| e.into_inner()).clone() {
+        content.push(UserContent::text(note));
     }
     content.extend(result.content.iter().cloned());
     let message = ToolResultMessage {
@@ -315,7 +324,7 @@ pub fn execute_tools(
             });
             jobs.push(Job {
                 name: fixed.map(|f| f.name.clone()).unwrap_or_else(|| call.name.clone()),
-                note: fixed.map(|f| f.note.clone()),
+                note: Mutex::new(fixed.map(|f| format!("[harness repaired this call: {}]", f.note))),
                 call,
             });
         }
@@ -377,7 +386,16 @@ pub fn execute_tools(
             }
             // Approvals stay one at a time, in order: only the runs overlap.
             let call = ex.jobs[i].call.clone();
-            let (args, denied) = authorize(&ctx, &tool, &call, inputs[i].clone(), &opts.signal).await?;
+            let (args, denied, edited) = authorize(&ctx, &tool, &call, inputs[i].clone(), &opts.signal).await?;
+            if edited {
+                // The stored call keeps what the model asked for: say what ran instead.
+                let told = format!(
+                    "[the user edited the arguments; the call ran with {}]",
+                    sasacode_ai::json::stringify(&Value::Object(args.clone()))
+                );
+                let mut note = ex.jobs[i].note.lock().unwrap_or_else(|e| e.into_inner());
+                *note = Some(note.take().map_or(told.clone(), |n| format!("{n}\n{told}")));
+            }
             let concurrent = tool.concurrent();
             let run = {
                 let (ctx, ex, signal) = (ctx.clone(), ex.clone(), opts.signal.clone());
@@ -516,7 +534,8 @@ async fn authorize(
     call: &ToolCall,
     input: JsonObject,
     signal: &CancellationToken,
-) -> anyhow::Result<(JsonObject, Option<ToolResult>)> {
+) -> anyhow::Result<(JsonObject, Option<ToolResult>, bool)> {
+    let denied = |args: JsonObject, r: ToolResult| Ok((args, Some(r), false));
     let mut args = input;
     let mut forced: Option<(Decision, String)> = None;
     let event = sasacode_plugin_api::ToolCallEvent {
@@ -542,7 +561,7 @@ async fn authorize(
     let problems = validate(&tool.parameters(), &Value::Object(args.clone()), "input");
     if !problems.is_empty() {
         let e = err(format!("Invalid arguments after tool_call: {}", problems.join("; ")));
-        return Ok((args, Some(e)));
+        return denied(args, e);
     }
     let check = PermissionCheck {
         tool: tool.clone(),
@@ -550,25 +569,23 @@ async fn authorize(
         cwd: ctx.cwd.clone(),
     };
     if signal.is_cancelled() {
-        return Ok((args, Some(not_run())));
+        return denied(args, not_run());
     }
     let verdict = decide(ctx, &check, call, forced).await;
     if signal.is_cancelled() {
-        return Ok((args, Some(not_run())));
+        return denied(args, not_run());
     }
     match verdict.decision {
-        Decision::Allow => return Ok((args, None)),
-        Decision::Deny => return Ok((args, Some(err(format!("Permission denied ({}).", verdict.reason))))),
+        Decision::Allow => return Ok((args, None, false)),
+        Decision::Deny => return denied(args, err(format!("Permission denied ({}).", verdict.reason))),
         Decision::Ask => {}
     }
     let Some(approve) = ctx.approve.clone() else {
-        return Ok((
-            args,
-            Some(err(format!(
-                "This call needs user approval ({}), but no user is available to approve it (non-interactive run). It was not executed.",
-                verdict.reason
-            ))),
+        let e = err(format!(
+            "This call needs user approval ({}), but no user is available to approve it (non-interactive run). It was not executed.",
+            verdict.reason
         ));
+        return denied(args, e);
     };
     // Esc while the question is open answers it: the call does not run. A failed question (the UI
     // went away) is not run either, like every other failure here a result.
@@ -589,26 +606,90 @@ async fn authorize(
             let e = err(format!(
                 "The approval could not be asked ({e:#}), so the call was not run."
             ));
-            return Ok((args, Some(e)));
+            return denied(args, e);
         }
         Some(Ok(a)) if !signal.is_cancelled() => a,
-        _ => return Ok((args, Some(not_run()))),
+        _ => return denied(args, not_run()),
     };
-    if answer.decision == ApprovalDecision::Always {
-        ctx.permissions.add_rules(&PermissionRules {
-            allow: PermissionPolicy::rules_for(&check),
-            ..Default::default()
-        })?;
-    }
     if answer.decision == ApprovalDecision::Deny {
         let feedback = answer
             .feedback
             .filter(|f| !f.is_empty())
             .map(|f| format!(" User feedback: {f}"))
             .unwrap_or_default();
-        return Ok((args, Some(err(format!("The user denied this tool call.{feedback}")))));
+        return denied(args, err(format!("The user denied this tool call.{feedback}")));
     }
-    Ok((args, None))
+    // Arguments the user edited are checked as the model's are: plugins see them again (a checkpoint
+    // of the files they name, the guards), and their denials and the deny rules still hold (softDeny
+    // asks: it was asked). Sent back unchanged it is a plain allow: seen twice, the loop guard would
+    // take it for a repeat.
+    let mut edited: Option<PermissionCheck> = None;
+    if let Some(mut next) = answer
+        .args
+        .filter(|a| !same_json(&Value::Object(a.clone()), &Value::Object(args.clone())))
+    {
+        let mut refused: Option<String> = None;
+        let event = sasacode_plugin_api::ToolCallEvent {
+            call: call.clone(),
+            tool: tool.clone(),
+            args: next.clone(),
+        };
+        ctx.hooks
+            .run::<hook::ToolCall>(event, |r, ev, _| {
+                if let Some(a) = r.args {
+                    next = a.clone();
+                    ev.args = a;
+                }
+                if r.decision == Some(Decision::Deny) {
+                    refused = Some(r.reason.unwrap_or_else(|| "plugin".into()));
+                }
+                refused.is_none()
+            })
+            .await;
+        let problems = match refused {
+            Some(r) => vec![r],
+            None => validate(&tool.parameters(), &Value::Object(next.clone()), "input"),
+        };
+        let checked = PermissionCheck {
+            args: next,
+            ..check.clone()
+        };
+        let verdict = problems.is_empty().then(|| ctx.permissions.check(&checked));
+        let reason = match &verdict {
+            None => Some(problems.join("; ")),
+            Some(v) if v.decision == Decision::Deny && v.source == VerdictSource::Rule => Some(v.reason.clone()),
+            Some(_) => None,
+        };
+        if let Some(reason) = reason {
+            return denied(
+                args,
+                err(format!("The user's edited arguments were refused ({reason}).")),
+            );
+        }
+        edited = Some(checked);
+    }
+    if answer.decision == ApprovalDecision::Always {
+        ctx.permissions.add_rules(&PermissionRules {
+            allow: PermissionPolicy::rules_for(edited.as_ref().unwrap_or(&check)),
+            ..Default::default()
+        })?;
+    }
+    Ok(match edited {
+        Some(e) => (e.args, None, true),
+        None => (args, None, false),
+    })
+}
+
+/// `isDeepStrictEqual` for JSON: numbers by value, objects whatever their keys' order.
+fn same_json(a: &Value, b: &Value) -> bool {
+    match (a, b) {
+        (Value::Number(x), Value::Number(y)) => x.as_f64() == y.as_f64(),
+        (Value::Array(x), Value::Array(y)) => x.len() == y.len() && x.iter().zip(y).all(|(x, y)| same_json(x, y)),
+        (Value::Object(x), Value::Object(y)) => {
+            x.len() == y.len() && x.iter().all(|(k, v)| y.get(k).is_some_and(|w| same_json(v, w)))
+        }
+        _ => a == b,
+    }
 }
 
 fn panic_message(p: &(dyn std::any::Any + Send)) -> String {
@@ -646,6 +727,15 @@ async fn run_tool(
         summary,
         parent_call_id: parent_call_id.clone(),
     });
+    // Its own token, so this call alone can be stopped (Agent::abort_call); stopping the run stops
+    // it too, also when that happened already (a tool_start listener can do that).
+    let own = signal.child_token();
+    if let Some(calls) = &ctx.calls {
+        calls
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(call.id.clone(), own.clone());
+    }
 
     // Calls from one execution are serialized, including when the caller joins several. Each child
     // has its own queue, so ordinary nested delegation never deadlocks. As with a JS promise, a call
@@ -655,7 +745,7 @@ async fn run_tool(
         tail: None,
     }));
     let call_tool: CallTool = {
-        let (ctx, queue, signal) = (ctx.clone(), queue.clone(), signal.clone());
+        let (ctx, queue, signal) = (ctx.clone(), queue.clone(), own.clone());
         let mut chain: Vec<String> = ancestors.to_vec();
         chain.push(tool.name().to_string());
         let parent_id = call.id.clone();
@@ -699,7 +789,7 @@ async fn run_tool(
     };
     let tctx = ToolContext {
         cwd: PathBuf::from(&ctx.cwd),
-        signal: signal.clone(),
+        signal: own.clone(),
         on_update: Some(on_update),
         call_tool: Some(call_tool),
     };
@@ -717,7 +807,21 @@ async fn run_tool(
     if let Some(t) = tail {
         t.await;
     }
-    Ok(result)
+    if let Some(calls) = &ctx.calls {
+        calls.lock().unwrap_or_else(|e| e.into_inner()).remove(&call.id);
+    }
+    if !own.is_cancelled() || signal.is_cancelled() {
+        return Ok(result);
+    }
+    let mut content = vec![UserContent::text(
+        "[The user stopped this tool call; the rest of the run goes on.]",
+    )];
+    content.extend(result.content);
+    Ok(ToolResult {
+        content,
+        is_error: Some(true),
+        ..result
+    })
 }
 
 type Tail = futures::future::Shared<BoxFuture<'static, ToolResult>>;

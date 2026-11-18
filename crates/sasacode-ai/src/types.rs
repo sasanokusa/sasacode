@@ -240,8 +240,15 @@ impl AssistantMessage {
     }
 
     /// Marks it as cut off unless the provider said it was done (`ended`) or the user aborted (`markIfCut`).
-    pub fn mark_if_cut(&mut self, ended: bool) {
-        if !ended && self.stop_reason != StopReason::Aborted {
+    /// An abort can end the stream without an error (the OpenAI SDK returned from an aborted stream),
+    /// so `aborted` (the request's signal is set) also means aborted.
+    pub fn mark_if_cut(&mut self, ended: bool, aborted: bool) {
+        if ended || self.stop_reason == StopReason::Aborted {
+            return;
+        }
+        if aborted {
+            self.stop_reason = StopReason::Aborted;
+        } else {
             self.stop_reason = StopReason::Error;
             self.error_message = Some(INCOMPLETE_STREAM.to_string());
         }

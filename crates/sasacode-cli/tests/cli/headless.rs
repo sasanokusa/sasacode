@@ -70,7 +70,10 @@ fn headless_jsonl_emits_the_whole_run_and_exits_0() {
     let r = bin.jsonl("hi", &["--no-session"]);
     assert_eq!(r.code, 0, "{}", r.stderr);
     let events = r.events;
-    assert_eq!(events[0], json!({ "type": "session", "id": null, "path": null })); // --no-session
+    assert_eq!(events[0]["id"], Value::Null); // --no-session
+    assert_eq!(events[0]["path"], Value::Null);
+    let keys: Vec<&String> = events[0].as_object().map(|o| o.keys().collect()).unwrap_or_default();
+    assert_eq!(keys, ["type", "id", "path", "contextWindow"]);
     assert_eq!(events[1]["type"], "message_end"); // the user message
     assert_eq!(events[1]["message"]["role"], "user");
     assert!(events.iter().any(|e| e["type"] == "message_update"));

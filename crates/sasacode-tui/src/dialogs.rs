@@ -419,6 +419,7 @@ impl Dialog for ApprovalDialog {
                     self.finish(ApprovalAnswer {
                         decision: ApprovalDecision::Deny,
                         feedback: (!feedback.is_empty()).then_some(feedback),
+                        args: None,
                     });
                 }
                 // Back to the choices: the instructions were not what the user wanted after all.

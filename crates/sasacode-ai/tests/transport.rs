@@ -235,12 +235,14 @@ async fn cancel_on_first_delta(m: ModelInfo, reply: Reply) -> sasacode_ai::Assis
 }
 
 #[tokio::test]
-async fn an_abort_mid_reply_is_aborted_on_anthropic_and_a_cut_reply_on_openai_as_the_sdks_had_it() {
+// The OpenAI SDK returned from an aborted stream without an error; a set signal still means aborted (#160).
+async fn a_reply_the_user_interrupted_is_aborted_not_cut_off_when_its_stream_then_ends_without_an_error_all_three_formats()
+ {
     let chat = sse(&[chat_chunk(json!({ "content": "Hel" }), None)], false).replace("data: [DONE]\n\n", "");
     let out = cancel_on_first_delta(chat_model(), Reply::Stalling(chat)).await;
     assert_eq!(
         (out.stop_reason, out.error_message.as_deref()),
-        (StopReason::Error, Some(INCOMPLETE_STREAM))
+        (StopReason::Aborted, None)
     );
     assert_eq!(content(&out), json!([{ "type": "text", "text": "Hel" }]));
 
@@ -254,8 +256,9 @@ async fn an_abort_mid_reply_is_aborted_on_anthropic_and_a_cut_reply_on_openai_as
     let out = cancel_on_first_delta(responses_model(), Reply::Stalling(responses)).await;
     assert_eq!(
         (out.stop_reason, out.error_message.as_deref()),
-        (StopReason::Error, Some(INCOMPLETE_STREAM))
+        (StopReason::Aborted, None)
     );
+    assert_eq!(content(&out), json!([{ "type": "text", "text": "Hel" }]));
 
     let claude = sse(
         &[
@@ -266,7 +269,10 @@ async fn an_abort_mid_reply_is_aborted_on_anthropic_and_a_cut_reply_on_openai_as
         true,
     );
     let out = cancel_on_first_delta(claude_model(), Reply::Stalling(claude)).await;
-    assert_eq!(out.stop_reason, StopReason::Aborted);
+    assert_eq!(
+        (out.stop_reason, out.error_message.as_deref()),
+        (StopReason::Aborted, None)
+    );
     assert_eq!(content(&out), json!([{ "type": "text", "text": "Hel" }]));
 }
 

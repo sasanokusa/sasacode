@@ -195,6 +195,7 @@ async fn approval_deny_with_feedback_always_allow_adds_a_rule_headless_denies() 
                         ApprovalAnswer {
                             decision: ApprovalDecision::Deny,
                             feedback: Some("use printf".into()),
+                            args: None,
                         }
                     } else {
                         ApprovalAnswer::new(ApprovalDecision::Always)
@@ -1031,4 +1032,151 @@ async fn an_abort_that_comes_in_between_requests_stops_the_next_one_no_reply_is_
     assert_eq!(s.agent.prompt_text("hi").await.unwrap(), StopCause::Aborted);
     assert_eq!(s.requests().len(), 1);
     assert!(!json(&s.agent.messages()).contains("generated after the abort"));
+}
+
+/// agent.test.ts: "abortCall stops one call; a call whose run was stopped as it started sees its signal aborted"
+#[tokio::test]
+async fn abort_call_stops_one_call_a_call_whose_run_was_stopped_as_it_started_sees_its_signal_aborted() {
+    let seen: Arc<Mutex<Vec<bool>>> = Arc::default();
+    let s2 = seen.clone();
+    let watch = ToolDef::new(
+        "watch",
+        "",
+        json!({ "type": "object", "properties": {} }),
+        ToolKind::Read,
+        move |_a, ctx| {
+            let seen = s2.clone();
+            async move {
+                seen.lock().unwrap().push(ctx.signal.is_cancelled());
+                ctx.signal.cancelled().await;
+                Ok(ToolResult::text("watched"))
+            }
+        },
+    )
+    .into_ref();
+    let auto = |o: &mut AgentOptions, watch: &sasacode_plugin_api::ToolRef| {
+        o.tools = vec![watch.clone()];
+        o.permissions = Some(policy(PermissionMode::Auto, json!({})));
+    };
+    let one = setup(
+        vec![reply(vec![call("1", "watch", json!({}))]), reply(vec![say("ok")])],
+        |o| auto(o, &watch),
+    );
+    let agent = one.agent.clone();
+    let _on = one.agent.events().on(move |e| {
+        if let AgentEvent::ToolStart { .. } = e {
+            let agent = agent.clone();
+            tokio::spawn(async move { agent.abort_call("1") });
+        }
+    });
+    assert_eq!(one.agent.prompt_text("go").await.unwrap(), StopCause::Done);
+    assert!(json(&one.agent.messages()).contains("The user stopped this tool call"));
+    let stopped = tool_results(&one.agent.messages())[0].clone();
+    assert!(stopped.is_error);
+    assert!(!one.agent.abort_call("1"), "finished: nothing is kept for it");
+
+    // The run is stopped by a tool_start listener, before the call's own token is made from it.
+    let two = setup(vec![reply(vec![call("2", "watch", json!({}))])], |o| auto(o, &watch));
+    let agent = two.agent.clone();
+    let _on = two.agent.events().on(move |e| {
+        if let AgentEvent::ToolStart { .. } = e {
+            agent.abort();
+        }
+    });
+    assert_eq!(two.agent.prompt_text("go").await.unwrap(), StopCause::Aborted);
+    assert_eq!(*seen.lock().unwrap(), [false, true]);
+}
+
+/// agent.test.ts: "edited arguments go past the plugins again: they see them, may refuse them, and the call runs with them"
+#[tokio::test]
+async fn edited_arguments_go_past_the_plugins_again_they_see_them_may_refuse_them_and_the_call_runs_with_them() {
+    let s = setup(
+        vec![
+            reply(vec![call("1", "write", json!({ "path": "asked.txt", "content": "a" }))]),
+            reply(vec![call("2", "write", json!({ "path": "asked.txt", "content": "b" }))]),
+            reply(vec![say("ok")]),
+        ],
+        |o| {
+            o.permissions = Some(policy(PermissionMode::Ask, json!({})));
+            o.approve = Some(Arc::new(move |r| {
+                let mut args = r.args.clone();
+                let to = if r.call.id == "1" { "edited.txt" } else { "refused.txt" };
+                args.insert("path".into(), json!(to));
+                Box::pin(async move {
+                    Ok(ApprovalAnswer {
+                        args: Some(args),
+                        ..ApprovalAnswer::new(ApprovalDecision::Allow)
+                    })
+                })
+            }));
+        },
+    );
+    let seen: Arc<Mutex<Vec<String>>> = Arc::default();
+    let sn = seen.clone();
+    s.agent.hooks().on::<hook::ToolCall, _, _>("test", move |e, _| {
+        let path = e
+            .args
+            .get("path")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string();
+        sn.lock().unwrap().push(path.clone());
+        async move {
+            Ok((path == "refused.txt").then(|| sasacode_plugin_api::ToolCallResult {
+                decision: Some(sasacode_plugin_api::Decision::Deny),
+                reason: Some("not there".into()),
+                args: None,
+            }))
+        }
+    });
+    s.agent.prompt_text("go").await.unwrap();
+    assert_eq!(
+        *seen.lock().unwrap(),
+        ["asked.txt", "edited.txt", "asked.txt", "refused.txt"]
+    );
+    assert_eq!(std::fs::read_to_string(s.file("edited.txt")).unwrap(), "a");
+    assert!(!s.file("refused.txt").exists());
+    assert!(!s.file("asked.txt").exists());
+    let first = json(last(&s.requests()[1]));
+    assert!(
+        first.contains(
+            r#"[the user edited the arguments; the call ran with {\"path\":\"edited.txt\",\"content\":\"a\"}]"#
+        ),
+        "{first}"
+    );
+    assert!(json(last(&s.requests()[2])).contains("edited arguments were refused (not there)"));
+}
+
+/// agent.test.ts: "arguments sent back unchanged are a plain allow: the plugins see the call once"
+#[tokio::test]
+async fn arguments_sent_back_unchanged_are_a_plain_allow_the_plugins_see_the_call_once() {
+    let s = setup(
+        vec![
+            reply(vec![call("1", "write", json!({ "path": "same.txt", "content": "s" }))]),
+            reply(vec![say("ok")]),
+        ],
+        |o| {
+            o.permissions = Some(policy(PermissionMode::Ask, json!({})));
+            o.approve = Some(Arc::new(move |_r| {
+                // The same arguments, in another order.
+                let args = obj(json!({ "content": "s", "path": "same.txt" }));
+                Box::pin(async move {
+                    Ok(ApprovalAnswer {
+                        args: Some(args),
+                        ..ApprovalAnswer::new(ApprovalDecision::Allow)
+                    })
+                })
+            }));
+        },
+    );
+    let seen = Arc::new(AtomicUsize::new(0));
+    let sn = seen.clone();
+    s.agent.hooks().on::<hook::ToolCall, _, _>("test", move |_e, _| {
+        sn.fetch_add(1, Ordering::SeqCst);
+        async { Ok(None) }
+    });
+    s.agent.prompt_text("go").await.unwrap();
+    assert_eq!(seen.load(Ordering::SeqCst), 1);
+    assert_eq!(std::fs::read_to_string(s.file("same.txt")).unwrap(), "s");
+    assert!(!json(&s.agent.messages()).contains("the user edited the arguments"));
 }

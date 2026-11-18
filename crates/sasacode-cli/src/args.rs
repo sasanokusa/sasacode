@@ -6,6 +6,8 @@ use indexmap::IndexMap;
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Kind {
     String,
+    /// A string option that may be given more than once (`multiple: true`): every value, in order.
+    Strings,
     Boolean,
 }
 
@@ -26,6 +28,15 @@ pub const fn string(name: &'static str, short: Option<char>) -> OptionSpec {
     }
 }
 
+pub const fn strings(name: &'static str, short: Option<char>) -> OptionSpec {
+    OptionSpec {
+        name,
+        kind: Kind::Strings,
+        short,
+        default: None,
+    }
+}
+
 pub const fn boolean(name: &'static str, short: Option<char>) -> OptionSpec {
     OptionSpec {
         name,
@@ -39,6 +50,7 @@ pub const fn boolean(name: &'static str, short: Option<char>) -> OptionSpec {
 pub enum Value {
     String(String),
     Bool(bool),
+    List(Vec<String>),
 }
 
 #[derive(Debug, Default)]
@@ -56,6 +68,13 @@ impl Parsed {
     }
     pub fn flag(&self, name: &str) -> bool {
         matches!(self.values.get(name), Some(Value::Bool(true)))
+    }
+    /// The values of a repeatable option; none when it was not given.
+    pub fn strings(&self, name: &str) -> &[String] {
+        match self.values.get(name) {
+            Some(Value::List(v)) => v,
+            _ => &[],
+        }
     }
 }
 
@@ -76,6 +95,11 @@ fn find_long_for_short(short: char, options: &[OptionSpec]) -> String {
 
 fn kind_of(name: &str, options: &[OptionSpec]) -> Option<Kind> {
     options.iter().find(|o| o.name == name).map(|o| o.kind)
+}
+
+/// A string option, once or repeatable: it takes the next argument as its value.
+fn takes_value(name: &str, options: &[OptionSpec]) -> bool {
+    matches!(kind_of(name, options), Some(Kind::String | Kind::Strings))
 }
 
 /// A JS string's code units, so `arg[1]` and `arg.length` mean what they meant there.
@@ -128,8 +152,8 @@ pub fn parse_args(args: &[String], options: &[OptionSpec]) -> Result<Parsed, Str
         if is_lone_short(&u) {
             let short = char_at(&arg, 1);
             let name = find_long_for_short(short, options);
-            let (value, inline_value) = match (kind_of(&name, options), rest.front()) {
-                (Some(Kind::String), Some(_)) => (rest.pop_front(), false),
+            let (value, inline_value) = match rest.front() {
+                Some(_) if takes_value(&name, options) => (rest.pop_front(), false),
                 _ => (None, false),
             };
             tokens.push(Token {
@@ -142,7 +166,7 @@ pub fn parse_args(args: &[String], options: &[OptionSpec]) -> Result<Parsed, Str
         }
         if starts_short(&u) {
             let first = char_at(&arg, 1);
-            if kind_of(&find_long_for_short(first, options), options) != Some(Kind::String) {
+            if !takes_value(&find_long_for_short(first, options), options) {
                 // A short option group: -fXzy is -f -X -z -y, and a string option inside it takes the rest.
                 let mut expanded = Vec::new();
                 let mut index = 1;
@@ -150,7 +174,7 @@ pub fn parse_args(args: &[String], options: &[OptionSpec]) -> Result<Parsed, Str
                     let short = char_at(&arg, index);
                     let width = short.len_utf16();
                     let long = find_long_for_short(short, options);
-                    if kind_of(&long, options) != Some(Kind::String) || index + width >= u.len() {
+                    if !takes_value(&long, options) || index + width >= u.len() {
                         expanded.push(format!("-{short}"));
                     } else {
                         expanded.push(format!("-{}", slice_from(&arg, index)));
@@ -188,8 +212,8 @@ pub fn parse_args(args: &[String], options: &[OptionSpec]) -> Result<Parsed, Str
                 }
                 _ => {
                     let name = arg[2..].to_string();
-                    let (value, inline_value) = match (kind_of(&name, options), rest.front()) {
-                        (Some(Kind::String), Some(_)) => (rest.pop_front(), false),
+                    let (value, inline_value) = match rest.front() {
+                        Some(_) if takes_value(&name, options) => (rest.pop_front(), false),
                         _ => (None, false),
                     };
                     tokens.push(Token {
@@ -215,7 +239,7 @@ pub fn parse_args(args: &[String], options: &[OptionSpec]) -> Result<Parsed, Str
             None => format!("--{}", spec.name),
         };
         match spec.kind {
-            Kind::String if token.value.is_none() => {
+            Kind::String | Kind::Strings if token.value.is_none() => {
                 return Err(format!("Option '{short_and_long} <value>' argument missing"));
             }
             Kind::Boolean if token.value.is_some() => {
@@ -238,6 +262,13 @@ pub fn parse_args(args: &[String], options: &[OptionSpec]) -> Result<Parsed, Str
             ));
         }
         let value = match token.value {
+            Some(v) if spec.kind == Kind::Strings => {
+                if let Some(Value::List(all)) = values.get_mut(&token.name) {
+                    all.push(v);
+                    continue;
+                }
+                Value::List(vec![v])
+            }
             Some(v) => Value::String(v),
             None => Value::Bool(true),
         };
@@ -282,6 +313,7 @@ mod tests {
                         match val {
                             Value::String(s) => serde_json::Value::from(s.clone()),
                             Value::Bool(b) => serde_json::Value::from(*b),
+                            Value::List(l) => serde_json::Value::from(l.clone()),
                         },
                     );
                 }
@@ -365,5 +397,22 @@ mod tests {
         for (args, want) in cases {
             assert_eq!(&run(args), want, "{args:?}");
         }
+    }
+
+    #[test]
+    fn a_repeatable_option_keeps_every_value_in_order_as_multiple_true_does() {
+        let options = [strings("allow", None), boolean("slash", None)];
+        let parse = |args: &[&str]| {
+            let args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+            parse_args(&args, &options)
+        };
+        let p = parse(&["--allow", "bash(ls)", "--slash", "--allow=edit(src/**)"]).unwrap();
+        assert_eq!(p.strings("allow"), ["bash(ls)", "edit(src/**)"]);
+        assert!(p.flag("slash"));
+        assert!(parse(&[]).unwrap().strings("allow").is_empty());
+        assert_eq!(
+            parse(&["--allow"]).unwrap_err(),
+            "Option '--allow <value>' argument missing"
+        );
     }
 }

@@ -73,6 +73,7 @@ fn answer(decision: ApprovalDecision, feedback: Option<&str>) -> ApprovalAnswer 
     ApprovalAnswer {
         decision,
         feedback: feedback.map(str::to_string),
+        args: None,
     }
 }
 
@@ -216,6 +217,8 @@ async fn an_approval_request_is_one_json_line_the_answer_with_its_id_settles_it(
         json!({
             "type": "approval_request", "id": out[0]["id"], "callId": "call_1", "tool": "bash",
             "args": { "command": "ls" }, "reason": "needs approval", "cwd": "/work",
+            // What "always" would allow.
+            "rules": ["bash(ls)"],
         })
     );
     assert_eq!(out[1]["callId"], "call_2");
@@ -498,4 +501,259 @@ fn control_is_stdio_only_and_only_with_p_and_output_jsonl() {
         let e = control_mode(Some(control), print, Some(output)).unwrap_err();
         assert!(e.to_string().contains(error), "{control} {print:?} {output}: {e}");
     }
+}
+
+// ── additions for the GUI: edited args, one call's abort, the plugins' ui, status and commands ──
+
+fn option(value: &str, label: &str) -> SelectOption {
+    SelectOption::new(value, label)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_approval_may_carry_edited_args_with_allow_or_always_with_deny_or_not_an_object_it_is_a_control_error() {
+    let (r, mut ch) = rig();
+    let p = r.ask(|_| {});
+    let out = r.emitted(1).await;
+    let id = out[0]["id"].clone();
+    for bad in [
+        json!({ "type": "approval", "id": id, "decision": "deny", "args": { "command": "pwd" } }),
+        json!({ "type": "approval", "id": id, "decision": "allow", "args": ["pwd"] }),
+        json!({ "type": "approval", "id": id, "decision": "allow", "args": null }),
+    ] {
+        send(&mut ch, bad).await;
+    }
+    let out = r.emitted(4).await;
+    let error =
+        json!({ "type": "control_error", "error": "approval \"args\" must be an object, sent with allow or always" });
+    assert_eq!(out[1..], [error.clone(), error.clone(), error]);
+    send(
+        &mut ch,
+        json!({ "type": "approval", "id": id, "decision": "always", "args": { "command": "pwd" } }),
+    )
+    .await;
+    let mut expected = answer(ApprovalDecision::Always, None);
+    expected.args = Some(obj(json!({ "command": "pwd" })));
+    assert_eq!(p.await.unwrap(), expected);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn abort_with_a_call_id_not_running_or_not_a_string_is_a_control_error_and_the_run_goes_on() {
+    // Stopping a running call alone: tests/agent.rs (abort_call) and tests/cli/control.rs.
+    let (r, mut ch) = rig();
+    let run = r.parked_run().await;
+    send(&mut ch, json!({ "type": "abort", "callId": "call_9" })).await;
+    send(&mut ch, json!({ "type": "abort", "callId": 3 })).await;
+    assert_eq!(
+        r.emitted(2).await,
+        [
+            json!({ "type": "control_error", "error": "no running tool call with callId \"call_9\"" }),
+            json!({ "type": "control_error", "error": "abort \"callId\" must be a string" }),
+        ]
+    );
+    tick().await;
+    assert!(!run.is_finished(), "the run was not stopped");
+    send(&mut ch, json!({ "type": "abort" })).await;
+    assert_eq!(run.await.unwrap(), StopCause::Aborted);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_plugins_question_is_a_ui_request_the_ui_response_with_its_id_answers_it_null_dismisses_it() {
+    let (r, mut ch) = rig();
+    let ui = r.control.ui();
+    assert!(ui.interactive());
+    let asking = {
+        let ui = ui.clone();
+        tokio::spawn(async move {
+            let confirmed = ui.confirm("Delete it?", Some("for good"));
+            let options = [option("a", "A").describe("first"), option("b", "B")];
+            let picked = ui.select("Which?", &options);
+            let typed_options = InputOptions {
+                placeholder: Some("x".into()),
+                initial: Some("y".into()),
+                ..Default::default()
+            };
+            let typed = ui.input("Name?", &typed_options);
+            let many_options = SelectManyOptions {
+                selected: Some(vec!["b".into()]),
+            };
+            let both = [option("a", "A"), option("b", "B")];
+            let many = ui.select_many("Which ones?", &both, &many_options);
+            let dismissed = ui.confirm("Again?", None);
+            // Asked in this order, all open at once.
+            tokio::join!(confirmed, picked, typed, many, dismissed)
+        })
+    };
+    let out = r.emitted(5).await;
+    let mut asked = out.clone();
+    asked.sort_by_key(|l| l["id"].as_str().unwrap_or_default().to_string());
+    assert_eq!(
+        asked,
+        [
+            json!({ "type": "ui_request", "id": "ui-1", "kind": "confirm", "title": "Delete it?", "message": "for good" }),
+            json!({ "type": "ui_request", "id": "ui-2", "kind": "select", "title": "Which?",
+                "options": [{ "value": "a", "label": "A", "description": "first" }, { "value": "b", "label": "B" }] }),
+            json!({ "type": "ui_request", "id": "ui-3", "kind": "input", "title": "Name?", "placeholder": "x", "initial": "y" }),
+            json!({ "type": "ui_request", "id": "ui-4", "kind": "select_many", "title": "Which ones?",
+                "options": [{ "value": "a", "label": "A" }, { "value": "b", "label": "B" }], "selected": ["b"] }),
+            json!({ "type": "ui_request", "id": "ui-5", "kind": "confirm", "title": "Again?" }),
+        ]
+    );
+    send(&mut ch, json!({ "type": "ui_response", "id": "ui-1", "value": true })).await;
+    send(&mut ch, json!({ "type": "ui_response", "id": "ui-2", "value": "b" })).await;
+    send(&mut ch, json!({ "type": "ui_response", "id": "ui-3", "value": "sasa" })).await;
+    send(
+        &mut ch,
+        json!({ "type": "ui_response", "id": "ui-4", "value": ["a", "b"] }),
+    )
+    .await;
+    send(&mut ch, json!({ "type": "ui_response", "id": "ui-5", "value": null })).await;
+    let answers = asking.await.unwrap();
+    assert_eq!(
+        answers,
+        (
+            true,
+            Some("b".to_string()),
+            Some("sasa".to_string()),
+            Some(vec!["a".to_string(), "b".to_string()]),
+            false
+        )
+    );
+    assert_eq!(r.out().len(), 5); // nothing else was written
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_ui_response_that_cannot_answer_its_question_is_a_control_error_and_the_question_stays_open() {
+    let (r, mut ch) = rig();
+    let ui = r.control.ui();
+    let picked = {
+        let ui = ui.clone();
+        tokio::spawn(async move { ui.select("Which?", &[option("a", "A")]).await })
+    };
+    r.emitted(1).await;
+    let sure = {
+        let ui = ui.clone();
+        tokio::spawn(async move { ui.confirm("Sure?", None).await })
+    };
+    r.emitted(2).await;
+    for bad in [
+        json!({ "type": "ui_response", "id": "ui-1", "value": "z" }), // not offered
+        json!({ "type": "ui_response", "id": "ui-2", "value": "yes" }),
+        json!({ "type": "ui_response", "id": "ui-2" }),
+        json!({ "type": "ui_response", "value": true }),
+        json!({ "type": "ui_response", "id": "ui-9", "value": true }),
+    ] {
+        send(&mut ch, bad).await;
+    }
+    let out = r.emitted(7).await;
+    let errors: Vec<&str> = out[2..]
+        .iter()
+        .map(|e| e["error"].as_str().unwrap_or_default())
+        .collect();
+    assert_eq!(
+        errors,
+        [
+            "ui_response to a select needs \"value\": one of the options' values, or null",
+            "ui_response to a confirm needs \"value\": true or false, or null",
+            "ui_response needs \"value\" (null dismisses the question)",
+            "ui_response needs a string \"id\"",
+            "no pending ui_request with id \"ui-9\" (unknown, already answered or cancelled)",
+        ]
+    );
+    send(&mut ch, json!({ "type": "ui_response", "id": "ui-1", "value": "a" })).await;
+    send(&mut ch, json!({ "type": "ui_response", "id": "ui-2", "value": false })).await;
+    assert_eq!(picked.await.unwrap().as_deref(), Some("a"));
+    assert!(!sure.await.unwrap());
+    send(&mut ch, json!({ "type": "ui_response", "id": "ui-1", "value": "a" })).await; // answered already
+    let out = r.emitted(8).await;
+    assert!(
+        out[7]["error"].as_str().unwrap_or_default().contains("\"ui-1\""),
+        "{}",
+        out[7]
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn abort_dismisses_the_open_questions_with_ui_cancelled_once_stdin_closes_every_question_is_dismissed_unannounced()
+ {
+    let (r, mut ch) = rig();
+    let ui = r.control.ui();
+    let run = r.parked_run().await;
+    let open = {
+        let ui = ui.clone();
+        tokio::spawn(async move { ui.select("Which?", &[option("a", "A")]).await })
+    };
+    r.emitted(1).await;
+    send(&mut ch, json!({ "type": "abort" })).await;
+    assert_eq!(open.await.unwrap(), None);
+    assert_eq!(run.await.unwrap(), StopCause::Aborted);
+    let out = r.out();
+    assert_eq!(out[0]["type"], "ui_request");
+    assert_eq!(out[1..], [json!({ "type": "ui_cancelled", "id": "ui-1" })]);
+    let waiting = {
+        let ui = ui.clone();
+        tokio::spawn(async move { ui.input("Name?", &InputOptions::default()).await })
+    };
+    r.emitted(3).await;
+    ch.take(); // EOF
+    assert_eq!(waiting.await.unwrap(), None);
+    assert!(!ui.interactive());
+    assert!(!ui.confirm("Later?", None).await); // not even asked
+    let types: Vec<Value> = r.out().iter().map(|e| e["type"].clone()).collect();
+    assert_eq!(types, ["ui_request", "ui_cancelled", "ui_request"]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn notices_and_shown_text_are_lines_status_items_and_commands_are_reported_now_and_as_they_change() {
+    let (r, _ch) = rig();
+    let ui = r.control.ui();
+    ui.notify("hello", NotifyLevel::Warning);
+    ui.show_text(ShowTextOptions {
+        title: "Usage".into(),
+        text: "12 tokens".into(),
+        format: TextFormat::Markdown,
+    })
+    .await;
+    let host = PluginHost::new(sasacode_agent::plugins::PluginHostOptions {
+        agent: r.agent.clone(),
+        cwd: "/work".into(),
+        settings: None,
+        register_provider: None,
+        disabled_tools: Vec::new(),
+        lang: sasacode_plugin_api::Lang::En,
+    });
+    let (goal, mcp) = (host.api("goal"), host.api("mcp"));
+    goal.ui().set_status("goal", Some("writing tests".into()));
+    goal.register_command(sasacode_plugin_api::Command::new("goal", "set a goal", |_| async { Ok(()) }).hint("<text>"));
+    r.control.watch(&host);
+    goal.ui().set_status("goal", Some("done".into()));
+    mcp.ui().set_status("servers", Some("MCP 1/1".into()));
+    host.on_change().expect("watched")(); // nothing changed: nothing written
+    goal.ui().set_status("goal", None);
+    mcp.register_command(sasacode_plugin_api::Command::new("mcp", "servers", |_| async {
+        Ok(())
+    }));
+    let goal_line = json!({ "name": "goal", "description": "set a goal", "argumentHint": "<text>", "owner": "goal" });
+    assert_eq!(
+        r.out(),
+        [
+            json!({ "type": "plugin_notify", "level": "warning", "text": "hello" }),
+            json!({ "type": "plugin_text", "title": "Usage", "text": "12 tokens", "format": "markdown" }),
+            json!({ "type": "plugin_status", "key": "goal:goal", "text": "writing tests" }),
+            json!({ "type": "commands", "commands": [goal_line] }),
+            json!({ "type": "plugin_status", "key": "goal:goal", "text": "done" }),
+            json!({ "type": "plugin_status", "key": "mcp:servers", "text": "MCP 1/1" }),
+            json!({ "type": "plugin_status", "key": "goal:goal", "text": null }),
+            json!({ "type": "commands", "commands": [goal_line, { "name": "mcp", "description": "servers", "owner": "mcp" }] }),
+        ]
+    );
+    // Keys in the TS order (the GUI reads them by name; the order is what a reader sees).
+    let out = r.out();
+    let keys: Vec<&String> = out[3]["commands"][0]
+        .as_object()
+        .map(|o| o.keys().collect())
+        .unwrap_or_default();
+    assert_eq!(keys, ["name", "description", "argumentHint", "owner"]);
+    r.control.stop();
+    mcp.ui().set_status("late", Some("after the run".into()));
+    assert_eq!(r.out().len(), 8); // after stop, nothing more is written
 }

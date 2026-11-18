@@ -30,7 +30,7 @@ use sasacode_plugin_api::{
 use crate::events::{AgentEvent, EventBus};
 use crate::permission::PermissionPolicy;
 use crate::session::{SessionEntry, SessionFile};
-use crate::tool_exec::{ApproveFn, ExecOptions, Repair, ToolRunContext, execute_tools, repair_calls};
+use crate::tool_exec::{ApproveFn, ExecOptions, Repair, RunningCalls, ToolRunContext, execute_tools, repair_calls};
 use crate::tool_search::{ToolSearchConfig, loaded_from_history, make_tool_search_tool, should_defer};
 
 pub use crate::tool_exec::{ApprovalAnswer, ApprovalDecision, ApprovalRequest};
@@ -244,6 +244,8 @@ struct Inner {
     is_subagent: bool,
     tasks: TaskTracker,
     state: Mutex<State>,
+    /// Tool calls running now, each with its own token (abort_call).
+    calls: RunningCalls,
 }
 
 /// The agent. Clones share one conversation.
@@ -316,6 +318,7 @@ impl Agent {
                 is_subagent,
                 tasks: TaskTracker::new(),
                 state: Mutex::new(state),
+                calls: RunningCalls::default(),
             }
         });
         Agent { inner }
@@ -548,6 +551,12 @@ impl Agent {
         if let Some(t) = &self.st().abort {
             t.cancel();
         }
+    }
+
+    /// Stop one running tool call: its result is an error and the run goes on. False when it is not running.
+    pub fn abort_call(&self, call_id: &str) -> bool {
+        let calls = self.inner.calls.lock().unwrap_or_else(|e| e.into_inner());
+        calls.get(call_id).inspect(|t| t.cancel()).is_some()
     }
 
     /// Abort and drop queued input, so nothing more runs on this conversation (before switching sessions).
@@ -1190,6 +1199,7 @@ impl Agent {
                 v.push(all.inner.search_tool.clone());
                 v
             }),
+            calls: Some(self.inner.calls.clone()),
         })
     }
 

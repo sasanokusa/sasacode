@@ -245,7 +245,11 @@ fn control_stdio_the_parent_answers_an_approval_request_over_stdin_and_the_call_
         .filter(|k| *k != "id")
         .collect();
     keys.sort_unstable();
-    assert_eq!(keys, ["args", "callId", "cwd", "reason", "tool", "type"], "{request}");
+    assert_eq!(
+        keys,
+        ["args", "callId", "cwd", "reason", "rules", "tool", "type"],
+        "{request}"
+    );
     assert_eq!(request["type"], "approval_request");
     assert!(
         request["callId"].is_string() && request["reason"].is_string() && request["cwd"].is_string(),
@@ -253,6 +257,7 @@ fn control_stdio_the_parent_answers_an_approval_request_over_stdin_and_the_call_
     );
     assert_eq!(request["tool"], "bash");
     assert_eq!(request["args"], json!({ "command": "touch made-by-bash" }));
+    assert_eq!(request["rules"], json!(["bash(touch made-by-bash)"]));
     assert!(!sb.project.join("made-by-bash").exists()); // nothing ran before the answer
     run.send(&json!({ "type": "approval", "id": request["id"], "decision": "allow" }));
     let rest = run.until("agent_end");

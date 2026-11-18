@@ -321,6 +321,7 @@ impl Loaded {
             session: None,
             find_tool: Arc::new(move |n| t1.get_tools().into_iter().find(|t| t.name() == n)),
             all_tools: Arc::new(move || a2.get_tools()),
+            calls: None,
         });
         let out: Arc<Mutex<Option<ToolResult>>> = Arc::default();
         let o = out.clone();

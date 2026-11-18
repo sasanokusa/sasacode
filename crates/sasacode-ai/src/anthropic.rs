@@ -470,7 +470,7 @@ async fn run(req: Request, y: Yielder) -> anyhow::Result<()> {
         break;
     }
     let o = Arc::make_mut(&mut out);
-    o.mark_if_cut(ended); // no stop reason and no message_stop
+    o.mark_if_cut(ended, req.signal.is_cancelled()); // no stop reason and no message_stop
     o.usage.cost = compute_cost(model, &o.usage);
     y.emit(StreamEvent::Done {
         message: Arc::unwrap_or_clone(out),

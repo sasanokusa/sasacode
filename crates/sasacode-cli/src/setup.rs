@@ -82,6 +82,8 @@ pub struct Harness {
     pub providers: Providers,
     pub sessions_dir: PathBuf,
     pub history_path: PathBuf,
+    /// What the agent permission mode's judge decides (`--control stdio` reports it as `judged`).
+    pub judged: sasacode_bundled::agent_judge::Verdicts,
     resolve: Resolve,
     catalog: ModelCatalog,
     opts: SetupOptions,
@@ -335,6 +337,7 @@ pub async fn setup(mut opts: SetupOptions) -> anyhow::Result<Arc<Harness>> {
         providers,
         sessions_dir,
         history_path,
+        judged: Default::default(),
         resolve,
         catalog,
         opts,
@@ -624,6 +627,9 @@ impl Harness {
                         // Its server joins the mcp plugin's below, under one `/mcp`.
                         self.host.load(p.name, sasacode_bundled::free_search::joined).await;
                         free_search = true;
+                    } else if on && p.name == "agent-judge" {
+                        let judge = sasacode_bundled::agent_judge::with_verdicts(self.judged.clone());
+                        self.host.load(p.name, judge).await;
                     } else if on {
                         self.host.load(p.name, p.plugin).await;
                     }

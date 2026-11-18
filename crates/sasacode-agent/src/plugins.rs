@@ -165,6 +165,11 @@ impl PluginHost {
         *self.on_change.write().unwrap_or_else(|e| e.into_inner()) = f;
     }
 
+    /// What runs when the status items or the commands change.
+    pub fn on_change(&self) -> Option<Arc<dyn Fn() + Send + Sync>> {
+        self.on_change.read().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
     fn changed(&self) {
         let f = self.on_change.read().unwrap_or_else(|e| e.into_inner()).clone();
         if let Some(f) = f {

@@ -5260,6 +5260,7 @@ dependencies = [
  "sasacode-host",
  "sasacode-mcp",
  "sasacode-plugin-api",
+ "sasacode-protocol",
  "sasacode-skills",
  "sasacode-testing",
  "sasacode-tools",

@@ -4,18 +4,18 @@
 use std::io::IsTerminal;
 use std::path::Path;
 
-use sasacode_agent::permission::PERMISSION_MODES;
-use sasacode_cli::args::{OptionSpec, boolean, parse_args, string};
+use sasacode_agent::permission::{PERMISSION_MODES, PermissionPolicy};
+use sasacode_cli::args::{OptionSpec, boolean, parse_args, string, strings};
 use sasacode_cli::config::{read_config_files, sasacode_home};
 use sasacode_cli::control::control_mode;
 use sasacode_cli::env::{blank_keys, ensure_env_file, parse_env_file};
-use sasacode_cli::headless::{OutputFormat, run_headless};
+use sasacode_cli::headless::{HeadlessOptions, OutputFormat, run_headless};
 use sasacode_cli::setup::{SetupOptions, read_prompt_file, setup};
 use sasacode_cli::stdin::read_piped_stdin;
 use sasacode_cli::trust::{ask_trust, assess_project, is_trusted, save_trust};
 use sasacode_cli::{subcommands, tui};
 use sasacode_host::{builtin_providers, resolve_lang, set_lang, t};
-use sasacode_plugin_api::hide_from_children;
+use sasacode_plugin_api::{PermissionMode, PermissionRules, hide_from_children};
 
 const HELP_TEXT: &str = "sasacode — a small, pluggable coding agent
 
@@ -41,11 +41,17 @@ Options:
                                  add the file's text to the system prompt, after the config's instructions
       --trust-project            trust this project's endpoints, MCP servers, plugin settings and
                                  permission settings without asking
+      --allow <rule>             allow calls matching a permission rule for this run, as answering \"always\" does
+                                 (repeatable; e.g. \"bash(npm test)\", the rules of approval_request)
+      --slash                    with -p: a prompt that starts with /<command> runs that plugin command
 
 Subcommands:
   sasacode endpoint add <name> <url> [--key-env VAR] [--project]   add a server (format detected)
   sasacode endpoint remove <name> [--project]
   sasacode endpoint list
+  sasacode list models|commands|skills [--json]   what a run here can use (the GUI asks with --json)
+  sasacode trust [--yes] [--json]   is this folder trusted, and what would trust enable; --yes trusts it
+  sasacode plugin list --json       the bundled plugins and whether each is on (the GUI asks)
   sasacode login [status|logout]    use a ChatGPT plan instead of an API key (openai-codex/… models)
   sasacode update [--check] [tag]   download and install the newest release (checksum-verified)
   sasacode web-search install [tag] install RustXNG for the web_search tool (checksum-verified)
@@ -81,6 +87,8 @@ const OPTIONS: &[OptionSpec] = &[
     string("resume", Some('r')),
     boolean("no-session", None),
     boolean("trust-project", None),
+    strings("allow", None),
+    boolean("slash", None),
     boolean("stdin", None),
     boolean("help", Some('h')),
     boolean("version", Some('v')),
@@ -175,6 +183,22 @@ async fn run(args: Vec<String>, cwd: String) -> anyhow::Result<i32> {
     let output = values.string("output").map(str::to_string);
     // Checked before anything is loaded: a wrong combination should fail at once, not after the setup.
     let control = control_mode(values.string("control"), print.as_deref(), output.as_deref())?;
+    if values.flag("slash") && print.is_none() {
+        anyhow::bail!(t!("--slash needs -p"));
+    }
+    let allow = values.strings("allow").to_vec();
+    for rule in &allow {
+        let rules = PermissionRules {
+            allow: vec![rule.clone()],
+            ..Default::default()
+        };
+        if PermissionPolicy::new(PermissionMode::Edits, &rules).is_err() {
+            anyhow::bail!(t!(
+                "--allow \"{rule}\" is not a permission rule (like bash, bash(npm test) or edit(src/**))",
+                rule = rule
+            ));
+        }
+    }
     let append_system_prompt = values
         .string("append-system-prompt-file")
         .map(read_prompt_file)
@@ -213,6 +237,15 @@ async fn run(args: Vec<String>, cwd: String) -> anyhow::Result<i32> {
     for w in harness.warnings() {
         eprintln!("{}", t!("warning: {warning}", warning = w));
     }
+    // As if "always" had been answered for each: a window that starts a process per message keeps
+    // its grants this way.
+    if !allow.is_empty() {
+        let rules = PermissionRules {
+            allow,
+            ..Default::default()
+        };
+        harness.agent.permissions().add_rules(&rules)?;
+    }
     // A mistyped -m should stop here, not start a session that fails at the first request.
     if let Some(model) = values.string("model") {
         harness.check_model(model).await?;
@@ -238,7 +271,10 @@ async fn run(args: Vec<String>, cwd: String) -> anyhow::Result<i32> {
             _ => anyhow::bail!(t!("--output must be text or jsonl")),
         };
         let input = control.then(tokio::io::stdin);
-        return Ok(run_headless(&harness, prompt, format, input).await);
+        let opts = HeadlessOptions {
+            slash: values.flag("slash"),
+        };
+        return Ok(run_headless(&harness, prompt, format, input, opts).await);
     }
     tui::run(harness, values.positionals.join(" ")).await
 }

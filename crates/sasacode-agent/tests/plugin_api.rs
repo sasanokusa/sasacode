@@ -110,6 +110,7 @@ impl Setup {
             session: self.session.clone(),
             find_tool: Arc::new(move |n| t1.iter().find(|t| t.name() == n).cloned()),
             all_tools: Arc::new(move || t2.clone()),
+            calls: None,
         })
     }
     async fn run(&self, name: &str, signal: CancellationToken) -> Run {
@@ -445,7 +446,11 @@ async fn abort_releases_a_pending_child_approval_without_executing_or_adding_an_
     );
     let (started_tx, started_rx) = tokio::sync::oneshot::channel::<()>();
     let started_tx = Arc::new(Mutex::new(Some(started_tx)));
-    h.approve = Some(Arc::new(move |_req| {
+    // The child's request carries its parent call's own token (abort_call), which the run's abort cancels too.
+    let asked: Arc<Mutex<Option<CancellationToken>>> = Arc::default();
+    let a = asked.clone();
+    h.approve = Some(Arc::new(move |req| {
+        *a.lock().unwrap() = Some(req.signal.clone());
         if let Some(tx) = started_tx.lock().unwrap().take() {
             let _ = tx.send(());
         }
@@ -454,7 +459,10 @@ async fn abort_releases_a_pending_child_approval_without_executing_or_adding_an_
     let ctl = controller.clone();
     let run = tokio::spawn(async move { h.run("wrapper", ctl).await.output });
     started_rx.await.unwrap();
+    let asked = asked.lock().unwrap().clone().expect("asked");
+    assert!(!asked.is_cancelled());
     controller.cancel();
+    assert!(asked.is_cancelled());
     let output = run.await.unwrap();
     assert!(body(&output).contains("Interrupted"));
     assert!(!*ran.lock().unwrap());

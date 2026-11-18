@@ -24,6 +24,12 @@ pub enum OutputFormat {
     Jsonl,
 }
 
+#[derive(Clone, Copy, Debug, Default)]
+pub struct HeadlessOptions {
+    /// --slash: a prompt that starts with /name runs that slash command instead of going to the model.
+    pub slash: bool,
+}
+
 enum Out {
     Stdout(String),
     Stderr(String),
@@ -99,14 +105,23 @@ fn stop_hint(cause: StopCause) -> Option<&'static str> {
     }
 }
 
+/// `/^\/(\S+)\s*([\s\S]*)$/` on the prompt with its leading space trimmed: the command's name and
+/// its arguments, trimmed.
+fn slash_command(prompt: &str) -> Option<(String, String)> {
+    let rest = prompt.trim_start().strip_prefix('/')?;
+    let end = rest.find(char::is_whitespace).unwrap_or(rest.len());
+    (end > 0).then(|| (rest[..end].to_string(), rest[end..].trim().to_string()))
+}
+
 pub async fn run_headless<R: AsyncRead + Unpin + Send + 'static>(
     h: &Harness,
     prompt: String,
     output: OutputFormat,
     control: Option<R>,
+    opts: HeadlessOptions,
 ) -> i32 {
     let out = Output::new();
-    let code = run(h, prompt, output, control, &out).await;
+    let code = run(h, prompt, output, control, &out, opts).await;
     // main ends with process::exit, which drops what a slow pipe reader has not taken yet (#102).
     out.flushed().await;
     code
@@ -118,6 +133,7 @@ async fn run<R: AsyncRead + Unpin + Send + 'static>(
     output: OutputFormat,
     control: Option<R>,
     out: &Output,
+    opts: HeadlessOptions,
 ) -> i32 {
     let agent = &h.agent;
     // Model and tool text reaching a terminal must not carry escape sequences it would act on.
@@ -197,10 +213,13 @@ async fn run<R: AsyncRead + Unpin + Send + 'static>(
     };
     let session = agent.session();
     if output == OutputFormat::Jsonl {
+        // The context window lets a window (the GUI) say how full the conversation is before it is full.
+        let window = agent.model().context_window;
         let line = json!({
             "type": "session",
             "id": session.as_ref().map(|s| Value::from(s.id())).unwrap_or(Value::Null),
             "path": session.as_ref().map(|s| Value::from(s.path().to_string_lossy().into_owned())).unwrap_or(Value::Null),
+            "contextWindow": if window > 0 { Value::from(window) } else { Value::Null },
         });
         write(&format!("{}\n", sasacode_ai::json::stringify(&line)));
     }
@@ -213,6 +232,16 @@ async fn run<R: AsyncRead + Unpin + Send + 'static>(
             Arc::new(move |m: Value| write(&format!("{}\n", sasacode_ai::json::stringify(&m)))),
         )
     });
+    if let Some(c) = &controller {
+        c.judge(&h.judged);
+    }
+    // With the channel on, the plugins ask the parent (ui_request). A slash command's notices must
+    // be seen: they go to stderr at once, not into the queue the headless info notices wait in.
+    let ui: Option<Arc<dyn sasacode_plugin_api::UiBridge>> = match &controller {
+        Some(c) => Some(c.ui()),
+        None if opts.slash => Some(Arc::new(sasacode_agent::plugins::HeadlessUi)),
+        None => None,
+    };
     // A local server knows the context the model really gets: asked while the plugins load, as the
     // TUI does at startup, and with the TUI's warning when Ollama will cut the input short (#61).
     // A custom server not told apart may be LM Studio added before sasacode knew it (#59).
@@ -228,10 +257,14 @@ async fn run<R: AsyncRead + Unpin + Send + 'static>(
         .is_some_and(|p| p.ollama == Some(true) || p.lmstudio == Some(true) || p.llamacpp == Some(true))
         || untold(&provider, local.as_ref());
     let (listing, _) = tokio::join!(async { if ask { h.current_listing().await } else { None } }, async {
-        h.load_plugins(None).await;
+        h.load_plugins(ui).await;
         // Unlike the TUI, a one-shot run should start with MCP servers and similar tools connected.
         h.host.settle(std::time::Duration::from_secs(30)).await;
     });
+    // MCP prompts become commands once their servers answer: the list the parent gets is the run's.
+    if let Some(c) = &controller {
+        c.watch(&h.host);
+    }
     if let Some(listed) = listing
         && listed.server.as_deref() == Some("ollama")
         && listed.context_window.is_none_or(|c| c == 0)
@@ -244,29 +277,70 @@ async fn run<R: AsyncRead + Unpin + Send + 'static>(
         );
         out.stderr(format!("{}\n", t!("warning: {warning}", warning = warning)));
     }
+    let controller = controller.map(Arc::new);
     let sigint = {
-        let agent = agent.clone();
+        let (agent, controller) = (agent.clone(), controller.clone());
         tokio::spawn(async move {
             while tokio::signal::ctrl_c().await.is_ok() {
-                agent.abort();
+                match &controller {
+                    Some(c) => c.abort(),
+                    None => agent.abort(),
+                }
             }
         })
     };
     let stopped_by: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
+    let ended: Arc<Mutex<Option<StopCause>>> = Arc::default();
     let end_listener = {
-        let stopped_by = stopped_by.clone();
+        let (stopped_by, ended) = (stopped_by.clone(), ended.clone());
         agent.events().on(move |e| {
-            if let AgentEvent::AgentEnd { stopped: Some(s), .. } = e {
-                *stopped_by.lock().unwrap_or_else(|e| e.into_inner()) = format!("{}: {}", s.plugin, s.reason);
+            if let AgentEvent::AgentEnd { cause, stopped, .. } = e {
+                *ended.lock().unwrap_or_else(|e| e.into_inner()) = Some(*cause);
+                if let Some(s) = stopped {
+                    *stopped_by.lock().unwrap_or_else(|e| e.into_inner()) = format!("{}: {}", s.plugin, s.reason);
+                }
             }
         })
     };
-    let cause = match agent.prompt_text(&prompt).await {
-        Ok(c) => c,
-        Err(e) => {
-            out.stderr(format!("{}\n", t!("error: {error}", error = plain(&format!("{e:#}")))));
-            StopCause::Error
+    let fail = |error: String| match output {
+        OutputFormat::Jsonl => write(&format!(
+            "{}\n",
+            sasacode_ai::json::stringify(&json!({ "type": "error", "error": error }))
+        )),
+        OutputFormat::Text => out.stderr(format!("{}\n", t!("error: {error}", error = plain(&error)))),
+    };
+    let cause = match opts.slash.then(|| slash_command(&prompt)).flatten() {
+        // What it says reaches the parent as plugin_notify / plugin_text lines; a run it starts ends
+        // as any run does.
+        Some((name, args)) => {
+            let command = h.host.commands().into_iter().find(|c| c.command.name == name);
+            let ran = match &command {
+                None => Err(t!("unknown command: /{name}", name = name)),
+                Some(c) => (c.command.run)(sasacode_plugin_api::CommandContext { args })
+                    .await
+                    .map_err(|e| t!("/{name} failed: {error}", name = name, error = format!("{e:#}"))),
+            };
+            match ran {
+                Ok(()) => {
+                    agent.wait_for_idle().await;
+                    ended
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .unwrap_or(StopCause::Done)
+                }
+                Err(error) => {
+                    fail(error);
+                    StopCause::Error
+                }
+            }
         }
+        None => match agent.prompt_text(&prompt).await {
+            Ok(c) => c,
+            Err(e) => {
+                out.stderr(format!("{}\n", t!("error: {error}", error = plain(&format!("{e:#}")))));
+                StopCause::Error
+            }
+        },
     };
     // Plugins may inject follow-ups (agent_end); wait for everything to settle.
     agent.wait_for_idle().await;

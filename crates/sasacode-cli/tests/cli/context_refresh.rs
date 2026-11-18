@@ -261,7 +261,14 @@ fn turn_sizes(h: &Harness) -> Arc<Mutex<Vec<u64>>> {
 }
 
 async fn headless(h: &Harness) {
-    run_headless(h, "hi".into(), OutputFormat::Text, None::<tokio::io::Empty>).await;
+    run_headless(
+        h,
+        "hi".into(),
+        OutputFormat::Text,
+        None::<tokio::io::Empty>,
+        Default::default(),
+    )
+    .await;
 }
 
 #[tokio::test(flavor = "multi_thread")]

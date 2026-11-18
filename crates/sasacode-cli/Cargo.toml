@@ -38,5 +38,6 @@ name = "sasacode"
 path = "src/main.rs"
 
 [dev-dependencies]
+sasacode-protocol = { path = "../sasacode-protocol" }
 sasacode-testing.workspace = true
 tempfile.workspace = true

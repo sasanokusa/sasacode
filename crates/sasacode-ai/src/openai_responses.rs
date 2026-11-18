@@ -374,7 +374,7 @@ async fn run(req: Request, y: Yielder) -> anyhow::Result<()> {
     let o = Arc::make_mut(&mut out);
     o.content
         .retain(|c| !matches!(c, AssistantContent::Text(t) if t.text.is_empty()));
-    o.mark_if_cut(ended); // neither response.completed nor response.incomplete
+    o.mark_if_cut(ended, req.signal.is_cancelled()); // neither response.completed nor response.incomplete
     if o.stop_reason == StopReason::Stop && o.tool_calls().next().is_some() {
         o.stop_reason = StopReason::ToolUse;
     }
