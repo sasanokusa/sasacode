@@ -30,6 +30,8 @@ pub const SEARCH: &str = "search";
 pub const TIMELINE: &str = "timeline";
 /// The field of the command palette, and of a conversation's new name.
 pub const PALETTE: &str = "palette";
+/// What the palette found, scrolled to keep the one chosen in sight.
+pub const PALETTE_LIST: &str = "palette-list";
 pub const RENAME: &str = "rename";
 /// The field of a conversation's group.
 pub const GROUP: &str = "group";
@@ -37,8 +39,6 @@ pub const GROUP: &str = "group";
 pub const PR_TITLE: &str = "pr-title";
 /// The search inside the conversation shown.
 pub const FIND_IN: &str = "find-in";
-/// The model's field.
-pub const MODEL: &str = "model";
 
 /// How far from its newest the conversation still counts as at it, in pixels: a nudge of the
 /// trackpad is not reading back.

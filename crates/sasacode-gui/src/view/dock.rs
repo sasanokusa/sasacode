@@ -10,7 +10,7 @@ use sasacode_protocol::Decision;
 use super::{
     El, MOD, bold, clip, clip_start, col_w, diff_view, first_line, mono, plus_minus, room, short_path, tag, tip,
 };
-use crate::app::{App, EFFORTS, INPUT, MODEL, Msg, PERMISSIONS, shortcut};
+use crate::app::{App, EFFORTS, INPUT, Msg, PERMISSIONS, shortcut};
 use crate::i18n::fill;
 use crate::icons::{Icon, icon};
 use crate::input::{Offer, OfferKind};
@@ -939,39 +939,47 @@ fn composer(app: &App) -> El<'_> {
     // Too narrow for one line of controls: the buttons get a line of their own.
     let tight = room(app) < 610.0;
     // What the next run starts with. A run that is going on keeps what it started with.
-    // As wide as a long `provider/model`, less where the room is less: a width of its own inside a
-    // box that takes the room the rest of the line leaves.
-    // Marked like the two pickers next to it, so that it says what it is once a name is typed.
+    // Chosen like a command from the palette: found by any part of its name, among however many.
+    // Marked like the two pickers next to it; the box takes the room the rest of the line leaves.
+    let chosen = app.model.trim();
+    // As much of a long name as the line leaves beside the pickers and the send button, its
+    // provider and its end kept.
+    let wide = room(app).min(col_w(app) + 48.0);
+    let fits = ((wide - 418.0) / 7.2).clamp(12.0, 44.0) as usize;
+    let named: El<'_> = if chosen.is_empty() {
+        text(s.model_ph).size(12).color(t.fg_3).into()
+    } else {
+        text(super::clip_middle(chosen, fits))
+            .size(12)
+            .color(t.fg_2)
+            .wrapping(text::Wrapping::None)
+            .into()
+    };
     let model = container(tip(
         t,
-        row![
-            icon(Icon::Bot, 13.0, t.fg_3),
-            text_input(s.model_ph, &app.model)
-                .id(MODEL)
-                .on_input(Msg::Model)
-                .size(12)
-                .padding([4, 8])
-                .width(260)
-                .style(t.input()),
-            iced::widget::mouse_area(
-                button(icon(Icon::ChevronDown, 12.0, t.fg_3))
-                    .padding(3)
-                    .style(t.ghost(t.fg_3, false))
-                    .on_press_maybe(
-                        app.listing
-                            .models
-                            .as_ref()
-                            .filter(|m| !m.is_empty())
-                            .map(|_| Msg::OpenMenu(crate::rows::MenuFor::Models)),
-                    ),
-            ),
-        ]
-        .spacing(5)
-        .align_y(Alignment::Center),
-        format!("{}\n{}", s.m_model, s.next_run),
+        button(
+            row![
+                icon(Icon::Bot, 13.0, t.fg_3),
+                named,
+                icon(Icon::ChevronDown, 11.0, t.fg_3)
+            ]
+            .spacing(6)
+            .align_y(Alignment::Center),
+        )
+        .padding([4, 6])
+        .style(t.ghost(t.fg_2, false))
+        .on_press(Msg::FocusModel),
+        format!(
+            "{}  {}\n{}",
+            s.m_model,
+            super::keys_for(crate::keys::Act::Model),
+            s.next_run
+        ),
         tooltip::Position::Top,
     ))
-    .width(Length::Fill);
+    .width(Length::Fill)
+    // Narrower than guessed, the name is cut at the box rather than run under the pickers.
+    .clip(true);
     let mut modes = vec![s.default_tag];
     modes.extend(PERMISSIONS);
     let mode_hint = match app.permission {

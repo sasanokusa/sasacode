@@ -39,8 +39,6 @@ pub enum MenuFor {
     Row(String),
     /// A file of the folder: in the files tab, or a changed file of the git tab.
     File(PathBuf),
-    /// The models the CLI listed, for the next run.
-    Models,
     /// The links of a paragraph of a reply, as written.
     Links(Vec<String>),
     /// How the git tab draws its diffs.

@@ -2565,16 +2565,62 @@ fn an_untrusted_folder_says_what_trust_would_use_and_a_window_can_use_it_alone()
 }
 
 #[test]
-fn the_models_the_cli_lists_are_picked_from_a_menu_and_the_rest_from_a_screen() {
+fn the_models_are_found_like_commands_in_the_palette_and_any_can_be_typed() {
+    use crate::overlay::{Overlay, Pick};
     let mut app = window("ja");
+    let w = crate::words::JA;
     app.listing = listed();
-    let _ = app.update(Msg::OpenMenu(crate::rows::MenuFor::Models));
-    assert!(says(&app, "cloud/big") && says(&app, "local/gemma4 · 131.1k"));
+    // A conversation here used a model the CLI does not list.
+    app.sessions.insert(
+        0,
+        sasacode_protocol::SessionSummary {
+            id: "used-1".into(),
+            path: app.cwd.join("used-1.jsonl"),
+            cwd: app.cwd.display().to_string(),
+            created_at: String::new(),
+            modified: std::time::SystemTime::now(),
+            first_prompt: "前の会話".into(),
+            message_count: 2,
+            model: Some("old/tiny".into()),
+        },
+    );
+    // The field says the default and opens the models as the palette lists commands: the one a
+    // run starts with first and marked, then the one used here, then the rest.
+    let ph = app.s.model_ph;
     act(&mut app, |ui| {
-        ui.click("cloud/big").expect("the model is there");
+        let _ = ui.click(ph).expect("the model button");
     });
+    assert!(matches!(
+        &app.overlay,
+        Some(Overlay::Palette { pick: Pick::Models, .. })
+    ));
+    let labels = |app: &App| app.found_entries().into_iter().map(|e| e.label).collect::<Vec<_>>();
+    assert_eq!(labels(&app), ["local/gemma4", "old/tiny", "cloud/big"]);
+    assert!(says(&app, &format!("{} · 131.1k", w.model_chosen)));
+    // What is typed finds every model with each of its words, and ↵ takes the first.
+    let _ = app.update(Msg::OverlayText("BIG".into()));
+    assert_eq!(labels(&app), ["cloud/big"]);
+    let _ = app.update(Msg::PaletteRun(0));
     assert_eq!(app.model, "cloud/big");
-    assert!(app.menu.is_none());
+    assert!(app.overlay.is_none() && says(&app, "cloud/big"));
+    // Opened again by its key, the one chosen is first, and the default can be gone back to.
+    let _ = app.update(Msg::FocusModel);
+    assert_eq!(labels(&app), ["cloud/big", "old/tiny", "local/gemma4", w.model_default]);
+    // A model no one listed is used as it is typed.
+    let _ = app.update(Msg::OverlayText("other/new".into()));
+    assert_eq!(labels(&app), [crate::i18n::fill(w.model_use, "model", "other/new")]);
+    let _ = app.update(Msg::PaletteRun(0));
+    assert_eq!(app.model, "other/new");
+    let _ = app.update(Msg::Command(crate::input::Command::Model));
+    let back = labels(&app).iter().position(|l| l == w.model_default).unwrap();
+    let _ = app.update(Msg::PaletteRun(back));
+    assert_eq!(app.model, "");
+    // While the CLI is still asked, what was used here can be chosen.
+    app.listing.models = None;
+    let _ = app.update(Msg::FocusModel);
+    assert!(says(&app, w.model_loading));
+    assert_eq!(labels(&app), ["old/tiny"]);
+    let _ = app.update(Msg::Show(None));
 
     let _ = app.update(Msg::Show(Some(crate::app::Overlay::Extensions)));
     for said in ["todo", "API 9 is newer", "/review", "変更を見直す", "db"] {

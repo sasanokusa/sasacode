@@ -7,7 +7,7 @@ use iced::Task;
 use iced::widget::operation;
 use iced::widget::text_editor::{self, Action, Edit};
 
-use crate::app::{App, FIND_IN, MODEL, Msg, Overlay};
+use crate::app::{App, FIND_IN, Msg, Overlay};
 use crate::composer::{self, SHOWN};
 
 /// How many conversations `@` offers below the files.
@@ -432,7 +432,7 @@ impl App {
             }
             Command::Export => return self.update(Msg::Copy(crate::app::Clip::Conversation)),
             Command::Steps => return self.update(Msg::SetSteps(!self.prefs.steps)),
-            Command::Model => return operation::focus(MODEL),
+            Command::Model => return self.update(Msg::Show(Some(Overlay::picker(crate::overlay::Pick::Models)))),
             Command::Rename | Command::Pin | Command::Archive | Command::Delete | Command::Group => {
                 let Some(id) = session else {
                     return Task::none();

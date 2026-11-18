@@ -195,7 +195,10 @@ pub fn listing(program: &Path, cwd: &Path, lang: Option<String>) -> Task<Msg> {
         let (program, cwd) = (program.to_owned(), cwd.to_owned());
         async move {
             Listing {
-                models: parsed(ask(program, cwd, vec!["list", "models", "--json"], lang).await),
+                // Asked and not answered is none listed: the models picker stops waiting for them.
+                models: Some(
+                    parsed(ask(program, cwd, vec!["list", "models", "--json"], lang).await).unwrap_or_default(),
+                ),
                 ..Listing::default()
             }
         }

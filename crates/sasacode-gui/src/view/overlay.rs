@@ -103,6 +103,7 @@ fn palette<'a>(app: &'a App, query: &'a str, at: usize, pick: Pick) -> El<'a> {
         Pick::Outline => s.w().outline_ph,
         Pick::Split => s.w().split_ph,
         Pick::Worktrees => s.w().worktrees_ph,
+        Pick::Models => s.w().model_find_ph,
     };
     let field = text_input(placeholder, query)
         .id(PALETTE)
@@ -116,6 +117,9 @@ fn palette<'a>(app: &'a App, query: &'a str, at: usize, pick: Pick) -> El<'a> {
         list = list.push(container(text(s.w().branch_loading).size(13).color(t.fg_3)).padding([8, 10]));
     } else if pick == Pick::Worktrees && app.worktree_list.is_none() {
         list = list.push(container(text(s.w().worktrees_loading).size(13).color(t.fg_3)).padding([8, 10]));
+    } else if pick == Pick::Models && app.listing.models.is_none() {
+        // What was used here and what is typed can be chosen while the rest is asked for.
+        list = list.push(container(text(s.w().model_loading).size(13).color(t.fg_3)).padding([8, 10]));
     } else if found.is_empty() {
         list = list.push(container(text(s.nothing).size(13).color(t.fg_3)).padding([8, 10]));
     }
@@ -137,6 +141,7 @@ fn palette<'a>(app: &'a App, query: &'a str, at: usize, pick: Pick) -> El<'a> {
     let body = column![
         field,
         scrollable(list)
+            .id(crate::app::PALETTE_LIST)
             .height(Length::Shrink)
             .style(t.scroll())
             .direction(scrollable::Direction::Vertical(
