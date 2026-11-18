@@ -366,7 +366,52 @@ fn row_of<'a>(app: &'a App, session: &'a SessionSummary, now: SystemTime, cells:
             || app
                 .chat_of(&session.id)
                 .is_some_and(|c| !c.editor.text().trim().is_empty()));
-    if let Some((color, _)) = mark {
+    // Pinned, named, grouped, archived or deleted from the row the pointer is on: at the end of
+    // its title's line, where its mark is otherwise, so that they are inside the row and the line
+    // under the title keeps all of its width.
+    let act = |mark: Icon, color, hint: &'static str, msg: Msg| {
+        tip(
+            t,
+            button(icon(mark, 13.0, color))
+                .padding([1, 3])
+                .style(t.ghost(t.fg_3, false))
+                .on_press(msg),
+            hint.to_owned(),
+            iced::widget::tooltip::Position::Bottom,
+        )
+    };
+    if hovered {
+        let w = s.w();
+        let id = session.id.clone();
+        // Red once pressed: the next press deletes.
+        let sure = app.confirm_delete.as_deref() == Some(id.as_str());
+        title_row = title_row.push(Space::new().width(Length::Fill)).push(
+            row![
+                act(
+                    Icon::Pin,
+                    t.fg_3,
+                    if pinned { s.unpin } else { s.pin },
+                    Msg::Pin(id.clone())
+                ),
+                act(Icon::Pencil, t.fg_3, s.rename, Msg::Rename(id.clone())),
+                act(Icon::Tag, t.fg_3, w.c_group, Msg::Group(id.clone())),
+                act(
+                    Icon::Archive,
+                    t.fg_3,
+                    if app.show_archived { s.unarchive } else { s.archive },
+                    Msg::Archive(id.clone())
+                ),
+                act(
+                    Icon::Trash,
+                    if sure { t.err } else { t.fg_3 },
+                    if sure { w.delete_sure } else { w.c_delete },
+                    Msg::Delete(id)
+                ),
+            ]
+            .spacing(0)
+            .align_y(Alignment::Center),
+        );
+    } else if let Some((color, _)) = mark {
         title_row = title_row
             .push(Space::new().width(Length::Fill))
             .push(icon(Icon::Dot, 15.0, color));
@@ -375,10 +420,14 @@ fn row_of<'a>(app: &'a App, session: &'a SessionSummary, now: SystemTime, cells:
             .push(Space::new().width(Length::Fill))
             .push(icon(Icon::Pencil, 11.0, t.fg_3));
     }
+    // Filled as a whole below, its buttons inside the fill.
     let item = button(column![title_row, text(meta).size(11.5).color(t.fg_3)].spacing(2))
         .width(Length::Fill)
         .padding([6, 10])
-        .style(t.ghost(t.fg, current || beside || chosen))
+        .style(move |theme, status| button::Style {
+            background: None,
+            ..t.ghost(t.fg, false)(theme, status)
+        })
         .on_press_maybe(if app.modifiers.shift() {
             // With ⇧ held, chosen with others, the one shown too.
             Some(Msg::Select(session.id.clone()))
@@ -392,51 +441,6 @@ fn row_of<'a>(app: &'a App, session: &'a SessionSummary, now: SystemTime, cells:
                 }
             })
         });
-    // Pinned, named, grouped, archived or deleted from the row the pointer is on.
-    let act = |mark: Icon, color, hint: &'static str, msg: Msg| {
-        tip(
-            t,
-            button(icon(mark, 13.0, color))
-                .padding(3)
-                .style(t.ghost(t.fg_3, false))
-                .on_press(msg),
-            hint.to_owned(),
-            iced::widget::tooltip::Position::Bottom,
-        )
-    };
-    let actions: El<'_> = if hovered {
-        let w = s.w();
-        let id = session.id.clone();
-        // Red once pressed: the next press deletes.
-        let sure = app.confirm_delete.as_deref() == Some(id.as_str());
-        row![
-            act(
-                Icon::Pin,
-                t.fg_3,
-                if pinned { s.unpin } else { s.pin },
-                Msg::Pin(id.clone())
-            ),
-            act(Icon::Pencil, t.fg_3, s.rename, Msg::Rename(id.clone())),
-            act(Icon::Tag, t.fg_3, w.c_group, Msg::Group(id.clone())),
-            act(
-                Icon::Archive,
-                t.fg_3,
-                if app.show_archived { s.unarchive } else { s.archive },
-                Msg::Archive(id.clone())
-            ),
-            act(
-                Icon::Trash,
-                if sure { t.err } else { t.fg_3 },
-                if sure { w.delete_sure } else { w.c_delete },
-                Msg::Delete(id)
-            ),
-        ]
-        .spacing(0)
-        .align_y(Alignment::Center)
-        .into()
-    } else {
-        Space::new().into()
-    };
     // And what the mark means, its model, the branch it was started on and that branch's pull
     // request.
     let w = s.w();
@@ -459,8 +463,21 @@ fn row_of<'a>(app: &'a App, session: &'a SessionSummary, now: SystemTime, cells:
         (Some(whole), None) => Some(whole),
         (None, about) => about,
     };
-    // Beside the whole row, past its buttons: beside the title alone it covered them.
-    let line = row![item, actions].spacing(2).align_y(Alignment::Center);
+    // Beside the whole row, past its buttons: beside the title alone it covered them. The row is
+    // filled while it is the one shown, beside or chosen, and fainter under the pointer.
+    let on = current || beside || chosen;
+    let fill = if on {
+        Some(t.state)
+    } else if hovered {
+        Some(iced::Color { a: 0.7, ..t.state })
+    } else {
+        None
+    };
+    let line = container(item).width(Length::Fill).style(move |_| container::Style {
+        background: fill.map(iced::Background::Color),
+        border: iced::border::rounded(crate::theme::RADIUS),
+        ..container::Style::default()
+    });
     let line: El<'_> = match hint {
         Some(hint) => tip(t, line, hint, iced::widget::tooltip::Position::Right),
         None => line.into(),
