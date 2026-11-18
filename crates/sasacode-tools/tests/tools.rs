@@ -144,6 +144,60 @@ async fn edit_requires_a_unique_exact_match_and_returns_a_diff() {
     assert_eq!(read(dir.join("e.txt")), "$&\nBAR\n$&\n");
 }
 
+/// The near-miss hints: where an old_string that is not in the file comes closest, numbered as read
+/// numbers lines, and where one found more than once is.
+#[tokio::test]
+async fn edit_errors_show_the_nearest_lines_and_where_the_matches_are() {
+    let d = sandbox();
+    let dir = d.path();
+    let edit = |old: &str| json!({ "path": "c.ts", "old_string": old, "new_string": "X" });
+    let file = "import x from \"y\";\n\nexport function count(s: string, p: string) {\n  const n = s.split(p).length - 2;\n  return n;\n}\n";
+    std::fs::write(dir.join("c.ts"), file).unwrap();
+    let missing = run(&EditTool, dir, edit("const n = s.split(p).length - 1;\nreturn n;")).await;
+    assert_eq!(missing.is_error, Some(true));
+    let text = out(&missing);
+    let hint = "The lines most like it:\n     3\texport function count(s: string, p: string) {\n     4\t  const n = s.split(p).length - 2;\n     5\t  return n;\n     6\t}";
+    assert!(text.ends_with(hint), "{text}");
+    // The hint as given (read's form) is an old_string edit takes back.
+    let numbered = "     4\t  const n = s.split(p).length - 2;\n     5\t  return n;";
+    let fixed = json!({ "path": "c.ts", "old_string": numbered, "new_string": "  const n = s.split(p).length - 1;\n  return n;" });
+    assert!(!run(&EditTool, dir, fixed).await.is_error());
+    assert!(read(dir.join("c.ts")).contains("length - 1;"));
+
+    // Nothing alike: no lines.
+    let unlike = out(&run(&EditTool, dir, edit("zzzz qqqq")).await);
+    assert!(unlike.ends_with("Re-read the file and match it exactly."), "{unlike}");
+    // At most ten of old_string's lines, and one line each side.
+    let long: String = (0..40).map(|i| format!("line {i}\n")).collect();
+    std::fs::write(dir.join("c.ts"), &long).unwrap();
+    let old: String = (5..30).map(|i| format!("line {i}\n")).collect::<String>() + "nope";
+    let bounded = out(&run(&EditTool, dir, edit(&old)).await);
+    let shown: Vec<&str> = bounded.split('\n').skip(1).collect();
+    assert_eq!(shown.len(), 12, "{bounded}");
+    assert_eq!((shown[0], shown[11]), ("     5\tline 4", "    16\tline 15"));
+
+    // Found more than once: the lines, the first ten of them.
+    std::fs::write(dir.join("c.ts"), "a\nb\na\n").unwrap();
+    let twice = out(&run(&EditTool, dir, edit("a")).await);
+    assert!(
+        twice.contains("appears 2 times in") && twice.contains(" (lines 1, 3). "),
+        "{twice}"
+    );
+    std::fs::write(dir.join("c.ts"), "t\n".repeat(12)).unwrap();
+    let many = out(&run(&EditTool, dir, edit("t")).await);
+    assert!(
+        many.contains("appears 12 times in") && many.contains(" (lines 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, …). "),
+        "{many}"
+    );
+    // Also when found only loosely (trailing whitespace ignored).
+    std::fs::write(dir.join("c.ts"), "a  \nb\nx\na \nb\n").unwrap();
+    let loose = out(&run(&EditTool, dir, edit("a\nb")).await);
+    assert!(
+        loose.contains("more than once") && loose.contains(" (lines 1, 4). "),
+        "{loose}"
+    );
+}
+
 #[tokio::test]
 async fn bash_reports_exit_codes_truncates_to_a_file_and_times_out() {
     if !in_sandboxed_home("bash_reports_exit_codes_truncates_to_a_file_and_times_out") {
