@@ -9,7 +9,7 @@ use serde_json::{Value, json};
 
 use sasacode_cli::setup::{Harness, SetupOptions, setup};
 
-use crate::support::{Home, child, merged, replay_provider};
+use crate::support::{Home, Role, child, isolated, merged, provider, replay_provider, sink, with_quiet_builtins};
 
 fn configure(t: &Home, extra: Value) {
     t.config(&merged(
@@ -219,4 +219,67 @@ fn the_gui_asks_the_binary_for_the_plugins_commands_skills_and_trust_other_plugi
             r.stderr
         );
     }
+}
+
+/// `list models --json`, as the GUI asks for it: the servers' models, the one a run would use
+/// marked `current`. The built-in providers go to a server that knows nothing.
+#[test]
+fn the_gui_asks_the_binary_for_the_models_the_one_a_run_uses_is_current() {
+    let server = sasacode_testing::FakeServer::start(Vec::new()).expect("the fake server");
+    let sink = sink();
+    let providers = with_quiet_builtins(&sink.url(), json!({ "fake": provider("openai-chat", server.url()) }));
+    // openai-codex off: it would look for its login in the (stubbed) keychain, as a run does.
+    let config = json!({
+        "providers": providers, "model": "fake/m", "maxRetries": 0, "plugins": { "disabled": ["openai-codex"] },
+    });
+    let bin = crate::support::Bin::new(&config);
+    let r = bin.run(["list", "models", "--json"]);
+    assert_eq!(r.code, 0, "{}", r.stderr);
+    let models: Vec<Value> = serde_json::from_str(r.stdout.trim()).expect("one JSON array");
+    let current: Vec<&Value> = models.iter().filter(|m| m["current"] == true).collect();
+    assert_eq!(current.len(), 1, "{models:?}");
+    assert_eq!(current[0]["id"], "fake/m");
+    assert!(server.requests().is_empty(), "no model was asked to answer");
+}
+
+/// `--slash` with a command that fails: its error, and exit 1 (here in text mode, so on stderr).
+#[tokio::test(flavor = "multi_thread")]
+async fn slash_a_command_that_fails_is_an_error_and_exit_1() {
+    let t = match isolated() {
+        Role::Child(t) => t,
+        Role::Parent(out) => {
+            assert!(out.stderr.contains("/hello failed: kaboom"), "{}", out.stderr);
+            return;
+        }
+    };
+    configure(&t, json!({}));
+    let h = setup(SetupOptions {
+        no_session: true,
+        ..SetupOptions::new(t.cwd())
+    })
+    .await
+    .expect("setup");
+    // A stand-in for a plugin whose command throws.
+    let loaded = h
+        .host
+        .load("asker", |api| {
+            Box::pin(async move {
+                let hello =
+                    sasacode_plugin_api::Command::new("hello", "say hello", |_| async { anyhow::bail!("kaboom") });
+                api.register_command(hello);
+                Ok(())
+            })
+        })
+        .await;
+    assert!(loaded);
+    let opts = sasacode_cli::headless::HeadlessOptions { slash: true };
+    let code = sasacode_cli::headless::run_headless(
+        &h,
+        "/hello boom".into(),
+        sasacode_cli::headless::OutputFormat::Text,
+        None::<tokio::io::Empty>,
+        opts,
+    )
+    .await;
+    assert_eq!(code, 1);
 }
