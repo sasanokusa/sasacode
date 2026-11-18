@@ -160,6 +160,12 @@ fn main() {
 
 async fn run(args: Vec<String>, cwd: String) -> anyhow::Result<i32> {
     match args.first().map(String::as_str) {
+        // All that is left of `sasacode plugin`: the bundled plugins, for the GUI.
+        Some("plugin") if args[1..] == ["list", "--json"] => {
+            let listed = sasacode_cli::listings::plugin_listing(Path::new(&cwd))?;
+            println!("{}", serde_json::to_string(&listed)?);
+            return Ok(0);
+        }
         Some("plugin") => anyhow::bail!(t!(
             "`sasacode plugin` was removed in 0.20: the plugins now ship with sasacode (turn the optional ones on with plugins.enabled in config.json); add tools with MCP servers or Skills"
         )),
@@ -168,6 +174,8 @@ async fn run(args: Vec<String>, cwd: String) -> anyhow::Result<i32> {
         Some("update") => return sasacode_cli::update::update_command(&args[1..]).await,
         Some("web-search") => return subcommands::web_search(&args[1..]).await,
         Some("gui") => return subcommands::gui(&args[1..]).await,
+        Some("list") => return sasacode_cli::listings::list_command(&args[1..], Path::new(&cwd)).await,
+        Some("trust") => return sasacode_cli::listings::trust_command(&args[1..], Path::new(&cwd)),
         _ => {}
     }
     let values = parse_args(&args, OPTIONS).map_err(anyhow::Error::msg)?;

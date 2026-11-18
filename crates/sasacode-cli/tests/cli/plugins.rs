@@ -185,3 +185,38 @@ async fn plugins_enabled_in_an_untrusted_project_config_is_ignored() {
     // Trusted, it applies.
     assert!(has(&plugins(&*loaded(&t, true).await), "ask-user"));
 }
+
+/// What the GUI asks the binary without starting a run (its cli.rs): `plugin list --json` is all
+/// that is left of `sasacode plugin`, the bundled plugins on or off as a run here loads them.
+#[test]
+fn the_gui_asks_the_binary_for_the_plugins_commands_skills_and_trust_other_plugin_use_is_an_error() {
+    let bin = crate::support::Bin::new(&json!({ "plugins": { "enabled": ["ask-user"], "disabled": ["goal"] } }));
+    let listed = bin.run(["plugin", "list", "--json"]);
+    assert_eq!(listed.code, 0, "{}", listed.stderr);
+    let plugins: Vec<Value> = serde_json::from_str(listed.stdout.trim()).expect("one JSON array");
+    let on = |name: &str| {
+        let p = plugins
+            .iter()
+            .find(|p| p["name"] == name)
+            .unwrap_or_else(|| panic!("{name}"));
+        assert_eq!(p["source"], "bundled");
+        p["enabled"].as_bool().expect("enabled")
+    };
+    assert!(on("ask-user") && on("checkpoints"));
+    assert!(!on("goal") && !on("workflows"));
+    let commands = bin.run(["list", "commands", "--json"]);
+    let commands: Vec<Value> = serde_json::from_str(commands.stdout.trim()).expect("the commands");
+    assert!(commands.iter().any(|c| c["name"] == "help" && c["headless"] == false));
+    let trust = bin.run(["trust", "--json"]);
+    let trust: Value = serde_json::from_str(trust.stdout.trim()).expect("the trust status");
+    assert_eq!((&trust["needed"], &trust["complete"]), (&json!(false), &json!(true)));
+    for other in [&["plugin", "list"][..], &["plugin", "add", "x"]] {
+        let r = bin.run(other);
+        assert_eq!(r.code, 1);
+        assert!(
+            r.stderr.contains("`sasacode plugin` was removed in 0.20"),
+            "{}",
+            r.stderr
+        );
+    }
+}

@@ -215,7 +215,9 @@ impl Ui {
     }
 
     async fn exited(self) -> (i32, FakeTerminal) {
-        let code = match tokio::time::timeout(Duration::from_secs(10), self.run).await {
+        // Leaving ends the plugins and closes the session; on the Windows runner that has taken
+        // longer than 10 s once in several runs (the e2e tests there wait 30 s too).
+        let code = match tokio::time::timeout(Duration::from_secs(30), self.run).await {
             Ok(Ok(Ok(code))) => code,
             other => panic!(
                 "the TUI did not exit: {other:?}; the screen:\n{}",
