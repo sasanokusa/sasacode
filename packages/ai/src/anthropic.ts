@@ -205,7 +205,7 @@ export const anthropicProvider: Provider = {
       break;
     }
     out.content = out.content.filter(Boolean);
-    markIfCut(out, ended); // no stop reason and no message_stop
+    markIfCut(out, ended, req.signal); // no stop reason and no message_stop
     out.usage.cost = computeCost(model, out.usage);
     yield { type: "done", message: out };
   },
