@@ -173,6 +173,10 @@ pub fn fs_error(e: &std::io::Error, syscall: &str, path: &str) -> anyhow::Error 
 }
 
 fn errno_text(e: &std::io::Error) -> Option<(&'static str, &'static str)> {
+    // ERROR_DIRECTORY (a working directory that is not there, at spawn): libuv says ENOENT.
+    if cfg!(windows) && e.raw_os_error() == Some(267) {
+        return Some(("ENOENT", "no such file or directory"));
+    }
     #[cfg(unix)]
     if let Some(n) = e.raw_os_error() {
         let known = match n {

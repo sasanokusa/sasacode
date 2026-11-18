@@ -1057,9 +1057,11 @@ async fn results_and_errors_as_the_ts_wrote_them() {
         format!("File not found: {}. Use write to create it.", s(&dir.join("adir")))
     );
     let r = run(&BashTool, &dir.join("missing"), json!({ "command": "echo hi" })).await;
+    // `bash` is Git Bash's full path on Windows.
+    let bash = sasacode_tools::shell::bash_path().unwrap();
     assert_eq!(
         out(&r),
-        "Error: ENOENT: no such file or directory, posix_spawn 'bash'\n[terminated by null]"
+        format!("Error: ENOENT: no such file or directory, posix_spawn '{bash}'\n[terminated by null]")
     );
     assert_eq!(
         serde_json::to_string(r.details.as_ref().unwrap()).unwrap(),
@@ -1072,11 +1074,17 @@ async fn results_and_errors_as_the_ts_wrote_them() {
     assert_eq!(out(&r), format!("{} is empty.", s(&dir.join("empty.txt"))));
     assert_eq!(r.is_error, None);
     let r = run(&BashTool, dir, json!({ "command": "kill -SEGV $$" })).await;
-    assert_eq!(out(&r), "[terminated by SIGSEGV]");
-    assert_eq!(
-        serde_json::to_string(&r).unwrap(),
-        r#"{"content":[{"type":"text","text":"[terminated by SIGSEGV]"}],"isError":true,"details":{"exitCode":null}}"#
-    );
+    if cfg!(windows) {
+        // No signals on Windows: Git Bash's emulated one ends the process with an exit code.
+        assert!(out(&r).starts_with("[exit code "), "{}", out(&r));
+        assert_eq!(r.is_error, Some(true));
+    } else {
+        assert_eq!(out(&r), "[terminated by SIGSEGV]");
+        assert_eq!(
+            serde_json::to_string(&r).unwrap(),
+            r#"{"content":[{"type":"text","text":"[terminated by SIGSEGV]"}],"isError":true,"details":{"exitCode":null}}"#
+        );
+    }
     let r = run(&BashTool, dir, json!({ "command": "echo out; echo err >&2; exit 0" })).await;
     assert_eq!(
         serde_json::to_string(&r).unwrap(),
@@ -1086,7 +1094,9 @@ async fn results_and_errors_as_the_ts_wrote_them() {
     assert_eq!(out(&r), "[exit code 0]");
     // A write's details, diff included.
     let r = run(&WriteTool, dir, json!({ "path": "w.txt", "content": "a\nb\n" })).await;
-    let p = s(&dir.join("w.txt"));
+    // As written inside a JSON string (`\` doubled on Windows).
+    let p = serde_json::to_string(&s(&dir.join("w.txt"))).unwrap();
+    let p = &p[1..p.len() - 1];
     assert_eq!(
         serde_json::to_string(&r).unwrap(),
         format!(
