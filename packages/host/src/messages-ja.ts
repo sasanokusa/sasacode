@@ -5,7 +5,7 @@
  */
 export const TO_JA: Record<string, string> = {
   // ── main.ts: help and top-level errors ─────────────────────────────
-  "sasacode — a small, pluggable coding agent\n\nUsage:\n  sasacode [prompt]              interactive session (optional first prompt)\n  sasacode -p \"<prompt>\"         run headless and print the answer\n\nOptions:\n  -p, --print <prompt>           headless mode (stdin is appended when piped)\n      --stdin                    with -p: wait for piped input however long it takes\n      --output <text|jsonl>      headless output format (default text)\n      --control stdio            with -p --output jsonl: the parent answers approvals, sends messages and can abort\n                                 over stdin as JSON Lines (stdin is then not appended to the prompt)\n  -m, --model <provider/model>   e.g. anthropic/claude-opus-5, openai/gpt-5.5, ollama/gemma4:e4b\n                                 (the TUI's /model lists what your providers offer)\n      --permission <mode>        {modes} (default edits)\n      --thinking <level>         off | low | medium | high | xhigh | max\n      --max-turns <n>            turns per run before stopping (default 200; 0 = no limit)\n  -c, --continue                 resume the most recent session in this directory\n  -r, --resume <id>              resume a session by id\n      --no-session               do not save this session\n      --append-system-prompt-file <path>\n                                 add the file's text to the system prompt, after the config's instructions\n      --trust-project            trust this project's plugins, endpoints, MCP servers and\n                                 permission settings without asking\n\nSubcommands:\n  sasacode plugin search [words]              find plugins (sasanokusa.com's list and npm)\n  sasacode plugin install <npm-spec|git-url> [--project] [--yes]\n  sasacode plugin update [name] | remove <name> | list   (flags may go anywhere)\n  sasacode plugin publish <file.ts|dir> [--name <pkg>] [--license <id>] [--dry-run]\n  sasacode endpoint add <name> <url> [--key-env VAR] [--project]   add a server (format detected)\n  sasacode endpoint remove <name> [--project]\n  sasacode endpoint list\n  sasacode login [status|logout]    use a ChatGPT plan instead of an API key (openai-codex/… models)\n  sasacode update [--check] [tag]   download and install the newest release (checksum-verified)\n  sasacode web-search install [tag] install RustXNG for the web_search tool (checksum-verified)\n  sasacode gui [folder]             open the desktop GUI on a folder (needs sasacode-gui: docs/gui.md)\n  -h, --help\n  -v, --version":
+  "sasacode — a small, pluggable coding agent\n\nUsage:\n  sasacode [prompt]              interactive session (optional first prompt)\n  sasacode -p \"<prompt>\"         run headless and print the answer\n\nOptions:\n  -p, --print <prompt>           headless mode (stdin is appended when piped)\n      --stdin                    with -p: wait for piped input however long it takes\n      --output <text|jsonl>      headless output format (default text)\n      --control stdio            with -p --output jsonl: the parent answers approvals, sends messages and can abort\n                                 over stdin as JSON Lines (stdin is then not appended to the prompt)\n  -m, --model <provider/model>   e.g. anthropic/claude-opus-5, openai/gpt-5.5, ollama/gemma4:e4b\n                                 (the TUI's /model lists what your providers offer)\n      --permission <mode>        {modes} (default edits)\n      --thinking <level>         off | low | medium | high | xhigh | max\n      --max-turns <n>            turns per run before stopping (default 200; 0 = no limit)\n  -c, --continue                 resume the most recent session in this directory\n  -r, --resume <id>              resume a session by id\n      --no-session               do not save this session\n      --append-system-prompt-file <path>\n                                 add the file's text to the system prompt, after the config's instructions\n      --trust-project            trust this project's plugins, endpoints, MCP servers and\n                                 permission settings without asking\n      --allow <rule>             allow calls matching a permission rule for this run, as answering \"always\" does\n                                 (repeatable; e.g. \"bash(npm test)\", the rules of approval_request)\n      --slash                    with -p: a prompt that starts with /<command> runs that plugin command\n\nSubcommands:\n  sasacode plugin search [words]              find plugins (sasanokusa.com's list and npm)\n  sasacode plugin install <npm-spec|git-url> [--project] [--yes]\n  sasacode plugin update [name] | remove <name> | list [--json]   (flags may go anywhere)\n  sasacode plugin publish <file.ts|dir> [--name <pkg>] [--license <id>] [--dry-run]\n  sasacode endpoint add <name> <url> [--key-env VAR] [--project]   add a server (format detected)\n  sasacode endpoint remove <name> [--project]\n  sasacode endpoint list\n  sasacode list models|commands|skills [--json]   what a run here can use (the GUI asks with --json)\n  sasacode trust [--yes] [--json]   is this folder trusted, and what would trust enable; --yes trusts it\n  sasacode login [status|logout]    use a ChatGPT plan instead of an API key (openai-codex/… models)\n  sasacode update [--check] [tag]   download and install the newest release (checksum-verified)\n  sasacode web-search install [tag] install RustXNG for the web_search tool (checksum-verified)\n  sasacode gui [folder]             open the desktop GUI on a folder (needs sasacode-gui: docs/gui.md)\n  -h, --help\n  -v, --version":
     `sasacode — 小さく、プラグインで組み替えられるコーディングエージェント
 
 使い方:
@@ -30,15 +30,20 @@ export const TO_JA: Record<string, string> = {
                                  ファイルの中身を、config の instructions の後ろにシステムプロンプトとして足す
       --trust-project            このプロジェクトのプラグイン、エンドポイント、MCP サーバー、
                                  権限設定を確認なしで信頼する
+      --allow <rule>             権限ルールに合う呼び出しを、この実行のあいだ「常に許可」と答えたように許す
+                                 （繰り返し指定できる。例: "bash(npm test)"。approval_requestのrulesと同じ形）
+      --slash                    -pと併用: /<command>で始まるプロンプトを、そのプラグインのコマンドとして実行する
 
 サブコマンド:
   sasacode plugin search [words]              プラグインを探す（sasanokusa.com の一覧と npm）
   sasacode plugin install <npm-spec|git-url> [--project] [--yes]
-  sasacode plugin update [name] | remove <name> | list   （フラグはどこに書いてもよい）
+  sasacode plugin update [name] | remove <name> | list [--json]   （フラグはどこに書いてもよい）
   sasacode plugin publish <file.ts|dir> [--name <pkg>] [--license <id>] [--dry-run]
   sasacode endpoint add <name> <url> [--key-env VAR] [--project]   サーバーを追加（形式は自動判別）
   sasacode endpoint remove <name> [--project]
   sasacode endpoint list
+  sasacode list models|commands|skills [--json]   ここでの実行が使えるもの（GUIは--jsonで尋ねる）
+  sasacode trust [--yes] [--json]   このフォルダを信頼しているか、信頼で何が有効になるか。--yesで信頼する
   sasacode login [status|logout]    API キーの代わりに ChatGPT プランを使う（openai-codex/… のモデル用）
   sasacode update [--check] [tag]   最新リリースをダウンロードしてインストール（チェックサム検証つき）
   sasacode web-search install [tag] web_search ツール用の RustXNG を入れる（チェックサム検証つき）
@@ -101,13 +106,13 @@ export const TO_JA: Record<string, string> = {
   "stopped: pass --yes to go ahead without a question (no terminal to ask on)": "中止: 質問なしで進めるには --yes（確認できる端末がない）",
   "{question} [y/N] ": "{question} [y/N] ",
   "Install it?": "入れる？",
-  "usage: sasacode plugin <command> [--project]\n  search [words]                       find plugins (the list on sasanokusa.com and npm); no words lists all\n  install <npm-spec|git-url|dir> [--yes]  add one (shows what it is and asks first)\n  update [name] [--yes]                update npm plugins, or pull a git one (shows the changes and asks)\n  remove <name> [--yes]\n  list\n  publish <file.ts|dir> [--name <pkg>] [--version <v>] [--api <range>] [--license <id>] [--description <text>] [--otp <code>] [--dry-run]":
+  "usage: sasacode plugin <command> [--project]\n  search [words]                       find plugins (the list on sasanokusa.com and npm); no words lists all\n  install <npm-spec|git-url|dir> [--yes]  add one (shows what it is and asks first)\n  update [name] [--yes]                update npm plugins, or pull a git one (shows the changes and asks)\n  remove <name> [--yes]\n  list [--json]                        --json: bundled plugins too, and whether each can load (checked without running it)\n  publish <file.ts|dir> [--name <pkg>] [--version <v>] [--api <range>] [--license <id>] [--description <text>] [--otp <code>] [--dry-run]":
     `使い方: sasacode plugin <command> [--project]
   search [words]                       プラグインを探す（sasanokusa.com の一覧と npm）。語を指定しなければ全件
   install <npm-spec|git-url|dir> [--yes]  ひとつ追加（内容を示してから確認）
   update [name] [--yes]                npm のプラグインを更新、git のものは pull（変更を示してから確認）
   remove <name> [--yes]
-  list
+  list [--json]                        --jsonなら同梱プラグインも含め、読み込めるかも示す（コードは動かさずに確かめる）
   publish <file.ts|dir> [--name <pkg>] [--version <v>] [--api <range>] [--license <id>] [--description <text>] [--otp <code>] [--dry-run]`,
   "error: {error}": "エラー: {error}",
   "warning: could not search {error}": "警告: 検索できなかった: {error}",
@@ -247,4 +252,21 @@ export const TO_JA: Record<string, string> = {
   "could not pack {dir}": "{dir} をまとめられなかった",
   "the connection dropped mid-reply; asking again": "接続が応答の途中で切れたため、やり直す",
   "this sasacode was installed with npm: update it with `npm install -g sasacode@latest`": "この sasacode は npm で入れたもの。更新は `npm install -g sasacode@latest`",
+  // ── --allow, --slash, list, trust (for the GUI) ───────────────────
+  "--slash needs -p": "--slashは-pと併用する",
+  "--allow \"{rule}\" is not a permission rule (like bash, bash(npm test) or edit(src/**))":
+    "--allowの「{rule}」は権限ルールではない（bash、bash(npm test)、edit(src/**)のような形で書く）",
+  "unknown command: /{name}": "不明なコマンド: /{name}",
+  "/{name} failed: {error}": "/{name}が失敗: {error}",
+  "not a sasacode plugin": "sasacodeのプラグインではない",
+  "usage: sasacode trust [--yes] [--json]": "使い方: sasacode trust [--yes] [--json]",
+  "usage: sasacode list models|commands|skills [--json]": "使い方: sasacode list models|commands|skills [--json]",
+  "{cwd}: nothing in this project needs trust": "{cwd}: このプロジェクトには信頼が要るものがない",
+  "{cwd} is trusted": "{cwd}は信頼済み",
+  "{cwd} is not trusted": "{cwd}は信頼していない",
+  "trust it with: sasacode trust --yes": "信頼するには: sasacode trust --yes",
+  "up to {size}": "最大{size}",
+  "TUI only": "TUIのみ",
+  "(other plugins' commands are listed by a run: the `commands` line of --control stdio)":
+    "（ほかのプラグインのコマンドは、実行が一覧を出す。--control stdioの`commands`行）",
 };

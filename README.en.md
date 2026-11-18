@@ -70,8 +70,13 @@ sasacode -r <id> -p "go on"          # continue a session by id (a conversation 
 | `--append-system-prompt-file <path>` | Add the file's text (UTF-8) to the system prompt, after the config's `instructions`. A file that cannot be read is an error; an empty file adds nothing. Works in the TUI too |
 | `-c` / `-r <id>` / `--no-session` | Resume / resume by id / do not save |
 | `--trust-project` | Trust the project without asking (for headless runs; see [Project trust](#project-trust)) |
+| `--allow <rule>` | Allow calls matching a permission rule for this run, as answering "always" does. Repeatable. The form is that of `rules` in `approval_request` (e.g. `bash(npm test)`): a GUI that starts a process per message carries "always allow" over to the next message with it |
+| `--slash` | With `-p`: a prompt that starts with `/<command> args` runs that plugin command instead of going to the model (`/goal …` in a conversation continued with `-r <id>`, say). An unknown command is an error. What the command shows comes as `plugin_notify` and similar lines with `--control stdio`, on stderr otherwise |
 | `sasacode plugin search\|install\|update\|remove\|list\|publish` | Find, install (npm or git URL), update and publish plugins ([Sharing](#sharing-plugins)) |
 | `sasacode endpoint add\|remove\|list` | Add your own server (the format is detected) |
+| `sasacode list models\|commands\|skills [--json]` | What a run in this folder can use. `models` is the TUI's `/model` list (`[{"id":"provider/model","contextWindow"?,"maxContext"?,"server"?,"current"?}]`), `skills` is `[{"name","description","path"}]`, `commands` the TUI's commands and the skills' (`[{"name","description","argumentHint"?,"owner","headless"}]`). Other plugins' commands are not listed here, since loading a plugin runs its startup work: a `--control stdio` run reports them in its `commands` line |
+| `sasacode plugin list --json` | Every plugin, bundled ones included, as `[{"name","version"?,"source":"bundled"\|"global"\|"project","dir"?,"enabled","error"?}]`. `error` is why it would not load, as far as can be told without running its code (API version, missing files) |
+| `sasacode trust [--yes] [--json]` | Whether this folder is trusted, and what trust would enable (`{"cwd","trusted","needed","complete","items","plugins","mcpServers","endpoints","allow","mode"}`). `--yes` saves the trust, as answering "y" at the start-up question does. When `complete` is `false` (the plugins' code could not all be read) a saved answer does not hold, and every run needs `--trust-project` |
 | `sasacode login [status\|logout]` | Sign in with a ChatGPT plan (for `openai-codex/…` models) |
 | `-h, --help` / `-v, --version` | Print the usage / the version |
 
@@ -82,9 +87,19 @@ When another program runs `sasacode -p "…" --output jsonl` as a child process,
 On stdout, these lines appear among the usual JSONL events, one per line.
 
 ```jsonc
-{"type":"approval_request","id":"approval-1","callId":"call_1","tool":"bash","args":{"command":"touch x"},"reason":"…","cwd":"/path/to/project"}
+{"type":"approval_request","id":"approval-1","callId":"call_1","tool":"bash","args":{"command":"touch x"},"reason":"…","cwd":"/path/to/project","rules":["bash(touch x)"]}
 {"type":"approval_cancelled","id":"approval-1"}
 {"type":"control_error","error":"not valid JSON"}
+{"type":"ui_request","id":"ui-1","kind":"confirm","title":"…","message":"…"}   // kind: "confirm" | "select" | "input" | "select_many"
+{"type":"ui_request","id":"ui-2","kind":"select","title":"…","options":[{"value":"a","label":"A","description":"…"}]}
+{"type":"ui_request","id":"ui-3","kind":"input","title":"…","message":"…","placeholder":"…","initial":"…"}
+{"type":"ui_request","id":"ui-4","kind":"select_many","title":"…","options":[…],"selected":["a"]}
+{"type":"ui_cancelled","id":"ui-1"}
+{"type":"plugin_notify","level":"info","text":"…"}                 // "info" | "warning" | "error"
+{"type":"plugin_text","title":"…","text":"…","format":"text"}      // "text" | "markdown"
+{"type":"plugin_status","key":"goal:goal","text":"…"}             // text: null clears it
+{"type":"commands","commands":[{"name":"goal","description":"…","argumentHint":"…","owner":"goal"}]}
+{"type":"judged","callId":"call_1","tool":"bash","verdict":"allow","reason":"agent judged safe: …"}   // "allow" | "ask"
 ```
 
 stdin is read as JSON Lines.
@@ -92,12 +107,21 @@ stdin is read as JSON Lines.
 ```jsonc
 {"type":"approval","id":"approval-1","decision":"allow"}           // "allow" | "always" | "deny"
 {"type":"approval","id":"approval-1","decision":"deny","feedback":"why"}
+{"type":"approval","id":"approval-1","decision":"allow","args":{"command":"touch y"}}   // allow, with the arguments edited
 {"type":"message","text":"check the tests too"}
 {"type":"abort"}
+{"type":"abort","callId":"call_1"}                                // stop that call alone
+{"type":"ui_response","id":"ui-1","value":true}                   // confirm: true/false, select: the value picked, input: a string, select_many: an array of values, null: dismissed
 ```
 
 - `approval_request` is written once for each call that needs approval, and the call does not run until an answer arrives. `id` goes back in the answer. `callId` is the id of the tool call in the conversation, `tool` and `args` are the call itself, and `reason` is why it needs approval.
 - In `approval`, `decision` is `allow` (this once), `always` (allow, and add a rule that allows the same call, as "always allow" does in the TUI, until the process exits) or `deny`. `feedback` reaches the model with a `deny`.
+- `rules` in `approval_request` are the allow rules an `always` adds. Given to the next process one by one with `--allow`, "always allow" lasts across runs.
+- `allow` and `always` may carry `args`: the call runs with those arguments (same tool). They are checked as the model's are; when they do not fit, or a deny rule matches, the call is denied and the model told why. The model is told, with the result, that the arguments were edited and what ran. An `always` rule is then the edited call's.
+- `abort` with a `callId` stops that running tool call alone (a subagent, a long command): its result is an error, and the run goes on. An id that is not running draws a `control_error`. It stops tools that heed the abort signal (bash, subagents, MCP and others).
+- The plugins' `api.ui` reaches the parent. `confirm` / `select` / `input` / `selectMany` write a `ui_request` and wait for the `ui_response` with its `id`; `null` dismisses it, answered as a headless run answers (`false` or `undefined`). When the run is aborted (`abort` or Ctrl+C), each question still open gets a `ui_cancelled` and is dismissed; once stdin closes, every question is dismissed. Notices come as `plugin_notify`, shown text as `plugin_text`, status items as `plugin_status` (keyed `plugin:key`). To plugins the run is interactive (`api.ui.interactive` is `true`, `false` once stdin closes).
+- `commands` comes once the plugins have loaded, and again whenever it changes: the slash commands the run can use, each of which `--slash` can run.
+- `judged` comes when the `agent` mode's judge (the bundled `agent-judge` plugin) decides a call: `allow` runs it, `ask` (risky, or the judge failed) is followed by an `approval_request`.
 - `message` works like input typed while the TUI is busy: the model sees it at its next turn. Use it to add to or redirect the work in progress. `text` must be a non-empty string.
 - `abort` is the same as Ctrl+C: the run is interrupted (`cause` in `agent_end` is `aborted`, the exit code 1).
 - When the run is interrupted, each request still waiting gets an `approval_cancelled`; an answer to that id then draws a `control_error`.

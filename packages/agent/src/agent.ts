@@ -34,7 +34,12 @@ export interface ApprovalRequest extends PermissionCheck {
   reason: string;
 }
 
-export type ApprovalAnswer = { decision: "allow" | "always" | "deny"; feedback?: string };
+/** `args`: what the user edited the call to (allow / always only); it runs with them, checked again. */
+export type ApprovalAnswer = {
+  decision: "allow" | "always" | "deny";
+  feedback?: string;
+  args?: Record<string, unknown>;
+};
 
 export interface AgentOptions {
   model: ModelInfo;
@@ -149,6 +154,8 @@ export class Agent {
   private searchTool: ToolDefinition<any>;
   private opts: AgentOptions;
   private abortController?: AbortController;
+  /** Tool calls running now, each with its own controller (abortCall). */
+  private calls = new Map<string, AbortController>();
   private queued: UserContent[][] = [];
   private interrupted = false;
   /** Set while halt() waits for the run to stop. */
@@ -278,6 +285,12 @@ export class Agent {
 
   abort(): void {
     this.abortController?.abort();
+  }
+
+  /** Stop one running tool call: its result is an error and the run goes on. False when it is not running. */
+  abortCall(callId: string): boolean {
+    this.calls.get(callId)?.abort();
+    return this.calls.has(callId);
   }
 
   /** Abort and drop queued input, so nothing more runs on this conversation (before switching sessions). */
@@ -619,6 +632,7 @@ export class Agent {
       permissions: this.permissions,
       approve: this.approve,
       session: this.session,
+      calls: this.calls,
       findTool: (n) => this.findTool(n),
       allTools: () => [...this.getTools(), this.searchTool],
     };

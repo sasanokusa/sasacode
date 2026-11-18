@@ -6,7 +6,7 @@ use iced::{Alignment, Color, Length, Padding, border};
 use sasacode_protocol::StopCause;
 
 use super::{
-    BOLD, COL_W, El, MONO, UI, clip, copy_button, diff_view, first_line, output_block, plus_minus, short_path, tag,
+    El, bold, clip, col_w, copy_button, diff_view, first_line, mono, output_block, plus_minus, short_path, tag, ui,
 };
 use crate::app::{App, Clip, Msg, TIMELINE, Tab};
 use crate::i18n::fill;
@@ -25,9 +25,6 @@ pub fn timeline(app: &App) -> El<'_> {
         return blank(app);
     }
     let mut col = column![].spacing(22).width(Length::Fill);
-    if app.chat.loaded {
-        col = col.push(text(s.loaded_note).size(12).color(t.fg_3));
-    }
     // While the search inside the conversation has something typed, only what has it is shown.
     let needle = app
         .find_in
@@ -35,9 +32,15 @@ pub fn timeline(app: &App) -> El<'_> {
         .map(str::trim)
         .filter(|n| !n.is_empty())
         .map(str::to_lowercase);
+    // Of those found, the one stepped to is marked.
+    let current = needle.as_ref().and_then(|_| app.find_current());
     for (i, ex) in app.chat.transcript.exchanges.iter().enumerate() {
         if needle.as_deref().is_none_or(|n| has(ex, n)) {
-            col = col.push(exchange(app, i, ex));
+            let mut shown = container(exchange(app, i, ex)).id(crate::outline::exchange_id(i));
+            if current == Some(i) {
+                shown = shown.padding([6, 8]).style(t.boxed(t.bg, t.accent, RADIUS));
+            }
+            col = col.push(shown);
         }
     }
     for queued in &app.chat.transcript.queued {
@@ -66,7 +69,7 @@ pub fn timeline(app: &App) -> El<'_> {
         );
     }
     let mut list = scrollable(
-        container(container(col).max_width(COL_W))
+        container(container(col).max_width(col_w(app)))
             .center_x(Length::Fill)
             .padding([20, 24]),
     )
@@ -132,8 +135,10 @@ fn blank(app: &App) -> El<'_> {
     container(
         column![
             icon(Icon::Leaf, 28.0, t.accent),
-            text(s.blank_h).size(20).font(BOLD).color(t.fg),
-            text(s.blank_p).size(13).color(t.fg_3),
+            text(s.blank_h).size(20).font(bold()).color(t.fg),
+            text(if app.chat.bare { s.w().bare_blank } else { s.blank_p })
+                .size(13)
+                .color(t.fg_3),
         ]
         .spacing(10)
         .align_x(Alignment::Center),
@@ -143,16 +148,97 @@ fn blank(app: &App) -> El<'_> {
     .into()
 }
 
+/// The corners of what the user said: round, a pill while it is one line.
+const BUBBLE: f32 = 18.0;
+
 /// What the user said, on the right.
-fn bubble<'a>(t: Tokens, prompt: &'a str) -> El<'a> {
+/// A message's start, drawn as the message is.
+fn bubble_owned<'a>(t: Tokens, prompt: String) -> El<'a> {
     container(
         container(text(prompt).size(14).color(t.fg))
-            .padding([8, 12])
+            .padding([8, 14])
             .max_width(560)
-            .style(t.boxed(t.inset, t.inset, RADIUS_L)),
+            .style(t.boxed(t.raised, t.line, BUBBLE)),
     )
     .align_right(Length::Fill)
     .into()
+}
+
+pub(crate) fn bubble<'a>(t: Tokens, prompt: &'a str) -> El<'a> {
+    container(
+        container(text(prompt).size(14).color(t.fg))
+            .padding([8, 14])
+            .max_width(560)
+            .style(t.boxed(t.raised, t.line, BUBBLE)),
+    )
+    .align_right(Length::Fill)
+    .into()
+}
+
+/// What the user said, with what the search inside the conversation found marked in it.
+fn bubble_found<'a>(t: Tokens, prompt: &str, needle: &str) -> El<'a> {
+    let said: Vec<iced::advanced::text::Span<'static, ()>> = vec![iced::advanced::text::Span::new(prompt.to_owned())];
+    container(
+        container(
+            iced::widget::rich_text(found_marked(&said, needle, found_mark(t)))
+                .size(14)
+                .color(t.fg),
+        )
+        .padding([8, 14])
+        .max_width(560)
+        .style(t.boxed(t.raised, t.line, BUBBLE)),
+    )
+    .align_right(Length::Fill)
+    .into()
+}
+
+/// How what the search found is marked.
+fn found_mark(t: Tokens) -> iced::advanced::text::Highlight {
+    iced::advanced::text::Highlight {
+        background: t.warn_wash.into(),
+        border: border::rounded(3.0).color(t.warn).width(1.0),
+    }
+}
+
+/// `spans` with each place that says `needle` (lower case) made a span of its own, `mark`ed. A
+/// span whose lower case is not as long as it is (so that places in one are not places in the
+/// other) is left as it is.
+pub(crate) fn found_marked<Link: Clone>(
+    spans: &[iced::advanced::text::Span<'static, Link>],
+    needle: &str,
+    mark: iced::advanced::text::Highlight,
+) -> Vec<iced::advanced::text::Span<'static, Link>> {
+    let mut out = Vec::new();
+    for span in spans {
+        let whole: &str = span.text.as_ref();
+        let lower = whole.to_lowercase();
+        if needle.is_empty() || lower.len() != whole.len() || !lower.contains(needle) {
+            out.push(span.clone());
+            continue;
+        }
+        let mut at = 0;
+        for (start, _) in lower.match_indices(needle) {
+            if start < at || !whole.is_char_boundary(start) || !whole.is_char_boundary(start + needle.len()) {
+                continue;
+            }
+            if start > at {
+                let mut before = span.clone();
+                before.text = whole[at..start].to_owned().into();
+                out.push(before);
+            }
+            let mut found = span.clone();
+            found.text = whole[start..start + needle.len()].to_owned().into();
+            found.highlight = Some(mark);
+            out.push(found);
+            at = start + needle.len();
+        }
+        if at < whole.len() {
+            let mut after = span.clone();
+            after.text = whole[at..].to_owned().into();
+            out.push(after);
+        }
+    }
+    out
 }
 
 fn exchange<'a>(app: &'a App, i: usize, ex: &'a Exchange) -> El<'a> {
@@ -161,7 +247,60 @@ fn exchange<'a>(app: &'a App, i: usize, ex: &'a Exchange) -> El<'a> {
     let live = last && app.running();
     let mut col = column![].spacing(10);
     if !ex.prompt.is_empty() {
-        let mut said = column![bubble(t, &ex.prompt)].spacing(3);
+        // A long message is folded to its start until it is opened.
+        let mut said = match crate::extras::folded(&ex.prompt) {
+            Some(head) => {
+                let whole = app.chat.whole.contains(&i);
+                let toggle = button(
+                    text(if whole {
+                        app.s.w().fold_whole
+                    } else {
+                        app.s.w().show_whole
+                    })
+                    .size(12)
+                    .color(t.accent),
+                )
+                .padding([2, 6])
+                .style(t.ghost(t.accent, false))
+                .on_press(Msg::Whole(i));
+                column![
+                    if whole {
+                        bubble(t, &ex.prompt)
+                    } else {
+                        bubble_owned(t, head)
+                    },
+                    container(toggle).align_right(Length::Fill)
+                ]
+                .spacing(3)
+            }
+            // What the search found in it is marked.
+            None => match app.find_needle() {
+                Some(needle) => column![bubble_found(t, &ex.prompt, &needle)].spacing(3),
+                None => column![bubble(t, &ex.prompt)].spacing(3),
+            },
+        };
+        // The images it named, small, each opened by a click.
+        let images = crate::composer::image_refs(&ex.prompt, &app.cwd);
+        if !images.is_empty() {
+            let mut line = row![Space::new().width(Length::Fill)].spacing(6);
+            for (path, _) in images {
+                line = line.push(
+                    button(
+                        container(
+                            iced::widget::image(iced::widget::image::Handle::from_path(&path))
+                                .height(96)
+                                .content_fit(iced::ContentFit::Contain),
+                        )
+                        .max_width(220)
+                        .style(t.boxed(t.raised, t.line, RADIUS)),
+                    )
+                    .padding(0)
+                    .style(t.ghost(t.fg, false))
+                    .on_press(Msg::ViewImage(path)),
+                );
+            }
+            said = said.push(line);
+        }
         // When it was sent, as the list says how long ago a conversation was used.
         if let Some(at) = ex.at {
             let ago = std::time::SystemTime::now().duration_since(at).unwrap_or_default();
@@ -213,11 +352,17 @@ fn exchange<'a>(app: &'a App, i: usize, ex: &'a Exchange) -> El<'a> {
         }
         return col.push(live_row(app, ex)).into();
     }
+    // What came back, apart from what was sent: under the pointer it shows what can be done with
+    // the reply.
+    let mut said = col;
+    let mut col = column![].spacing(10).width(Length::Fill);
+    let mut any = false;
     let answer = ex.answer();
     let work = &ex.steps[..answer.unwrap_or(ex.steps.len())];
     // The steps hidden by the settings: only what was said, and how it ended.
     if !work.is_empty() && app.prefs.steps {
         let open = app.steps_open(i);
+        any = true;
         col = col.push(fold_row(app, i, ex, work, open));
         if open {
             col = col.push(
@@ -234,22 +379,84 @@ fn exchange<'a>(app: &'a App, i: usize, ex: &'a Exchange) -> El<'a> {
         // exchange has no end of its run to say it. One that was answered after all ended well.
         for (j, step) in work.iter().enumerate() {
             if let Step::Note(note @ Note::Error(_)) = step {
+                any = true;
                 col = col.push(note_row(app, i, j, note));
             }
         }
     }
     if let Some(Step::Text(md)) = answer.map(|a| &ex.steps[a]) {
+        any = true;
         col = col.push(reply(app, md, true));
     }
-    // The reply as it was written, Markdown and all: its text cannot be selected here.
-    let copy = answer.map(|_| copy_button(app, Clip::Reply(i), app.s.copy));
+    // The reply as it was written, Markdown and all: its text cannot be selected here. Shown under
+    // the pointer and under the last reply, in a place kept for it, so nothing moves when it shows.
+    // The last reply is the last exchange's that has one: a turn that ended without one after it
+    // does not take it away.
+    let latest = answer.is_some()
+        && !app.chat.transcript.exchanges[i + 1..]
+            .iter()
+            .any(|e| e.answer().is_some());
+    let shown = latest || app.reply_hover == Some(i);
+    let copy = answer.map(|_| {
+        if !shown {
+            return container(Space::new()).height(FOOT).into();
+        }
+        let mut foot = row![].spacing(2).align_y(Alignment::Center);
+        // Branched off here: a new conversation holding this one through this reply.
+        if !app.busy() && app.chat.session.is_some() {
+            let w = app.s.w();
+            foot = foot.push(super::tip(
+                t,
+                button(
+                    text(w.fork_after)
+                        .size(11.5)
+                        .color(t.fg_3)
+                        .wrapping(text::Wrapping::None),
+                )
+                .padding([2, 8])
+                .style(t.ghost(t.fg_2, false))
+                .on_press(Msg::ForkAfter(i)),
+                w.fork_after_hint.to_owned(),
+                iced::widget::tooltip::Position::Bottom,
+            ));
+        }
+        // Part of it chosen and quoted into the input.
+        foot = foot.push(super::tip(
+            t,
+            button(
+                text(app.s.w().quote)
+                    .size(11.5)
+                    .color(t.fg_3)
+                    .wrapping(text::Wrapping::None),
+            )
+            .padding([2, 8])
+            .style(t.ghost(t.fg_2, false))
+            .on_press(Msg::QuoteOpen(i)),
+            app.s.w().quote_part_hint.to_owned(),
+            iced::widget::tooltip::Position::Bottom,
+        ));
+        let foot = foot.push(copy_button(app, Clip::Reply(i), app.s.copy));
+        container(foot).height(FOOT).align_y(Alignment::Center).into()
+    });
     match (&ex.end, copy) {
         (Some(end), copy) => col = col.push(ending(app, ex, end, last, copy)),
         (None, Some(copy)) => col = col.push(copy),
         (None, None) => {}
     }
-    col.into()
+    any |= ex.end.is_some() || answer.is_some();
+    if !any {
+        return said.into();
+    }
+    said = said.push(
+        iced::widget::mouse_area(col)
+            .on_enter(Msg::ReplyHover(i, true))
+            .on_exit(Msg::ReplyHover(i, false)),
+    );
+    said.into()
 }
+
+/// The height kept under a reply for what can be done with it, shown or not.
+const FOOT: f32 = 24.0;
 
 /// The line that stands for the steps of a finished exchange.
 fn fold_row<'a>(app: &'a App, i: usize, ex: &'a Exchange, work: &'a [Step], open: bool) -> El<'a> {
@@ -330,7 +537,14 @@ fn steps<'a>(app: &'a App, i: usize, work: &'a [Step]) -> Column<'a, Msg> {
     // What is still being written is not offered to copy.
     let live = i + 1 == app.chat.transcript.exchanges.len() && app.running();
     let mut col = column![].spacing(2);
+    let more = &app.prefs.more;
     for (j, step) in work.iter().enumerate() {
+        // As the settings say: calls that went well, and what the model thought, left out.
+        match step {
+            Step::Thinking(_) if more.hide_thinking => continue,
+            Step::Tool(tool) if more.failed_only && tool.state == crate::transcript::ToolState::Done => continue,
+            _ => {}
+        }
         col = col.push(match step {
             Step::Thinking(thought) => thinking(app, i, j, thought),
             Step::Text(md) => container(reply(app, md, !live)).padding([6, 8]).into(),
@@ -382,7 +596,7 @@ fn say<'a>(label: impl text::IntoFragment<'a>, color: Color) -> El<'a> {
 }
 
 fn code<'a>(label: impl text::IntoFragment<'a>, color: Color) -> El<'a> {
-    text(label).size(12.5).font(MONO).color(color).into()
+    text(label).size(12.5).font(mono()).color(color).into()
 }
 
 /// What belongs to a row, under it.
@@ -518,6 +732,15 @@ fn tool_row<'a>(app: &'a App, i: usize, j: usize, tool: &'a Tool) -> El<'a> {
     if tool.repaired.is_some() {
         parts.push(tag(t, s.repaired, t.warn_wash, t.warn));
     }
+    if let Some((allowed, _)) = &tool.judged {
+        let w = s.w();
+        parts.push(tag(
+            t,
+            if *allowed { w.judged_allow } else { w.judged_ask },
+            t.inset,
+            t.fg_2,
+        ));
+    }
     match tool.state {
         ToolState::Waiting => {
             let asked = app
@@ -567,7 +790,25 @@ fn tool_row<'a>(app: &'a App, i: usize, j: usize, tool: &'a Tool) -> El<'a> {
     let open = app.chat.open.contains(&(i, j)) != by_itself;
     let details = tool_details(app, tool);
     let press = details.is_some().then_some((Msg::Open(i, j), open));
-    let head = line(t, (symbol, color), parts, meta, press);
+    let mut head = line(t, (symbol, color), parts, meta, press);
+    // A call that runs long can be stopped alone: its result is an error, and the run goes on.
+    // Not one a subagent's tool made: the CLI cannot stop those alone.
+    if running && app.running() && app.chat.newer && tool.parent.is_none() {
+        head = iced::widget::row![
+            container(head).width(Length::Fill),
+            super::tip(
+                t,
+                iced::widget::button(icon(Icon::Stop, 12.0, t.fg_3))
+                    .padding(4)
+                    .style(t.ghost(t.fg_3, false))
+                    .on_press(Msg::StopCall(tool.id.clone())),
+                s.w().stop_call.to_owned(),
+                iced::widget::tooltip::Position::Left,
+            ),
+        ]
+        .align_y(iced::Alignment::Center)
+        .into();
+    }
     let row: El<'a> = match details {
         Some(details) if open => column![head, under(details)].into(),
         _ => head,
@@ -593,6 +834,16 @@ fn tool_details<'a>(app: &'a App, tool: &'a Tool) -> Option<El<'a>> {
                 .into(),
         );
     }
+    if let Some((allowed, reason)) = tool.judged.as_ref().filter(|(_, r)| !r.is_empty()) {
+        let w = s.w();
+        let who = if *allowed { w.judged_allow } else { w.judged_ask };
+        push(
+            text(format!("{who}{}{reason}", if s.ja { "：" } else { ": " }))
+                .size(12)
+                .color(t.fg_2)
+                .into(),
+        );
+    }
     let said = tool.shown_output();
     match tool.kind() {
         Kind::Write | Kind::Edit => {
@@ -612,7 +863,7 @@ fn tool_details<'a>(app: &'a App, tool: &'a Tool) -> Option<El<'a>> {
                     container(
                         text(format!("$ {command}"))
                             .size(12)
-                            .font(MONO)
+                            .font(mono())
                             .color(t.fg)
                             .wrapping(text::Wrapping::WordOrGlyph),
                     )
@@ -670,6 +921,27 @@ fn tool_details<'a>(app: &'a App, tool: &'a Tool) -> Option<El<'a>> {
                 push(output_block(t, s, said, 20));
             }
         }
+    }
+    // The pictures its result holds, small, each larger on a click.
+    if !tool.images.is_empty() {
+        let mut line = row![].spacing(6);
+        for path in &tool.images {
+            line = line.push(
+                button(
+                    container(
+                        iced::widget::image(iced::widget::image::Handle::from_path(path))
+                            .height(120)
+                            .content_fit(iced::ContentFit::Contain),
+                    )
+                    .max_width(260)
+                    .style(t.boxed(t.raised, t.line, RADIUS)),
+                )
+                .padding(0)
+                .style(t.ghost(t.fg, false))
+                .on_press(Msg::ViewImage(path.clone())),
+            );
+        }
+        push(line.wrap().into());
     }
     (!parts.is_empty()).then(|| Column::with_children(parts).spacing(6).into())
 }
@@ -779,8 +1051,33 @@ fn note_row<'a>(app: &'a App, i: usize, j: usize, note: &'a Note) -> El<'a> {
         .style(t.boxed(t.err_wash, t.err_line, RADIUS))
         .into(),
         Note::ContextFull => line(t, (Icon::Alert, t.warn), vec![say(s.context_full, t.warn)], None, None),
-        Note::Compacted => quiet(Icon::Spark, s.compacted),
+        Note::Compacted(None) => quiet(Icon::Spark, s.compacted),
+        Note::Compacted(Some(summary)) => folded(Icon::Spark, s.compacted.to_owned(), summary),
         Note::Retrying => quiet(Icon::Spark, s.discarded),
+        Note::Notice(body) => container(
+            row![
+                container(icon(Icon::Alert, 14.0, t.warn)).padding(Padding::ZERO.top(1.0)),
+                text(body.as_str())
+                    .size(13)
+                    .color(t.fg)
+                    .width(Length::Fill)
+                    .wrapping(text::Wrapping::WordOrGlyph),
+            ]
+            .spacing(8),
+        )
+        .width(Length::Fill)
+        .padding([8, 10])
+        .style(t.boxed(t.warn_wash, t.warn_line, RADIUS))
+        .into(),
+        Note::Text { title, text: body } => {
+            let w = s.w();
+            let label = if title.trim().is_empty() {
+                w.plugin_text.to_owned()
+            } else {
+                format!("{} · {}", w.plugin_text, clip(title, 60))
+            };
+            folded(Icon::File, label, body)
+        }
     }
 }
 
@@ -793,12 +1090,12 @@ pub(crate) fn reply<'a>(app: &'a App, md: &'a Markdown, copy: bool) -> El<'a> {
         background: t.inset.into(),
         border: border::rounded(4.0),
     };
-    style.link_color = t.accent;
+    style.link_color = t.link;
     // Named, like the rest of the window: the style's own default is the sans-serif family, which
     // is not the window's font and takes kanji and kana of one bold word from different fonts.
-    style.font = UI;
-    style.inline_code_font = MONO;
-    style.code_block_font = MONO;
+    style.font = ui();
+    style.inline_code_font = mono();
+    style.code_block_font = mono();
     let mut settings = markdown::Settings::with_text_size(14, style);
     settings.code_size = 12.5.into();
     markdown::view_with(md.content.items(), settings, &Reply { app, copy })
@@ -815,6 +1112,104 @@ impl<'a> markdown::Viewer<'a, Msg> for Reply<'a> {
         Msg::Link(url)
     }
 
+    /// As iced draws one, with what the search inside the conversation found marked. One with
+    /// links offers them on a right click: iced does not say which of them is under the pointer.
+    fn paragraph(&self, settings: markdown::Settings, text: &markdown::Text) -> El<'a> {
+        let spans = text.spans(settings.style);
+        let drawn: El<'a> = match self.app.find_needle() {
+            Some(needle) => iced::widget::rich_text(found_marked(&spans, &needle, found_mark(self.app.t)))
+                .size(settings.text_size)
+                .on_link_click(Self::on_link_click)
+                .into(),
+            None => markdown::paragraph(settings, text, Self::on_link_click),
+        };
+        let mut links: Vec<String> = Vec::new();
+        for link in spans.iter().filter_map(|s| s.link.clone()) {
+            if !links.contains(&link) {
+                links.push(link);
+            }
+        }
+        if links.is_empty() {
+            return drawn;
+        }
+        iced::widget::mouse_area(drawn)
+            .on_right_press(Msg::OpenMenu(crate::rows::MenuFor::Links(links)))
+            .into()
+    }
+
+    /// A picture that is a file here, shown, and larger on a click; any other, its words.
+    fn image(
+        &self,
+        settings: markdown::Settings,
+        url: &'a markdown::Uri,
+        _title: &'a str,
+        alt: &markdown::Text,
+    ) -> El<'a> {
+        let t = self.app.t;
+        match crate::files::local_image(url, &self.app.cwd) {
+            Some(path) => button(
+                container(
+                    iced::widget::image(iced::widget::image::Handle::from_path(&path))
+                        .content_fit(iced::ContentFit::ScaleDown),
+                )
+                .max_width(560)
+                .max_height(320)
+                .style(t.boxed(t.raised, t.line, RADIUS)),
+            )
+            .padding(0)
+            .style(t.ghost(t.fg, false))
+            .on_press(Msg::ViewImage(path))
+            .into(),
+            None => container(iced::widget::rich_text(alt.spans(settings.style)).on_link_click(Self::on_link_click))
+                .padding(settings.spacing.0)
+                .style(t.boxed(t.inset, t.line, RADIUS))
+                .into(),
+        }
+    }
+
+    /// A quote; a GitHub alert, `> [!WARNING]`, under a head that names it in its color.
+    fn quote(&self, settings: markdown::Settings, contents: &'a [markdown::Item]) -> El<'a> {
+        let t = self.app.t;
+        let kind = match contents.first() {
+            Some(markdown::Item::Paragraph(first)) => {
+                let said: String = first.spans(settings.style).iter().map(|s| s.text.as_ref()).collect();
+                said.strip_prefix(crate::figure::ALERT).map(str::to_owned)
+            }
+            _ => None,
+        };
+        let Some(kind) = kind else {
+            return markdown::quote(self, settings, contents);
+        };
+        let w = self.app.s.w();
+        let (mark, label, color) = match kind.as_str() {
+            "NOTE" => (Icon::Bot, w.alert_note, t.accent),
+            "TIP" => (Icon::Bulb, w.alert_tip, t.accent),
+            "IMPORTANT" => (Icon::Spark, w.alert_important, t.accent),
+            "WARNING" => (Icon::Alert, w.alert_warning, t.warn),
+            _ => (Icon::Alert, w.alert_caution, t.err),
+        };
+        let body = Column::with_children(
+            contents[1..]
+                .iter()
+                .enumerate()
+                .map(|(i, item)| markdown::item(self, settings, item, i)),
+        )
+        .spacing(settings.spacing.0);
+        let head = row![
+            icon(mark, 14.0, color),
+            text(label).size(13.5).font(super::bold()).color(color)
+        ]
+        .spacing(6)
+        .align_y(Alignment::Center);
+        row![
+            rule::vertical(3).style(t.rule(color)),
+            column![head, body].spacing(settings.spacing.0 * 0.6)
+        ]
+        .height(Length::Shrink)
+        .spacing(settings.spacing.0)
+        .into()
+    }
+
     /// The code as it was written, in the monospaced font. iced's own code block draws each line
     /// in the font of the text around it unless it highlights the code, which this window does not.
     /// A head over it names its language and copies it.
@@ -827,27 +1222,52 @@ impl<'a> markdown::Viewer<'a, Msg> for Reply<'a> {
     ) -> El<'a> {
         let t = self.app.t;
         let code = code.trim_end();
-        let body = scrollable(
-            container(
-                text(code)
+        // Math and Mermaid are drawn; what cannot be, as while it streams, is shown as written.
+        let lang = language.map(str::to_ascii_lowercase);
+        let math = lang.as_deref().is_some_and(|l| crate::figure::MATH.contains(&l));
+        if (math || lang.as_deref() == Some("mermaid"))
+            && let Ok(figure) = crate::figure::figure(math, code)
+        {
+            return self.figure(language, code, math, figure);
+        }
+        // Colored by its language, when it names one the grammars know.
+        let shown: El<'a> = match language.filter(|l| !l.is_empty()) {
+            Some(language) => {
+                let colored = crate::files::colored(code, language, t.dark);
+                let mut spans: Vec<iced::widget::text::Span<'a, (), iced::Font>> = Vec::new();
+                for (i, line) in code.lines().enumerate() {
+                    if i > 0 {
+                        spans.push(iced::widget::span("\n"));
+                    }
+                    for (range, color) in colored.get(i).into_iter().flatten() {
+                        spans.push(iced::widget::span(&line[range.clone()]).color(color.unwrap_or(t.fg)));
+                    }
+                }
+                iced::widget::rich_text(spans)
                     .size(settings.code_size)
-                    .font(MONO)
-                    .color(t.fg)
-                    .wrapping(text::Wrapping::None),
-            )
-            .padding([8, 10]),
-        )
-        .direction(scrollable::Direction::Horizontal(
-            scrollable::Scrollbar::new().width(6).scroller_width(6).margin(1),
-        ))
-        .style(t.scroll());
+                    .font(mono())
+                    .wrapping(text::Wrapping::None)
+                    .into()
+            }
+            None => text(code)
+                .size(settings.code_size)
+                .font(mono())
+                .color(t.fg)
+                .wrapping(text::Wrapping::None)
+                .into(),
+        };
+        let body = scrollable(container(shown).padding([8, 10]))
+            .direction(scrollable::Direction::Horizontal(
+                scrollable::Scrollbar::new().width(6).scroller_width(6).margin(1),
+            ))
+            .style(t.scroll());
         let mut block = column![];
         if self.copy && !code.is_empty() {
             block = block.push(
                 row![
                     text(language.unwrap_or_default())
                         .size(11.5)
-                        .font(MONO)
+                        .font(mono())
                         .color(t.fg_3)
                         .wrapping(text::Wrapping::None),
                     Space::new().width(Length::Fill),
@@ -866,6 +1286,69 @@ impl<'a> markdown::Viewer<'a, Msg> for Reply<'a> {
             .width(Length::Fill)
             .style(t.boxed(t.inset, t.inset, RADIUS))
             .into()
+    }
+}
+
+impl Reply<'_> {
+    /// Math, in the color of the text around it; a diagram, on the light ground it was drawn for.
+    /// Wider than the reply, it scrolls sideways, as code does.
+    fn figure<'a>(
+        &self,
+        language: Option<&'a str>,
+        code: &'a str,
+        math: bool,
+        figure: crate::figure::Figure,
+    ) -> El<'a> {
+        let t = self.app.t;
+        let picture = iced::widget::svg(figure.handle)
+            .width(Length::Fixed(figure.width))
+            .height(Length::Fixed(figure.height));
+        let picture: El<'a> = if math {
+            let fg = t.fg;
+            picture
+                .style(move |_, _| iced::widget::svg::Style { color: Some(fg) })
+                .into()
+        } else {
+            container(picture)
+                .padding(8)
+                .style(t.boxed(Color::WHITE, t.line, RADIUS))
+                .into()
+        };
+        let body = scrollable(container(picture).padding([6, 10]))
+            .direction(scrollable::Direction::Horizontal(
+                scrollable::Scrollbar::new().width(6).scroller_width(6).margin(1),
+            ))
+            .style(t.scroll());
+        let mut block = column![];
+        if self.copy && !math {
+            block = block.push(
+                row![
+                    text(language.unwrap_or_default())
+                        .size(11.5)
+                        .font(mono())
+                        .color(t.fg_3)
+                        .wrapping(text::Wrapping::None),
+                    Space::new().width(Length::Fill),
+                    copy_button(self.app, Clip::Text(code.to_owned()), self.app.s.copy),
+                ]
+                .align_y(Alignment::Center)
+                .padding(Padding {
+                    top: 2.0,
+                    right: 2.0,
+                    bottom: 0.0,
+                    left: 10.0,
+                }),
+            );
+        }
+        let block = block.push(body).width(Length::Fill);
+        if math {
+            block.into()
+        } else {
+            container(block)
+                .width(Length::Fill)
+                .style(t.boxed(t.inset, t.inset, RADIUS))
+                .into()
+        }
     }
 }
 
@@ -924,7 +1407,7 @@ fn ending<'a>(app: &'a App, ex: &'a Exchange, end: &'a End, last: bool, copy: Op
         _ => (Icon::Alert, s.end_other.to_owned(), t.inset, t.line_2, t.fg),
     };
     let mut body = column![
-        row![icon(mark, 14.0, ink), text(title).size(13.5).font(BOLD).color(ink)]
+        row![icon(mark, 14.0, ink), text(title).size(13.5).font(bold()).color(ink)]
             .spacing(8)
             .align_y(Alignment::Center)
     ]
@@ -933,7 +1416,7 @@ fn ending<'a>(app: &'a App, ex: &'a Exchange, end: &'a End, last: bool, copy: Op
         body = body.push(
             text(reason.as_str())
                 .size(12.5)
-                .font(MONO)
+                .font(mono())
                 .color(t.fg)
                 .wrapping(text::Wrapping::WordOrGlyph),
         );

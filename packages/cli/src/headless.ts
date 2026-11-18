@@ -1,19 +1,24 @@
 import { existsSync } from "node:fs";
-import { type AgentEvent, type StopCause } from "@sasacode/agent";
+import { type AgentEvent, headlessUI, type StopCause } from "@sasacode/agent";
 import { t } from "@sasacode/host";
 import { fmtTokens, textOf } from "@sasacode/ai";
 import { untold } from "./catalog.ts";
 import { type ControlInput, startControl } from "./control.ts";
 import type { Harness } from "./setup.ts";
 
+export interface HeadlessOptions {
+  /** --slash: a prompt that starts with /name runs that slash command (a plugin's) instead of going to the model. */
+  slash?: boolean;
+}
+
 /**
  * `sasacode -p`: run one prompt to completion. Text mode streams the answer to stdout; jsonl emits every event.
  * With `control` (`--control stdio`, jsonl only), the process that reads this output answers approvals, sends messages and can abort.
  */
-export async function runHeadless(h: Harness, prompt: string, output: "text" | "jsonl", control?: ControlInput): Promise<number> {
+export async function runHeadless(h: Harness, prompt: string, output: "text" | "jsonl", control?: ControlInput, opts: HeadlessOptions = {}): Promise<number> {
   const out = sent();
   try {
-    return await run(h, prompt, output, control, out);
+    return await run(h, prompt, output, control, out, opts);
   } finally {
     // main() ends with process.exit, which drops what a slow pipe reader has not taken yet (#102).
     await out.flushed();
@@ -41,7 +46,7 @@ function sent() {
   };
 }
 
-async function run(h: Harness, prompt: string, output: "text" | "jsonl", control: ControlInput | undefined, out: ReturnType<typeof sent>): Promise<number> {
+async function run(h: Harness, prompt: string, output: "text" | "jsonl", control: ControlInput | undefined, out: ReturnType<typeof sent>, opts: HeadlessOptions): Promise<number> {
   const { agent } = h;
   // Model and tool text reaching a terminal must not carry escape sequences it would act on.
   const tty = process.stdout.isTTY;
@@ -83,21 +88,45 @@ async function run(h: Harness, prompt: string, output: "text" | "jsonl", control
   // A custom server not told apart may be LM Studio added before sasacode knew it (#59).
   const local = h.providers[agent.model.provider];
   const listing = local?.ollama || local?.lmstudio || local?.llamacpp || untold(agent.model.provider, local) ? h.currentListing() : undefined;
-  await h.loadPlugins();
+  // With the channel on, the plugins ask the parent (ui_request). A slash command's notices must be seen: they go to
+  // stderr at once, not into the buffer headlessUI's info notices wait in.
+  await h.loadPlugins(controller?.ui ?? (opts.slash ? { ...headlessUI } : undefined));
   // Unlike the TUI, a one-shot run should start with MCP servers and similar tools connected.
   await h.host.settle();
+  // MCP prompts become commands once their servers answer: the list the parent gets is the run's.
+  controller?.watch(h.host);
   const listed = await listing;
   if (listed?.server === "ollama" && !listed.contextWindow && listed.maxContext) {
     const warning = t("{spec} には num_ctx が設定されていません。Ollama を OLLAMA_CONTEXT_LENGTH で起動していなければ、Ollama の既定の長さ（数千トークン）を超えた入力は黙って切り詰められます。Modelfile に PARAMETER num_ctx 32768 などを書くか、OLLAMA_CONTEXT_LENGTH を設定してください（このモデルは最大 {max}）。", { spec: listed.spec, max: fmtTokens(listed.maxContext) });
     out.stderr(`${t("warning: {warning}", { warning })}\n`);
   }
-  const onSigint = () => agent.abort();
+  const onSigint = () => (controller ? controller.abort() : agent.abort());
   process.on("SIGINT", onSigint);
   let stoppedBy = "";
+  let ended: StopCause | undefined;
   agent.events.on((e) => {
-    if (e.type === "agent_end" && e.stopped) stoppedBy = `${e.stopped.plugin}: ${e.stopped.reason}`;
+    if (e.type !== "agent_end") return;
+    ended = e.cause;
+    if (e.stopped) stoppedBy = `${e.stopped.plugin}: ${e.stopped.reason}`;
   });
-  const cause: StopCause = await agent.prompt(prompt);
+  const fail = (error: string) =>
+    output === "jsonl" ? write(`${JSON.stringify({ type: "error", error })}\n`) : out.stderr(`${t("error: {error}", { error: plain(error) })}\n`);
+  const command = opts.slash ? /^\/(\S+)\s*([\s\S]*)$/.exec(prompt.trimStart()) : null;
+  let cause: StopCause;
+  if (command) {
+    // What it says reaches the parent as plugin_notify / plugin_text lines; a run it starts ends as any run does.
+    const [, name = "", args = ""] = command;
+    const cmd = h.host.commands.find((c) => c.name === name);
+    try {
+      if (!cmd) throw new Error(t("unknown command: /{name}", { name }));
+      await cmd.run({ args: args.trim() });
+      await agent.waitForIdle();
+      cause = ended ?? "done";
+    } catch (e) {
+      fail(cmd ? t("/{name} failed: {error}", { name, error: e instanceof Error ? e.message : String(e) }) : (e as Error).message);
+      cause = "error";
+    }
+  } else cause = await agent.prompt(prompt);
   // Plugins may inject follow-ups (agent_end); wait for everything to settle.
   await agent.waitForIdle();
   process.off("SIGINT", onSigint);

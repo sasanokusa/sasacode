@@ -4,12 +4,18 @@
 //! and the input under it, and the inspector (changes, plan, commands, usage). A status bar runs
 //! along the bottom.
 
+mod automations;
 mod chords;
-mod dock;
+pub(crate) mod dock;
 mod inspector;
-mod overlay;
+mod jobs;
+mod menu;
+pub(crate) use timeline::has;
+pub(crate) mod overlay;
 mod sidebar;
-mod timeline;
+mod split;
+pub(crate) mod timeline;
+mod usage;
 
 use std::path::Path;
 
@@ -28,22 +34,19 @@ pub(crate) type El<'a> = Element<'a, Msg>;
 /// The font of the window's words. On macOS a font by name, so that Latin and Japanese letters are
 /// of one design and both have a bold: iced's own choice there sets the two in different fonts and
 /// leaves Latin letters light in a bold line. Elsewhere iced's choice.
-pub(crate) const UI: Font = if cfg!(target_os = "macos") {
+const UI_DEFAULT: Font = if cfg!(target_os = "macos") {
     Font::with_name("Hiragino Sans")
 } else {
     Font::DEFAULT
 };
-pub(crate) const BOLD: Font = Font {
-    weight: Weight::Semibold,
-    ..UI
-};
+
 /// The font of code, paths and output: a monospaced font by name where one is always there.
 ///
 /// `Font::MONOSPACE` is not usable on macOS: what the monospaced font lacks, cosmic-text 0.15 then
 /// takes from another monospaced font, and for kanji that is the system's GB18030 Bitmap, whose
 /// letters have no width it can read. They come out blank and endlessly wide, and a debug build
 /// panics over where to put them. A font named outright is helped out by the usual fonts.
-pub(crate) const MONO: Font = if cfg!(target_os = "macos") {
+const MONO_DEFAULT: Font = if cfg!(target_os = "macos") {
     Font::with_name("Menlo")
 } else if cfg!(target_os = "windows") {
     Font::with_name("Consolas")
@@ -51,8 +54,43 @@ pub(crate) const MONO: Font = if cfg!(target_os = "macos") {
     Font::MONOSPACE
 };
 
+/// The fonts the settings name, taken once when the window starts.
+static FONTS: std::sync::OnceLock<(Font, Font)> = std::sync::OnceLock::new();
+
+/// Takes the fonts the settings name for the window's words and for code; an empty name keeps the
+/// window's own. Read once, before the window opens: one changed is used from the next window.
+pub fn set_fonts(words: &str, code: &str) {
+    let named = |name: &str, own: Font| match name.trim() {
+        "" => own,
+        // A font is named for as long as the program runs: once, so the name is kept for good.
+        name => Font::with_name(Box::leak(name.to_owned().into_boxed_str())),
+    };
+    let _ = FONTS.set((named(words, UI_DEFAULT), named(code, MONO_DEFAULT)));
+}
+
+/// The font of the window's words.
+pub(crate) fn ui() -> Font {
+    FONTS.get().map_or(UI_DEFAULT, |f| f.0)
+}
+
+/// The window's words in bold.
+pub(crate) fn bold() -> Font {
+    Font {
+        weight: Weight::Semibold,
+        ..ui()
+    }
+}
+
+/// The font of code, paths and output.
+pub(crate) fn mono() -> Font {
+    FONTS.get().map_or(MONO_DEFAULT, |f| f.1)
+}
+
 /// The conversation and the input keep to this width, centred.
-const COL_W: f32 = 760.0;
+/// How wide the conversation and the input are drawn at most, as the settings say.
+pub(crate) fn col_w(app: &App) -> f32 {
+    crate::extras::column_width(app.prefs.more.chat_width)
+}
 /// How wide a panel's edge is to the pointer: wider than its line, so as to be taken.
 const GRIP: f32 = 7.0;
 
@@ -65,6 +103,14 @@ pub(crate) fn room(app: &App) -> f32 {
 
 /// The key that makes a chord: ⌘ on macOS, Ctrl elsewhere.
 pub(crate) const MOD: &str = if cfg!(target_os = "macos") { "⌘" } else { "Ctrl+" };
+
+/// A shortcut's key as it is bound now, or nothing for one the user unbound.
+pub(crate) fn keys_for(act: crate::keys::Act) -> String {
+    crate::keys::bound()
+        .chord(act)
+        .map(crate::keys::Chord::show)
+        .unwrap_or_default()
+}
 
 pub fn window(app: &App) -> El<'_> {
     let t = app.t;
@@ -86,6 +132,10 @@ pub fn window(app: &App) -> El<'_> {
         dock::dock(app),
     ];
     body = body.push(middle.width(Length::Fill).height(Length::Fill));
+    // Another conversation beside, as wide.
+    if let Some(chat) = app.split_chat() {
+        body = body.push(vline(t)).push(split::pane(app, chat));
+    }
     if app.insp {
         body = body.push(vline(t)).push(inspector::inspector(app));
     }
@@ -102,7 +152,53 @@ pub fn window(app: &App) -> El<'_> {
         );
     }
     let window = container(column![panes, hline(t), status_bar(app)]).style(t.fill(t.bg));
+    // A menu a right click opened lies over all of it. With none, an empty layer keeps its place:
+    // the window's tree stays as it is when one opens, and the conversation keeps where it was
+    // read to.
+    let menu = menu::layer(app).or_else(|| dragged_row(app)).unwrap_or_else(nothing);
+    let window: El<'_> = stack![window, menu].into();
     overlay::over(app, chords::chords(window))
+}
+
+/// The conversation's row being dragged, by the pointer: what is let go into the input.
+fn dragged_row(app: &App) -> Option<El<'_>> {
+    let at = app.row_drag?;
+    let (id, _) = app.row_grab.as_ref()?;
+    let t = app.t;
+    let name = app
+        .prefs
+        .names
+        .get(id)
+        .cloned()
+        .or_else(|| {
+            app.sessions
+                .iter()
+                .find(|s| &s.id == id)
+                .map(|s| s.first_prompt.trim().to_owned())
+        })
+        .unwrap_or_else(|| id.clone());
+    let chip = container(
+        row![
+            icon(Icon::Bot, 12.0, t.accent),
+            text(clip(&name, 40)).size(12).color(t.fg)
+        ]
+        .spacing(6)
+        .align_y(Alignment::Center),
+    )
+    .padding([4, 8])
+    .style(t.floating(t.raised, t.line_2));
+    Some(
+        container(chip)
+            .padding(iced::Padding {
+                top: at.y + 14.0,
+                left: at.x + 14.0,
+                right: 0.0,
+                bottom: 0.0,
+            })
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into(),
+    )
 }
 
 /// Where the side panels' inner edges are taken to be dragged: a strip over each one's line, with
@@ -159,6 +255,32 @@ fn header(app: &App) -> El<'_> {
     if changed > 0 && !app.insp {
         inspector = inspector.push(tag(t, changed.to_string(), t.accent_wash, t.accent));
     }
+    // Only what can be used now: the outline of a conversation with messages, the folder's
+    // scripts once it has some. The palette has both always.
+    let mut extra = row![].spacing(10).align_y(Alignment::Center);
+    if !app.chat.transcript.exchanges.is_empty() {
+        extra = extra.push(tip(
+            t,
+            button(icon(Icon::Toc, 16.0, t.fg_2))
+                .padding(6)
+                .style(t.ghost(t.fg_2, false))
+                .on_press(Msg::Command(crate::input::Command::Outline)),
+            format!("{}  {}", s.w().c_outline, keys_for(crate::keys::Act::Outline)),
+            tooltip::Position::Bottom,
+        ));
+    }
+    let running = app.script_runs.iter().any(|r| r.running());
+    if running || !app.scripts().is_empty() {
+        extra = extra.push(tip(
+            t,
+            button(icon(Icon::Play, 15.0, if running { t.accent } else { t.fg_2 }))
+                .padding(6)
+                .style(t.ghost(t.fg_2, false))
+                .on_press(Msg::Command(crate::input::Command::Scripts)),
+            format!("{}  {}", s.w().c_scripts, keys_for(crate::keys::Act::Scripts)),
+            tooltip::Position::Bottom,
+        ));
+    }
     container(
         row![
             tip(
@@ -171,7 +293,7 @@ fn header(app: &App) -> El<'_> {
                 .padding(6)
                 .style(t.ghost(t.fg_2, false))
                 .on_press(Msg::ToggleSide),
-                format!("{}  {MOD}B", s.a_side),
+                format!("{}  {}", s.a_side, keys_for(crate::keys::Act::Side)),
                 tooltip::Position::Bottom,
             ),
             // The title is cut where the header runs out of room, so the state and the buttons stay.
@@ -186,13 +308,14 @@ fn header(app: &App) -> El<'_> {
                 .align_y(Alignment::Center)
                 .into()
             }),
+            extra,
             tip(
                 t,
                 button(icon(Icon::List, 16.0, t.fg_2))
                     .padding(6)
                     .style(t.ghost(t.fg_2, false))
                     .on_press(Msg::Show(Some(crate::app::Overlay::palette()))),
-                format!("{}  {MOD}⇧P", s.c_palette),
+                format!("{}  {}", s.c_palette, keys_for(crate::keys::Act::Palette)),
                 tooltip::Position::Bottom,
             ),
             tip(
@@ -201,7 +324,7 @@ fn header(app: &App) -> El<'_> {
                     .padding(6)
                     .style(t.ghost(t.fg_2, false))
                     .on_press(Msg::Show(Some(crate::app::Overlay::Settings))),
-                format!("{}  {MOD},", s.settings),
+                format!("{}  {}", s.settings, keys_for(crate::keys::Act::Settings)),
                 tooltip::Position::Bottom,
             ),
             tip(
@@ -210,7 +333,7 @@ fn header(app: &App) -> El<'_> {
                     .padding(6)
                     .style(t.ghost(t.fg_2, false))
                     .on_press(Msg::ToggleInspector),
-                format!("{}  {MOD}I", s.a_insp),
+                format!("{}  {}", s.a_insp, keys_for(crate::keys::Act::Inspector)),
                 tooltip::Position::Bottom,
             ),
         ]
@@ -247,7 +370,7 @@ fn find_bar(app: &App) -> El<'_> {
         iced::widget::text_input(s.find_in_ph, typed)
             .id(crate::app::FIND_IN)
             .on_input(Msg::FindInText)
-            .on_submit(Msg::FocusInput)
+            .on_submit(Msg::FindStep(1))
             .size(13)
             .padding(0)
             .style(t.input_bare()),
@@ -255,11 +378,28 @@ fn find_bar(app: &App) -> El<'_> {
     .spacing(8)
     .align_y(Alignment::Center);
     if let Some(n) = found {
-        line = line.push(
-            text(fill(s.found_n, "n", n))
-                .size(12)
-                .color(if n == 0 { t.err } else { t.fg_3 }),
-        );
+        let w = s.w();
+        let said = if n == 0 {
+            fill(s.found_n, "n", 0)
+        } else {
+            fill(fill(w.found_at, "at", app.find_at.min(n - 1) + 1).as_str(), "n", n)
+        };
+        line = line.push(text(said).size(12).color(if n == 0 { t.err } else { t.fg_3 }));
+        // The last and the next of those found: also ⇧↵ / ↵ and ⌘⇧G / ⌘G.
+        let step = |mark: Icon, hint: &'static str, by: i8| {
+            tip(
+                t,
+                button(icon(mark, 13.0, t.fg_3))
+                    .padding(4)
+                    .style(t.ghost(t.fg_3, false))
+                    .on_press_maybe((n > 0).then_some(Msg::FindStep(by))),
+                hint.to_owned(),
+                tooltip::Position::Bottom,
+            )
+        };
+        line = line
+            .push(step(Icon::ChevronUp, w.find_prev, -1))
+            .push(step(Icon::ChevronDown, w.find_next, 1));
     }
     line = line.push(
         button(icon(Icon::Close, 13.0, t.fg_3))
@@ -278,10 +418,30 @@ fn title(app: &App) -> El<'_> {
     let title_text = |label: String| {
         text(label)
             .size(14)
-            .font(BOLD)
+            .font(bold())
             .color(t.fg)
             .wrapping(text::Wrapping::None)
     };
+    // A scratch conversation says it goes once it is left.
+    if app.chat.scratch {
+        let said = if app.chat.bare {
+            s.w().bare_tag
+        } else {
+            s.w().scratch_tag
+        };
+        return row![
+            tag(t, said.to_owned(), t.warn_wash, t.warn),
+            title_text(
+                app.chat
+                    .transcript
+                    .title()
+                    .map_or_else(|| s.new_session.to_owned(), |p| clip(first_line(p), 40))
+            ),
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center)
+        .into();
+    }
     // The name it was given in the list, as the list shows it; else its first message.
     match app.name().or(app.chat.transcript.title()) {
         Some(prompt) => {
@@ -335,14 +495,24 @@ fn pill(app: &App) -> El<'_> {
     if dot {
         content = content.push(icon(Icon::Dot, 10.0, color));
     }
-    container(content.push(text(label).size(12).color(color)))
+    let pill = container(content.push(text(label).size(12).color(color)))
         .padding([2, 8])
         .style(move |_| container::Style {
             background: Some(fill.into()),
             border: iced::border::rounded(999.0),
             ..container::Style::default()
-        })
-        .into()
+        });
+    // Read back from a log: what it does not keep, said where it is asked about.
+    if app.chat.loaded && !matches!(app.status(), Status::Running | Status::Waiting) {
+        let s = app.s;
+        return tip(
+            app.t,
+            pill,
+            format!("{}\n{}", s.loaded_note, s.ch_from_args),
+            tooltip::Position::Bottom,
+        );
+    }
+    pill.into()
 }
 
 fn status_bar(app: &App) -> El<'_> {
@@ -363,7 +533,7 @@ fn status_bar(app: &App) -> El<'_> {
         } else {
             let shown = clip(branch, 28);
             rest += mono_width(&shown);
-            item(shown).font(MONO)
+            item(shown).font(mono())
         };
         rest += BAR_GAP + 8.0 + 11.0 + 4.0;
         tail = tail.push(dot()).push(tip(
@@ -380,27 +550,6 @@ fn status_bar(app: &App) -> El<'_> {
             tooltip::Position::Top,
         ));
     }
-    if let Some(id) = &app.chat.session {
-        // The start of the id, as `sasacode -r` takes it; a click copies all of it.
-        let label = if app.copied == Some(Clip::Session) {
-            rest += prose_width(s.copied);
-            item(s.copied.to_owned()).color(t.accent)
-        } else {
-            let shown = clip(id, 8).trim_end_matches('…').to_owned();
-            rest += mono_width(&shown);
-            item(shown).font(MONO)
-        };
-        rest += BAR_GAP + 8.0;
-        tail = tail.push(dot()).push(tip(
-            t,
-            button(label)
-                .padding([1, 4])
-                .style(t.ghost(t.fg_3, false))
-                .on_press(Msg::Copy(Clip::Session)),
-            format!("{id}\n{}", s.copy_id),
-            tooltip::Position::Top,
-        ));
-    }
     // The model that answered, else the one asked for; what the config decides is not known here,
     // and is not guessed at.
     let model = match (app.model.trim(), &app.chat.transcript.model) {
@@ -409,7 +558,7 @@ fn status_bar(app: &App) -> El<'_> {
     };
     if let Some(model) = model {
         rest += BAR_GAP + mono_width(&model);
-        tail = tail.push(dot()).push(item(model).font(MONO));
+        tail = tail.push(dot()).push(item(model).font(mono()));
     }
     if let Some(mode) = app.permission {
         let color = if mode == "auto" { t.err } else { t.fg_3 };
@@ -444,22 +593,55 @@ fn status_bar(app: &App) -> El<'_> {
         tail = tail.push(dot()).push(tip(
             t,
             item(label).color(color),
-            format!("{} / {}", compact(tr.last_input), compact(window)),
+            match app.compact_at {
+                Some(at) => format!(
+                    "{} / {}\n{}",
+                    compact(tr.last_input),
+                    compact(window),
+                    crate::i18n::fill(
+                        &crate::i18n::fill(s.w().compact_at, "n", format!("{:.0}", at * 100.0)),
+                        "tokens",
+                        compact((window as f64 * at) as u64)
+                    )
+                ),
+                None => format!(
+                    "{} / {}\n{}",
+                    compact(tr.last_input),
+                    compact(window),
+                    s.w().compact_off
+                ),
+            },
             tooltip::Position::Top,
         ));
     }
+    // What the conversation cost, its tokens in the tooltip; with none used yet, nothing.
     let u = &app.chat.transcript.usage;
-    let usage = format!(
-        "in {} · out {} · cache {} · ${:.4}",
+    let tokens = format!(
+        "in {} · out {} · cache {}",
         compact(u.input),
         compact(u.output),
-        compact(u.cache_read),
-        u.cost
+        compact(u.cache_read)
     );
-    rest += 12.0 + mono_width(&usage);
+    let usage = if u.cost > 0.0 {
+        Some(if u.cost >= 0.01 {
+            format!("${:.2}", u.cost)
+        } else {
+            format!("${:.4}", u.cost)
+        })
+    } else if u.input + u.output > 0 {
+        Some(format!("{} tok", compact(u.input + u.output)))
+    } else {
+        None
+    };
+    if let Some(usage) = &usage {
+        rest += 12.0 + mono_width(usage);
+    }
     let mut right = row![].spacing(8).align_y(Alignment::Center);
     // Copied from the palette or `/export`, where there is no button to say so.
-    if app.copied == Some(Clip::Conversation) {
+    if matches!(
+        app.copied,
+        Some(Clip::Conversation | Clip::Session | Clip::Link | Clip::Log | Clip::Folder)
+    ) {
         rest += 8.0 + prose_width(s.copied);
         right = right.push(item(s.copied.to_owned()).color(t.accent));
     }
@@ -477,27 +659,51 @@ fn status_bar(app: &App) -> El<'_> {
             ))
         };
     }
-    let cwd = app.cwd.to_string_lossy();
-    let shown = clip_start(&cwd, folder_cells(app.width, rest));
-    let folder: El<'_> = if shown == cwd {
-        item(shown).font(MONO).into()
-    } else {
-        tip(t, item(shown).font(MONO), cwd.into_owned(), tooltip::Position::Top)
-    };
+    // A change of the list just made, taken back from here.
+    if app.toast.is_some() && app.toast == app.undo_toast && !app.undo.is_empty() {
+        let w = s.w();
+        rest += 8.0 + prose_width(w.undo) + 24.0;
+        right = right.push(
+            button(
+                row![
+                    icon(Icon::Undo, 11.0, t.accent),
+                    item(w.undo.to_owned()).color(t.accent)
+                ]
+                .spacing(4)
+                .align_y(Alignment::Center),
+            )
+            .padding([1, 6])
+            .style(t.ghost(t.accent, false))
+            .on_press(Msg::Undo),
+        );
+    }
+    // The folder by its name; where it is, in the tooltip.
+    let cwd = app.cwd.to_string_lossy().into_owned();
+    let name = app
+        .cwd
+        .file_name()
+        .map_or_else(|| cwd.clone(), |n| n.to_string_lossy().into_owned());
+    let shown = clip_start(&name, folder_cells(app.width, rest));
+    let folder = tip(t, item(shown).font(mono()), cwd, tooltip::Position::Top);
     let left = row![icon(Icon::Folder, 12.0, t.fg_3), folder, tail]
         .spacing(6)
         .align_y(Alignment::Center);
-    container(
-        row![
-            container(left).width(Length::Fill).clip(true),
-            right,
-            button(item(usage).font(MONO))
+    let right = match usage {
+        Some(usage) => right.push(tip(
+            t,
+            button(item(usage).font(mono()))
                 .padding([1, 6])
                 .style(t.ghost(t.fg_3, false))
                 .on_press(Msg::Tab(Tab::Usage)),
-        ]
-        .spacing(8)
-        .align_y(Alignment::Center),
+            tokens,
+            tooltip::Position::Top,
+        )),
+        None => right,
+    };
+    container(
+        row![container(left).width(Length::Fill).clip(true), right,]
+            .spacing(8)
+            .align_y(Alignment::Center),
     )
     .padding([3, 12])
     .style(t.fill(t.surface))
@@ -584,16 +790,61 @@ pub(crate) fn copy_button<'a>(app: &App, clip: Clip, label: &'static str) -> El<
 pub(crate) fn plus_minus<'a>(t: Tokens, added: usize, removed: usize) -> El<'a> {
     let mut out = row![].spacing(6);
     if added > 0 || removed == 0 {
-        out = out.push(text(format!("+{added}")).size(12).font(MONO).color(t.add));
+        out = out.push(text(format!("+{added}")).size(12).font(mono()).color(t.add));
     }
     if removed > 0 {
-        out = out.push(text(format!("−{removed}")).size(12).font(MONO).color(t.del));
+        out = out.push(text(format!("−{removed}")).size(12).font(mono()).color(t.del));
     }
     out.into()
 }
 
-/// The lines of a change, at most `max` of them.
+/// The lines of a change, at most `max` of them, wrapped to the box.
 pub(crate) fn diff_view<'a>(t: Tokens, s: Strings, diff: &'a Diff, max: usize) -> El<'a> {
+    diff_view_in(t, s, diff, max, None)
+}
+
+/// How wide diff lines are drawn when they are not wrapped: as the longest of them, at least
+/// `least`. A text widget does not say how wide it is, so it is reckoned from the characters.
+pub(crate) fn unwrapped_width<'a>(lines: impl Iterator<Item = &'a str>, least: f32) -> f32 {
+    let longest = lines
+        .map(|l| l.chars().map(|c| if c == '\t' { 4 } else { cells(c) }).sum::<usize>())
+        .max()
+        .unwrap_or(0);
+    (longest as f32 * 7.3 + 72.0).max(least)
+}
+
+/// The width of one line of a diff, and how its text is broken: each line kept whole and as wide
+/// as `wide` when given, else filling the box and wrapped.
+pub(crate) fn diff_line_width(wide: Option<f32>) -> (Length, text::Wrapping) {
+    match wide {
+        Some(w) => (Length::Fixed(w), text::Wrapping::None),
+        None => (Length::Fill, text::Wrapping::WordOrGlyph),
+    }
+}
+
+/// The box around a diff's lines, scrolled sideways when they are not wrapped.
+pub(crate) fn diff_box<'a>(t: Tokens, lines: iced::widget::Column<'a, Msg>, wide: Option<f32>) -> El<'a> {
+    let inner: El<'a> = if wide.is_some() {
+        iced::widget::scrollable(lines)
+            .direction(iced::widget::scrollable::Direction::Horizontal(
+                iced::widget::scrollable::Scrollbar::new().width(5).scroller_width(5),
+            ))
+            .style(t.scroll())
+            .into()
+    } else {
+        lines.into()
+    };
+    container(inner)
+        .width(Length::Fill)
+        .padding([4, 0])
+        .clip(true)
+        .style(t.boxed(t.raised, t.line, RADIUS))
+        .into()
+}
+
+/// [`diff_view`], its lines kept whole and the box scrolled sideways when `wide` is given.
+pub(crate) fn diff_view_in<'a>(t: Tokens, s: Strings, diff: &'a Diff, max: usize, wide: Option<f32>) -> El<'a> {
+    let (width, wrapping) = diff_line_width(wide);
     let mut lines = column![];
     for line in diff.lines.iter().take(max) {
         let (mark, color, fill) = match line.sign {
@@ -604,12 +855,12 @@ pub(crate) fn diff_view<'a>(t: Tokens, s: Strings, diff: &'a Diff, max: usize) -
         };
         let body = text(line.text.as_str())
             .size(12)
-            .font(MONO)
+            .font(mono())
             .color(if line.sign == Sign::Hunk { t.fg_3 } else { t.fg })
-            .wrapping(text::Wrapping::WordOrGlyph);
+            .wrapping(wrapping);
         lines = lines.push(
-            container(row![text(mark).size(12).font(MONO).color(color).width(14), body].spacing(2))
-                .width(Length::Fill)
+            container(row![text(mark).size(12).font(mono()).color(color).width(14), body].spacing(2))
+                .width(width)
                 .padding([1, 8])
                 .style(move |_| container::Style {
                     background: fill.map(Into::into),
@@ -621,15 +872,11 @@ pub(crate) fn diff_view<'a>(t: Tokens, s: Strings, diff: &'a Diff, max: usize) -
     if hidden > 0 {
         lines = lines.push(container(text(fill(s.more_lines, "n", hidden)).size(11.5).color(t.fg_3)).padding([3, 8]));
     }
-    container(lines)
-        .width(Length::Fill)
-        .padding([4, 0])
-        .clip(true)
-        .style(t.boxed(t.raised, t.line, RADIUS))
-        .into()
+    diff_box(t, lines, wide)
 }
 
-/// Text a program wrote: its last `max` lines, set in.
+/// Text a program wrote: its last `max` lines, set in. A file named with its line in it opens in
+/// the files tab at that line.
 pub(crate) fn output_block<'a>(t: Tokens, s: Strings, out: &str, max: usize) -> El<'a> {
     let lines: Vec<&str> = out.trim_end().lines().collect();
     let skip = lines.len().saturating_sub(max);
@@ -637,18 +884,40 @@ pub(crate) fn output_block<'a>(t: Tokens, s: Strings, out: &str, max: usize) -> 
     if skip > 0 {
         body = body.push(text(fill(s.more_lines, "n", skip)).size(11.5).color(t.fg_3));
     }
-    let shown = if lines.is_empty() {
-        s.no_output.to_owned()
+    let shown: El<'a> = if lines.is_empty() {
+        text(s.no_output).size(12).font(mono()).color(t.fg_3).into()
     } else {
-        lines[skip..].join("\n")
-    };
-    body = body.push(
-        text(shown)
+        let mut spans: Vec<iced::widget::text::Span<'a, String, Font>> = Vec::new();
+        for (n, line) in lines[skip..].iter().enumerate() {
+            if n > 0 {
+                spans.push(iced::widget::span("\n"));
+            }
+            let mut at = 0;
+            for (range, link) in crate::talk::refs(line) {
+                if range.start > at {
+                    spans.push(iced::widget::span(line[at..range.start].to_owned()));
+                }
+                spans.push(
+                    iced::widget::span(line[range.clone()].to_owned())
+                        .color(t.accent)
+                        .underline(true)
+                        .link(link),
+                );
+                at = range.end;
+            }
+            if at < line.len() {
+                spans.push(iced::widget::span(line[at..].to_owned()));
+            }
+        }
+        iced::widget::rich_text(spans)
             .size(12)
-            .font(MONO)
-            .color(if lines.is_empty() { t.fg_3 } else { t.fg_2 })
-            .wrapping(text::Wrapping::WordOrGlyph),
-    );
+            .font(mono())
+            .color(t.fg_2)
+            .wrapping(text::Wrapping::WordOrGlyph)
+            .on_link_click(Msg::OpenRef)
+            .into()
+    };
+    body = body.push(shown);
     container(body)
         .width(Length::Fill)
         .padding([6, 10])

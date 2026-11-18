@@ -2,32 +2,64 @@
 //! `sasacode -p … --output jsonl --control stdio` in the folder, so the agent, its tools, its
 //! permissions and its sessions are exactly those of the CLI and the TUI.
 
+mod about;
 mod app;
+mod automations;
+mod cli;
+mod compare;
 mod composer;
 mod diff;
 #[cfg(test)]
 mod drive;
+mod edit;
 mod export;
+mod extras;
+mod figure;
+mod files;
 mod fork;
+mod gist;
 mod git;
+mod helper;
 mod i18n;
 mod icons;
 mod input;
+mod jobs;
+mod keys;
 mod layout;
+mod link;
+mod list;
+mod nav;
+mod outline;
 mod overlay;
+mod picture;
+mod plan;
+mod plugins;
+mod restore;
+mod review;
+mod rows;
 mod runner;
+mod scope;
+mod scratch;
+mod scripts;
 #[cfg(test)]
 mod snapshots;
+mod split;
 mod system;
+mod talk;
 mod theme;
 mod transcript;
+mod usage;
 mod view;
+mod watch;
+mod words;
+mod worktrees;
 
 use std::path::PathBuf;
 
-const USAGE: &str = "usage: sasacode-gui [--sasacode <path>] [--session <id>] [folder]
+const USAGE: &str = "usage: sasacode-gui [--sasacode <path>] [--session <id>] [folder | link]
 
   folder              the project to work in (default: the current directory)
+  link                sasacode://open?folder=<path>&session=<id>, as the window copies it
   --sasacode <path>   the sasacode executable (default: $SASACODE_BIN, else sasacode on PATH)
   --session <id>      open on this conversation of the folder (its id, or the start of it)
   --at <x,y>          put the window's top left corner here, in points (a window opening another)
@@ -63,7 +95,24 @@ fn main() -> iced::Result {
                 None => exit_with("--at needs x,y"),
             },
             Some(flag) if flag.starts_with('-') => exit_with(&format!("unknown option {flag}")),
+            Some(url) if url.starts_with(link::SCHEME) => match link::parse(url) {
+                Some(to) => {
+                    folder = to.folder.or(folder);
+                    session = to.session.or(session);
+                }
+                None => exit_with(&format!("not a link this window opens: {url}")),
+            },
             _ => folder = Some(PathBuf::from(arg)),
+        }
+    }
+    // Started from the Finder, the Dock or a desktop's menu, not a terminal: the PATH and the
+    // rest as the user's terminal has them, so that `sasacode`, git and gh are found.
+    #[cfg(unix)]
+    if std::env::var_os("TERM").is_none() {
+        for (name, value) in system::login_env() {
+            // SAFETY: nothing else runs yet that reads the environment: the window has not
+            // started, and the thread that read the shell's answer has ended or is gone.
+            unsafe { std::env::set_var(name, value) };
         }
     }
     let cwd = folder
@@ -76,6 +125,11 @@ fn main() -> iced::Result {
     let layout = layout_file.as_deref().map(layout::Layout::read).unwrap_or_default();
     let prefs = layout_file.as_deref().map(layout::Prefs::read).unwrap_or_default();
     let zoom = prefs.zoom;
+    // The settings' sasacode, unless this launch named one.
+    if program.is_none() && !prefs.more.program.trim().is_empty() {
+        program = Some(app::program_of(&prefs.more.program));
+    }
+    view::set_fonts(&prefs.more.ui_font, &prefs.more.code_font);
     let options = app::Options {
         program: program.unwrap_or_else(|| PathBuf::from("sasacode")),
         cwd,
@@ -90,15 +144,42 @@ fn main() -> iced::Result {
         .theme(app::App::theme)
         .subscription(app::App::subscription)
         .scale_factor(app::App::scale)
-        .default_font(view::UI)
+        .default_font(view::ui())
         .window(iced::window::Settings {
             // What the system measures, as iced takes it: before the zoom it draws at.
             size: iced::Size::new(layout.size.width / zoom, layout.size.height / zoom),
             min_size: Some(layout::MIN_SIZE),
-            position: at.map_or(iced::window::Position::Default, iced::window::Position::Specific),
+            // Where this launch said, else where the window was last, while a screen shows it: the
+            // system's own place the first time. macOS brings a window on no screen back itself.
+            position: at
+                .or(layout.at.filter(|&kept| on_a_screen(kept, layout.size)))
+                .map_or(iced::window::Position::Default, iced::window::Position::Specific),
+            // Asked first while something runs: `Msg::CloseAsked`.
+            exit_on_close_request: false,
             ..iced::window::Settings::default()
         })
         .run()
+}
+
+/// Whether some screen shows the top of a window put at `at`: its title bar, by which it is moved.
+/// macOS brings a window on no screen back itself.
+#[cfg(windows)]
+fn on_a_screen(at: iced::Point, size: iced::Size) -> bool {
+    use windows_sys::Win32::Foundation::RECT;
+    use windows_sys::Win32::Graphics::Gdi::{MONITOR_DEFAULTTONULL, MonitorFromRect};
+    let top = RECT {
+        left: at.x as i32,
+        top: at.y as i32,
+        right: (at.x + size.width) as i32,
+        bottom: at.y as i32 + 32,
+    };
+    // SAFETY: the rectangle is only read, while the call lasts.
+    unsafe { MonitorFromRect(&top, MONITOR_DEFAULTTONULL) != 0 }
+}
+
+#[cfg(not(windows))]
+fn on_a_screen(_at: iced::Point, _size: iced::Size) -> bool {
+    true
 }
 
 /// `x,y`, as a point.

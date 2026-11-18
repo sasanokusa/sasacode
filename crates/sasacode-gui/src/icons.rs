@@ -6,7 +6,9 @@ use iced::{Color, Length};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Icon {
     ChevronRight,
+    ChevronLeft,
     ChevronDown,
+    ChevronUp,
     Check,
     Plus,
     File,
@@ -37,13 +39,25 @@ pub enum Icon {
     Archive,
     Branch,
     Gear,
+    Trash,
+    Tag,
+    Play,
+    Toc,
+    Filter,
+    Undo,
+    Refresh,
+    Sliders,
+    /// Nothing drawn: the place of a mark that is off, in a menu of marks.
+    Blank,
 }
 
 impl Icon {
     fn body(self) -> &'static str {
         match self {
             Icon::ChevronRight => r#"<path d="M6 3.5 10.5 8 6 12.5"/>"#,
+            Icon::ChevronLeft => r#"<path d="M10 3.5 5.5 8 10 12.5"/>"#,
             Icon::ChevronDown => r#"<path d="M3.5 6 8 10.5 12.5 6"/>"#,
+            Icon::ChevronUp => r#"<path d="M3.5 10 8 5.5 12.5 10"/>"#,
             Icon::Check => r#"<path d="M3 8.5 6.5 12 13 4.5"/>"#,
             Icon::Plus => r#"<path d="M8 3v10M3 8h10"/>"#,
             Icon::File => r#"<path d="M4 2h5l3 3v9H4zM9 2v3h3"/>"#,
@@ -86,6 +100,17 @@ impl Icon {
             Icon::Gear => {
                 r#"<circle cx="8" cy="8" r="2.2"/><path d="M8 1.8v2M8 12.2v2M1.8 8h2M12.2 8h2M3.6 3.6 5 5M11 11l1.4 1.4M3.6 12.4 5 11M11 5l1.4-1.4"/>"#
             }
+            Icon::Trash => r#"<path d="M2.5 4.5h11M6 4.5V3h4v1.5M4 4.5l.7 9h6.6l.7-9M6.8 7v4.5M9.2 7v4.5"/>"#,
+            Icon::Tag => r#"<path d="M2.5 2.5h5.2l6 6-5.2 5.2-6-6zM5.3 5.3h.1"/>"#,
+            Icon::Play => r#"<path d="M5 3.5v9l7-4.5z"/>"#,
+            Icon::Toc => r#"<path d="M6 4h7.5M6 8h7.5M8 12h5.5M2.5 4h.1M2.5 8h.1M4.5 12h.1"/>"#,
+            Icon::Filter => r#"<path d="M2.5 3.5h11l-4.3 5v4.2l-2.4 1v-5.2z"/>"#,
+            Icon::Undo => r#"<path d="M5.5 3 2.5 6l3 3M2.8 6h6.7a4 4 0 0 1 0 8H7"/>"#,
+            Icon::Refresh => r#"<path d="M13 8a5 5 0 1 1-1.5-3.6M13 2.5v3h-3"/>"#,
+            Icon::Sliders => {
+                r##"<path d="M2.5 4.5h11M2.5 11.5h11"/><circle cx="6" cy="4.5" r="1.6" fill="#000"/><circle cx="10" cy="11.5" r="1.6" fill="#000"/>"##
+            }
+            Icon::Blank => "",
         }
     }
 

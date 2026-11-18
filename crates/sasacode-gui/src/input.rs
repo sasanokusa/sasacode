@@ -9,6 +9,9 @@ use iced::widget::text_editor::{self, Action, Edit};
 
 use crate::app::{App, FIND_IN, MODEL, Msg, Overlay};
 use crate::composer::{self, SHOWN};
+
+/// How many conversations `@` offers below the files.
+const CHATS_SHOWN: usize = 5;
 use crate::i18n::Strings;
 use crate::system;
 
@@ -35,11 +38,24 @@ pub enum Command {
     Keys,
     Attention,
     Mention,
+    Branch,
+    Delete,
+    Group,
+    Scripts,
+    Outline,
+    Split,
+    Tui,
+    Usage,
+    OpenFolder,
+    Worktrees,
+    Automations,
+    Gist,
+    Jobs,
 }
 
 impl Command {
     /// What `/` offers, by the word typed after it.
-    pub const SLASH: [(&'static str, Command); 16] = [
+    pub const SLASH: &'static [(&'static str, Command)] = &[
         ("new", Command::New),
         ("btw", Command::Btw),
         ("find", Command::Find),
@@ -56,6 +72,19 @@ impl Command {
         ("worktree", Command::Worktree),
         ("settings", Command::Settings),
         ("keys", Command::Keys),
+        ("branch", Command::Branch),
+        ("delete", Command::Delete),
+        ("group", Command::Group),
+        ("run", Command::Scripts),
+        ("outline", Command::Outline),
+        ("split", Command::Split),
+        ("tui", Command::Tui),
+        ("usage", Command::Usage),
+        ("open", Command::OpenFolder),
+        ("worktrees", Command::Worktrees),
+        ("automations", Command::Automations),
+        ("jobs", Command::Jobs),
+        ("gist", Command::Gist),
     ];
 
     pub fn what(self, s: &Strings) -> &'static str {
@@ -79,12 +108,28 @@ impl Command {
             Command::Keys => s.c_keys,
             Command::Attention => s.c_attention,
             Command::Mention => s.c_mention,
+            Command::Branch => s.w().branch_switch,
+            Command::Delete => s.w().c_delete,
+            Command::Group => s.w().c_group,
+            Command::Scripts => s.w().c_scripts,
+            Command::Outline => s.w().c_outline,
+            Command::Split => s.w().c_split,
+            Command::Tui => s.w().c_tui,
+            Command::Usage => s.w().c_usage,
+            Command::OpenFolder => s.w().c_open_folder,
+            Command::Worktrees => s.w().c_worktrees,
+            Command::Automations => s.w().c_automations,
+            Command::Jobs => s.w().c_jobs,
+            Command::Gist => s.w().c_gist,
         }
     }
 
-    /// Takes what is typed after it: `/btw` and its question.
+    /// Takes what is typed after it: `/btw` and its question, `/usage` and what of it.
     fn takes_text(self) -> bool {
-        self == Command::Btw
+        matches!(
+            self,
+            Command::Btw | Command::Export | Command::Usage | Command::Worktree
+        )
     }
 }
 
@@ -100,17 +145,18 @@ pub struct Offer {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum OfferKind {
-    /// Files and folders after `@`, best first.
-    Files(Vec<String>),
-    /// The window's commands after `/`.
-    Commands(Vec<(&'static str, Command)>),
+    /// Files and folders after `@`, best first; then the conversations of this folder whose names
+    /// hold what was typed, by id and name.
+    Files(Vec<String>, Vec<(String, String)>),
+    /// The window's commands after `/`, then the plugins' and the skills', which the CLI runs.
+    Commands(Vec<(&'static str, Command)>, Vec<crate::cli::Command>),
 }
 
 impl Offer {
     pub fn len(&self) -> usize {
         match &self.kind {
-            OfferKind::Files(files) => files.len(),
-            OfferKind::Commands(commands) => commands.len(),
+            OfferKind::Files(files, chats) => files.len() + chats.len(),
+            OfferKind::Commands(commands, plugins) => commands.len() + plugins.len(),
         }
     }
 }
@@ -136,11 +182,17 @@ impl App {
                 .copied()
                 .filter(|(name, _)| name.starts_with(&word.to_lowercase()))
                 .collect();
-            return (!commands.is_empty()).then_some(Offer {
+            let plugins: Vec<_> = self
+                .slash_commands()
+                .into_iter()
+                .filter(|c| c.name.to_lowercase().starts_with(&word.to_lowercase()))
+                .filter(|c| !commands.iter().any(|(name, _)| *name == c.name))
+                .collect();
+            return (!commands.is_empty() || !plugins.is_empty()).then_some(Offer {
                 line: at.line,
                 start: 0,
                 end: at.column,
-                kind: OfferKind::Commands(commands),
+                kind: OfferKind::Commands(commands, plugins),
             });
         }
         let (start, query) = composer::mention(before)?;
@@ -152,8 +204,32 @@ impl App {
             line: at.line,
             start,
             end: at.column,
-            kind: OfferKind::Files(files),
+            kind: OfferKind::Files(files, self.mentioned(query)),
         })
+    }
+
+    /// The conversations of this folder whose names hold `query`, the latest first: not the one
+    /// shown, nor those archived. None for nothing typed yet.
+    fn mentioned(&self, query: &str) -> Vec<(String, String)> {
+        let query = query.trim().to_lowercase();
+        if query.is_empty() {
+            return Vec::new();
+        }
+        self.sessions
+            .iter()
+            .filter(|s| Some(&s.id) != self.chat.session.as_ref() && !self.prefs.archived.contains(&s.id))
+            .map(|s| {
+                let name = self
+                    .prefs
+                    .names
+                    .get(&s.id)
+                    .cloned()
+                    .unwrap_or_else(|| s.first_prompt.clone());
+                (s.id.clone(), name.lines().next().unwrap_or_default().to_owned())
+            })
+            .filter(|(id, name)| name.to_lowercase().contains(&query) || id.starts_with(&query))
+            .take(CHATS_SHOWN)
+            .collect()
     }
 
     /// An action on the input. Typing ends going through what was sent before, and brings back
@@ -176,7 +252,7 @@ impl App {
             || !matches!(
                 self.offer(),
                 Some(Offer {
-                    kind: OfferKind::Files(_),
+                    kind: OfferKind::Files(..),
                     ..
                 })
             )
@@ -215,7 +291,7 @@ impl App {
     }
 
     /// Puts `text` in place of what the input has.
-    fn set_input(&mut self, text: &str) {
+    pub(crate) fn set_input(&mut self, text: &str) {
         self.chat.editor = text_editor::Content::with_text(text);
         self.chat.editor.perform(Action::Move(text_editor::Motion::DocumentEnd));
     }
@@ -229,7 +305,12 @@ impl App {
         let at = which.unwrap_or(self.pick).min(offer.len().saturating_sub(1));
         self.pick = 0;
         match offer.kind {
-            OfferKind::Files(files) => {
+            OfferKind::Files(files, chats) => {
+                // A conversation goes in as a file of what was said in it, in place of the `@word`.
+                if let Some((id, _)) = at.checked_sub(files.len()).and_then(|i| chats.get(i)) {
+                    self.replace(offer.line, offer.start, offer.end, "");
+                    return self.attach_conversation(id);
+                }
                 let Some(file) = files.get(at) else {
                     return Task::none();
                 };
@@ -241,8 +322,12 @@ impl App {
                 self.replace(offer.line, offer.start, offer.end, &with);
                 self.ask_files()
             }
-            OfferKind::Commands(commands) => {
+            OfferKind::Commands(commands, plugins) => {
                 let Some(&(name, command)) = commands.get(at) else {
+                    // A plugin's command goes in with room for its text; ↵ runs it.
+                    if let Some(plugin) = plugins.get(at - commands.len()) {
+                        self.replace(offer.line, offer.start, offer.end, &format!("/{} ", plugin.name));
+                    }
                     return Task::none();
                 };
                 if command.takes_text() {
@@ -273,6 +358,18 @@ impl App {
         self.set_input("");
         if command == Command::Btw {
             return Some(self.side_question(rest));
+        }
+        // `/export path`: to a file, not the clipboard.
+        if command == Command::Export && !rest.is_empty() {
+            return Some(self.update(Msg::ExportTo(rest)));
+        }
+        // `/worktree main`: from that branch.
+        if command == Command::Worktree {
+            return Some(self.worktree((!rest.is_empty()).then_some(rest)));
+        }
+        // `/usage graph`, `history`, `models`: that part, as the CLI's.
+        if command == Command::Usage {
+            return Some(self.update(Msg::UsagePart(crate::usage::Part::named(&rest))));
         }
         Some(self.command(command))
     }
@@ -336,13 +433,15 @@ impl App {
             Command::Export => return self.update(Msg::Copy(crate::app::Clip::Conversation)),
             Command::Steps => return self.update(Msg::SetSteps(!self.prefs.steps)),
             Command::Model => return operation::focus(MODEL),
-            Command::Rename | Command::Pin | Command::Archive => {
+            Command::Rename | Command::Pin | Command::Archive | Command::Delete | Command::Group => {
                 let Some(id) = session else {
                     return Task::none();
                 };
                 return self.update(match command {
                     Command::Rename => Msg::Rename(id),
                     Command::Pin => Msg::Pin(id),
+                    Command::Delete => Msg::Delete(id),
+                    Command::Group => Msg::Group(id),
                     _ => Msg::Archive(id),
                 });
             }
@@ -358,12 +457,62 @@ impl App {
                 system::terminal(&self.cwd);
             }
             Command::Editor => {
-                system::editor(&self.cwd);
+                system::editor_with(&self.cwd, &self.prefs.more.editor);
             }
-            Command::Worktree => return self.worktree(),
+            Command::Worktree => return self.worktree(None),
+            Command::Worktrees => {
+                return self.update(Msg::Show(Some(Overlay::picker(crate::overlay::Pick::Worktrees))));
+            }
+            Command::Automations => return self.show_automations(),
+            Command::Jobs => {
+                self.overlay = Some(crate::overlay::Overlay::Jobs);
+                return self.list_jobs();
+            }
+            Command::Gist => return self.update(Msg::GistAsk),
             Command::Settings => self.overlay = Some(Overlay::Settings),
             Command::Keys => self.overlay = Some(Overlay::Keys),
+            Command::Usage => return self.update(Msg::UsagePart(crate::usage::Part::All)),
+            Command::OpenFolder => {
+                let from = self.cwd.parent().unwrap_or(&self.cwd).to_path_buf();
+                return Task::perform(
+                    async move {
+                        rfd::AsyncFileDialog::new()
+                            .set_directory(from)
+                            .pick_folder()
+                            .await
+                            .map(|f| f.path().to_path_buf())
+                    },
+                    Msg::FolderPicked,
+                );
+            }
             Command::Attention => return self.attention(),
+            Command::Tui => {
+                let Some(id) = session else {
+                    return Task::none();
+                };
+                if !system::resume_in_terminal(&self.cwd, &self.program, &id) {
+                    self.toast = Some(self.s.w().tui_failed.to_owned());
+                }
+            }
+            Command::Split => {
+                if self.split.is_some() {
+                    return self.update(Msg::SplitClose);
+                }
+                return self.update(Msg::Show(Some(Overlay::picker(crate::overlay::Pick::Split))));
+            }
+            Command::Outline => {
+                return self.update(Msg::Show(Some(Overlay::picker(crate::overlay::Pick::Outline))));
+            }
+            Command::Scripts => {
+                // None yet: the settings, where they are listed.
+                if self.scripts().is_empty() {
+                    return self.update(Msg::SettingsPart(crate::overlay::Part::Tools));
+                }
+                return self.update(Msg::Show(Some(Overlay::picker(crate::overlay::Pick::Scripts))));
+            }
+            Command::Branch => {
+                return self.update(Msg::Show(Some(Overlay::picker(crate::overlay::Pick::Branches))));
+            }
             Command::Mention => {
                 // An `@` where the cursor is, a word of its own: the files are offered.
                 let cursor = self.chat.editor.cursor().position;
@@ -429,7 +578,10 @@ mod tests {
         let mut app = window();
         typed(&mut app, "これを見て @dock");
         let offer = app.offer().unwrap();
-        assert_eq!(offer.kind, OfferKind::Files(vec!["src/view/dock.rs".into()]));
+        assert_eq!(
+            offer.kind,
+            OfferKind::Files(vec!["src/view/dock.rs".into()], Vec::new())
+        );
         let _ = app.update(Msg::Complete(None));
         assert_eq!(app.chat.editor.text(), "これを見て @src/view/dock.rs ");
         assert!(app.offer().is_none());
@@ -445,7 +597,7 @@ mod tests {
         typed(&mut app, "d");
         assert_eq!(
             app.offer().unwrap().kind,
-            OfferKind::Files(vec!["src/view/dock.rs".into()])
+            OfferKind::Files(vec!["src/view/dock.rs".into()], Vec::new())
         );
     }
 
@@ -454,7 +606,7 @@ mod tests {
         let mut app = window();
         typed(&mut app, "/ste");
         let Some(Offer {
-            kind: OfferKind::Commands(found),
+            kind: OfferKind::Commands(found, _),
             ..
         }) = app.offer()
         else {
