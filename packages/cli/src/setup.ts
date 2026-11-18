@@ -240,11 +240,10 @@ export async function setup(opts: SetupOptions): Promise<Harness> {
         found.push(...discoverPlugins(opts.cwd, problems));
         for (const w of problems) host.notify(w, "warning");
       }
-      for (let i = found.length - 1; i >= 0; i--) if (disabled.has(found[i]!.manifest.name)) found.splice(i, 1);
-      const skipped = found.filter((p) => p.scope === "project" && !trusted);
+      const skipped = found.filter((p) => p.scope === "project" && !trusted && !disabled.has(p.manifest.name));
       if (skipped.length)
         host.notify(t("project plugins not loaded until you trust this project: {names}", { names: skipped.map((p) => p.manifest.name).join(", ") }), "warning");
-      const usable = found.filter((p) => p.scope === "global" || trusted);
+      const usable = usablePlugins(found, disabled, trusted);
       // A user or project plugin of the same name replaces the bundled one (both would hook twice).
       const own = new Set(usable.map((p) => p.manifest.name));
       for (const [name, plugin] of Object.entries(bundledPlugins))
@@ -254,14 +253,7 @@ export async function setup(opts: SetupOptions): Promise<Harness> {
         host.notify(t("jev-guard is no longer bundled, so the Jev check your config turns on is not running: sasacode plugin install sasacode-plugin-jev-guard"), "warning");
 
       if (!disabled.has("skills")) {
-        const dirs = [join(home, "skills"), join(opts.cwd, ".sasacode", "skills"), ...usable.flatMap((p) => {
-          if (!p.manifest.skills) return [];
-          const dir = resolvePath(p.dir, p.manifest.skills);
-          // A plugin's skills come from its own folder, like its code.
-          if (isInside(dir, p.dir)) return [dir];
-          host.notify(t("plugin {name}: skills folder {folder} is outside the plugin; ignored", { name: p.manifest.name, folder: p.manifest.skills! }), "warning");
-          return [];
-        })];
+        const dirs = skillFolders(home, opts.cwd, usable, (w) => host.notify(w, "warning"));
         await host.load("skills", createSkillsPlugin(dirs, { builtinDir: join(home, "builtin-skills") }));
       }
       if (!disabled.has("mcp")) {
@@ -341,6 +333,23 @@ export async function setup(opts: SetupOptions): Promise<Harness> {
       await endSession("exit");
     },
   };
+}
+
+/** The plugins found that load: not turned off in config, and a project's only when the project is trusted. */
+export function usablePlugins(found: FoundPlugin[], disabled: Set<string>, trusted: boolean): FoundPlugin[] {
+  return found.filter((p) => !disabled.has(p.manifest.name) && (p.scope === "global" || trusted));
+}
+
+/** Where skills are read from after the built-in ones: the user's, the project's, then each usable plugin's own folder. */
+export function skillFolders(home: string, cwd: string, usable: FoundPlugin[], warn: (warning: string) => void): string[] {
+  return [join(home, "skills"), join(cwd, ".sasacode", "skills"), ...usable.flatMap((p) => {
+    if (!p.manifest.skills) return [];
+    const dir = resolvePath(p.dir, p.manifest.skills);
+    // A plugin's skills come from its own folder, like its code.
+    if (isInside(dir, p.dir)) return [dir];
+    warn(t("plugin {name}: skills folder {folder} is outside the plugin; ignored", { name: p.manifest.name, folder: p.manifest.skills! }));
+    return [];
+  })];
 }
 
 async function loadExternal(host: PluginHost, p: FoundPlugin): Promise<void> {

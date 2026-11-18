@@ -106,19 +106,31 @@ function registerVirtualApi(): void {
   });
 }
 
-/** Import every extension module of a plugin. Throws when the API version does not fit. */
-export async function importExtensions(p: FoundPlugin): Promise<Plugin[]> {
+/**
+ * The modules a plugin's extensions name, as [as written, absolute path], checked as they are before
+ * any is imported. Throws what keeps the plugin from loading: an API version that does not fit, a file
+ * that is missing or outside the plugin's folder.
+ */
+export function extensionFiles(p: FoundPlugin): [string, string][] {
   if (p.manifest.apiVersion && !isCompatible(p.manifest.apiVersion))
     throw new Error(t("needs plugin API {need}, host provides {have}", { need: p.manifest.apiVersion, have: pluginApi.PLUGIN_API_VERSION }));
-  registerVirtualApi();
-  const out: Plugin[] = [];
-  for (const rel of p.manifest.extensions ?? []) {
+  return (p.manifest.extensions ?? []).map((rel) => {
     const file = resolve(p.dir, rel);
     // Only code inside the plugin's own folder: that is what trust and review covered.
     if (!existsSync(file) || !isInside(realpathSync(file), realpathSync(p.dir))) throw new Error(t("{file} is not a file inside {dir}", { file: rel, dir: p.dir }));
     // A project's trust covers its plugins' code but not their node_modules or .git: none of it may be loaded from there (#104).
     if (p.scope === "project" && relative(realpathSync(p.dir), realpathSync(file)).split(sep).some((s) => s === "node_modules" || s === ".git"))
       throw new Error(t("{file} is inside node_modules or .git, which the project's trust does not cover", { file: rel }));
+    return [rel, file];
+  });
+}
+
+/** Import every extension module of a plugin. Throws when the API version does not fit. */
+export async function importExtensions(p: FoundPlugin): Promise<Plugin[]> {
+  const files = extensionFiles(p);
+  registerVirtualApi();
+  const out: Plugin[] = [];
+  for (const [rel, file] of files) {
     const mod = await import(file);
     const fn = mod.default ?? mod.plugin;
     if (typeof fn !== "function") throw new Error(t("{file} has no default export function", { file: rel }));
@@ -162,7 +174,7 @@ const USAGE = `usage: sasacode plugin <command> [--project]
   install <npm-spec|git-url|dir> [--yes]  add one (shows what it is and asks first)
   update [name] [--yes]                update npm plugins, or pull a git one (shows the changes and asks)
   remove <name> [--yes]
-  list
+  list [--json]                        --json: bundled plugins too, and whether each can load (checked without running it)
   publish <file.ts|dir> [--name <pkg>] [--version <v>] [--api <range>] [--license <id>] [--description <text>] [--otp <code>] [--dry-run]`;
 
 export async function pluginCommand(args: string[], cwd: string): Promise<number> {
@@ -181,6 +193,7 @@ export async function pluginCommand(args: string[], cwd: string): Promise<number
         description: { type: "string" },
         otp: { type: "string" },
         "dry-run": { type: "boolean" },
+        json: { type: "boolean" },
       },
     });
   } catch (e) {
@@ -341,6 +354,12 @@ export async function pluginCommand(args: string[], cwd: string): Promise<number
       const left = named();
       if (left.length) throw new Error(t("{name} is still installed at {path}", { name: spec, path: left[0]!.dir }));
       console.log(t("removed {name}", { name: spec }));
+      return 0;
+    }
+    if ((sub === "list" || !sub) && v.json) {
+      // Imported here: the listing reads the config and trust, which import this module.
+      const { pluginListing } = await import("./listings.ts");
+      console.log(JSON.stringify(pluginListing(cwd)));
       return 0;
     }
     if (sub === "list" || !sub) {

@@ -25,6 +25,7 @@ import webFetch from "./web-fetch.ts";
 import webSearch from "./web-search.ts";
 import writeGuard from "./write-guard.ts";
 
+export { type Judged, onJudged } from "./agent-judge.ts";
 export { agentsFiles } from "./agents-md.ts";
 export { compact, splitPoint, transcript } from "./compaction.ts";
 export { PRESETS } from "./permission-presets.ts";

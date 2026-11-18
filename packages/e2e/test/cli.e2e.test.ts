@@ -1,11 +1,14 @@
 // End to end: the real CLI, as a child process, against a fake OpenAI-compatible server. Each test
 // is a thing a user does, checked by what they would see (output, files, exit code) and by what
 // the server was actually sent.
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, setDefaultTimeout, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { type FakeServer, fakeServer } from "./fake-server.ts";
 import { answer, fakeConfig, type Live, roles, type Sandbox, sandbox } from "./harness.ts";
+
+// Several tests start the CLI more than once; on the Windows runner each start can take seconds.
+setDefaultTimeout(30_000);
 
 let server: FakeServer | undefined;
 let box: Sandbox | undefined;
@@ -160,7 +163,7 @@ test("--control stdio: the parent answers an approval request over stdin and the
   const before = await run.until("approval_request");
   expect(before[0].type).toBe("session");
   const request = before.at(-1);
-  expect(request).toEqual({ type: "approval_request", id: request.id, callId: expect.any(String), tool: "bash", args: { command: "touch made-by-bash" }, reason: expect.any(String), cwd: expect.any(String) });
+  expect(request).toEqual({ type: "approval_request", id: request.id, callId: expect.any(String), tool: "bash", args: { command: "touch made-by-bash" }, reason: expect.any(String), cwd: expect.any(String), rules: ["bash(touch made-by-bash)"] });
   expect(existsSync(join(box.project, "made-by-bash"))).toBe(false); // nothing ran before the answer
   run.send({ type: "approval", id: request.id, decision: "allow" });
   const rest = await run.until("agent_end");

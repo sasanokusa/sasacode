@@ -52,6 +52,11 @@ pub enum SessionEntry {
         usage: Usage,
         #[serde(default)]
         source: String,
+        /// When, in milliseconds since 1970, and `provider/model`.
+        #[serde(default)]
+        t: f64,
+        #[serde(default)]
+        model: String,
     },
     /// A plugin's own entry: not part of the conversation, so not read here.
     #[serde(other)]
@@ -167,6 +172,8 @@ pub struct SessionSummary {
     /// The first line of the first prompt.
     pub first_prompt: String,
     pub message_count: usize,
+    /// `provider/model` the conversation last used, if its log says.
+    pub model: Option<String>,
 }
 
 /// The sessions started in `cwd`, newest first. Logs that cannot be read are left out.
@@ -211,5 +218,6 @@ pub fn summarize(path: &Path) -> Option<SessionSummary> {
             .unwrap_or(SystemTime::UNIX_EPOCH),
         first_prompt: first_prompt.lines().next().unwrap_or("").to_owned(),
         message_count: restored.messages.len(),
+        model: restored.model,
     })
 }

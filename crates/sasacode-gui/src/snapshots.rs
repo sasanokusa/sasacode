@@ -13,9 +13,11 @@ use iced::{Settings, Size};
 use iced_test::Simulator;
 use sasacode_protocol::{Event, SessionEntry, SessionSummary, parse_event};
 
-use crate::app::{App, Clip, Msg, Options, Tab};
+use crate::app::{App, Chat, Clip, Msg, Options, Tab};
+use crate::diff::Diff;
 use crate::i18n::Strings;
 use crate::layout::Layout;
+use crate::overlay::Overlay;
 use crate::transcript::Transcript;
 
 pub(crate) fn fixture(name: &str) -> String {
@@ -32,10 +34,13 @@ pub(crate) fn window(lang: &str) -> App {
             cwd: "/Users/me/src/orders-api".into(),
             session: None,
             layout: Layout::default(),
+            prefs: crate::layout::Prefs::default(),
             layout_file: None,
         },
         Strings::get(lang),
     );
+    // Never the user's own: a deleted log would go to its trash.
+    app.home = Some(std::env::temp_dir().join(format!("sasacode-gui-home-{}", std::process::id())));
     let prompts = [
         ("再試行を指数バックオフにして", 40, 28),
         ("注文一覧のページングが2ページ目で重複する", 3 * 3600, 41),
@@ -53,6 +58,7 @@ pub(crate) fn window(lang: &str) -> App {
             modified: SystemTime::now() - Duration::from_secs(*ago),
             first_prompt: (*prompt).to_owned(),
             message_count: *count,
+            model: None,
         })
         .collect();
     app
@@ -62,8 +68,8 @@ pub(crate) fn window(lang: &str) -> App {
 /// between the events, so durations have something to show.
 pub(crate) fn play(app: &mut App, name: &str, prompt: &str, stop: impl Fn(&Event) -> bool) {
     let mut now = Instant::now();
-    app.session = Some("0a1b2c3d-0".into());
-    app.transcript.send(prompt, now);
+    app.chat.session = Some("0a1b2c3d-0".into());
+    app.chat.transcript.send(prompt, now);
     for line in fixture(name).lines() {
         let event = parse_event(line).unwrap();
         if stop(&event) {
@@ -74,7 +80,7 @@ pub(crate) fn play(app: &mut App, name: &str, prompt: &str, stop: impl Fn(&Event
             Event::ToolEnd { .. } => Duration::from_millis(2600),
             _ => Duration::from_millis(450),
         };
-        app.transcript.apply(&event, now);
+        app.chat.transcript.apply(&event, now);
     }
     app.now = now;
 }
@@ -87,14 +93,14 @@ pub(crate) const REPLY_CODE: &str =
 /// code block and a link.
 pub(crate) fn markdown_reply(app: &mut App) {
     let mut now = Instant::now();
-    app.session = Some("0a1b2c3d-0".into());
-    app.transcript.send("何を変えた？", now);
+    app.chat.session = Some("0a1b2c3d-0".into());
+    app.chat.transcript.send("何を変えた？", now);
     for line in [
         r###"{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"## 変更点\n\n待ち時間を**指数バックオフ**に変えました。`src/client.ts`の1行だけです。\n\n1. 再試行は2回までのまま\n2. 待ち時間は200ミリ秒から倍々\n\n```ts\nawait new Promise((r) => setTimeout(r, 200 * 2 ** attempt)); // 待ち時間\nif (attempt > 2) throw err;\n```\n\n詳しくは[MDNの解説](https://developer.mozilla.org/)を見てください。"}],"provider":"fake","model":"m","usage":{"input":1200,"output":60},"stopReason":"stop"}}"###,
         r#"{"type":"agent_end","cause":"done"}"#,
     ] {
         now += Duration::from_secs(2);
-        app.transcript.apply(&parse_event(line).unwrap(), now);
+        app.chat.transcript.apply(&parse_event(line).unwrap(), now);
     }
     app.now = now;
 }
@@ -112,9 +118,9 @@ pub(crate) fn long_log(app: &mut App) {
         .filter(|l| !l.trim().is_empty())
         .map(|l| serde_json::from_str(l).unwrap())
         .collect();
-    app.transcript = Transcript::from_entries(&entries);
-    app.loaded = true;
-    app.session = Some("0a1b2c3d-0".into());
+    app.chat.transcript = Transcript::from_entries(&entries);
+    app.chat.loaded = true;
+    app.chat.session = Some("0a1b2c3d-0".into());
 }
 
 fn shoot(app: &App, name: &str, size: (f32, f32)) {
@@ -127,7 +133,7 @@ fn shoot(app: &App, name: &str, size: (f32, f32)) {
         }
     }
     let settings = Settings {
-        default_font: crate::view::UI,
+        default_font: crate::view::ui(),
         ..Settings::default()
     };
     let mut ui = Simulator::with_size(settings, Size::new(size.0, size.1), app.view());
@@ -165,7 +171,7 @@ fn snapshots() {
 
     // With the steps of the second exchange shown, the commands in the inspector, in the dark.
     app.set_dark(true);
-    app.folds.insert(1, true);
+    app.chat.folds.insert(1, true);
     app.tab = Tab::Commands;
     shoot(&app, "04-steps-dark", (1280.0, 1100.0));
     app.tab = Tab::Usage;
@@ -178,7 +184,7 @@ fn snapshots() {
         matches!(e, Event::ToolEnd { .. })
     });
     let _written = app.pretend_running();
-    app.transcript.queue("やっぱり10秒でいい");
+    app.chat.transcript.queue("やっぱり10秒でいい");
     app.now += Duration::from_secs(12);
     shoot(&app, "06-running", WIDE);
 
@@ -198,13 +204,13 @@ fn snapshots() {
     // An approval of an edit: the card shows the change the call asks for.
     let mut app = window("ja");
     let mut now = Instant::now();
-    app.transcript.send("タイムアウトを30秒にして", now);
+    app.chat.transcript.send("タイムアウトを30秒にして", now);
     for line in [
         r#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"設定ファイルのタイムアウトを変更します。"},{"type":"tool_call","id":"call_e","name":"edit","input":{"path":"/Users/me/src/orders-api/config/http.json","old_string":"{\n  \"retries\": 2,\n  \"timeoutMs\": 10000\n}","new_string":"{\n  \"retries\": 2,\n  \"timeoutMs\": 30000\n}"}}],"provider":"fake","model":"m","usage":{"input":1200,"output":60},"stopReason":"tool_use"}}"#,
         r#"{"type":"approval_request","id":"approval-1","callId":"call_e","tool":"edit","args":{"path":"/Users/me/src/orders-api/config/http.json","old_string":"{\n  \"retries\": 2,\n  \"timeoutMs\": 10000\n}","new_string":"{\n  \"retries\": 2,\n  \"timeoutMs\": 30000\n}"},"reason":"rule ask: edit(config/**)","cwd":"/Users/me/src/orders-api"}"#,
     ] {
         now += Duration::from_secs(2);
-        app.transcript.apply(&parse_event(line).unwrap(), now);
+        app.chat.transcript.apply(&parse_event(line).unwrap(), now);
     }
     app.now = now;
     let _written = app.pretend_running();
@@ -247,10 +253,10 @@ fn snapshots() {
         .lines()
         .map(|l| serde_json::from_str(l).unwrap())
         .collect();
-    app.transcript = Transcript::from_entries(&entries);
-    app.loaded = true;
-    app.session = Some("0a1b2c3d-0".into());
-    app.folds.insert(1, true);
+    app.chat.transcript = Transcript::from_entries(&entries);
+    app.chat.loaded = true;
+    app.chat.session = Some("0a1b2c3d-0".into());
+    app.chat.folds.insert(1, true);
     app.width = 1000.0;
     shoot(&app, "11-loaded-en-narrow", (1000.0, 900.0));
     app.insp = false;
@@ -277,4 +283,366 @@ fn snapshots() {
         app.width = size.0;
         shoot(&app, name, size);
     }
+
+    // What opens over a conversation: the command palette, as opened and as typed in, the
+    // settings and the list of keys.
+    let mut app = window("ja");
+    play(&mut app, "work.jsonl", "再試行を指数バックオフにして", never);
+    app.overlay = Some(Overlay::palette());
+    shoot(&app, "21-palette", WIDE);
+    app.overlay = Some(Overlay::Palette {
+        query: "テーマ".into(),
+        at: 1,
+        pick: crate::overlay::Pick::Commands,
+    });
+    shoot(&app, "22-palette-found", WIDE);
+    app.overlay = Some(Overlay::Settings);
+    shoot(&app, "23-settings", WIDE);
+    app.overlay = Some(Overlay::Keys);
+    shoot(&app, "24-keys", (1280.0, 900.0));
+
+    // `@` offers the project's files, `/` the window's commands.
+    let mut app = window("ja");
+    app.files = [
+        "src/client.ts",
+        "src/client.test.ts",
+        "docs/clients.md",
+        "README.md",
+        "src/",
+    ]
+    .map(String::from)
+    .to_vec();
+    app.files_asked = true;
+    type_in(&mut app, "ここを見て @cli");
+    app.insp = false;
+    shoot(&app, "25-mention", (1280.0, 640.0));
+    type_in(&mut app, "/");
+    shoot(&app, "26-slash", (1280.0, 800.0));
+    app.set_dark(true);
+    shoot(&app, "41-slash-dark", (1280.0, 800.0));
+    app.set_input("");
+    app.overlay = Some(Overlay::Palette {
+        query: "テーマ".into(),
+        at: 1,
+        pick: crate::overlay::Pick::Commands,
+    });
+    shoot(&app, "42-palette-dark", WIDE);
+    app.overlay = None;
+    app.set_dark(false);
+
+    // The git tab: the branch ahead of its upstream, a changed file and a new one, and how full
+    // the conversation is in the status bar.
+    let mut app = window("ja");
+    app.chat.transcript.apply(
+        &parse_event(r#"{"type":"session","id":"0a1b2c3d-0","path":"/s.jsonl","contextWindow":64000}"#).unwrap(),
+        app.now,
+    );
+    play(&mut app, "work.jsonl", "再試行を指数バックオフにして", never);
+    app.git = crate::git::Status {
+        repo: true,
+        top: "/Users/me/src/orders-api".into(),
+        branch: Some("retry-backoff".into()),
+        upstream: true,
+        ahead: 2,
+        behind: 0,
+        default_branch: Some("main".into()),
+        files: vec![
+            crate::git::File {
+                path: "src/client.ts".into(),
+                index: 'M',
+                tree: ' ',
+                unstaged_diff: Diff::default(),
+                staged_diff: Diff::parse(
+                    "@@ -10,4 +10,4 @@\n   for (let attempt = 0; ; attempt++) {\n-    await sleep(200);\n+    await sleep(200 * 2 ** attempt);\n     if (attempt > 2) throw err;\n   }\n",
+                ),
+            },
+            crate::git::File {
+                path: "notes/retry.md".into(),
+                index: '?',
+                tree: '?',
+                staged_diff: Diff::default(),
+                unstaged_diff: Diff::create("# 再試行\n\n待ち時間は倍々にする。\n"),
+            },
+        ],
+    };
+    app.tab = Tab::Git;
+    app.commit_msg = "再試行を指数バックオフに".into();
+    shoot(&app, "27-git", WIDE);
+
+    // The list with a conversation named, one pinned, one archived away, one with news, and the
+    // pointer on another; the last message found by what it says; a message's actions on hover.
+    let mut app = window("ja");
+    play(&mut app, "work.jsonl", "再試行を指数バックオフにして", never);
+    app.prefs.names.insert("0a1b2c3d-2".into(), "README整備".into());
+    app.prefs.pinned = vec!["0a1b2c3d-3".into()];
+    app.prefs.archived.insert("0a1b2c3d-1".into());
+    let mut news = Chat::new(7);
+    news.session = Some("0a1b2c3d-2".into());
+    news.unread = true;
+    app.parked.push(news);
+    app.row_hover = Some("0a1b2c3d-3".into());
+    app.find_in = Some("テスト".into());
+    app.ex_hover = Some(0);
+    app.insp = false;
+    shoot(&app, "28-list-and-find", WIDE);
+
+    // A side question, answered over the conversation.
+    let mut app = window("ja");
+    play(&mut app, "work.jsonl", "再試行を指数バックオフにして", never);
+    let mut side = Chat::new(crate::overlay::SIDE);
+    let mut now = app.now;
+    side.transcript.send("リトライの上限はどこで決めてる？", now);
+    for line in [
+        r#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"`src/client.ts`の`attempt > 2`です。3回目の失敗でそのまま投げます。"}],"provider":"fake","model":"m","usage":{"input":900,"output":30},"stopReason":"stop"}}"#,
+        r#"{"type":"agent_end","cause":"done"}"#,
+    ] {
+        now += Duration::from_secs(2);
+        side.transcript.apply(&parse_event(line).unwrap(), now);
+    }
+    app.aside = Some(side);
+    app.overlay = Some(Overlay::Side);
+    shoot(&app, "29-side-question", WIDE);
+
+    // A long folder in a narrow window: the bottom bar cuts the path's start, not the branch, the
+    // model or how full the conversation is.
+    let mut app = window("ja");
+    app.cwd = "/Users/me/src/work/clients/acme/orders-api-with-a-long-name".into();
+    app.chat.transcript.apply(
+        &parse_event(r#"{"type":"session","id":"0a1b2c3d-0","path":"/s.jsonl","contextWindow":64000}"#).unwrap(),
+        app.now,
+    );
+    play(&mut app, "work.jsonl", "再試行を指数バックオフにして", never);
+    app.git.branch = Some("retry-backoff".into());
+    app.insp = false;
+    app.side = false;
+    app.width = 860.0;
+    shoot(&app, "30-narrow-bar", (860.0, 560.0));
+}
+
+/// `text` in the input, the cursor at its end, as if typed.
+fn type_in(app: &mut App, text: &str) {
+    use iced::widget::text_editor::{Action, Content, Motion};
+    app.chat.editor = Content::with_text(text);
+    app.chat.editor.perform(Action::Move(Motion::DocumentEnd));
+    app.dismissed = false;
+    app.pick = 0;
+}
+
+#[test]
+#[ignore = "writes pictures to look at; run it by name"]
+fn snapshots_of_figures() {
+    let mut app = window("ja");
+    let now = Instant::now();
+    app.chat.session = Some("0a1b2c3d-0".into());
+    app.chat.transcript.send("式と図で説明して", now);
+    let reply = "誤差は $\\sigma^2 = \\frac{1}{n}\\sum_i (x_i - \\mu)^2$ で、全体は\n\n$$\n\\int_0^\\infty e^{-x^2}\\,dx = \\frac{\\sqrt{\\pi}}{2}\n$$\n\n流れはこうです。\n\n```mermaid\nflowchart LR\n  A[入力] --> B{判定}\n  B -->|はい| C[送る]\n  B -->|いいえ| D[戻す]\n```\n";
+    let event = serde_json::json!({
+        "type": "message_end",
+        "message": {"role": "assistant", "content": [{"type": "text", "text": reply}],
+            "provider": "fake", "model": "m", "usage": {"input": 10, "output": 10}, "stopReason": "stop"}
+    });
+    app.chat
+        .transcript
+        .apply(&parse_event(&event.to_string()).unwrap(), now + Duration::from_secs(1));
+    app.chat.transcript.apply(
+        &parse_event(r#"{"type":"agent_end","cause":"done"}"#).unwrap(),
+        now + Duration::from_secs(2),
+    );
+    app.now = now + Duration::from_secs(2);
+    shoot(&app, "30-figures", WIDE);
+    // And a file read in the files tab, a comment under one of its lines.
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/figure.rs");
+    let _ = app.update(Msg::FileRead(Box::new(crate::files::read(path.clone(), Some(12)))));
+    app.tab = Tab::Files;
+    let _ = app.update(Msg::CommentAt(path, 14, false));
+    shoot(&app, "32-files", WIDE);
+    // An image named in the input, small above it, and in a message sent.
+    let picture = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/snapshots/30-figures-wgpu.png");
+    let _ = app.update(Msg::Dropped(picture.clone()));
+    app.chat
+        .transcript
+        .send(&format!("この画面の @{} の余白を詰めて", picture.display()), now);
+    shoot(&app, "33-images", WIDE);
+    app.set_dark(true);
+    shoot(&app, "31-figures-dark", WIDE);
+    // Another conversation beside it.
+    app.set_dark(false);
+    app.insp = false;
+    let log = std::env::temp_dir().join(format!("sasacode-gui-split-shot-{}.jsonl", std::process::id()));
+    let said = "注文一覧のページングが2ページ目で重複する";
+    let answer = "`ORDER BY created_at` だけでは同じ時刻の行の順が決まりません。`id` を二つ目のキーにします。\n\n```sql\nSELECT * FROM orders\nORDER BY created_at DESC, id DESC\nLIMIT 20 OFFSET 20;\n```";
+    let lines = [
+        serde_json::json!({"type":"session","version":3,"id":"0a1b2c3d-1","cwd":"/w","createdAt":"2026-01-01T00:00:00.000Z"}),
+        serde_json::json!({"type":"message","message":{"role":"user","content":[{"type":"text","text":said}],"timestamp":1}}),
+        serde_json::json!({"type":"message","message":{"role":"assistant","content":[{"type":"text","text":answer}],"provider":"p","model":"m","usage":{"input":1,"output":1},"stopReason":"stop","timestamp":0}}),
+    ];
+    std::fs::write(&log, lines.iter().map(|l| format!("{l}\n")).collect::<String>()).unwrap();
+    app.sessions[1].path = log.clone();
+    let _ = app.update(Msg::Split(log.clone()));
+    shoot(&app, "34-split", WIDE);
+    let _ = std::fs::remove_file(log);
+}
+
+/// Some months of use, as the usage screen reads them: busier on weekdays, two models.
+fn months_of_use() -> crate::usage::Report {
+    use crate::usage::{ModelUse, Report, Sum};
+    use chrono::{Datelike, Duration as Days, NaiveDate};
+    let today = NaiveDate::from_ymd_opt(2026, 11, 17).unwrap();
+    let mut report = Report {
+        today,
+        ..Default::default()
+    };
+    let mut all = Sum::default();
+    for i in 0..150i64 {
+        let day = today - Days::days(i);
+        let weekday = day.weekday().num_days_from_monday() < 5;
+        // Some days nothing; the rest more or less, as work goes.
+        let seed = (i * 7919 + 13) % 23;
+        if seed % 5 == 0 || (!weekday && seed % 2 == 0) {
+            continue;
+        }
+        let tokens = (seed as u64 + 1) * if weekday { 41_000 } else { 9_000 };
+        let s = Sum {
+            tokens,
+            output: tokens / 14,
+            requests: seed as u64 + 2,
+            cost: tokens as f64 / 1_000_000.0 * 0.6,
+        };
+        report.days.insert(day, s);
+        all.tokens += s.tokens;
+        all.output += s.output;
+        all.requests += s.requests;
+        all.cost += s.cost;
+    }
+    let span = |n: i64| {
+        let mut sum = Sum::default();
+        for (_, s) in report.days.range(today - Days::days(n - 1)..) {
+            sum.tokens += s.tokens;
+            sum.output += s.output;
+            sum.requests += s.requests;
+            sum.cost += s.cost;
+        }
+        sum
+    };
+    report.spans = [span(1), span(7), span(30), all];
+    let share = |f: f64| Sum {
+        tokens: (all.tokens as f64 * f) as u64,
+        output: (all.output as f64 * f) as u64,
+        requests: (all.requests as f64 * f) as u64,
+        cost: all.cost * f,
+    };
+    report.models = vec![
+        ModelUse {
+            model: "commandcode/deepseek/deepseek-v4.1-flash".into(),
+            sum: share(0.72),
+            last: today,
+        },
+        ModelUse {
+            model: "local/gemma4".into(),
+            sum: share(0.28),
+            last: today - Days::days(3),
+        },
+    ];
+    report
+}
+
+#[test]
+#[ignore = "writes pictures to look at; run it by name"]
+fn snapshots_of_screens() {
+    let mut app = window("ja");
+    let report = months_of_use();
+    let _ = app.update(Msg::UsagePart(crate::usage::Part::All));
+    let _ = app.update(Msg::UsageRead(false, Box::new(report.clone())));
+    shoot(&app, "35-usage", (1280.0, 900.0));
+    let _ = app.update(Msg::UsagePart(crate::usage::Part::Graph));
+    shoot(&app, "36-usage-graph", WIDE);
+    app.set_dark(true);
+    shoot(&app, "37-usage-graph-dark", WIDE);
+    app.set_dark(false);
+    // One message to several models.
+    app.listing = crate::drive::listed();
+    app.set_input("注文一覧のページングを直して");
+    let _ = app.update(Msg::Show(Some(Overlay::Compare)));
+    let _ = app.update(Msg::CompareToggle("local/gemma4".into()));
+    shoot(&app, "38-compare", WIDE);
+    let _ = app.update(Msg::Show(Some(Overlay::About)));
+    shoot(&app, "39-about", WIDE);
+    // A file of the folder, being edited.
+    let _ = app.update(Msg::Show(None));
+    app.set_input("");
+    app.cwd = Path::new(env!("CARGO_MANIFEST_DIR")).to_path_buf();
+    let path = app.cwd.join("Cargo.toml");
+    let _ = app.update(Msg::FileRead(Box::new(crate::files::read(path, None))));
+    app.tab = Tab::Files;
+    app.insp = true;
+    let _ = app.update(Msg::FileEditStart);
+    shoot(&app, "40-file-edit", WIDE);
+
+    // The folder's automations, and one being written.
+    use crate::automations::{AutoMsg, Automation, Every};
+    let mut app = window("ja");
+    let now = chrono::Local::now().timestamp();
+    for (id, name, prompt, every, mode, on) in [
+        (
+            "a1",
+            "朝のCI確認",
+            "昨夜のCIで落ちたテストをまとめて、原因の見当をつけて",
+            Every::Weekdays { at: 510 },
+            "plan",
+            true,
+        ),
+        (
+            "a2",
+            "依存の確認",
+            "古くなった依存を調べて、上げる順番を提案して",
+            Every::Daily { at: 1080 },
+            "ask",
+            true,
+        ),
+        (
+            "a3",
+            "TODOの棚卸し",
+            "TODOコメントを集めて、古いものから並べて",
+            Every::Hours { hours: 6 },
+            "plan",
+            false,
+        ),
+    ] {
+        app.prefs.more.automations.insert(
+            id.into(),
+            Automation {
+                name: name.into(),
+                folder: app.folder_key(),
+                prompt: prompt.into(),
+                every,
+                mode: mode.into(),
+                on,
+                since: now - 86_400,
+                last: Some(now - 3 * 3600),
+            },
+        );
+    }
+    let _ = app.update(Msg::Command(crate::input::Command::Automations));
+    let _ = app.update(Msg::Auto(AutoMsg::Name("週次のリリースノート".into())));
+    app.auto_form.prompt =
+        iced::widget::text_editor::Content::with_text("先週マージされたPRから、リリースノートの下書きを書いて");
+    shoot(&app, "43-automations", WIDE);
+
+    // A plan written in plan mode, to go ahead with.
+    let mut app = window("ja");
+    let at = Instant::now();
+    app.chat.session = Some("0a1b2c3d-0".into());
+    app.chat
+        .transcript
+        .send("注文一覧のページングが2ページ目で重複するのを直す計画を立てて", at);
+    for line in [
+        r###"{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"## 計画\n\n1. `src/orders/list.ts`のクエリに`ORDER BY created_at, id`を足し、同じ時刻の行の順番を決める\n2. `src/orders/cursor.ts`のカーソルを`(created_at, id)`の組にする\n3. `test/orders.test.ts`に、同じ時刻の注文が3件ある場合のテストを足す\n\n## 危ないところ\n\n- 古いカーソルを持つクライアント：一度だけ読み替える\n\n## 確かめ方\n\n- `npm test -- orders`"}],"provider":"fake","model":"m","usage":{"input":4200,"output":160},"stopReason":"stop"}}"###,
+        r#"{"type":"agent_end","cause":"done"}"#,
+    ] {
+        app.chat.transcript.apply(&parse_event(line).unwrap(), at);
+    }
+    app.permission = Some("plan");
+    app.before_plan = Some("edits");
+    app.chat.planned = true;
+    shoot(&app, "44-plan-ready", WIDE);
 }
