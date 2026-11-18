@@ -327,7 +327,7 @@ sasacode -m llama/<モデル名>
 | --- | --- |
 | `ask-user` | `ask_user`ツール。モデルが推測で進めずに、選択肢つきの質問（1回に1〜4問）であなたに判断を仰ぐ。ヘッドレスでは尋ねず、モデルに自分で決めて前提を書くよう返す（[詳しく](docs/plugins.md#ask-user)） |
 | `git-context` | `git_context`ツール。レビューに要るGitの状態・変更の統計・パッチを、1回の呼び出しで返す。読み取りだけで、Gitが要る（[詳しく](docs/plugins.md#git-context)） |
-| `project-checks` | `project_checks`・`project_check`ツールと`/checks`。テスト・lint・型検査などを名前で実行し、PASS / FAIL、終了コード、時間、ログを返す。bashと同じ権限ルールで判定する（[詳しく](docs/plugins.md#project-checks)） |
+| `project-checks` | `project_checks`・`project_check`ツールと`/checks`。テスト・lint・型検査などを名前で実行し、PASS / FAIL、終了コード、時間、ログを返す。bashと同じ権限ルールで判定する。`verifyOnFinish`に名前を書いた検査は、モデルが作業を終えようとしたときにも確認なしで実行し、落ちていれば出力の末尾を返して続けさせる（[詳しく](docs/plugins.md#project-checks)） |
 | `workflows` | `/workflow`。レビュー・失敗の調査・公開前の確認など、繰り返し使う依頼を呼び出す。設定で足す・上書きする・外すことができる（[詳しく](docs/plugins.md#workflows)） |
 | `jev-guard` | 実行前のツール呼び出しをJevに判定させる。有効にする方法は上の「Jevによる実行前判断」にある（[詳しく](docs/plugins.md#jev-guard)） |
 | `free-search` | MCPサーバー`uvx free-search-mcp`を`free-search`という名前でつなぐ（キー不要でローカルで動くWeb検索。複数の検索エンジン、ページの取得、文書の読み取り）。ツールは`mcp__free-search__<tool>`になる。[uv](https://docs.astral.sh/uv/)が要る（[詳しく](docs/plugins.md#free-search)） |

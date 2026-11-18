@@ -439,7 +439,16 @@ fn abort_with_a_call_id_stops_that_call_alone_its_result_is_an_error_and_the_run
             ch.send(json!({ "type": "abort", "callId": e["call"]["id"] }));
         }
     });
-    assert!(started.elapsed() < Duration::from_secs(10), "{:?}", started.elapsed());
+    // What the parent was told and what the call ended with, should it run its full 20 s.
+    let seen = (
+        d.of("control_error"),
+        d.of("tool_end").first().map(|e| &e["result"]["details"]),
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(10),
+        "{:?}: {seen:?}",
+        started.elapsed()
+    );
     assert_eq!(d.code, 0);
     assert_eq!(d.of("tool_end")[0]["result"]["isError"], true);
     let told = "[The user stopped this tool call; the rest of the run goes on.]";

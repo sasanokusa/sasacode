@@ -722,13 +722,8 @@ async fn run_tool(
             data: json!({ "parentCallId": parent, "call": call.tagged(), "args": args }),
         })?;
     }
-    ctx.events.emit(AgentEvent::ToolStart {
-        call: call.clone(),
-        summary,
-        parent_call_id: parent_call_id.clone(),
-    });
-    // Its own token, so this call alone can be stopped (Agent::abort_call); stopping the run stops
-    // it too, also when that happened already (a tool_start listener can do that).
+    // Its own token, so this call alone can be stopped (Agent::abort_call), from before tool_start
+    // tells anyone it runs; stopping the run stops it too, also when that happened already.
     let own = signal.child_token();
     if let Some(calls) = &ctx.calls {
         calls
@@ -736,6 +731,11 @@ async fn run_tool(
             .unwrap_or_else(|e| e.into_inner())
             .insert(call.id.clone(), own.clone());
     }
+    ctx.events.emit(AgentEvent::ToolStart {
+        call: call.clone(),
+        summary,
+        parent_call_id: parent_call_id.clone(),
+    });
 
     // Calls from one execution are serialized, including when the caller joins several. Each child
     // has its own queue, so ordinary nested delegation never deadlocks. As with a JS promise, a call
