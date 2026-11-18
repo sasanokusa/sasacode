@@ -9,10 +9,10 @@ sasacodeのGUIは、sasacode本体を子プロセスとして動かすRust製の
 | 部品 | 場所 | 役割 |
 | --- | --- | --- |
 | `sasacode-gui` | `crates/sasacode-gui` | 窓。入力ごとに `sasacode -p <入力> --output jsonl --control stdio`（続きなら `-r <id>`）を作業フォルダで起動し、stdoutのイベントを画面に出し、承認・追加の指示・中断をstdinに書く |
-| `sasacode-protocol` | `crates/sasacode-protocol` | イベント、制御メッセージ、セッションログの型と、セッションの一覧。将来のRust版コアも同じ型を使う想定 |
-| sasacode本体 | `packages/` | これまでどおり。エージェントのループ、ツール、権限確認、セッションの保存はすべてこちらに残るので、TUIとGUIで振る舞いがずれない |
+| `sasacode-protocol` | `crates/sasacode-protocol` | イベント、制御メッセージ、セッションログの型と、セッションの一覧 |
+| sasacode本体 | `crates/`のほかのクレート | 0.20でRustになった。エージェントのループ、ツール、権限確認、セッションの保存はすべてこちらにあるので、TUIとGUIで振る舞いがずれない |
 
-中継のサーバーは置かない。Rust版のコアができたら、GUIは子プロセスをやめてコアのクレートを直接使う形に移れる。そのときも画面側は `sasacode-protocol` の型だけを見ているので、書き換えは接続部分（`runner.rs`）に収まる。
+中継のサーバーは置かない。本体がRustになったので、GUIは子プロセスをやめてコアのクレートを直接使う形にも移れる（0.20では子プロセスのまま）。そのときも画面側は `sasacode-protocol` の型だけを見ているので、書き換えは接続部分（`runner.rs`）に収まる。
 
 ## プロトコル
 
@@ -33,13 +33,13 @@ GUIが使うのは、すでにあるヘッドレスの出力と制御だけ（[R
 
 画面を作るうえで効いてくる、プロトコルの性質：
 
-- 承認は1件ずつ、順に届く。1つの応答に呼び出しが複数あっても、まとめては聞かれず、それぞれ実行の直前に聞かれる。だから承認カードは1枚で足りる。bashやeditのように並行して走れないツールは、その呼び出しが終わってから次が聞かれる。readのように並行できるツールは、許可されるとすぐ走り出すので、走っている最中に次が聞かれることがある（`packages/agent/src/tool-exec.ts`）。
+- 承認は1件ずつ、順に届く。1つの応答に呼び出しが複数あっても、まとめては聞かれず、それぞれ実行の直前に聞かれる。だから承認カードは1枚で足りる。bashやeditのように並行して走れないツールは、その呼び出しが終わってから次が聞かれる。readのように並行できるツールは、許可されるとすぐ走り出すので、走っている最中に次が聞かれることがある（`crates/sasacode-agent/src/tool_exec.rs`）。
 - 拒否された呼び出し、規則やプラグインに止められた呼び出し、中断で走らなかった呼び出しには`tool_start` / `tool_end`が出ない。あるのは結果のメッセージだけで、本文の出だし（`The user denied this tool call.`など）で見分ける。
 - セッションログにはツール結果の`details`が残らない。読み込んだ会話では、差分は呼び出しの引数から作り（行番号と前後の行はない）、終了コード、所要時間、承認の記録は出せない。
 - 実行中に送ったメッセージは、次のターンで新しいユーザーメッセージとしてモデルに渡る。中断のあとに渡るときは、先頭に`[The user interrupted the previous response.]`というテキストの部品が付く（ユーザーの言葉ではないので、画面には出さない）。
 - ハーネスがユーザーの代わりに送る注意（`[Reminder from sasacode, not from the user] `で始まる）と、サブエージェントの終了報告も、ユーザーのメッセージとして届く。吹き出しにはせず、注記として出す。
 
-TS側が正。`crates/sasacode-protocol/tests/fixtures` に実際の実行の出力とそのセッションログを置き、`cargo test` で読めるかを確かめる。テストはTSのソース（`events.ts`、`control.ts`、`session.ts`）も読み、Rust側の知らないイベントの種類が増えたら落ちる。出力やログの形を変えたら `bun crates/sasacode-protocol/tests/fixtures/generate.ts` でフィクスチャを作り直す。今のフィクスチャは、`session`行に`contextWindow`を足す前のCLIの出力のまま。GUIが古いCLIの行も読めることの確かめを兼ねる（新しい行は`tests/protocol.rs`で確かめる）。
+CLIのソースが正。`crates/sasacode-protocol/tests/fixtures`に実際の実行の出力とそのセッションログを置き、`cargo test`で読めるかを確かめる。テストはCLIのソース（`crates/sasacode-agent/src/events.rs`、`session.rs`、`crates/sasacode-cli/src/control.rs`、`headless.rs`）も読み、このクレートの知らないイベントの種類が増えたら落ちる。出力やログの形を変えたら`cargo build -p sasacode-cli`のあと`SASACODE_E2E_BIN=target/debug/sasacode cargo run -p sasacode-testing --example protocol-fixtures`でフィクスチャを作り直す（`crates/sasacode-testing/examples/protocol-fixtures.rs`）。今のフィクスチャは、`session`行に`contextWindow`を足す前のCLIの出力のまま。GUIが古いCLIの行も読めることの確かめを兼ねる（新しい行は`tests/protocol.rs`で確かめる）。
 
 ## 使い方
 

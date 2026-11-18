@@ -1,0 +1,17 @@
+[package]
+name = "xtask"
+description = "Repository tasks: build, checks, improve (`cargo xtask <task>`, rust/DECISIONS.md ADR-009)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+# Only crates the workspace already locks: the tasks read sources as text and run cargo.
+[dependencies]
+anyhow.workspace = true
+regex.workspace = true
+percent-encoding.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

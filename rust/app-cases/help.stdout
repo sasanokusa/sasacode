@@ -1,0 +1,35 @@
+sasacode — a small, pluggable coding agent
+
+Usage:
+  sasacode [prompt]              interactive session (optional first prompt)
+  sasacode -p "<prompt>"         run headless and print the answer
+
+Options:
+  -p, --print <prompt>           headless mode (stdin is appended when piped)
+      --stdin                    with -p: wait for piped input however long it takes
+      --output <text|jsonl>      headless output format (default text)
+      --control stdio            with -p --output jsonl: the parent answers approvals, sends messages and can abort
+                                 over stdin as JSON Lines (stdin is then not appended to the prompt)
+  -m, --model <provider/model>   e.g. anthropic/claude-opus-5, openai/gpt-5.5, ollama/gemma4:e4b
+                                 (the TUI's /model lists what your providers offer)
+      --permission <mode>        edits | ask | agent | auto (default edits)
+      --thinking <level>         off | low | medium | high | xhigh | max
+      --max-turns <n>            turns per run before stopping (default 200; 0 = no limit)
+  -c, --continue                 resume the most recent session in this directory
+  -r, --resume <id>              resume a session by id
+      --no-session               do not save this session
+      --append-system-prompt-file <path>
+                                 add the file's text to the system prompt, after the config's instructions
+      --trust-project            trust this project's endpoints, MCP servers, plugin settings and
+                                 permission settings without asking
+
+Subcommands:
+  sasacode endpoint add <name> <url> [--key-env VAR] [--project]   add a server (format detected)
+  sasacode endpoint remove <name> [--project]
+  sasacode endpoint list
+  sasacode login [status|logout]    use a ChatGPT plan instead of an API key (openai-codex/… models)
+  sasacode update [--check] [tag]   download and install the newest release (checksum-verified)
+  sasacode web-search install [tag] install RustXNG for the web_search tool (checksum-verified)
+  sasacode gui [folder]             open the desktop GUI on a folder (needs sasacode-gui: docs/gui.md)
+  -h, --help
+  -v, --version

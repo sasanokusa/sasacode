@@ -1,0 +1,7 @@
+bin.name = "sasacode"
+args = ["--append-system-prompt-file", "nope.md", "-p", "hi"]
+env.add.SASACODE_HOME = "home"
+env.add.SASACODE_LANG = "en"
+status.code = 1
+fs.sandbox = true
+fs.base = "append-missing-file.in"

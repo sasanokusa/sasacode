@@ -787,7 +787,9 @@ mod tests {
         write(&file, &Layout::default(), &prefs).unwrap();
         assert_eq!(Prefs::read(&file), prefs);
         assert_eq!(Layout::read(&file), Layout::default());
-        assert!(std::fs::read_to_string(&file).unwrap().contains("\"zoom\": 1.2\n"));
+        // Exactly 1.2, whatever key follows (the workspace keeps keys in their order).
+        let written = std::fs::read_to_string(&file).unwrap();
+        assert!(written.contains("\"zoom\": 1.2\n") || written.contains("\"zoom\": 1.2,\n"));
 
         // An older file has none of it; a zoom too large is the largest; a blank name is none.
         std::fs::write(

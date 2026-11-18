@@ -1,0 +1,43 @@
+[package]
+name = "sasacode-cli"
+description = "The sasacode command"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+sasacode-ai.workspace = true
+sasacode-plugin-api.workspace = true
+sasacode-agent.workspace = true
+sasacode-tools.workspace = true
+sasacode-mcp.workspace = true
+sasacode-skills.workspace = true
+sasacode-host.workspace = true
+sasacode-bundled.workspace = true
+sasacode-tui.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+futures.workspace = true
+async-trait.workspace = true
+anyhow.workspace = true
+reqwest.workspace = true
+url.workspace = true
+sha2.workspace = true
+indexmap.workspace = true
+regex.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+nix = { version = "0.31", default-features = false, features = ["fs"] }
+
+[[bin]]
+name = "sasacode"
+path = "src/main.rs"
+
+[dev-dependencies]
+sasacode-protocol = { path = "../sasacode-protocol" }
+sasacode-testing.workspace = true
+tempfile.workspace = true

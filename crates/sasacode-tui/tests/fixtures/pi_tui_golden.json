@@ -1,0 +1,1656 @@
+{
+ "width": {
+  "narrow": {
+   "abc": 3,
+   "日本語": 6,
+   "ｱｲｳ": 3,
+   "😀": 2,
+   "👨‍👩‍👧": 2,
+   "🇯🇵": 2,
+   "🇯": 2,
+   "é": 1,
+   "α": 1,
+   "Ж": 1,
+   "é": 1,
+   "①": 1,
+   "○": 1,
+   "※": 1,
+   "→": 1,
+   "…": 1,
+   "─": 1,
+   "\t": 3,
+   "a\tb": 5,
+   "\u001b[31mred\u001b[0m": 3,
+   "\u001b]8;;http://x\u0007link\u001b]8;;\u0007": 4,
+   "\u001b_pi:c\u0007x": 1,
+   "☺️": 2,
+   "☺": 1,
+   "1️⃣": 2,
+   "ำ": 1,
+   "กำ": 2,
+   "한글": 4,
+   "​": 0,
+   "­": 0,
+   "×": 1,
+   "°": 1,
+   "±": 1,
+   "§": 1,
+   "¶": 1,
+   "·": 1,
+   "♪": 1,
+   "★": 1,
+   "■": 1,
+   "▶": 1,
+   "△": 1,
+   "⚠": 1,
+   "✓": 1,
+   "❯": 1,
+   "⎿": 1,
+   "∴": 1,
+   "↳": 1,
+   "↻": 1,
+   "●": 1,
+   "Ω": 1,
+   "ä": 1,
+   "ß": 1,
+   "Ⅰ": 1,
+   "ⅰ": 1,
+   "€": 1,
+   "™": 1,
+   "〜": 2,
+   "ー": 2,
+   "！": 2,
+   "　": 2,
+   "́": 0,
+   "": 0,
+   "\u0001": 0,
+   "abำ": 3
+  },
+  "wide": {
+   "abc": 3,
+   "日本語": 6,
+   "ｱｲｳ": 3,
+   "😀": 2,
+   "👨‍👩‍👧": 2,
+   "🇯🇵": 2,
+   "🇯": 2,
+   "é": 1,
+   "α": 2,
+   "Ж": 2,
+   "é": 2,
+   "①": 2,
+   "○": 2,
+   "※": 2,
+   "→": 2,
+   "…": 2,
+   "─": 2,
+   "\t": 3,
+   "a\tb": 5,
+   "\u001b[31mred\u001b[0m": 3,
+   "\u001b]8;;http://x\u0007link\u001b]8;;\u0007": 4,
+   "\u001b_pi:c\u0007x": 1,
+   "☺️": 2,
+   "☺": 1,
+   "1️⃣": 2,
+   "ำ": 1,
+   "กำ": 2,
+   "한글": 4,
+   "​": 0,
+   "­": 0,
+   "×": 2,
+   "°": 2,
+   "±": 2,
+   "§": 2,
+   "¶": 2,
+   "·": 2,
+   "♪": 2,
+   "★": 2,
+   "■": 2,
+   "▶": 2,
+   "△": 2,
+   "⚠": 1,
+   "✓": 1,
+   "❯": 1,
+   "⎿": 1,
+   "∴": 2,
+   "↳": 1,
+   "↻": 1,
+   "●": 2,
+   "Ω": 2,
+   "ä": 1,
+   "ß": 2,
+   "Ⅰ": 2,
+   "ⅰ": 2,
+   "€": 2,
+   "™": 2,
+   "〜": 2,
+   "ー": 2,
+   "！": 2,
+   "　": 2,
+   "́": 0,
+   "": 0,
+   "\u0001": 0,
+   "abำ": 3
+  }
+ },
+ "wrap": [
+  {
+   "text": "hello 日本語のテキストです。",
+   "width": 8,
+   "out": [
+    "hello 日",
+    "本語のテ",
+    "キストで",
+    "す。"
+   ]
+  },
+  {
+   "text": "hello world foo bar",
+   "width": 7,
+   "out": [
+    "hello",
+    "world",
+    "foo bar"
+   ]
+  },
+  {
+   "text": "a  b   c",
+   "width": 3,
+   "out": [
+    "a",
+    "b",
+    "c"
+   ]
+  },
+  {
+   "text": "  leading spaces here",
+   "width": 6,
+   "out": [
+    "",
+    "leadin",
+    "g",
+    "spaces",
+    "here"
+   ]
+  },
+  {
+   "text": "\u001b[31mred text that wraps around\u001b[0m plain",
+   "width": 10,
+   "out": [
+    "\u001b[31mred text",
+    "\u001b[31mthat wraps",
+    "\u001b[31maround\u001b[0m",
+    "plain"
+   ]
+  },
+  {
+   "text": "\u001b[4munder line wraps here\u001b[24m",
+   "width": 8,
+   "out": [
+    "\u001b[4munder\u001b[24m",
+    "\u001b[4mline\u001b[24m",
+    "\u001b[4mwraps\u001b[24m",
+    "\u001b[4mhere\u001b[24m"
+   ]
+  },
+  {
+   "text": "\u001b]8;;http://e.com\u0007link text long\u001b]8;;\u0007 after",
+   "width": 6,
+   "out": [
+    "\u001b]8;;http://e.com\u0007link\u001b]8;;\u0007",
+    "\u001b]8;;http://e.com\u0007text\u001b]8;;\u0007",
+    "\u001b]8;;http://e.com\u0007long\u001b]8;;\u0007",
+    "after"
+   ]
+  },
+  {
+   "text": "superlongwordwithoutspaces",
+   "width": 7,
+   "out": [
+    "superlo",
+    "ngwordw",
+    "ithouts",
+    "paces"
+   ]
+  },
+  {
+   "text": "日本語😀テキスト",
+   "width": 5,
+   "out": [
+    "日本",
+    "語😀",
+    "テキ",
+    "スト"
+   ]
+  },
+  {
+   "text": "line1\nline2 is long\r\nline3",
+   "width": 6,
+   "out": [
+    "line1",
+    "line2",
+    "is",
+    "long",
+    "line3"
+   ]
+  },
+  {
+   "text": "",
+   "width": 5,
+   "out": [
+    ""
+   ]
+  },
+  {
+   "text": "   ",
+   "width": 5,
+   "out": [
+    "   "
+   ]
+  },
+  {
+   "text": "tab\there",
+   "width": 6,
+   "out": [
+    "tab",
+    "here"
+   ]
+  },
+  {
+   "text": "\u001b[1mbold\u001b[22m and \u001b[38;5;196mcolor\u001b[39m words",
+   "width": 9,
+   "out": [
+    "\u001b[1mbold\u001b[22m and",
+    "\u001b[38;5;196mcolor\u001b[39m",
+    "words"
+   ]
+  },
+  {
+   "text": "English and 日本語 mixed text 混在",
+   "width": 10,
+   "out": [
+    "English",
+    "and 日本語",
+    "mixed text",
+    "混在"
+   ]
+  },
+  {
+   "text": "a",
+   "width": 1,
+   "out": [
+    "a"
+   ]
+  },
+  {
+   "text": "日本",
+   "width": 1,
+   "out": [
+    "",
+    "日",
+    "",
+    "本"
+   ]
+  },
+  {
+   "text": "trailing   ",
+   "width": 4,
+   "out": [
+    "trai",
+    "ling"
+   ]
+  },
+  {
+   "text": "\u001b[48;5;236m> hi there you\u001b[49m",
+   "width": 6,
+   "out": [
+    "\u001b[48;5;236m> hi",
+    "\u001b[48;5;236mthere",
+    "\u001b[48;5;236myou\u001b[49m"
+   ]
+  }
+ ],
+ "truncate": [
+  {
+   "text": "日本語のテキスト",
+   "width": 7,
+   "ellipsis": "...",
+   "pad": false,
+   "out": "日本\u001b[0m...\u001b[0m"
+  },
+  {
+   "text": "hello world",
+   "width": 8,
+   "ellipsis": "…",
+   "pad": false,
+   "out": "hello w\u001b[0m…\u001b[0m"
+  },
+  {
+   "text": "hello",
+   "width": 10,
+   "ellipsis": "...",
+   "pad": true,
+   "out": "hello     "
+  },
+  {
+   "text": "\u001b[31mred long text\u001b[0m",
+   "width": 6,
+   "ellipsis": "...",
+   "pad": false,
+   "out": "\u001b[31mred\u001b[0m...\u001b[0m"
+  },
+  {
+   "text": "abc",
+   "width": 3,
+   "ellipsis": "...",
+   "pad": false,
+   "out": "abc"
+  },
+  {
+   "text": "abcd",
+   "width": 3,
+   "ellipsis": "",
+   "pad": false,
+   "out": "abc\u001b[0m"
+  },
+  {
+   "text": "日本語",
+   "width": 3,
+   "ellipsis": "",
+   "pad": false,
+   "out": "日\u001b[0m"
+  },
+  {
+   "text": "日本語",
+   "width": 4,
+   "ellipsis": "",
+   "pad": true,
+   "out": "日本\u001b[0m"
+  },
+  {
+   "text": "\u001b]8;;u\u0007link text\u001b]8;;\u0007",
+   "width": 5,
+   "ellipsis": "…",
+   "pad": false,
+   "out": "\u001b]8;;u\u0007link\u001b]8;;\u0007\u001b[0m…\u001b[0m"
+  },
+  {
+   "text": "😀😀😀",
+   "width": 3,
+   "ellipsis": "",
+   "pad": false,
+   "out": "😀\u001b[0m"
+  },
+  {
+   "text": "",
+   "width": 3,
+   "ellipsis": "...",
+   "pad": true,
+   "out": "   "
+  }
+ ],
+ "slice": [
+  {
+   "text": "hello world",
+   "start": 2,
+   "len": 5,
+   "strict": false,
+   "out": "llo w"
+  },
+  {
+   "text": "日本語テキスト",
+   "start": 1,
+   "len": 4,
+   "strict": false,
+   "out": "本語"
+  },
+  {
+   "text": "日本語テキスト",
+   "start": 1,
+   "len": 4,
+   "strict": true,
+   "out": "本"
+  },
+  {
+   "text": "\u001b[31mred\u001b[0m plain",
+   "start": 1,
+   "len": 6,
+   "strict": false,
+   "out": "\u001b[31med\u001b[0m pla"
+  },
+  {
+   "text": "abc",
+   "start": 0,
+   "len": 10,
+   "strict": false,
+   "out": "abc"
+  },
+  {
+   "text": "a日b",
+   "start": 1,
+   "len": 1,
+   "strict": true,
+   "out": ""
+  },
+  {
+   "text": "a日b",
+   "start": 1,
+   "len": 1,
+   "strict": false,
+   "out": "日"
+  }
+ ],
+ "wordWrap": [
+  {
+   "text": "hello world foo",
+   "width": 7,
+   "out": [
+    {
+     "text": "hello ",
+     "startIndex": 0,
+     "endIndex": 6
+    },
+    {
+     "text": "world ",
+     "startIndex": 6,
+     "endIndex": 12
+    },
+    {
+     "text": "foo",
+     "startIndex": 12,
+     "endIndex": 15
+    }
+   ]
+  },
+  {
+   "text": "日本語のテキスト",
+   "width": 5,
+   "out": [
+    {
+     "text": "日本",
+     "startIndex": 0,
+     "endIndex": 2
+    },
+    {
+     "text": "語の",
+     "startIndex": 2,
+     "endIndex": 4
+    },
+    {
+     "text": "テキ",
+     "startIndex": 4,
+     "endIndex": 6
+    },
+    {
+     "text": "スト",
+     "startIndex": 6,
+     "endIndex": 8
+    }
+   ]
+  },
+  {
+   "text": "abc def",
+   "width": 3,
+   "out": [
+    {
+     "text": "abc",
+     "startIndex": 0,
+     "endIndex": 3
+    },
+    {
+     "text": " ",
+     "startIndex": 3,
+     "endIndex": 4
+    },
+    {
+     "text": "def",
+     "startIndex": 4,
+     "endIndex": 7
+    }
+   ]
+  },
+  {
+   "text": "a  b",
+   "width": 2,
+   "out": [
+    {
+     "text": "a ",
+     "startIndex": 0,
+     "endIndex": 2
+    },
+    {
+     "text": " b",
+     "startIndex": 2,
+     "endIndex": 4
+    }
+   ]
+  },
+  {
+   "text": "superlongword",
+   "width": 5,
+   "out": [
+    {
+     "text": "super",
+     "startIndex": 0,
+     "endIndex": 5
+    },
+    {
+     "text": "longw",
+     "startIndex": 5,
+     "endIndex": 10
+    },
+    {
+     "text": "ord",
+     "startIndex": 10,
+     "endIndex": 13
+    }
+   ]
+  },
+  {
+   "text": "",
+   "width": 5,
+   "out": [
+    {
+     "text": "",
+     "startIndex": 0,
+     "endIndex": 0
+    }
+   ]
+  },
+  {
+   "text": "hello 日本語",
+   "width": 8,
+   "out": [
+    {
+     "text": "hello 日",
+     "startIndex": 0,
+     "endIndex": 7
+    },
+    {
+     "text": "本語",
+     "startIndex": 7,
+     "endIndex": 9
+    }
+   ]
+  },
+  {
+   "text": "word   ",
+   "width": 4,
+   "out": [
+    {
+     "text": "word",
+     "startIndex": 0,
+     "endIndex": 4
+    },
+    {
+     "text": "   ",
+     "startIndex": 4,
+     "endIndex": 7
+    }
+   ]
+  },
+  {
+   "text": "x [paste #1 +12 lines] y",
+   "width": 10,
+   "out": [
+    {
+     "text": "x [paste ",
+     "startIndex": 0,
+     "endIndex": 9
+    },
+    {
+     "text": "#1 +12 ",
+     "startIndex": 9,
+     "endIndex": 16
+    },
+    {
+     "text": "lines] y",
+     "startIndex": 16,
+     "endIndex": 24
+    }
+   ]
+  }
+ ],
+ "markdown": [
+  {
+   "text": "# Title\n\nPara text here.",
+   "width": 40,
+   "out": [
+    "\u001b[1m\u001b[36m\u001b[1m\u001b[4mTitle\u001b[24m\u001b[22m\u001b[39m\u001b[22m                                   ",
+    "                                        ",
+    "Para text here.                         "
+   ]
+  },
+  {
+   "text": "## Sub\n### Third\nText",
+   "width": 40,
+   "out": [
+    "\u001b[1m\u001b[36m\u001b[1mSub\u001b[22m\u001b[39m\u001b[22m                                     ",
+    "                                        ",
+    "\u001b[1m\u001b[36m\u001b[1m### \u001b[22m\u001b[39m\u001b[22m\u001b[1m\u001b[36m\u001b[1mThird\u001b[22m\u001b[39m\u001b[22m                               ",
+    "                                        ",
+    "Text                                    "
+   ]
+  },
+  {
+   "text": "- a\n- b\n  - nested\n- c",
+   "width": 40,
+   "out": [
+    "\u001b[36m- \u001b[39ma                                     ",
+    "\u001b[36m- \u001b[39mb                                     ",
+    "    \u001b[36m- \u001b[39mnested                            ",
+    "\u001b[36m- \u001b[39mc                                     "
+   ]
+  },
+  {
+   "text": "1. one\n2. two\n\n3. three",
+   "width": 40,
+   "out": [
+    "\u001b[36m1. \u001b[39mone                                  ",
+    "                                        ",
+    "\u001b[36m2. \u001b[39mtwo                                  ",
+    "                                        ",
+    "\u001b[36m3. \u001b[39mthree                                "
+   ]
+  },
+  {
+   "text": "- [x] done\n- [ ] todo",
+   "width": 40,
+   "out": [
+    "\u001b[36m- [x] \u001b[39mdone                              ",
+    "\u001b[36m- [ ] \u001b[39mtodo                              "
+   ]
+  },
+  {
+   "text": "```js\nconst a = 1;\n```\nafter",
+   "width": 40,
+   "out": [
+    "\u001b[90m```js\u001b[39m                                   ",
+    "  const a = 1;                          ",
+    "\u001b[90m```\u001b[39m                                     ",
+    "                                        ",
+    "after                                   "
+   ]
+  },
+  {
+   "text": "> quote line\n> more",
+   "width": 40,
+   "out": [
+    "\u001b[90m│ \u001b[39m\u001b[3m\u001b[3mquote line                            ",
+    "\u001b[90m│ \u001b[39m\u001b[3mmore\u001b[23m\u001b[23m                                  "
+   ]
+  },
+  {
+   "text": "---\nafter rule",
+   "width": 40,
+   "out": [
+    "\u001b[90m────────────────────────────────────────\u001b[39m",
+    "                                        ",
+    "after rule                              "
+   ]
+  },
+  {
+   "text": "Some **bold** and *em* and `code` and ~~del~~.",
+   "width": 40,
+   "out": [
+    "Some \u001b[1mbold\u001b[22m and \u001b[3mem\u001b[23m and \u001b[33mcode\u001b[39m and \u001b[9mdel\u001b[29m.      "
+   ]
+  },
+  {
+   "text": "[link](http://example.com) and http://bare.example.com and <http://auto.com>",
+   "width": 40,
+   "out": [
+    "\u001b[34m\u001b[4mlink\u001b[24m\u001b[39m\u001b[90m (http://example.com)\u001b[39m and           ",
+    "\u001b[34m\u001b[4mhttp://bare.example.com\u001b[24m\u001b[39m and             ",
+    "\u001b[34m\u001b[4mhttp://auto.com\u001b[24m\u001b[39m                         "
+   ]
+  },
+  {
+   "text": "| a | b |\n|---|:-:|\n| 1 | 22 |\n| long cell text | x |",
+   "width": 40,
+   "out": [
+    "┌────────────────┬────┐                 ",
+    "│ \u001b[1ma             \u001b[22m │ \u001b[1mb \u001b[22m │                 ",
+    "├────────────────┼────┤                 ",
+    "│ 1              │ 22 │                 ",
+    "├────────────────┼────┤                 ",
+    "│ long cell text │ x  │                 ",
+    "└────────────────┴────┘                 "
+   ]
+  },
+  {
+   "text": "line one  \nline two",
+   "width": 40,
+   "out": [
+    "line one                                ",
+    "line two                                "
+   ]
+  },
+  {
+   "text": "text\n\n\n\nmore",
+   "width": 40,
+   "out": [
+    "text                                    ",
+    "                                        ",
+    "more                                    "
+   ]
+  },
+  {
+   "text": "<div>html</div>\n\npara",
+   "width": 40,
+   "out": [
+    "<div>html</div>                         ",
+    "                                        ",
+    "para                                    "
+   ]
+  },
+  {
+   "text": "Math $x^2$ and $$y$$",
+   "width": 40,
+   "out": [
+    "Math x² and y                           "
+   ]
+  },
+  {
+   "text": "\\*escaped\\*",
+   "width": 40,
+   "out": [
+    "*escaped*                               "
+   ]
+  },
+  {
+   "text": "para\n- list right after",
+   "width": 40,
+   "out": [
+    "para                                    ",
+    "\u001b[36m- \u001b[39mlist right after                      "
+   ]
+  },
+  {
+   "text": "1. a\n\n   continued\n2. b",
+   "width": 40,
+   "out": [
+    "\u001b[36m1. \u001b[39ma                                    ",
+    "                                        ",
+    "   continued                            ",
+    "                                        ",
+    "\u001b[36m2. \u001b[39mb                                    "
+   ]
+  },
+  {
+   "text": "日本語の段落です。長い文章を折り返します。",
+   "width": 40,
+   "out": [
+    "日本語の段落です。長い文章を折り返します",
+    "。                                      "
+   ]
+  },
+  {
+   "text": "# 見出し\n本文",
+   "width": 40,
+   "out": [
+    "\u001b[1m\u001b[36m\u001b[1m\u001b[4m見出し\u001b[24m\u001b[22m\u001b[39m\u001b[22m                                  ",
+    "                                        ",
+    "本文                                    "
+   ]
+  },
+  {
+   "text": "a\nb",
+   "width": 40,
+   "out": [
+    "a                                       ",
+    "b                                       "
+   ]
+  },
+  {
+   "text": "* * *",
+   "width": 40,
+   "out": [
+    "\u001b[90m────────────────────────────────────────\u001b[39m"
+   ]
+  },
+  {
+   "text": "```\nno lang\n```",
+   "width": 40,
+   "out": [
+    "\u001b[90m```\u001b[39m                                     ",
+    "  no lang                               ",
+    "\u001b[90m```\u001b[39m                                     "
+   ]
+  },
+  {
+   "text": "[same](same)",
+   "width": 40,
+   "out": [
+    "\u001b[34m\u001b[4msame\u001b[24m\u001b[39m                                    "
+   ]
+  },
+  {
+   "text": "[mail](mailto:a@b.c)",
+   "width": 40,
+   "out": [
+    "\u001b[34m\u001b[4mmail\u001b[24m\u001b[39m\u001b[90m (mailto:a@b.c)\u001b[39m                     "
+   ]
+  },
+  {
+   "text": "<a@b.c>",
+   "width": 40,
+   "out": [
+    "\u001b[34m\u001b[4ma@b.c\u001b[24m\u001b[39m                                   "
+   ]
+  },
+  {
+   "text": "    indented code",
+   "width": 40,
+   "out": [
+    "\u001b[90m```\u001b[39m                                     ",
+    "  indented code                         ",
+    "\u001b[90m```\u001b[39m                                     "
+   ]
+  },
+  {
+   "text": "Term\n===",
+   "width": 40,
+   "out": [
+    "\u001b[1m\u001b[36m\u001b[1m\u001b[4mTerm\u001b[24m\u001b[22m\u001b[39m\u001b[22m                                    "
+   ]
+  },
+  {
+   "text": "![img](http://x/y.png)",
+   "width": 40,
+   "out": [
+    "img                                     "
+   ]
+  },
+  {
+   "text": "a &amp; b &lt;x&gt;",
+   "width": 40,
+   "out": [
+    "a &amp; b &lt;x&gt;                     "
+   ]
+  },
+  {
+   "text": "~single~ and ~~double~~",
+   "width": 40,
+   "out": [
+    "~single~ and \u001b[9mdouble\u001b[29m                     "
+   ]
+  },
+  {
+   "text": "see www.example.com today",
+   "width": 40,
+   "out": [
+    "see \u001b[34m\u001b[4mwww.example.com\u001b[24m\u001b[39m\u001b[90m                     ",
+    "\u001b[90m(http://www.example.com)\u001b[39m today          "
+   ]
+  },
+  {
+   "text": "mail foo@bar.com now",
+   "width": 40,
+   "out": [
+    "mail \u001b[34m\u001b[4mfoo@bar.com\u001b[24m\u001b[39m now                    "
+   ]
+  },
+  {
+   "text": "para\n\n",
+   "width": 40,
+   "out": [
+    "para                                    ",
+    "                                        "
+   ]
+  },
+  {
+   "text": "> - item\n> - two\n>\n> after",
+   "width": 40,
+   "out": [
+    "\u001b[90m│ \u001b[39m\u001b[3m\u001b[3m\u001b[36m- \u001b[39mitem\u001b[23m\u001b[23m                                ",
+    "\u001b[90m│ \u001b[39m\u001b[3m\u001b[3m\u001b[36m- \u001b[39mtwo\u001b[23m\u001b[23m                                 ",
+    "\u001b[90m│ \u001b[39m\u001b[3m\u001b[3m\u001b[23m\u001b[23m                                      ",
+    "\u001b[90m│ \u001b[39m\u001b[3m\u001b[3mafter\u001b[23m\u001b[23m                                 "
+   ]
+  },
+  {
+   "text": "# Head `code` **b**",
+   "width": 40,
+   "out": [
+    "\u001b[1m\u001b[36m\u001b[1m\u001b[4mHead \u001b[24m\u001b[22m\u001b[39m\u001b[22m\u001b[33mcode\u001b[39m\u001b[1m\u001b[36m\u001b[1m\u001b[4m\u001b[1m\u001b[36m\u001b[1m\u001b[4m \u001b[24m\u001b[22m\u001b[39m\u001b[22m\u001b[1m\u001b[1m\u001b[36m\u001b[1m\u001b[4mb\u001b[24m\u001b[22m\u001b[39m\u001b[22m\u001b[22m                             "
+   ]
+  },
+  {
+   "text": "| `c` | **b** |\n|---|---|\n| x | y |",
+   "width": 40,
+   "out": [
+    "┌───┬───┐                               ",
+    "│ \u001b[1m\u001b[33mc\u001b[39m\u001b[22m │ \u001b[1m\u001b[1mb\u001b[22m\u001b[22m │                               ",
+    "├───┼───┤                               ",
+    "│ x │ y │                               ",
+    "└───┴───┘                               "
+   ]
+  },
+  {
+   "text": "- a\n\n  - nested\n- b",
+   "width": 40,
+   "out": [
+    "\u001b[36m- \u001b[39ma                                     ",
+    "                                        ",
+    "    \u001b[36m- \u001b[39mnested                            ",
+    "                                        ",
+    "\u001b[36m- \u001b[39mb                                     "
+   ]
+  },
+  {
+   "text": "```js\ncode\n``",
+   "width": 40,
+   "out": [
+    "\u001b[90m```js\u001b[39m                                   ",
+    "  code                                  ",
+    "\u001b[90m```\u001b[39m                                     "
+   ]
+  },
+  {
+   "text": "see http://x.com/a.",
+   "width": 40,
+   "out": [
+    "see \u001b[34m\u001b[4mhttp://x.com/a\u001b[24m\u001b[39m.                     "
+   ]
+  },
+  {
+   "text": "a_b_c and *x*y",
+   "width": 40,
+   "out": [
+    "a_b_c and \u001b[3mx\u001b[23my                            "
+   ]
+  },
+  {
+   "text": "1) one\n2) two",
+   "width": 40,
+   "out": [
+    "\u001b[36m1. \u001b[39mone                                  ",
+    "\u001b[36m2. \u001b[39mtwo                                  "
+   ]
+  },
+  {
+   "text": "5. five\n6. six",
+   "width": 40,
+   "out": [
+    "\u001b[36m5. \u001b[39mfive                                 ",
+    "\u001b[36m6. \u001b[39msix                                  "
+   ]
+  },
+  {
+   "text": "> quote\n\npara",
+   "width": 40,
+   "out": [
+    "\u001b[90m│ \u001b[39m\u001b[3m\u001b[3mquote\u001b[23m\u001b[23m                                 ",
+    "                                        ",
+    "para                                    "
+   ]
+  },
+  {
+   "text": "- a\n- b\n\npara",
+   "width": 40,
+   "out": [
+    "\u001b[36m- \u001b[39ma                                     ",
+    "\u001b[36m- \u001b[39mb                                     ",
+    "                                        ",
+    "para                                    "
+   ]
+  },
+  {
+   "text": "text\n# head",
+   "width": 40,
+   "out": [
+    "text                                    ",
+    "                                        ",
+    "\u001b[1m\u001b[36m\u001b[1m\u001b[4mhead\u001b[24m\u001b[22m\u001b[39m\u001b[22m                                    "
+   ]
+  },
+  {
+   "text": "- a\n# head",
+   "width": 40,
+   "out": [
+    "\u001b[36m- \u001b[39ma                                     ",
+    "\u001b[1m\u001b[36m\u001b[1m\u001b[4mhead\u001b[24m\u001b[22m\u001b[39m\u001b[22m                                    "
+   ]
+  },
+  {
+   "text": "| a | b |\n|---|---|\n| only |",
+   "width": 40,
+   "out": [
+    "┌──────┬───┐                            ",
+    "│ \u001b[1ma   \u001b[22m │ \u001b[1mb\u001b[22m │                            ",
+    "├──────┼───┤                            ",
+    "│ only │   │                            ",
+    "└──────┴───┘                            "
+   ]
+  },
+  {
+   "text": "<span>inline</span> html",
+   "width": 40,
+   "out": [
+    "<span>inline</span> html                "
+   ]
+  },
+  {
+   "text": "Line with trailing  ",
+   "width": 40,
+   "out": [
+    "Line with trailing                      "
+   ]
+  },
+  {
+   "text": "```\nx\n```\n\n\nafter",
+   "width": 40,
+   "out": [
+    "\u001b[90m```\u001b[39m                                     ",
+    "  x                                     ",
+    "\u001b[90m```\u001b[39m                                     ",
+    "                                        ",
+    "after                                   "
+   ]
+  },
+  {
+   "text": "| aaaaaaaaaa bbbbbbbbbb cccccccccc | dddddddddd eeeeeeeeee |\n|---|---|\n| 1 | 2 |",
+   "width": 40,
+   "out": [
+    "┌─────────────────────┬────────────────┐",
+    "│ \u001b[1maaaaaaaaaa\u001b[22;23;24;25;27;28;29;39m         \u001b[22m │ \u001b[1mdddddddddd\u001b[22;23;24;25;27;28;29;39m    \u001b[22m │",
+    "│ \u001b[1mbbbbbbbbbb\u001b[22;23;24;25;27;28;29;39m         \u001b[22m │ \u001b[1meeeeeeeeee    \u001b[22m │",
+    "│ \u001b[1mcccccccccc         \u001b[22m │ \u001b[1m              \u001b[22m │",
+    "├─────────────────────┼────────────────┤",
+    "│ 1                   │ 2              │",
+    "└─────────────────────┴────────────────┘"
+   ]
+  },
+  {
+   "text": "**bold _nested em_ end**",
+   "width": 40,
+   "out": [
+    "\u001b[1mbold \u001b[3mnested em\u001b[23m end\u001b[22m                      "
+   ]
+  },
+  {
+   "text": "[**b**](http://b.com)",
+   "width": 40,
+   "out": [
+    "\u001b[34m\u001b[4m\u001b[1mb\u001b[22m\u001b[24m\u001b[39m\u001b[90m (http://b.com)\u001b[39m                        "
+   ]
+  },
+  {
+   "text": "- ",
+   "width": 40,
+   "out": [
+    "\u001b[36m- \u001b[39m                                      "
+   ]
+  },
+  {
+   "text": "-",
+   "width": 40,
+   "out": [
+    "\u001b[36m- \u001b[39m                                      "
+   ]
+  },
+  {
+   "text": "> ",
+   "width": 40,
+   "out": [
+    ""
+   ]
+  },
+  {
+   "text": "##",
+   "width": 40,
+   "out": [
+    "                                        "
+   ]
+  },
+  {
+   "text": "x\n***\ny",
+   "width": 40,
+   "out": [
+    "x                                       ",
+    "                                        ",
+    "\u001b[90m────────────────────────────────────────\u001b[39m",
+    "                                        ",
+    "y                                       "
+   ]
+  },
+  {
+   "text": "# Title\n\nPara text here.",
+   "width": 20,
+   "out": [
+    "\u001b[1m\u001b[36m\u001b[1m\u001b[4mTitle\u001b[24m\u001b[22m\u001b[39m\u001b[22m               ",
+    "                    ",
+    "Para text here.     "
+   ]
+  },
+  {
+   "text": "## Sub\n### Third\nText",
+   "width": 20,
+   "out": [
+    "\u001b[1m\u001b[36m\u001b[1mSub\u001b[22m\u001b[39m\u001b[22m                 ",
+    "                    ",
+    "\u001b[1m\u001b[36m\u001b[1m### \u001b[22m\u001b[39m\u001b[22m\u001b[1m\u001b[36m\u001b[1mThird\u001b[22m\u001b[39m\u001b[22m           ",
+    "                    ",
+    "Text                "
+   ]
+  },
+  {
+   "text": "- a\n- b\n  - nested\n- c",
+   "width": 20,
+   "out": [
+    "\u001b[36m- \u001b[39ma                 ",
+    "\u001b[36m- \u001b[39mb                 ",
+    "    \u001b[36m- \u001b[39mnested        ",
+    "\u001b[36m- \u001b[39mc                 "
+   ]
+  },
+  {
+   "text": "1. one\n2. two\n\n3. three",
+   "width": 20,
+   "out": [
+    "\u001b[36m1. \u001b[39mone              ",
+    "                    ",
+    "\u001b[36m2. \u001b[39mtwo              ",
+    "                    ",
+    "\u001b[36m3. \u001b[39mthree            "
+   ]
+  },
+  {
+   "text": "- [x] done\n- [ ] todo",
+   "width": 20,
+   "out": [
+    "\u001b[36m- [x] \u001b[39mdone          ",
+    "\u001b[36m- [ ] \u001b[39mtodo          "
+   ]
+  },
+  {
+   "text": "```js\nconst a = 1;\n```\nafter",
+   "width": 20,
+   "out": [
+    "\u001b[90m```js\u001b[39m               ",
+    "  const a = 1;      ",
+    "\u001b[90m```\u001b[39m                 ",
+    "                    ",
+    "after               "
+   ]
+  },
+  {
+   "text": "> quote line\n> more",
+   "width": 20,
+   "out": [
+    "\u001b[90m│ \u001b[39m\u001b[3m\u001b[3mquote line        ",
+    "\u001b[90m│ \u001b[39m\u001b[3mmore\u001b[23m\u001b[23m              "
+   ]
+  },
+  {
+   "text": "---\nafter rule",
+   "width": 20,
+   "out": [
+    "\u001b[90m────────────────────\u001b[39m",
+    "                    ",
+    "after rule          "
+   ]
+  },
+  {
+   "text": "Some **bold** and *em* and `code` and ~~del~~.",
+   "width": 20,
+   "out": [
+    "Some \u001b[1mbold\u001b[22m and \u001b[3mem\u001b[23m and",
+    "\u001b[33mcode\u001b[39m and \u001b[9mdel\u001b[29m.       "
+   ]
+  },
+  {
+   "text": "[link](http://example.com) and http://bare.example.com and <http://auto.com>",
+   "width": 20,
+   "out": [
+    "\u001b[34m\u001b[4mlink\u001b[24m\u001b[39m\u001b[90m                ",
+    "\u001b[90m(http://example.com)",
+    "\u001b[90m\u001b[39m and                ",
+    "\u001b[34m\u001b[4mhttp://bare.example.\u001b[24m",
+    "\u001b[4;34mcom\u001b[24m\u001b[39m and             ",
+    "\u001b[34m\u001b[4mhttp://auto.com\u001b[24m\u001b[39m     "
+   ]
+  },
+  {
+   "text": "| a | b |\n|---|:-:|\n| 1 | 22 |\n| long cell text | x |",
+   "width": 20,
+   "out": [
+    "┌─────────────┬────┐",
+    "│ \u001b[1ma          \u001b[22m │ \u001b[1mb \u001b[22m │",
+    "├─────────────┼────┤",
+    "│ 1           │ 22 │",
+    "├─────────────┼────┤",
+    "│ long cell\u001b[22;23;24;25;27;28;29;39m   │ x  │",
+    "│ text        │    │",
+    "└─────────────┴────┘"
+   ]
+  },
+  {
+   "text": "line one  \nline two",
+   "width": 20,
+   "out": [
+    "line one            ",
+    "line two            "
+   ]
+  },
+  {
+   "text": "text\n\n\n\nmore",
+   "width": 20,
+   "out": [
+    "text                ",
+    "                    ",
+    "more                "
+   ]
+  },
+  {
+   "text": "<div>html</div>\n\npara",
+   "width": 20,
+   "out": [
+    "<div>html</div>     ",
+    "                    ",
+    "para                "
+   ]
+  },
+  {
+   "text": "Math $x^2$ and $$y$$",
+   "width": 20,
+   "out": [
+    "Math x² and y       "
+   ]
+  },
+  {
+   "text": "\\*escaped\\*",
+   "width": 20,
+   "out": [
+    "*escaped*           "
+   ]
+  },
+  {
+   "text": "para\n- list right after",
+   "width": 20,
+   "out": [
+    "para                ",
+    "\u001b[36m- \u001b[39mlist right after  "
+   ]
+  },
+  {
+   "text": "1. a\n\n   continued\n2. b",
+   "width": 20,
+   "out": [
+    "\u001b[36m1. \u001b[39ma                ",
+    "                    ",
+    "   continued        ",
+    "                    ",
+    "\u001b[36m2. \u001b[39mb                "
+   ]
+  },
+  {
+   "text": "日本語の段落です。長い文章を折り返します。",
+   "width": 20,
+   "out": [
+    "日本語の段落です。長",
+    "い文章を折り返します",
+    "。                  "
+   ]
+  },
+  {
+   "text": "# 見出し\n本文",
+   "width": 20,
+   "out": [
+    "\u001b[1m\u001b[36m\u001b[1m\u001b[4m見出し\u001b[24m\u001b[22m\u001b[39m\u001b[22m              ",
+    "                    ",
+    "本文                "
+   ]
+  },
+  {
+   "text": "a\nb",
+   "width": 20,
+   "out": [
+    "a                   ",
+    "b                   "
+   ]
+  },
+  {
+   "text": "* * *",
+   "width": 20,
+   "out": [
+    "\u001b[90m────────────────────\u001b[39m"
+   ]
+  },
+  {
+   "text": "```\nno lang\n```",
+   "width": 20,
+   "out": [
+    "\u001b[90m```\u001b[39m                 ",
+    "  no lang           ",
+    "\u001b[90m```\u001b[39m                 "
+   ]
+  },
+  {
+   "text": "[same](same)",
+   "width": 20,
+   "out": [
+    "\u001b[34m\u001b[4msame\u001b[24m\u001b[39m                "
+   ]
+  },
+  {
+   "text": "[mail](mailto:a@b.c)",
+   "width": 20,
+   "out": [
+    "\u001b[34m\u001b[4mmail\u001b[24m\u001b[39m\u001b[90m (mailto:a@b.c)\u001b[39m "
+   ]
+  },
+  {
+   "text": "<a@b.c>",
+   "width": 20,
+   "out": [
+    "\u001b[34m\u001b[4ma@b.c\u001b[24m\u001b[39m               "
+   ]
+  },
+  {
+   "text": "    indented code",
+   "width": 20,
+   "out": [
+    "\u001b[90m```\u001b[39m                 ",
+    "  indented code     ",
+    "\u001b[90m```\u001b[39m                 "
+   ]
+  },
+  {
+   "text": "Term\n===",
+   "width": 20,
+   "out": [
+    "\u001b[1m\u001b[36m\u001b[1m\u001b[4mTerm\u001b[24m\u001b[22m\u001b[39m\u001b[22m                "
+   ]
+  },
+  {
+   "text": "![img](http://x/y.png)",
+   "width": 20,
+   "out": [
+    "img                 "
+   ]
+  },
+  {
+   "text": "a &amp; b &lt;x&gt;",
+   "width": 20,
+   "out": [
+    "a &amp; b &lt;x&gt; "
+   ]
+  },
+  {
+   "text": "~single~ and ~~double~~",
+   "width": 20,
+   "out": [
+    "~single~ and \u001b[9mdouble\u001b[29m "
+   ]
+  },
+  {
+   "text": "see www.example.com today",
+   "width": 20,
+   "out": [
+    "see \u001b[34m\u001b[4mwww.example.com\u001b[24m\u001b[39m\u001b[90m ",
+    "\u001b[90m(http://www.example.",
+    "\u001b[90mcom)\u001b[39m today          "
+   ]
+  },
+  {
+   "text": "mail foo@bar.com now",
+   "width": 20,
+   "out": [
+    "mail \u001b[34m\u001b[4mfoo@bar.com\u001b[24m\u001b[39m now"
+   ]
+  },
+  {
+   "text": "para\n\n",
+   "width": 20,
+   "out": [
+    "para                ",
+    "                    "
+   ]
+  },
+  {
+   "text": "> - item\n> - two\n>\n> after",
+   "width": 20,
+   "out": [
+    "\u001b[90m│ \u001b[39m\u001b[3m\u001b[3m\u001b[36m- \u001b[39mitem\u001b[23m\u001b[23m            ",
+    "\u001b[90m│ \u001b[39m\u001b[3m\u001b[3m\u001b[36m- \u001b[39mtwo\u001b[23m\u001b[23m             ",
+    "\u001b[90m│ \u001b[39m\u001b[3m\u001b[3m\u001b[23m\u001b[23m                  ",
+    "\u001b[90m│ \u001b[39m\u001b[3m\u001b[3mafter\u001b[23m\u001b[23m             "
+   ]
+  },
+  {
+   "text": "# Head `code` **b**",
+   "width": 20,
+   "out": [
+    "\u001b[1m\u001b[36m\u001b[1m\u001b[4mHead \u001b[24m\u001b[22m\u001b[39m\u001b[22m\u001b[33mcode\u001b[39m\u001b[1m\u001b[36m\u001b[1m\u001b[4m\u001b[1m\u001b[36m\u001b[1m\u001b[4m \u001b[24m\u001b[22m\u001b[39m\u001b[22m\u001b[1m\u001b[1m\u001b[36m\u001b[1m\u001b[4mb\u001b[24m\u001b[22m\u001b[39m\u001b[22m\u001b[22m         "
+   ]
+  },
+  {
+   "text": "| `c` | **b** |\n|---|---|\n| x | y |",
+   "width": 20,
+   "out": [
+    "┌───┬───┐           ",
+    "│ \u001b[1m\u001b[33mc\u001b[39m\u001b[22m │ \u001b[1m\u001b[1mb\u001b[22m\u001b[22m │           ",
+    "├───┼───┤           ",
+    "│ x │ y │           ",
+    "└───┴───┘           "
+   ]
+  },
+  {
+   "text": "- a\n\n  - nested\n- b",
+   "width": 20,
+   "out": [
+    "\u001b[36m- \u001b[39ma                 ",
+    "                    ",
+    "    \u001b[36m- \u001b[39mnested        ",
+    "                    ",
+    "\u001b[36m- \u001b[39mb                 "
+   ]
+  },
+  {
+   "text": "```js\ncode\n``",
+   "width": 20,
+   "out": [
+    "\u001b[90m```js\u001b[39m               ",
+    "  code              ",
+    "\u001b[90m```\u001b[39m                 "
+   ]
+  },
+  {
+   "text": "see http://x.com/a.",
+   "width": 20,
+   "out": [
+    "see \u001b[34m\u001b[4mhttp://x.com/a\u001b[24m\u001b[39m. "
+   ]
+  },
+  {
+   "text": "a_b_c and *x*y",
+   "width": 20,
+   "out": [
+    "a_b_c and \u001b[3mx\u001b[23my        "
+   ]
+  },
+  {
+   "text": "1) one\n2) two",
+   "width": 20,
+   "out": [
+    "\u001b[36m1. \u001b[39mone              ",
+    "\u001b[36m2. \u001b[39mtwo              "
+   ]
+  },
+  {
+   "text": "5. five\n6. six",
+   "width": 20,
+   "out": [
+    "\u001b[36m5. \u001b[39mfive             ",
+    "\u001b[36m6. \u001b[39msix              "
+   ]
+  },
+  {
+   "text": "> quote\n\npara",
+   "width": 20,
+   "out": [
+    "\u001b[90m│ \u001b[39m\u001b[3m\u001b[3mquote\u001b[23m\u001b[23m             ",
+    "                    ",
+    "para                "
+   ]
+  },
+  {
+   "text": "- a\n- b\n\npara",
+   "width": 20,
+   "out": [
+    "\u001b[36m- \u001b[39ma                 ",
+    "\u001b[36m- \u001b[39mb                 ",
+    "                    ",
+    "para                "
+   ]
+  },
+  {
+   "text": "text\n# head",
+   "width": 20,
+   "out": [
+    "text                ",
+    "                    ",
+    "\u001b[1m\u001b[36m\u001b[1m\u001b[4mhead\u001b[24m\u001b[22m\u001b[39m\u001b[22m                "
+   ]
+  },
+  {
+   "text": "- a\n# head",
+   "width": 20,
+   "out": [
+    "\u001b[36m- \u001b[39ma                 ",
+    "\u001b[1m\u001b[36m\u001b[1m\u001b[4mhead\u001b[24m\u001b[22m\u001b[39m\u001b[22m                "
+   ]
+  },
+  {
+   "text": "| a | b |\n|---|---|\n| only |",
+   "width": 20,
+   "out": [
+    "┌──────┬───┐        ",
+    "│ \u001b[1ma   \u001b[22m │ \u001b[1mb\u001b[22m │        ",
+    "├──────┼───┤        ",
+    "│ only │   │        ",
+    "└──────┴───┘        "
+   ]
+  },
+  {
+   "text": "<span>inline</span> html",
+   "width": 20,
+   "out": [
+    "<span>inline</span> ",
+    "html                "
+   ]
+  },
+  {
+   "text": "Line with trailing  ",
+   "width": 20,
+   "out": [
+    "Line with trailing  "
+   ]
+  },
+  {
+   "text": "```\nx\n```\n\n\nafter",
+   "width": 20,
+   "out": [
+    "\u001b[90m```\u001b[39m                 ",
+    "  x                 ",
+    "\u001b[90m```\u001b[39m                 ",
+    "                    ",
+    "after               "
+   ]
+  },
+  {
+   "text": "| aaaaaaaaaa bbbbbbbbbb cccccccccc | dddddddddd eeeeeeeeee |\n|---|---|\n| 1 | 2 |",
+   "width": 20,
+   "out": [
+    "┌─────────┬────────┐",
+    "│ \u001b[1maaaaaaa\u001b[22;23;24;25;27;28;29;39m\u001b[22m │ \u001b[1mdddddd\u001b[22;23;24;25;27;28;29;39m\u001b[22m │",
+    "│ \u001b[1maaa\u001b[22;23;24;25;27;28;29;39m    \u001b[22m │ \u001b[1mdddd\u001b[22;23;24;25;27;28;29;39m  \u001b[22m │",
+    "│ \u001b[1mbbbbbbb\u001b[22;23;24;25;27;28;29;39m\u001b[22m │ \u001b[1meeeeee\u001b[22;23;24;25;27;28;29;39m\u001b[22m │",
+    "│ \u001b[1mbbb\u001b[22;23;24;25;27;28;29;39m    \u001b[22m │ \u001b[1meeee  \u001b[22m │",
+    "│ \u001b[1mccccccc\u001b[22;23;24;25;27;28;29;39m\u001b[22m │ \u001b[1m      \u001b[22m │",
+    "│ \u001b[1mccc    \u001b[22m │ \u001b[1m      \u001b[22m │",
+    "├─────────┼────────┤",
+    "│ 1       │ 2      │",
+    "└─────────┴────────┘"
+   ]
+  },
+  {
+   "text": "**bold _nested em_ end**",
+   "width": 20,
+   "out": [
+    "\u001b[1mbold \u001b[3mnested em\u001b[23m end\u001b[22m  "
+   ]
+  },
+  {
+   "text": "[**b**](http://b.com)",
+   "width": 20,
+   "out": [
+    "\u001b[34m\u001b[4m\u001b[1mb\u001b[22m\u001b[24m\u001b[39m\u001b[90m (http://b.com)\u001b[39m    "
+   ]
+  },
+  {
+   "text": "- ",
+   "width": 20,
+   "out": [
+    "\u001b[36m- \u001b[39m                  "
+   ]
+  },
+  {
+   "text": "-",
+   "width": 20,
+   "out": [
+    "\u001b[36m- \u001b[39m                  "
+   ]
+  },
+  {
+   "text": "> ",
+   "width": 20,
+   "out": [
+    ""
+   ]
+  },
+  {
+   "text": "##",
+   "width": 20,
+   "out": [
+    "                    "
+   ]
+  },
+  {
+   "text": "x\n***\ny",
+   "width": 20,
+   "out": [
+    "x                   ",
+    "                    ",
+    "\u001b[90m────────────────────\u001b[39m",
+    "                    ",
+    "y                   "
+   ]
+  }
+ ],
+ "markdownLinks": [
+  {
+   "text": "[link](http://example.com)",
+   "width": 40,
+   "out": [
+    "\u001b]8;;http://example.com\u001b\\\u001b[34m\u001b[4mlink\u001b[24m\u001b[39m\u001b]8;;\u001b\\                                    "
+   ]
+  },
+  {
+   "text": "http://bare.example.com",
+   "width": 40,
+   "out": [
+    "\u001b]8;;http://bare.example.com\u001b\\\u001b[34m\u001b[4mhttp://bare.example.com\u001b[24m\u001b[39m\u001b]8;;\u001b\\                 "
+   ]
+  },
+  {
+   "text": "[same](http://s.com/)",
+   "width": 40,
+   "out": [
+    "\u001b]8;;http://s.com/\u001b\\\u001b[34m\u001b[4msame\u001b[24m\u001b[39m\u001b]8;;\u001b\\                                    "
+   ]
+  }
+ ]
+}

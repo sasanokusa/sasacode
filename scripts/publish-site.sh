@@ -3,7 +3,7 @@
 # /sasacode/install.sh redirects to the installer attached to the latest release.
 #   scripts/publish-site.sh [user@host]
 # The host is the first argument, else $SASACODE_SITE_HOST. {{VERSION}} in the HTML is replaced
-# with the version in packages/cli/package.json (e.g. v0.9.7) in a temporary copy at deploy time.
+# with the workspace version in Cargo.toml (e.g. v0.20.0) in a temporary copy at deploy time.
 set -eu
 HOST="${1:-${SASACODE_SITE_HOST:-}}"
 if [ -z "$HOST" ]; then
@@ -12,9 +12,9 @@ if [ -z "$HOST" ]; then
 fi
 ROOT=/var/www/html/sasacode
 cd "$(dirname "$0")/.."
-VERSION="v$(sed -n 's/^ *"version": *"\([^"]*\)".*/\1/p' packages/cli/package.json | head -n 1)"
+VERSION="v$(sed -n '/^\[workspace.package\]/,/^\[/s/^version *= *"\([^"]*\)".*/\1/p' Cargo.toml | head -n 1)"
 if [ "$VERSION" = "v" ]; then
-  echo "could not read the version from packages/cli/package.json" >&2
+  echo "could not read the version from Cargo.toml ([workspace.package])" >&2
   exit 1
 fi
 TMP="$(mktemp -d)"

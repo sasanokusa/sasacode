@@ -1,16 +1,75 @@
-# Rust crates of sasacode. The TypeScript packages under packages/ are still the CLI and its core;
-# these crates are the first Rust parts (the GUI and the types it shares with a future Rust core).
+# sasacode in Rust. The CLI and its core are the crates below. The TypeScript original they were
+# ported from (0.15.2) is in the git history at tag v0.15.2 (rust/DECISIONS.md).
 [workspace]
 resolver = "3"
-members = ["crates/sasacode-protocol", "crates/sasacode-gui"]
+members = [
+  "crates/sasacode-protocol",
+  "crates/sasacode-gui",
+  "crates/sasacode-ai",
+  "crates/sasacode-plugin-api",
+  "crates/sasacode-agent",
+  "crates/sasacode-tools",
+  "crates/sasacode-mcp",
+  "crates/sasacode-skills",
+  "crates/sasacode-host",
+  "crates/sasacode-bundled",
+  "crates/sasacode-tui",
+  "crates/sasacode-cli",
+  "crates/sasacode-testing",
+  "xtask",
+]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.20.0"
 edition = "2024"
 license = "Apache-2.0"
 repository = "https://github.com/sasanokusa/sasacode"
 rust-version = "1.88"
 
 [workspace.dependencies]
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+sasacode-ai = { path = "crates/sasacode-ai" }
+sasacode-plugin-api = { path = "crates/sasacode-plugin-api" }
+sasacode-agent = { path = "crates/sasacode-agent" }
+sasacode-tools = { path = "crates/sasacode-tools" }
+sasacode-mcp = { path = "crates/sasacode-mcp" }
+sasacode-skills = { path = "crates/sasacode-skills" }
+sasacode-host = { path = "crates/sasacode-host" }
+sasacode-bundled = { path = "crates/sasacode-bundled" }
+sasacode-tui = { path = "crates/sasacode-tui" }
+sasacode-testing = { path = "crates/sasacode-testing" }
+
+serde = { version = "1", features = ["derive", "rc"] }
+serde_json = { version = "1", features = ["preserve_order", "float_roundtrip"] }
+tokio = { version = "1.54", features = ["full"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+futures = "0.3"
+async-trait = "0.1"
+anyhow = "1"
+thiserror = "2"
+reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "http2", "charset", "system-proxy", "json", "stream"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+bytes = "1"
+url = "2"
+percent-encoding = "2"
+regex = "1"
+fancy-regex = "0.20"
+globset = "0.4"
+sha2 = "0.10"
+uuid = { version = "1", features = ["v4"] }
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
+base64 = "0.22"
+indexmap = { version = "2", features = ["serde"] }
+dirs = "6"
+unicode-width = "0.2"
+unicode-segmentation = "1"
+unicode-normalization = "0.1"
+encoding_rs = "0.8"
+ratatui = { version = "0.30", default-features = false, features = ["crossterm_0_29", "underline-color", "layout-cache", "macros"] }
+crossterm = { version = "0.29", features = ["bracketed-paste", "event-stream"] }
+pulldown-cmark = { version = "0.13", default-features = false }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
+tempfile = "3"
+which = "8"
+libc = "0.2"
+rand = "0.9"
+axum = "0.8"

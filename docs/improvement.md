@@ -6,10 +6,10 @@
 
 ## 1周の流れ
 
-1. **計測する**。`bun run improve` が検査の合否、コアの行数、リポジトリの規模を出す。必要なら `bun test` と `bun run typecheck` も走らせる。
+1. **計測する**。`cargo xtask improve`が検査の合否、コアの行数、リポジトリの規模を出す。必要なら`cargo test --workspace --locked`と`cargo clippy --workspace --all-targets --locked -- -D warnings`も走らせる。
 2. **観点を1つ選ぶ**。下の表から選ぶ。落ちている検査、余白の小さい予算、片方のREADMEにしかない記述など、信号のあるものから手を付ける。
-3. **直す**。変更は1つの観点に絞る。振る舞いが変わるならテストを同時に足す（`packages/<パッケージ>/test`）。プロバイダーの応答は `@sasacode/testing` の録画再生でモデルなしに再現できる。
-4. **検証する**。`bun run typecheck && bun test`、`bun run improve`。CLI・TUI・プラグインの見え方が変わるなら、ヘッドレス（`sasacode -p`）かTUIで実機を1回通す。
+3. **直す**。変更は1つの観点に絞る。振る舞いが変わるならテストを同時に足す（`crates/<クレート>`の単体テストか`tests/`）。プロバイダーの応答は`sasacode-testing`の録画再生でモデルなしに再現できる。
+4. **検証する**。`cargo clippy --workspace --all-targets --locked -- -D warnings && cargo test --workspace --locked`、`cargo xtask improve`。CLI・TUI・プラグインの見え方が変わるなら、ヘッドレス（`sasacode -p`）かTUIで実機を1回通す。
 5. **記録する**。下の「記録」に1行足す。何を変え、どう確かめたかを書く。
 6. **コミットする**。1改善1コミット。メッセージは既存の履歴と同じ形（`area: 何を変えたか、どう確かめたか`）にする。
 
@@ -17,32 +17,35 @@
 
 | 観点 | 問い | 見るところ |
 | --- | --- | --- |
-| コアの小ささ | その機能はコアに要るか。プラグインで足りないか | `bun run improve` の行数（上限5,000行、1行120桁まで。超えるとテストが落ちる）。コアに行を足すときは、同程度を削るか、置き場所を変える |
-| テスト | その振る舞いはテストで守られているか。実機でしか見ていない経路はないか | `packages/*/test`。録画再生でループ・プラグイン・権限をモデルなしでE2Eにできる |
-| 約束の検査 | 要求やREADMEが約束しているのに、誰も検査していないことはないか | `scripts/checks.ts`。新しい約束は、先に検査を書いてからREADMEに書く |
-| ドキュメント | README（日英）とdocsは実装と合っているか。書いてあるのに辿れないdocはないか | `bun run improve` の `readme-cli` / `readme-plugins` / `readme-shape` / `api-version` / `docs-links` / `docs-reachable` |
-| 開発体験 | よく使う手順は1コマンドで済むか。失敗したときの出力から直し方が分かるか | `bun run improve`、`bun run typecheck`、`bun test`、`bun run build` |
-| 安全性 | 権限の判定、シークレット、プロジェクトの信頼に穴はないか | `packages/agent/test/permission*.test.ts`、`bash` / `read` の実機、[docs/requirements.md](requirements.md) の非機能要件 |
-| 可搬性 | macOS / Linux / Windows の差で壊れるところはないか | CI（ubuntu / windows）、Git Bash まわりのテスト、パスの正規化 |
-| 速度 | 起動・描画・テストは速いか | 起動から入力可能まで（目標300ms）、`bun test` の所要時間、描画の差分 |
+| コアの小ささ | その機能はコアに要るか。プラグインで足りないか | `cargo xtask improve`の行数（上限12,500行、1行120桁まで。超えると`cargo xtask checks`が落ちる）。コアに行を足すときは、同程度を削るか、置き場所を変える |
+| テスト | その振る舞いはテストで守られているか。実機でしか見ていない経路はないか | `crates/*`のテスト。録画再生（`sasacode-testing`）でループ・プラグイン・権限をモデルなしでE2Eにできる |
+| 約束の検査 | 要求やREADMEが約束しているのに、誰も検査していないことはないか | `xtask/src/checks.rs`。新しい約束は、先に検査を書いてからREADMEに書く |
+| ドキュメント | README（日英）とdocsは実装と合っているか。書いてあるのに辿れないdocはないか | `cargo xtask improve`の`readme-cli` / `readme-plugins` / `readme-shape` / `docs-links` / `docs-reachable` |
+| 開発体験 | よく使う手順は1コマンドで済むか。失敗したときの出力から直し方が分かるか | `cargo xtask improve`、`cargo clippy`、`cargo test`、`cargo xtask build` |
+| 安全性 | 権限の判定、シークレット、プロジェクトの信頼に穴はないか | `crates/sasacode-agent`の権限のテスト（`permission_tests.rs`、`tests/permission_hook.rs`）、`bash` / `read`の実機、[docs/requirements.md](requirements.md)の非機能要件 |
+| 可搬性 | macOS / Linux / Windowsの差で壊れるところはないか | CI（ubuntu / windows / macos）、Git Bashまわりのテスト、パスの正規化 |
+| 速度 | 起動・描画・テストは速いか | 起動から入力可能まで（目標300ms）、`cargo test`の所要時間、描画の差分 |
 
 ## 検査
 
-`scripts/checks.ts` の検査は `bun test`（`scripts/checks.test.ts`）から走るので、CIでも自動で見る。検査を足すときは、`scripts/checks.test.ts` に「壊れた入力を渡すと落ちる」テストも書く。静かに効かなくなった検査は、検査がないより悪い。
+`xtask/src/checks.rs`の検査は`cargo xtask checks`で走る。`cargo test --workspace`（`xtask/src/checks_tests.rs`）からも走り、CIは`cargo xtask improve`も実行するので、CIでも自動で見る。検査を足すときは、`xtask/src/checks_tests.rs`に「壊れた入力を渡すと落ちる」テストも書く。0.15までは`scripts/checks.ts`で、`bun test`から走らせていた。静かに効かなくなった検査は、検査がないより悪い。
 
 | 検査 | 守っている主張 |
 | --- | --- |
-| `core-line-budget` | コア（ai・agent・plugin-api・tools）は5,000行以下（README「開発」） |
-| `core-line-width` | コアの行は120桁まで。文字列やテンプレートリテラルだけの行（ツールの説明、モデルへの文）は除く。行数の上限が大きさを表すように、幅と組にする |
-| `dependency-record` | 実行時の依存パッケージはすべて [docs/dependencies.md](dependencies.md) に理由つきで載っている（[docs/requirements.md](requirements.md) の非機能要件） |
-| `readme-cli` | CLIのオプションは両方のREADMEに書いてある |
-| `readme-plugins` | 同梱プラグインの一覧とREADMEの表が一致する |
+| `core-line-budget` | コア（`sasacode-ai`・`sasacode-agent`・`sasacode-plugin-api`・`sasacode-tools`の`src/`。単体テストは数えない）は12,500行以下（README「開発」） |
+| `core-line-width` | コアの行は120桁まで。ほとんどが1つの文字列リテラルの行（ツールの説明、モデルへの文）は除く。行数の上限が大きさを表すように、幅と組にする |
+| `dependency-record` | 配布する`sasacode`（`sasacode-cli`と、それが使うクレート）の実行時の依存はすべて[docs/dependencies.md](dependencies.md)に理由つきで載っていて、載っているものは使われている（[docs/requirements.md](requirements.md)の非機能要件） |
+| `readme-cli` | CLIのオプション（`crates/sasacode-cli/src/main.rs`の`OPTIONS`と`HELP_TEXT`）は両方のREADMEに書いてある |
+| `readme-plugins` | 同梱プラグインの一覧（`crates/sasacode-bundled/src/lib.rs`の`PLUGINS`。既定で無効のものも）とREADMEの表が一致する |
 | `readme-shape` | 日英のREADMEは同じ形（見出しの階層とコードブロックの並び）を保つ |
-| `api-version` | プラグインAPIの版は、コード・docs/plugins.md・両READMEで一致する |
 | `docs-links` | markdownの相対リンクが解決する |
 | `docs-reachable` | `docs/*.md` は両方のREADMEから辿れる |
 
+0.15まであった`api-version`（プラグインAPIの版が、コード・docs/plugins.md・両READMEで一致する）は、公開のプラグインAPIをやめたので0.20でなくした。
+
 ## 記録
+
+0.15まで（TypeScript版）の記録は、コマンドとパスを当時のまま残している。
 
 | 日付 | 何を | どう確かめたか | コミット |
 | --- | --- | --- | --- |
@@ -66,10 +69,7 @@
 まだ検査にも改善にもなっていないもの。信号が出たら手を付ける。
 
 - 起動から入力可能まで300ms以内という目標は、手元の体感だけで測っていない
-- CIはubuntuとwindowsのみ。macOSはリリースのワークフローでしか起動していない
 - 日英のREADMEの本文の対応は目視。見出しとコードブロックの並びは検査しているが、段落や表の行が片方にしかないことは検査していない
-- `plugins/*` のREADMEと実装のずれは検査していない
 - 調べたが見つからなかったもの（次に同じ場所を疑うときの記録）：`loop-guard` の「同じエラーがN回続いた」の数え方は、間に成功したファイル変更のない呼び出しが挟まっても数える（コメントに明記されているので仕様）。`bash` の起動自体に失敗したときの注記は `[terminated by null]` になる（`packages/tools/src/bash.ts`）
-- `sasacode --help` の `plugin publish` の行は、`sasacode plugin` の使い方より短い（`--version` / `--api` / `--description` / `--otp` を出さない）。要約として意図したものか確かめてから直す
 - `npm/sasacode` のランチャーはテストがあるが、公開後の更新は手作業
-- 単一バイナリ（`bun run build`）での起動確認は手元とリリース時のみ
+- 単一バイナリ（`cargo xtask build`）での起動確認は手元とリリース時のみ

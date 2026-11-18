@@ -180,7 +180,7 @@
   <main>
     <div class="hero">
       <h1>sasacode ドキュメント</h1>
-      <p>READMEでは書ききれない、画面の見方、権限の判定の流れ、設定と同梱プラグインの全項目、プラグインの共有、ヘッドレス実行、困ったときの対処をまとめた。{{VERSION}} 時点の内容。</p>
+      <p>READMEでは書ききれない、画面の見方、権限の判定の流れ、設定と同梱プラグインの全項目、MCPとSkillsでの拡張、ヘッドレス実行、困ったときの対処をまとめた。{{VERSION}} 時点の内容。</p>
     </div>
 
     <details class="toc-m"><summary>目次</summary><ol id="toc-m"></ol></details>
@@ -191,14 +191,14 @@
 
       <h3 id="install">インストール</h3>
       <pre><code>curl -fsSL https://sasanokusa.com/sasacode/install.sh | sh</code></pre>
-      <p>macOS（Apple Silicon / Intel）とLinux（x64 / arm64、glibc / musl、AVX2のないCPU向けのbaseline版）の単一バイナリが <code>~/.local/bin/sasacode</code> に入る。BunもNode.jsも要らない。</p>
-      <p>Windows（x64 / arm64、AVX2のないCPU向けのx64 baseline版）はPowerShellから。<code>%LOCALAPPDATA%\Programs\sasacode\sasacode.exe</code> に入り、PATHに追加される。WSLは要らない。</p>
+      <p>macOS（Apple Silicon / Intel）とLinux（x64 / arm64、glibc / musl）の単一バイナリが <code>~/.local/bin/sasacode</code> に入る。x64版はどれもAVX2のないCPUでも動く。BunもNode.jsも要らない。</p>
+      <p>Windows（x64 / arm64）はPowerShellから。<code>%LOCALAPPDATA%\Programs\sasacode\sasacode.exe</code> に入り、PATHに追加される。WSLは要らない。</p>
       <pre><code>irm https://sasanokusa.com/sasacode/install.ps1 | iex</code></pre>
       <p><code>bash</code> ツールは <a href="https://git-scm.com/download/win">Git for Windows</a> のGit Bashでコマンドを実行するので、Windowsではそれも入れておく（<code>winget install --id Git.Git -e</code>）。標準以外の場所なら <code>SASACODE_GIT_BASH_PATH</code> にbash.exeのパスを設定する。</p>
       <ul>
         <li>インストーラーとバイナリはGitHub Releasesの最新版から取り、SHA256を確かめてから置く。</li>
         <li>版の固定は <code>SASACODE_VERSION={{VERSION}}</code>、置き場所の変更は <code>SASACODE_INSTALL_DIR=/usr/local/bin</code> で行う。</li>
-        <li><b>更新</b>は <code>sasacode update</code>（インストーラーと同じ検証つき。<code>--check</code> で確かめるだけ）か、同じインストールコマンドをもう一度実行する。新しい版が出ると起動時に一度だけ知らせる（設定の <code>"updateCheck": false</code> で止まる）。<b>削除</b>は <code>~/.local/bin/sasacode</code> と <code>~/.sasacode</code>（設定・セッション・プラグイン）を消す。</li>
+        <li><b>更新</b>は <code>sasacode update</code>（インストーラーと同じ検証つき。<code>--check</code> で確かめるだけ）か、同じインストールコマンドをもう一度実行する。新しい版が出ると起動時に一度だけ知らせる（設定の <code>"updateCheck": false</code> で止まる）。<b>削除</b>は <code>~/.local/bin/sasacode</code> と <code>~/.sasacode</code>（設定・セッションなど）を消す。</li>
         <li>Web検索に使う<b>RustXNG</b>は <code>sasacode web-search install</code>（TUIでは <code>/web-search install</code>）で入る。公式リリースをチェックサムで確かめて <code>~/.sasacode/bin</code> に置く。</li>
       </ul>
 
@@ -296,7 +296,8 @@ sasacode                    <span class="c"># 対話モードで始める</span>
         <tr><td><code>/image</code></td><td>画像を次のメッセージに添付（引数なしでクリップボード、<code>clear</code> で取り消し）。スクリーンショットの ⌘V（または ctrl+v）、ファイルのドラッグ&amp;ドロップ、<code>@パス</code> でも付けられる</td><td>image-attach</td></tr>
         <tr><td><code>/image-slim</code></td><td>直近のリクエストで送った画像と省いた画像の枚数</td><td>image-slim</td></tr>
         <tr><td><code>/task</code></td><td>サブエージェントの一覧・詳細、<code>send &lt;id&gt; &lt;内容&gt;</code> で指示、<code>stop &lt;id&gt;</code> で停止</td><td>subagent</td></tr>
-        <tr><td><code>/presets</code> <code>/jev</code></td><td>権限プリセットの一覧 / Jevの状態と直近の判定（<code>/jev on</code>・<code>/jev off</code> で切り替え。<a href="#jev">jev-guardを入れたとき</a>）</td><td>permission-presets / jev-guard</td></tr>
+        <tr><td><code>/presets</code> <code>/jev</code></td><td>権限プリセットの一覧 / Jevの状態と直近の判定（<code>/jev on</code>・<code>/jev off</code> で切り替え。<a href="#jev">jev-guardを有効にしたとき</a>）</td><td>permission-presets / jev-guard</td></tr>
+        <tr><td><code>/checks</code> <code>/workflow</code></td><td>検査の一覧 / 繰り返し使う依頼の一覧と呼び出し（<a href="#enable">project-checks・workflowsを有効にしたとき</a>）</td><td>project-checks / workflows</td></tr>
         <tr><td><code>/mcp</code> <code>/skills</code> <code>/skill:&lt;name&gt;</code> <code>/browsr</code> <code>/web-search</code></td><td>MCPの接続状態（<code>/mcp reconnect [name]</code> で再接続。落ちたときは数回まで自動で再接続する） / Skillsの一覧 / Skillを明示して使う / browsrの状態 / web_searchの状態</td><td>mcp / skills / browsr / web-search</td></tr>
       </table></div>
 
@@ -314,7 +315,7 @@ sasacode                    <span class="c"># 対話モードで始める</span>
       <h2><span class="no">03</span>モデルとプロバイダー</h2>
       <div class="tbl"><table>
         <tr><th>provider</th><th>API形式</th><th>キー</th></tr>
-        <tr><td><code>anthropic</code></td><td>Anthropic Messages</td><td><code>ANTHROPIC_API_KEY</code>（空ならSDKの <code>ant auth login</code>）</td></tr>
+        <tr><td><code>anthropic</code></td><td>Anthropic Messages</td><td><code>ANTHROPIC_API_KEY</code>（空なら環境変数 <code>ANTHROPIC_AUTH_TOKEN</code> をBearerトークンとして、それもなければ <code>ant auth login</code> のプロファイル）</td></tr>
         <tr><td><code>openai</code> / <code>openai-chat</code></td><td>OpenAI Responses / Chat Completions</td><td><code>OPENAI_API_KEY</code></td></tr>
         <tr><td><code>openrouter</code></td><td>Chat Completions</td><td><code>OPENROUTER_API_KEY</code></td></tr>
         <tr><td><code>commandcode</code>（<code>-responses</code> / <code>-anthropic</code>）</td><td>Command Codeの各形式</td><td><code>CMD_API_KEY</code></td></tr>
@@ -328,14 +329,14 @@ sasacode                    <span class="c"># 対話モードで始める</span>
         <div class="st"><div><b><code>~/.sasacode/.env</code></b>空欄は無視。</div></div>
         <div class="st"><div><b>OSのキーチェーン</b>macOS：<code>security add-generic-password -s sasacode -a &lt;provider&gt; -w</code><br>Linux：<code>secret-tool store --label sasacode service sasacode account &lt;provider&gt;</code></div></div>
       </div>
-      <div class="note"><b>読まないもの</b>作業ディレクトリの <code>.env</code> と <code>bunfig.toml</code>。リポジトリが接続先（<code>ANTHROPIC_BASE_URL</code> など）を差し替えたり、起動時にコードを実行させたりできないようにするため。セッションのログには、使っているキーを <code>[REDACTED]</code> に置き換えてから書く。</div>
+      <div class="note"><b>読まないもの</b>作業ディレクトリの <code>.env</code>。リポジトリが接続先（<code>ANTHROPIC_BASE_URL</code> など）を差し替えられないようにするため。セッションのログには、使っているキーを <code>[REDACTED]</code> に置き換えてから書く。</div>
 
       <h3 id="own-server">自前のサーバー</h3>
       <pre><code>sasacode endpoint add pgx http://gpu-box:8000/v1          <span class="c"># 形式を判別して保存</span>
 sasacode endpoint add mygw https://llm.example.com/v1 --key-env MYGW_KEY
 sasacode endpoint list
 sasacode -m pgx/&lt;モデル名&gt;</code></pre>
-      <p><code>GET /v1/models</code> の応答から、OpenAI形式かAnthropic形式かを判別し、URLもSDKに合わせて整える。llama.cppは <code>/props</code>、Ollamaは <code>/api/show</code>（メモリに載っていれば <code>/api/ps</code>）、LM Studio（0.3.6以降）は <code>/api/v0/models</code> から実際のコンテキスト長も取る。まだロードされていなくて長さが分からないOllamaとLM Studioのモデルは、応答の後にサーバーに聞き直して、実際にロードされた長さに切り替える。判別の結果は <code>~/.sasacode/endpoints.json</code> にキャッシュする。表にないモデルのコンテキスト長が違うときは <code>modelOverrides</code> で直す。</p>
+      <p><code>GET /v1/models</code> の応答から、OpenAI形式かAnthropic形式かを判別し、URLも形式に合わせて整える。llama.cppは <code>/props</code>、Ollamaは <code>/api/show</code>（メモリに載っていれば <code>/api/ps</code>）、LM Studio（0.3.6以降）は <code>/api/v0/models</code> から実際のコンテキスト長も取る。まだロードされていなくて長さが分からないOllamaとLM Studioのモデルは、応答の後にサーバーに聞き直して、実際にロードされた長さに切り替える。判別の結果は <code>~/.sasacode/endpoints.json</code> にキャッシュする。表にないモデルのコンテキスト長が違うときは <code>modelOverrides</code> で直す。</p>
       <pre><code>{ "modelOverrides": { "pgx/qwen3.8-flash-next": { "contextWindow": 262144, "maxOutput": 32000 } } }</code></pre>
 
       <h3 id="chatgpt">ChatGPTプラン</h3>
@@ -439,10 +440,10 @@ sasacode -m pgx/&lt;モデル名&gt;</code></pre>
         <li>確認の画面で <kbd>esc</kbd> を押すと、その呼び出しを拒否して実行全体を中断する。「代わりの指示を伝える」の入力中の <kbd>esc</kbd> は、選択肢に戻る。確認するコマンドが画面に収まらないときは、<kbd>shift+↑↓</kbd> で全文をスクロールできる（選択肢はいつも表示したまま）。</li>
       </ul>
 
-      <h3 id="jev">Jevによる判定（配布プラグイン <code>jev-guard</code>）</h3>
-      <p>判断専用モデルJevに、呼び出しが安全かを確率で答えさせ、上の <code>permission</code> フックで判定を変えるプラグイン。0.9.5 までは同梱していたが、既定で無効でキーも要るので、配布プラグインに分けた。入れた後はTUIで <code>/jev on</code> と打てばそのセッションで有効になり（<code>/jev off</code> で無効。<code>/resume</code> 後も保たれる）、いつも使うなら設定に書く。0.9.5 までの設定はそのまま使え、設定があるのにプラグインが入っていなければ起動時に入れ方を知らせる。</p>
-      <pre><code>sasacode plugin install sasacode-plugin-jev-guard</code></pre>
+      <h3 id="jev">Jevによる判定（同梱・既定で無効の <code>jev-guard</code>）</h3>
+      <p>判断専用モデルJevに、呼び出しが安全かを確率で答えさせ、上の <code>permission</code> フックで判定を変えるプラグイン。既定で無効でキーも要るので、0.9.6 から 0.15 までは別に入れるプラグインだった。0.20 から再び同梱し、既定では読み込まない。いつも使うなら設定に次のとおり書く（これまでの設定がそのまま使える）。</p>
       <pre><code>{ "plugins": { "settings": { "jev-guard": { "enabled": true } } } }</code></pre>
+      <p><code>"plugins": { "enabled": ["jev-guard"] }</code> と書いた場合は、読み込むだけで判定は止まったまま。TUIで <code>/jev on</code> と打てば、そのセッションで有効になる（<code>/jev off</code> で無効。<code>/resume</code> 後も保たれる）。</p>
       <div class="tbl"><table>
         <tr><th>元の判定</th><th>Jevが「安全」</th><th>Jevが「要確認」</th><th>Jevが「危険」</th></tr>
         <tr><td>許可（allowルール・autoモード）</td><td class="yes">許可</td><td>確認</td><td class="no-c">拒否</td></tr>
@@ -461,18 +462,17 @@ sasacode -m pgx/&lt;モデル名&gt;</code></pre>
         <tr><th>プロジェクトの設定</th><th>信頼なしで使う</th></tr>
         <tr><td><code>model</code>（全体の設定にあるプロバイダー）、<code>models</code>、<code>thinking</code>、<code>instructions</code></td><td class="yes">使う</td></tr>
         <tr><td>deny / askルールの追加、ツールの無効化、より厳しい権限モード、小さい <code>maxTurns</code>・<code>maxRetries</code>、<code>toolSearch</code>、<code>tui</code></td><td class="yes">使う</td></tr>
-        <tr><td><code>.sasacode/plugins</code> のプラグイン</td><td class="no-c">信頼が必要</td></tr>
         <tr><td><code>providers</code>（エンドポイント）、<code>modelOverrides</code>、<code>mcpServers</code></td><td class="no-c">信頼が必要</td></tr>
-        <tr><td><code>plugins</code>（無効化と設定）、<code>allow</code> ルール、緩い権限モード、大きい上限、プロジェクトにしかないプロバイダーを指す <code>model</code></td><td class="no-c">信頼が必要</td></tr>
+        <tr><td><code>plugins</code>（有効化・無効化と設定）、<code>allow</code> ルール、緩い権限モード、大きい上限、プロジェクトにしかないプロバイダーを指す <code>model</code>・<code>models</code>・<code>judgeModel</code></td><td class="no-c">信頼が必要</td></tr>
         <tr><td><code>trustedProjects</code></td><td>全体の設定でしか読まない</td></tr>
       </table></div>
-      <p>答えは <code>~/.sasacode/trust.json</code> に保存し、上の設定かプラグインのコードが変わったら、また尋ねる。全体の設定の <code>trustedProjects</code> に入れたプロジェクトは尋ねずに信頼する。</p>
+      <p>答えは <code>~/.sasacode/trust.json</code> に保存し、上の設定が変わったら、また尋ねる。全体の設定の <code>trustedProjects</code> に入れたプロジェクトは尋ねずに信頼する。0.15 までは <code>.sasacode/plugins</code> のプラグインも信頼の対象だったが、0.20 からはそのフォルダを読み込まないので、対象から外した。</p>
     </section>
 
     <!-- ─────────────────────────────────────────────── -->
     <section id="config">
       <h2><span class="no">06</span>設定リファレンス</h2>
-      <p><code>~/.sasacode/config.json</code>（全体）と <code>&lt;project&gt;/.sasacode/config.json</code>（プロジェクト）を合わせ、プロジェクトが優先する。権限ルールと <code>disabled</code> の配列は両方を合わせるので、全体のdenyや無効化をプロジェクトから消すことはできない。型の合わない値と未知のキーは、警告を出して無視する。</p>
+      <p><code>~/.sasacode/config.json</code>（全体）と <code>&lt;project&gt;/.sasacode/config.json</code>（プロジェクト）を合わせ、プロジェクトが優先する。権限ルールと <code>disabled</code>、<code>plugins.enabled</code> の配列は両方を合わせるので、全体のdenyや無効化をプロジェクトから消すことはできない。型の合わない値と未知のキーは、警告を出して無視する。</p>
       <div class="tbl"><table>
         <tr><th>キー</th><th>型・既定</th><th>内容</th></tr>
         <tr><td><code>model</code></td><td>文字列</td><td>起動時のモデル（<code>provider/model</code>）</td></tr>
@@ -485,10 +485,11 @@ sasacode -m pgx/&lt;モデル名&gt;</code></pre>
         <tr><td><code>instructions</code></td><td>文字列</td><td>システムプロンプトに足す文。実行ごとに足したいときは <code>--append-system-prompt-file &lt;path&gt;</code>（ファイルの中身を、この後ろに足す）</td></tr>
         <tr><td><code>maxTurns</code></td><td><code>200</code></td><td>1回の依頼でモデルに送るリクエストの上限（0 で無制限）</td></tr>
         <tr><td><code>maxRetries</code></td><td><code>8</code></td><td>APIエラー（429・5xx）の再試行の回数（最大 20）</td></tr>
-        <tr><td><code>plugins.disabled</code></td><td>配列</td><td>読み込まないプラグイン（同梱も含む）</td></tr>
+        <tr><td><code>plugins.enabled</code></td><td>配列</td><td>既定で無効の同梱プラグインを読み込む（<a href="#enable">既定で無効のプラグイン</a>）</td></tr>
+        <tr><td><code>plugins.disabled</code></td><td>配列</td><td>読み込まないプラグイン。<code>plugins.enabled</code> にも書いてあれば、こちらが優先する</td></tr>
         <tr><td><code>plugins.settings.&lt;name&gt;</code></td><td>オブジェクト</td><td>プラグインに渡す設定（<a href="#bundled">同梱プラグインの設定</a>）</td></tr>
         <tr><td><code>tools.disabled</code></td><td>配列</td><td>使わないツール（組み込みも含む）</td></tr>
-        <tr><td><code>mcpServers.&lt;name&gt;</code></td><td>オブジェクト</td><td class="brk">stdio：<code>command</code>、<code>args</code>、<code>env</code>、<code>cwd</code> ／ HTTP：<code>url</code>、<code>headers</code>。共通：<code>disabled</code>、<code>alwaysLoad</code>。<code>${VAR}</code> は環境変数から展開</td></tr>
+        <tr><td><code>mcpServers.&lt;name&gt;</code></td><td>オブジェクト</td><td class="brk">stdio：<code>command</code>、<code>args</code>、<code>env</code>、<code>cwd</code> ／ HTTP：<code>url</code>、<code>headers</code>。共通：<code>disabled</code>、<code>alwaysLoad</code>、<code>timeout</code>、<code>toolNames</code>。<code>${VAR}</code> は環境変数から展開（<a href="#mcp">MCPサーバー</a>）</td></tr>
         <tr><td><code>toolSearch</code></td><td><code>{"mode":"auto","percent":10,"count":30}</code></td><td class="brk">MCPとプラグインのツール定義が、コンテキストの <code>percent</code>% 以上か <code>count</code> 個以上で遅延ロードにする。<code>mode</code> は <code>auto</code> / <code>always</code> / <code>never</code></td></tr>
         <tr><td><code>tui.altScreen</code> / <code>tui.bell</code></td><td><code>true</code> / <code>true</code></td><td>全画面 / 長い実行の後のベル</td></tr>
         <tr><td><code>trustedProjects</code></td><td>配列（全体の設定のみ）</td><td>尋ねずに信頼するプロジェクト</td></tr>
@@ -501,7 +502,6 @@ sasacode -m pgx/&lt;モデル名&gt;</code></pre>
         <tr><td><code>SASACODE_HOME</code></td><td><code>~/.sasacode</code> の代わりに使う場所</td></tr>
         <tr><td><code>SASACODE_VERSION</code> / <code>SASACODE_INSTALL_DIR</code></td><td>インストーラー：版の固定 / 置き場所</td></tr>
         <tr><td><code>SASACODE_AMBIGUOUS_WIDTH</code></td><td>幅の曖昧な文字を 1 か 2 マスとして数える</td></tr>
-        <tr><td><code>SASACODE_PLUGIN_INDEX</code> / <code>SASACODE_NPM_REGISTRY</code></td><td><code>plugin search</code> のおすすめ一覧のURL / npmのレジストリ</td></tr>
         <tr><td>各プロバイダーのキー</td><td><code>ANTHROPIC_API_KEY</code>、<code>OPENAI_API_KEY</code>、<code>OPENROUTER_API_KEY</code>、<code>CMD_API_KEY</code> など</td></tr>
       </table></div>
 
@@ -515,21 +515,19 @@ sasacode -m pgx/&lt;モデル名&gt;</code></pre>
 ├── codex-auth.json         <span class="d"># ChatGPT プランの認証情報（本人だけが読める）</span>
 ├── history.jsonl           <span class="d"># 入力履歴</span>
 ├── sessions/&lt;dir&gt;-&lt;hash&gt;/&lt;日時&gt;_&lt;id&gt;.jsonl   <span class="d"># セッション</span>
-├── plugins/                <span class="d"># プラグイン（.ts 1ファイル、フォルダ、npm で入れたもの）</span>
 ├── skills/&lt;name&gt;/SKILL.md  <span class="d"># Skills</span>
-├── background-sessions/    <span class="d"># バックグラウンドジョブの出力と状態</span>
-└── publish/                <span class="d"># plugin publish が組み立てたパッケージ</span>
+├── builtin-skills/         <span class="d"># 組み込みのSkill（起動時に書き出す）</span>
+└── background-sessions/    <span class="d"># バックグラウンドジョブの出力と状態</span>
 
 &lt;project&gt;/.sasacode/
 ├── config.json             <span class="d"># プロジェクトの設定</span>
-├── plugins/                <span class="d"># プロジェクトのプラグイン（信頼が必要）</span>
 └── skills/</div>
     </section>
 
     <!-- ─────────────────────────────────────────────── -->
     <section id="bundled">
       <h2><span class="no">07</span>同梱プラグインと設定</h2>
-      <p>設定は <code>plugins.settings.&lt;名前&gt;</code> に書く。どれも <code>plugins.disabled</code> で外せ、<code>~/.sasacode/plugins</code> やプロジェクトに同じ名前のプラグインがあれば、同梱版の代わりにそちらを読み込む。</p>
+      <p>設定は <code>plugins.settings.&lt;名前&gt;</code> に書く。どれも <code>plugins.disabled</code> で外せる。既定で無効のものは <code>plugins.enabled</code> で読み込む（<a href="#enable">既定で無効のプラグイン</a>）。0.15 まで <code>~/.sasacode/plugins</code> やプロジェクトの <code>.sasacode/plugins</code> に置いたプラグインは読み込まず、同じ名前のプラグインで同梱版を置き換える仕組みもなくなった。</p>
       <pre><code>{ "plugins": { "settings": { "compaction": { "threshold": 0.7 }, "loop-guard": { "noProgressTurns": 0 } } } }</code></pre>
 
       <h3 id="p-small">小型モデル向けの修復と抑止</h3>
@@ -604,10 +602,10 @@ sasacode -m pgx/&lt;モデル名&gt;</code></pre>
         <tr><td><code>browsr</code></td><td><code>command</code>、<code>mode</code>、<code>config</code></td><td><a href="https://github.com/sasanokusa/browsr-4-agent">browsr-4-agent</a> で検索（<code>search</code>）と本文の閲覧（<code>open</code>）。<code>browsr-agent</code> がPATHにあれば自動で起動。別の場所なら <code>command</code> で指定</td></tr>
       </table></div>
 
-      <h3 id="p-jev">Jev（配布プラグイン <code>jev-guard</code>）の設定</h3>
+      <h3 id="p-jev">Jev（<code>jev-guard</code>）の設定</h3>
       <div class="tbl"><table>
         <tr><th>設定</th><th>既定</th><th>内容</th></tr>
-        <tr><td><code>enabled</code></td><td><code>false</code></td><td>有効にする</td></tr>
+        <tr><td><code>enabled</code></td><td><code>false</code></td><td>有効にする（<code>plugins.enabled</code> に書かなくても読み込む）</td></tr>
         <tr><td><code>backend</code></td><td>キーのある方</td><td class="brk"><code>commandcode</code>（<code>CMD_API_KEY</code>）、<code>typesafe</code>（<code>TYPESAFE_API_KEY</code>）、<code>openrouter</code>、<code>vercel</code>、<code>chat</code>（sasacodeの任意のモデル）。OpenRouterとVercelは名前を指定したときだけ使う</td></tr>
         <tr><td><code>model</code> / <code>endpoint</code> / <code>apiKeyEnv</code></td><td>接続先ごと</td><td>モデル名 / URL / キーの変数を変える（プロキシなど）</td></tr>
         <tr><td><code>timeoutMs</code></td><td><code>5000</code>（<code>chat</code> は 60000）</td><td>これを超えたらJevなしの判定で続ける</td></tr>
@@ -618,78 +616,85 @@ sasacode -m pgx/&lt;モデル名&gt;</code></pre>
 
     <!-- ─────────────────────────────────────────────── -->
     <section id="plugins">
-      <h2><span class="no">08</span>プラグイン</h2>
-
-      <h3 id="share">探す・入れる・公開する</h3>
+      <h2><span class="no">08</span>拡張のしかた</h2>
+      <p class="lead">0.20 からは外部のプラグインを読み込まない。自分で機能を足すには、コードを動かすツールならMCPサーバー、手順や知識ならAgent Skills（<code>SKILL.md</code>）を使う。同梱プラグインは、設定で外したり、既定で無効のものを有効にしたりできる。</p>
       <figure>
         <div class="pipe">
-          <div class="col"><h5>公開する人</h5><ul>
-            <li><code>sasacode plugin publish my-tool.ts --license MIT</code></li>
-            <li>package.json・READMEを組み立てて <code>npm publish</code></li>
-            <li>キーワード <code>sasacode-plugin</code> が付く</li>
+          <div class="col"><h5>MCPサーバー</h5><ul>
+            <li>コードを動かすツール</li>
+            <li>設定の <code>mcpServers</code> に書く</li>
+            <li>stdioのサーバーなら言語は問わない</li>
           </ul></div>
-          <div class="col"><h5>置き場所</h5><ul>
-            <li><b>npm</b>：プラグインの本体</li>
-            <li><b>GitHub</b>：gitで配るもの</li>
-            <li><b>sasanokusa.com/sasacode/plugins.json</b>：おすすめの一覧だけ（数KB）</li>
+          <div class="col"><h5>Skills</h5><ul>
+            <li>手順や知識</li>
+            <li><code>SKILL.md</code> を決まったフォルダに置く</li>
+            <li>本文はモデルが必要なときに読む</li>
           </ul></div>
-          <div class="col"><h5>使う人</h5><ul>
-            <li><code>sasacode plugin search 語</code>：一覧（★）とnpmから</li>
-            <li><code>sasacode plugin install 名前</code>：中身を見て確認してから</li>
-            <li><code>sasacode plugin update</code>：最新へ</li>
+          <div class="col"><h5>同梱プラグイン</h5><ul>
+            <li>sasacodeに入っているもの</li>
+            <li><code>plugins.enabled</code> / <code>plugins.disabled</code> で入れ外し</li>
+            <li><code>plugins.settings</code> で設定</li>
           </ul></div>
         </div>
-        <figcaption>サーバーを通るのは一覧のJSONだけ。本体はnpmやGitHubから直接取る。</figcaption>
+        <figcaption>外から足せるのはMCPサーバーとSkillsだけ。プラグインはsasacodeのソースの中にしかない。</figcaption>
       </figure>
+      <div class="note"><b>0.15 からの変更</b><code>~/.sasacode/plugins</code> とプロジェクトの <code>.sasacode/plugins</code> は読み込まない。<code>sasacode plugin</code>（search / install / update / remove / list / publish）もなくなり、実行すると、既定で無効の同梱プラグインは <code>plugins.enabled</code> で有効にすることと、ツールはMCPサーバーかSkillsで足すことを示して、エラーで終わる。npmの <code>@sasacode/plugin-api</code> も公開しない。</div>
 
-      <pre><code>sasacode plugin search                      <span class="c"># 全部</span>
-sasacode plugin search 天気                  <span class="c"># 語で絞る</span>
-sasacode plugin install sasacode-plugin-foo  <span class="c"># npm</span>
-sasacode plugin install https://github.com/you/plugin   <span class="c"># git</span>
-sasacode plugin install ./my-plugin          <span class="c"># 手元のパッケージ（公開前の確認）</span>
-sasacode plugin install foo --project        <span class="c"># このプロジェクトの .sasacode/plugins へ</span>
-sasacode plugin update [名前]
-sasacode plugin list
-sasacode plugin remove &lt;名前&gt;</code></pre>
-
-      <h4>入れる前に見せるもの</h4>
+      <h3 id="mcp">MCPサーバー</h3>
+      <p><code>~/.sasacode/config.json</code> か、プロジェクトの <code>.sasacode/config.json</code> の <code>mcpServers</code> に、サーバーの名前ごとに書く。</p>
+      <pre><code>{
+  "mcpServers": {
+    "github": { "command": "npx", "args": ["-y", "@modelcontextprotocol/server-github"], "env": { "GITHUB_TOKEN": "${GITHUB_TOKEN}" } },
+    "remote": { "url": "https://example.com/mcp", "headers": { "Authorization": "Bearer ${REMOTE_TOKEN}" }, "timeout": 60000 }
+  }
+}</code></pre>
       <ul>
-        <li><b>npm</b>：版、説明、公開者と公開日、ファイル数と大きさ、依存パッケージ、installスクリプトの有無（実行はしない）、<code>sasacode</code> フィールドの有無、ソースのリポジトリ。</li>
-        <li><b>git</b>：URL。入れた後にコミットを出す。<code>update</code> では新しいコミットの一覧と変更の規模を見せてから更新する。</li>
-        <li>端末がない（スクリプトから実行する）ときは <code>--yes</code> が要る。</li>
+        <li>stdio（<code>command</code>・<code>args</code>・<code>env</code>・<code>cwd</code>）とStreamable HTTP（<code>url</code>・<code>headers</code>）に対応。<code>${VAR}</code> は起動時に環境変数から展開する。stdioのサーバーなら言語は問わない。</li>
+        <li>ツール名は <code>mcp__&lt;server&gt;__&lt;tool&gt;</code>、promptsはスラッシュコマンドになる。ツールは通常のツールと同じ権限確認とフックを通り、editsモードでも実行の前に確認する（allowルールで許可できる）。</li>
+        <li>接続はバックグラウンドで行うので、起動を待たせない（ヘッドレスでは接続を待ってから最初のリクエストを送る）。落ちたサーバーは数回まで自動で再接続する（<code>/mcp reconnect [name]</code> で手動）。</li>
+        <li>プロジェクトの設定に書いたサーバーは、プロジェクトを信頼するまで起動しない（<a href="#trust">プロジェクトの信頼</a>）。</li>
+        <li>ツールが多いとき（定義がコンテキストの 10% 以上か 30 個以上）は、<code>tool_search</code> で必要なものだけ読み込ませる。</li>
       </ul>
-      <div class="warn"><b>注意</b>プラグインはsasacodeと同じ権限で動く。コードを読むか、信頼できる作者のものだけを入れる。</div>
+      <p>サーバーごとの <code>disabled</code>、<code>alwaysLoad</code>、<code>timeout</code>、<code>toolNames</code> は <a href="https://github.com/sasanokusa/sasacode/blob/main/docs/plugins.md">docs/plugins.md</a>。</p>
 
-      <h4>公開する</h4>
-      <pre><code>sasacode plugin publish my-tool.ts --license MIT --dry-run   <span class="c"># 中身の確認</span>
-sasacode plugin publish my-tool.ts --license MIT             <span class="c"># 公開（npm へのログインが必要）</span></code></pre>
+      <h3 id="skills">Skills</h3>
+      <p>標準のAgent Skills形式のフォルダを、次の順に読む。同じ名前のSkillは、後から読んだものが優先する。</p>
+      <ol>
+        <li>組み込みのSkill（<code>~/.sasacode/builtin-skills</code>。起動時に書き出す。いまは <code>tool-authoring</code>）</li>
+        <li><code>~/.sasacode/skills/&lt;フォルダ&gt;/SKILL.md</code></li>
+        <li>プロジェクトの <code>.sasacode/skills/&lt;フォルダ&gt;/SKILL.md</code></li>
+      </ol>
+      <pre><code>---
+name: release-notes
+description: Write release notes from the commits since the last tag.
+---
+
+1. `git describe --tags --abbrev=0`で前のタグを調べる。
+2. …</code></pre>
+      <ul>
+        <li>使うのはfrontmatterの <code>name</code> と <code>description</code> だけで、どちらかが空のフォルダは読まない。ほかのキーは読み飛ばす。</li>
+        <li>システムプロンプトには名前・説明・<code>SKILL.md</code> のパスだけを載せ、本文はモデルが必要なときにreadツールで読む。</li>
+        <li><code>/skill:&lt;name&gt; [依頼]</code> で明示的に使わせる。<code>/skills</code> で一覧。プロジェクトのSkillは信頼の確認なしで読む。</li>
+        <li>0.15 まで読んでいたプラグインの <code>skills</code> ディレクトリは、0.20 からはない。</li>
+      </ul>
+      <p>組み込みのSkillを使えば、MCPサーバーやSkillをモデルに書かせることもできる（<code>/skill:tool-authoring 天気を返すツールを作って</code>）。</p>
+
+      <h3 id="enable">既定で無効の同梱プラグイン</h3>
+      <p>次の6つも同梱しているが、既定では読み込まない（0.15 までは別に入れるプラグインだった）。<code>plugins.enabled</code> に名前を書くと読み込む。<code>plugins.disabled</code> にも書いてあれば、そちらが優先する。名前も設定も当時のままなので、それまでの <code>plugins.settings</code> がそのまま使える。</p>
+      <pre><code>{ "plugins": { "enabled": ["git-context", "project-checks"] } }</code></pre>
       <div class="tbl"><table>
-        <tr><th>オプション</th><th>既定</th><th>内容</th></tr>
-        <tr><td><code>--name</code></td><td><code>sasacode-plugin-&lt;ファイル名&gt;</code></td><td>パッケージ名（<code>@you/my-tool</code> も可）</td></tr>
-        <tr><td><code>--version</code></td><td>npmの最新版の次のパッチ（初回 0.1.0）</td><td>版</td></tr>
-        <tr><td><code>--api</code></td><td>使っている機能から</td><td>対応するプラグインAPI（<code>permission</code> フックなら ^1.7.0 など）</td></tr>
-        <tr><td><code>--description</code></td><td>ファイル先頭のコメント</td><td>説明文</td></tr>
-        <tr><td><code>--license</code></td><td>なし</td><td>付けないと、ほかの人は再利用できない</td></tr>
-        <tr><td><code>--otp</code></td><td>その場で聞かれる</td><td>npmの2段階認証のコード</td></tr>
+        <tr><th>プラグイン</th><th>内容</th></tr>
+        <tr><td><code>ask-user</code></td><td><code>ask_user</code> ツール。モデルが推測で進めずに、選択肢つきの質問（1回に1〜4問）であなたに判断を仰ぐ。ヘッドレスでは尋ねず、モデルに自分で決めて前提を書くよう返す</td></tr>
+        <tr><td><code>git-context</code></td><td><code>git_context</code> ツール。レビューに要るGitの状態・変更の統計・パッチを、1回の呼び出しで返す。読み取りだけで、Gitが要る</td></tr>
+        <tr><td><code>project-checks</code></td><td><code>project_checks</code>・<code>project_check</code> ツールと <code>/checks</code>。テスト・lint・型検査などを名前で実行し、PASS / FAIL、終了コード、時間、ログを返す。bashと同じ権限ルールで判定する</td></tr>
+        <tr><td><code>workflows</code></td><td><code>/workflow</code>。レビュー・失敗の調査・公開前の確認など、繰り返し使う依頼を呼び出す。設定で足す・上書きする・外すことができる</td></tr>
+        <tr><td><code>jev-guard</code></td><td class="brk">実行前のツール呼び出しをJevに判定させる（<a href="#jev">Jevによる判定</a>）。<code>plugins.settings["jev-guard"].enabled: true</code> でも読み込む</td></tr>
+        <tr><td><code>free-search</code></td><td class="brk">MCPサーバー <code>uvx free-search-mcp</code> を <code>free-search</code> という名前でつなぐ（キー不要でローカルで動くWeb検索）。ツールは <code>mcp__free-search__&lt;tool&gt;</code> になる。<a href="https://docs.astral.sh/uv/">uv</a> が要る</td></tr>
       </table></div>
-      <p>ほかのファイルをimportしているプラグインは、<code>package.json</code> に <code>sasacode</code> フィールドを書いたフォルダごと <code>sasacode plugin publish &lt;フォルダ&gt;</code> で出す。おすすめ一覧に載せたいときは、<a href="https://github.com/sasanokusa/sasacode/blob/main/site/plugins.json">site/plugins.json</a> に1件足すpull requestを送る。</p>
-      <pre><code>{ "name": "my-tool", "source": "sasacode-plugin-my-tool", "description": "何をするか", "author": "you" }</code></pre>
+      <p>プロジェクトの設定に書いた <code>plugins.enabled</code> は、プロジェクトを信頼するまで使わない（<a href="#trust">プロジェクトの信頼</a>）。それぞれの設定は <a href="https://github.com/sasanokusa/sasacode/blob/main/docs/plugins.md">docs/plugins.md</a>。</p>
 
-      <h3 id="write">書く</h3>
-      <p><code>~/.sasacode/plugins/hello.ts</code> に置くだけで読み込む（ビルド不要）。<code>@sasacode/plugin-api</code> は入れなくてもimportできる（型補完が欲しければ <code>npm i -D @sasacode/plugin-api</code>）。</p>
-      <pre><code><span class="k">import</span> { text, type Plugin } <span class="k">from</span> "@sasacode/plugin-api";
-
-<span class="k">export default</span> ((api) =&gt; {
-  api.registerTool({
-    name: "hello",
-    description: "Greet someone by name.",
-    parameters: { type: "object", properties: { name: { type: "string" } }, required: ["name"] },
-    kind: "read",
-    execute: <span class="k">async</span> ({ name }) =&gt; ({ content: [text(`Hello, ${name}!`)] }),
-  });
-  api.registerCommand({ name: "hello", description: "挨拶する", run: ({ args }) =&gt; api.ui.notify(`こんにちは ${args}`) });
-}) satisfies Plugin;</code></pre>
-      <p>組み込みのSkillを使えば、モデルに書かせることもできる（<code>/skill:tool-authoring 天気を返すツールを作って</code>）。</p>
+      <h3 id="write">同梱プラグインを書く（開発者向け）</h3>
+      <p>同梱プラグインは <a href="https://github.com/sasanokusa/sasacode/tree/main/crates/sasacode-bundled/src">crates/sasacode-bundled/src</a> のRustのモジュールで、<code>sasacode-plugin-api</code> の <code>PluginApi</code> だけを通して登録する。外部のプラグインはないので、このAPIは公開しない内部のAPIで、版ごとの互換も約束しない。足すときは <code>crates/sasacode-bundled/src/lib.rs</code> の <code>PLUGINS</code> に加える（既定で読み込むなら <code>on(…)</code>、既定で無効なら <code>off(…)</code>）。並びが読み込みの順で、フックもこの順に呼ばれる。</p>
 
       <h4 id="hooks">フックの順序</h4>
       <figure>
@@ -705,33 +710,7 @@ sasacode plugin publish my-tool.ts --license MIT             <span class="c"># �
         </div>
         <figcaption>ほかにsession_start / session_end、context_limit。サブエージェントはsystem_prompt〜tool_resultを共有し、セッション系のフックは呼ばれない。</figcaption>
       </figure>
-
-      <h4>APIの版</h4>
-      <div class="tbl"><table>
-        <tr><th>版</th><th>追加されたもの</th></tr>
-        <tr><td>1.0</td><td>ツール、コマンド、プロバイダー、基本のフック、ui / session / agent</td></tr>
-        <tr><td>1.1</td><td><code>ready(promise)</code></td></tr>
-        <tr><td>1.2</td><td><code>stream_delta</code>、<code>assistant_message</code>、<code>tool_call_raw</code>、サンプリングの変更</td></tr>
-        <tr><td>1.3</td><td>コマンドの引数の補完</td></tr>
-        <tr><td>1.4</td><td>実行されなかった呼び出しの <code>tool_result</code>、<code>turn_end</code> の <code>stop</code>。<b>ここで締め切り</b>、以後 1.xは追加だけ</td></tr>
-        <tr><td>1.5</td><td><code>Provider.listModels</code>、<code>Request.fetch</code></td></tr>
-        <tr><td>1.6</td><td>ツールの <code>permissionsAs</code></td></tr>
-        <tr><td>1.7</td><td><code>permission</code> フック、<code>softDeny</code></td></tr>
-      </table></div>
-      <p>マニフェスト、APIの全項目、互換性の約束は <a href="https://github.com/sasanokusa/sasacode/blob/main/docs/plugins.md">docs/plugins.md</a>。</p>
-
-      <h3 id="mcp">MCPとSkills</h3>
-      <pre><code>{
-  "mcpServers": {
-    "github": { "command": "npx", "args": ["-y", "@modelcontextprotocol/server-github"], "env": { "GITHUB_TOKEN": "${GITHUB_TOKEN}" } },
-    "remote": { "url": "https://example.com/mcp", "headers": { "Authorization": "Bearer ${REMOTE_TOKEN}" } }
-  }
-}</code></pre>
-      <ul>
-        <li>stdioとStreamable HTTPに対応。ツール名は <code>mcp__&lt;server&gt;__&lt;tool&gt;</code>、promptsはスラッシュコマンドになる。接続はバックグラウンドで行うので、起動を待たせない。</li>
-        <li>Skillsは <code>~/.sasacode/skills/&lt;name&gt;/SKILL.md</code>、<code>.sasacode/skills/</code>、プラグインの <code>skills</code> から読む。システムプロンプトには名前と説明だけを載せ、本文はモデルが必要なときに読む。</li>
-        <li>ツールが多いとき（定義がコンテキストの 10% 以上か 30 個以上）は、<code>tool_search</code> で必要なものだけ読み込ませる。</li>
-      </ul>
+      <p>手順、<code>PluginApi</code> でできること、例は <a href="https://github.com/sasanokusa/sasacode/blob/main/docs/plugins.md">docs/plugins.md</a>。</p>
     </section>
 
     <!-- ─────────────────────────────────────────────── -->
@@ -830,20 +809,16 @@ sasacode -p "…" --permission auto --trust-project   <span class="c"># CI な�
         <p>コンテキスト長が取れないモデルは 128k として扱う。<code>modelOverrides</code> で <code>contextWindow</code> を指定する（<a href="#own-server">自前のサーバー</a>）。</p>
       </div></details>
 
-      <details class="qa"><summary><code>plugin install</code> がスクリプトから動かない</summary><div>
-        <p>入れる前の確認に答える端末がないため。<code>--yes</code> を付ける。</p>
+      <details class="qa"><summary>0.15 で入れたプラグインが読み込まれない・<code>sasacode plugin</code> がエラーになる</summary><div>
+        <p>0.20 からは外部のプラグインを読み込まず、<code>sasacode plugin</code> もなくなった。<code>ask-user</code>、<code>git-context</code>、<code>project-checks</code>、<code>workflows</code>、<code>jev-guard</code>、<code>free-search</code> は同梱になったので、<code>plugins.enabled</code> に名前を書けば、それまでの設定のまま使える（<a href="#enable">既定で無効の同梱プラグイン</a>）。それ以外のツールはMCPサーバーに、手順はSkillにする（<a href="#plugins">拡張のしかた</a>）。</p>
       </div></details>
 
-      <details class="qa"><summary><code>plugin publish</code> が 404 やEOTPで失敗する</summary><div>
-        <p><b>404</b>：npmのログインが切れている。<code>npm whoami</code> で確かめ、<code>npm login</code> し直す（npmは権限のない相手に 404 を返す）。<br><b>EOTP</b>：2段階認証のコードが要る。その場で聞かれるので入力するか、<code>--otp &lt;コード&gt;</code> を付ける（0.9.4 以降）。</p>
-      </div></details>
-
-      <details class="qa"><summary>プロジェクトのプラグインや設定が効かない</summary><div>
+      <details class="qa"><summary>プロジェクトの設定やMCPサーバーが効かない</summary><div>
         <p>プロジェクトを信頼していない可能性がある。起動時の確認で信頼するか、ヘッドレスなら <code>--trust-project</code>、いつも使うなら全体の設定の <code>trustedProjects</code> に入れる（<a href="#trust">プロジェクトの信頼</a>）。</p>
       </div></details>
 
       <details class="qa"><summary>同梱プラグインを自分で改造したい</summary><div>
-        <p>同じ名前のプラグインを <code>~/.sasacode/plugins</code> に置くと、同梱版の代わりにそちらを読み込む。同梱版のソースは <a href="https://github.com/sasanokusa/sasacode/tree/main/packages/bundled/src">packages/bundled/src</a>。</p>
+        <p>0.20 からは、同じ名前のプラグインを置いて同梱版を置き換えることはできない。同梱のツールを別のものにしたいなら、<code>plugins.disabled</code> や <code>tools.disabled</code> で外して、代わりのツールをMCPサーバーで足す。ループに関わる振る舞い（修復、圧縮など）を変えるなら、ソース（<a href="https://github.com/sasanokusa/sasacode/tree/main/crates/sasacode-bundled/src">crates/sasacode-bundled/src</a>）を直してビルドする（<a href="#write">同梱プラグインを書く</a>）。</p>
       </div></details>
 
       <details class="qa"><summary>ネットワークが切れて止まった・サーバーのエラー（503 など）で止まった</summary><div>

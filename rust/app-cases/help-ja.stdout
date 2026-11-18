@@ -1,0 +1,35 @@
+sasacode — 小さく、プラグインで組み替えられるコーディングエージェント
+
+使い方:
+  sasacode [prompt]              対話セッション（最初のプロンプトは省略可）
+  sasacode -p "<prompt>"         ヘッドレスで実行し、答えを表示
+
+オプション:
+  -p, --print <prompt>           ヘッドレスモード（パイプした stdin は後ろに付く）
+      --stdin                    -p と併用: パイプ入力をどれだけ待っても読む
+      --output <text|jsonl>      ヘッドレス出力の形式（既定 text）
+      --control stdio            -p --output jsonl と併用: 親プロセスが stdin に JSON Lines を送り、
+                                 承認への答え・メッセージ・中断を伝える（stdin はプロンプトに付かない）
+  -m, --model <provider/model>   例 anthropic/claude-opus-5, openai/gpt-5.5, ollama/gemma4:e4b
+                                 （TUI の /model がプロバイダーの提供一覧を表示）
+      --permission <mode>        edits | ask | agent | auto（既定 edits）
+      --thinking <level>         off | low | medium | high | xhigh | max
+      --max-turns <n>            1回の実行のターン数上限（既定 200、0 で無制限）
+  -c, --continue                 このディレクトリの直近のセッションを再開
+  -r, --resume <id>              セッション ID を指定して再開
+      --no-session               このセッションを保存しない
+      --append-system-prompt-file <path>
+                                 ファイルの中身を、config の instructions の後ろにシステムプロンプトとして足す
+      --trust-project            このプロジェクトのエンドポイント、MCP サーバー、プラグインの設定、
+                                 権限設定を確認なしで信頼する
+
+サブコマンド:
+  sasacode endpoint add <name> <url> [--key-env VAR] [--project]   サーバーを追加（形式は自動判別）
+  sasacode endpoint remove <name> [--project]
+  sasacode endpoint list
+  sasacode login [status|logout]    API キーの代わりに ChatGPT プランを使う（openai-codex/… のモデル用）
+  sasacode update [--check] [tag]   最新リリースをダウンロードしてインストール（チェックサム検証つき）
+  sasacode web-search install [tag] web_search ツール用の RustXNG を入れる（チェックサム検証つき）
+  sasacode gui [folder]             フォルダをデスクトップGUIで開く（sasacode-guiが要る。docs/gui.md）
+  -h, --help
+  -v, --version
