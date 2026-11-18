@@ -1690,9 +1690,15 @@ impl App {
             let _ = tx.send(a);
         });
         // Esc stops the run, as anywhere else while the agent works; the call itself is refused
-        // (the dialog closes without an answer, which is a deny).
+        // (the dialog closes without an answer, which is a deny). The run is stopped here, before
+        // the dialog closes: had the deny reached the agent first, it could send the next request
+        // before `interrupt` (which runs later, on the app) stopped it.
         let h = self.handle.clone();
-        let interrupt = Box::new(move || h.send(|app| app.interrupt()));
+        let agent = self.agent.clone();
+        let interrupt = Box::new(move || {
+            agent.abort();
+            h.send(|app| app.interrupt());
+        });
         Some(Shown::Dialog(Box::new(ApprovalDialog::new(
             &req,
             &summary,
