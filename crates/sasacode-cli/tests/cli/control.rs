@@ -434,15 +434,21 @@ fn abort_with_a_call_id_stops_that_call_alone_its_result_is_an_error_and_the_run
         config: json!({ "permissions": { "mode": "auto" } }),
         ..Run::default()
     };
+    let mut arrived = Vec::new();
     let d = drive_with(vec![bash("sleep 20"), Reply::text("carried on")], run, |e, ch| {
         if e["type"] == "tool_start" {
             ch.send(json!({ "type": "abort", "callId": e["call"]["id"] }));
         }
+        if e["type"] == "tool_end" || e["type"] == "agent_end" {
+            arrived.push((e["type"].to_string(), started.elapsed()));
+        }
     });
-    // What the parent was told and what the call ended with, should it run its full 20 s.
+    // What the parent was told, what the call ended with and when the run's last lines came,
+    // should it run its full 20 s.
     let seen = (
         d.of("control_error"),
         d.of("tool_end").first().map(|e| &e["result"]["details"]),
+        arrived,
     );
     assert!(
         started.elapsed() < Duration::from_secs(10),
