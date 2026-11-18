@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 use sasacode_agent::agent::{Agent, AgentOptions};
 use sasacode_agent::plugins::{PluginHost, PluginHostOptions};
 use sasacode_ai::{AssistantMessage, Message, register_api};
-use sasacode_bundled::write_guard::strip_line_numbers;
+use sasacode_bundled::write_guard::{strip_line_numbers, strip_padding};
 use sasacode_plugin_api::{Lang, PermissionMode, Tool, ToolContext};
 use sasacode_testing::{ReplayOptions, ReplayProvider};
 use sasacode_tools::ReadTool;
@@ -116,6 +116,61 @@ async fn content_copied_from_read_with_its_line_numbers_written_without_them_and
     assert!(!results[0].is_error);
     // read does not show the final newline, so the content had none.
     assert_eq!(read(&file), text[..text.len() - 1]);
+}
+
+#[tokio::test]
+async fn a_file_written_back_with_only_reads_numbers_and_tabs_taken_off_the_padding_left_on_every_line_is_removed() {
+    let root = temp_dir("sasacode-write-guard-");
+    let file = root.path().join("padded.test.ts");
+    let lines: Vec<String> = (0..30)
+        .map(|i| match i {
+            _ if i % 7 == 3 => String::new(),
+            _ if i % 2 == 1 => format!("  expect({i}).toBe({i});"),
+            _ => format!("test(\"t{i}\", () => {{}});"),
+        })
+        .collect();
+    let text = format!("{}\n", lines.join("\n"));
+    std::fs::write(&file, &text).unwrap();
+    // As Gemma4 e2b sent it (2026-11-11): "     1\t…" became "     …" on every line, one line changed.
+    let changed = text.replacen("toBe(1)", "toBe(2)", 1);
+    let content = changed
+        .split('\n')
+        .map(|l| {
+            if l.is_empty() {
+                l.to_string()
+            } else {
+                format!("     {l}")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let results = run(root.path(), vec![write("1", "padded.test.ts", &content)], json!({})).await;
+    assert!(
+        results[0]
+            .text
+            .contains("removed the 5 spaces every line of content started with"),
+        "{}",
+        results[0].text
+    );
+    assert!(!results[0].is_error);
+    assert_eq!(read(&file), changed);
+}
+
+#[tokio::test]
+async fn a_new_file_or_one_indented_on_purpose_is_written_as_it_is() {
+    let root = temp_dir("sasacode-write-guard-");
+    let yaml = "  - a\n  - b\n  - c\n";
+    std::fs::write(root.path().join("list.yml"), "x: 1\ny: 2\nz: 3\n").unwrap();
+    let results = run(
+        root.path(),
+        vec![write("1", "new.yml", yaml), write("2", "list.yml", yaml)],
+        json!({}),
+    )
+    .await;
+    let texts = results.iter().map(|r| r.text.as_str()).collect::<Vec<_>>().join(",");
+    assert!(!texts.contains("harness repaired"), "{texts}");
+    assert_eq!(read(&root.path().join("new.yml")), yaml);
+    assert_eq!(read(&root.path().join("list.yml")), yaml);
 }
 
 #[tokio::test]
@@ -247,4 +302,26 @@ fn strip_line_numbers_indented_numbers_with_no_tab_anywhere_are_the_files_text_9
         strip_line_numbers("     1\ta\n     2\n     3\tb\n").as_deref(),
         Some("a\n\nb\n")
     ); // a blank line among numbered ones
+}
+
+#[test]
+fn strip_padding_only_spaces_read_could_have_left_beyond_the_files_own_indentation_on_a_file_written_back() {
+    let file = "def f():\n    return 1\n\nprint(f())\n";
+    assert_eq!(
+        strip_padding("     def f():\n         return 1\n\n     print(f())\n", file),
+        Some((file.to_string(), 5))
+    );
+    // A file whose lines all share an indentation keeps it.
+    let nested = "  a: 1\n  b: 2\n  c: 3\n";
+    assert_eq!(
+        strip_padding("     a: 1\n     b: 2\n     c: 3\n", nested),
+        Some((nested.to_string(), 3))
+    );
+    // Not read's padding: more than 5 spaces, a tab, or no extra indentation at all.
+    assert_eq!(strip_padding("        a\n        b\n        c\n", "a\nb\nc\n"), None);
+    assert_eq!(strip_padding("\ta\n\tb\n\tc\n", "a\nb\nc\n"), None);
+    assert_eq!(strip_padding("a\nb\nc\n", "a\nb\nc\n"), None);
+    // New text, not the file written back, or too short to tell: left as the model wrote it.
+    assert_eq!(strip_padding("  x\n  y\n  z\n", "a\nb\nc\n"), None);
+    assert_eq!(strip_padding("  a\n  b\n", "a\nb\n"), None);
 }

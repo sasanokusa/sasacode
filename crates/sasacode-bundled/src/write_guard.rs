@@ -2,7 +2,8 @@
 //! models did in the Gemma4 measurement (#68):
 //! - content copied from read with its line numbers: removed when every line has one and they count
 //!   up one by one (the model is told); refused when most lines have one but not like that (lines
-//!   were dropped or added among them);
+//!   were dropped or added among them); the spaces of read's padding left on every line of a file
+//!   written back without its numbers: removed (the model is told);
 //! - an existing file of `minLines` lines or more replaced by less than half as many (a fragment
 //!   meant as an edit): refused.
 //!
@@ -11,7 +12,7 @@
 //!
 //! settings: { lineNumbers?: boolean, shrink?: boolean (both default true), minLines?: number (default 20) }
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use futures::future::BoxFuture;
@@ -78,6 +79,55 @@ pub fn strip_line_numbers(content: &str) -> Option<String> {
     Some(body.join("\n") + if content.ends_with('\n') { "\n" } else { "" })
 }
 
+/// The leading whitespace every non-blank line shares.
+fn shared_indent<'a>(lines: &[&'a str]) -> &'a str {
+    let mut shared: Option<&'a str> = None;
+    for &l in lines {
+        if l.trim().is_empty() {
+            continue;
+        }
+        let w = &l[..l.len() - l.trim_start_matches([' ', '\t']).len()];
+        shared = Some(match shared {
+            None => w,
+            Some(s) => &s[..s.bytes().zip(w.bytes()).take_while(|(a, b)| a == b).count()],
+        });
+    }
+    shared.unwrap_or("")
+}
+
+/// `content` without what read's padding left on every line when the model took off only its numbers and tabs
+/// ("     1\t…" → "     …", seen with Gemma4 e2b), and how many spaces that was: 1 to 5 spaces that every non-blank
+/// line starts with beyond the indentation all of `file`'s lines share, removed only when at least half of what is
+/// left are lines of `file` (the model wrote the file back), and there are 3 such lines or more; else None.
+pub fn strip_padding(content: &str, file: &str) -> Option<(String, usize)> {
+    let (lines, file_rows) = (rows(content), rows(file));
+    let (have, all) = (shared_indent(&file_rows), shared_indent(&lines));
+    let extra = all.strip_prefix(have).unwrap_or("");
+    if !(1..=5).contains(&extra.len()) || extra.bytes().any(|c| c != b' ') {
+        return None;
+    }
+    let plain: Vec<String> = lines
+        .iter()
+        .map(|l| {
+            l.strip_prefix(all)
+                .map_or_else(|| l.to_string(), |rest| format!("{have}{rest}"))
+        })
+        .collect();
+    let known: HashSet<&str> = file_rows.into_iter().collect();
+    let text: Vec<&str> = plain
+        .iter()
+        .map(String::as_str)
+        .filter(|l| !l.trim().is_empty())
+        .collect();
+    if text.len() < 3 || text.iter().filter(|l| known.contains(*l)).count() * 2 < text.len() {
+        return None;
+    }
+    Some((
+        plain.join("\n") + if content.ends_with('\n') { "\n" } else { "" },
+        extra.len(),
+    ))
+}
+
 /// Lines as read and write count them: a final newline ends the last line, it does not start one.
 fn count(s: &str) -> usize {
     if s.is_empty() { 0 } else { rows(s).len() }
@@ -101,30 +151,66 @@ pub fn plugin(api: PluginApi) -> BoxFuture<'static, anyhow::Result<()>> {
             async { Ok(None) }
         });
 
+        let cwd = api.cwd();
+        let raw_cwd = cwd.clone();
         // After tool-repair (load order): the name and arguments are the repaired ones.
         api.on::<hook::ToolCallRaw, _, _>(move |ev, _c| {
-            let out = match ev.input.get("content") {
-                Some(Value::String(content)) if ev.name == "write" && line_numbers => {
-                    strip_line_numbers(content).map(|plain| {
-                        let n = count(content);
-                        let mut input = ev.input.clone();
-                        input.insert("content".into(), Value::String(plain));
-                        ToolCallRawResult {
-                            name: None,
-                            input: Some(input),
-                            note: Some(format!(
-                                "removed read's line numbers from content ({n} line{}); write takes the file's text alone",
-                                if n == 1 { "" } else { "s" }
-                            )),
-                        }
-                    })
+            let cwd = raw_cwd.clone();
+            async move {
+                let Some(Value::String(content)) = ev.input.get("content") else {
+                    return Ok(None);
+                };
+                if ev.name != "write" || !line_numbers {
+                    return Ok(None);
                 }
-                _ => None,
-            };
-            async move { Ok(out) }
+                let fixed = |content: String, note: String| {
+                    let mut input = ev.input.clone();
+                    input.insert("content".into(), Value::String(content));
+                    Ok(Some(ToolCallRawResult {
+                        name: None,
+                        input: Some(input),
+                        note: Some(note),
+                    }))
+                };
+                if let Some(plain) = strip_line_numbers(content) {
+                    let n = count(content);
+                    return fixed(
+                        plain,
+                        format!(
+                            "removed read's line numbers from content ({n} line{}); write takes the file's text alone",
+                            if n == 1 { "" } else { "s" }
+                        ),
+                    );
+                }
+                let Some(Value::String(path_arg)) = ev.input.get("path") else {
+                    return Ok(None);
+                };
+                let path = ev
+                    .tools
+                    .iter()
+                    .find(|t| t.name() == "write")
+                    .and_then(|t| t.paths(&ev.input, &cwd))
+                    .and_then(|p| p.into_iter().next())
+                    .filter(|p| !p.is_empty());
+                let Some(path) = path else {
+                    return Ok(None);
+                };
+                let Ok(file) = tokio::fs::read(&path).await else {
+                    return Ok(None);
+                };
+                let Some((plain, spaces)) = strip_padding(content, &String::from_utf8_lossy(&file)) else {
+                    return Ok(None);
+                };
+                fixed(
+                    plain,
+                    format!(
+                        "removed the {spaces} space{} every line of content started with, which {path_arg}'s own lines do not have (read's padding, left when only its line numbers were taken off); write takes the file's text alone",
+                        if spaces == 1 { "" } else { "s" }
+                    ),
+                )
+            }
         });
 
-        let cwd = api.cwd();
         api.on::<hook::ToolCall, _, _>(move |ev, ctx| {
             let refused = refused.clone();
             let cwd = cwd.clone();
