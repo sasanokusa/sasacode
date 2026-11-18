@@ -4,17 +4,98 @@
 //!
 //! settings: { command?: string }
 
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use futures::future::BoxFuture;
 
 use sasacode_host::t;
-use sasacode_plugin_api::{Command, NotifyLevel, PluginApi, apply_child_env, detach_session};
+use sasacode_plugin_api::{Command, NotifyLevel, PluginApi, apply_child_env, detach_session, sasacode_home};
 
 use crate::net_util::setting_str;
 
-/// How to get the window's program while it is not released with sasacode (docs/gui.md). `--locked`: the versions CI builds with.
-const INSTALL: &str = "cargo install --locked --path crates/sasacode-gui";
+/// How to get the window's program: it is built on this machine, not released with sasacode (docs/gui.md).
+const INSTALL: &str = "sasacode gui install";
+/// The version the window should be: sasacode's own (one workspace version for every crate).
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// Where `sasacode gui install` builds into (cargo's `--root`): under sasacode's home, off PATH.
+pub fn gui_root_in(home: &Path) -> PathBuf {
+    home.join("gui")
+}
+
+/// The window's program that `sasacode gui install` built, under a sasacode home.
+pub fn managed_gui_in(home: &Path) -> PathBuf {
+    gui_root_in(home)
+        .join("bin")
+        .join(format!("sasacode-gui{}", std::env::consts::EXE_SUFFIX))
+}
+
+/// [`managed_gui_in`] for this sasacode home.
+pub fn managed_gui() -> PathBuf {
+    managed_gui_in(&sasacode_home())
+}
+
+/// Which window to start: the one plugins.settings.gui.command names, else the one `sasacode gui
+/// install` built (an older one installed by hand on PATH would hide every rebuild), else
+/// sasacode-gui on PATH. The bool: found here, not named by the user (only those are asked their
+/// version: a command the user names may be a launcher that opens a window on any argument).
+pub fn pick_gui(
+    configured: Option<String>,
+    managed: &Path,
+    on_path: impl FnOnce() -> Option<PathBuf>,
+) -> Option<(String, bool)> {
+    if let Some(c) = configured.filter(|c| !c.is_empty()) {
+        return Some((c, false));
+    }
+    if managed.is_file() {
+        return Some((managed.display().to_string(), true));
+    }
+    on_path().map(|p| (p.display().to_string(), true))
+}
+
+/// The version in what `sasacode-gui --version` prints ("sasacode-gui 0.20.0").
+pub fn version_of(printed: &str) -> Option<String> {
+    let v = printed.trim();
+    let v = v.strip_prefix("sasacode-gui").map_or(v, str::trim_start);
+    (!v.is_empty() && !v.contains(char::is_whitespace)).then(|| v.to_string())
+}
+
+/// What the window at `program` says its version is, within 5 s; None when it says nothing usable.
+pub async fn gui_version(program: &str) -> Option<String> {
+    let mut cmd = tokio::process::Command::new(program);
+    cmd.arg("--version")
+        .stdin(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .kill_on_drop(true);
+    apply_child_env(&mut cmd, &[]);
+    let out = tokio::time::timeout(Duration::from_secs(5), cmd.output())
+        .await
+        .ok()?
+        .ok()?;
+    out.status
+        .success()
+        .then(|| version_of(&String::from_utf8_lossy(&out.stdout)))
+        .flatten()
+}
+
+/// A window that is not this sasacode's version: what to tell the user (the window opens all the same).
+pub fn stale_note(gui: &str) -> String {
+    t!(
+        "sasacode-guiは{gui}、sasacodeは{cli}です。`{install}`で、この版のGUIを作り直せます。",
+        gui = gui,
+        cli = VERSION,
+        install = INSTALL
+    )
+}
+
+/// The window that was started.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Opened {
+    pub program: String,
+    /// Its version, when it is not sasacode's (only asked of a window found here, not one the user named).
+    pub stale: Option<String>,
+}
 /// How long a window has to stay up to count as opened: time for one to turn its arguments down. A
 /// guess: a program started for the first time can take longer, and is then taken for opened.
 const GRACE: Duration = Duration::from_millis(600);
@@ -94,20 +175,23 @@ fn exit_status(status: std::process::ExitStatus) -> String {
 }
 
 /// Starts the window on its own: it stays when this sasacode ends. `command` is the program to start
-/// (default: sasacode-gui on PATH, looked up now, so one installed a moment ago is found). Returns
-/// the program once it has stayed up for `grace` (600 ms). One that leaves at once with an error
-/// (an older sasacode-gui that does not know an option) is an error: nothing the window says is
-/// seen from here.
-pub async fn open_gui(target: GuiTarget, command: Option<String>, grace: Option<Duration>) -> anyhow::Result<String> {
+/// (default: [`pick_gui`]'s, looked up now, so one installed a moment ago is found). Returns the
+/// program once it has stayed up for `grace` (600 ms). One that leaves at once with an error (an
+/// older sasacode-gui that does not know an option) is an error: nothing the window says is seen
+/// from here.
+pub async fn open_gui(target: GuiTarget, command: Option<String>, grace: Option<Duration>) -> anyhow::Result<Opened> {
     // PATH as it is now: `which` reads it on every call.
-    let command = command
-        .filter(|c| !c.is_empty())
-        .or_else(|| which::which("sasacode-gui").ok().map(|p| p.display().to_string()));
-    let Some(command) = command else {
+    let picked = pick_gui(command, &managed_gui(), || which::which("sasacode-gui").ok());
+    let Some((command, found_here)) = picked else {
         anyhow::bail!(t!(
-            "sasacode-guiが見つかりません。sasacodeのリポジトリで次を実行すると入ります。\n  {install}\n別の場所にある場合はplugins.settings.gui.commandを指定してください。",
+            "sasacode-guiが見つかりません。ターミナルで次を実行すると、このマシンでビルドして入ります（Rustが要ります）。\n  {install}\n別の場所にある場合はplugins.settings.gui.commandを指定してください。",
             install = INSTALL
         ));
+    };
+    let stale = if found_here {
+        gui_version(&command).await.filter(|v| v != VERSION)
+    } else {
+        None
     };
     let failed = |reason: String| {
         anyhow::anyhow!(t!(
@@ -143,7 +227,10 @@ pub async fn open_gui(target: GuiTarget, command: Option<String>, grace: Option<
             install = INSTALL
         ));
     }
-    Ok(command)
+    Ok(Opened {
+        program: command,
+        stale,
+    })
 }
 
 pub fn plugin(api: PluginApi) -> BoxFuture<'static, anyhow::Result<()>> {
@@ -159,9 +246,15 @@ pub fn plugin(api: PluginApi) -> BoxFuture<'static, anyhow::Result<()>> {
                     session: session.clone(),
                     program: own_program(),
                 };
-                if let Err(e) = open_gui(target, setting_str(&api.settings(), "command"), None).await {
-                    api.ui().notify(&e.to_string(), NotifyLevel::Error);
-                    return Ok(());
+                let opened = match open_gui(target, setting_str(&api.settings(), "command"), None).await {
+                    Ok(opened) => opened,
+                    Err(e) => {
+                        api.ui().notify(&e.to_string(), NotifyLevel::Error);
+                        return Ok(());
+                    }
+                };
+                if let Some(gui) = &opened.stale {
+                    api.ui().notify(&stale_note(gui), NotifyLevel::Warning);
                 }
                 let message = if session.is_some() {
                     t!("GUIでこの会話を開きました。この画面とGUIは互いの発言を読み込みません。続きはどちらか一方で進めてください。")

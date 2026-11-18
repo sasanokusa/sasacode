@@ -4,7 +4,7 @@
 //! Generated from `packages/host/src/messages-en.ts` (every entry verbatim, in its order; a key the TS
 //! object listed twice appears once, with the value that won).
 
-/// 273 entries.
+/// 274 entries.
 pub static TO_EN: &[(&str, &str)] = &[
     ("↓ 最新へ (ctrl+end)", "↓ latest (ctrl+end)"),
     (
@@ -565,8 +565,12 @@ pub static TO_EN: &[(&str, &str)] = &[
         "Opened this conversation in the GUI. This screen and the GUI do not read what the other adds: go on in one of the two.",
     ),
     (
-        "sasacode-guiが見つかりません。sasacodeのリポジトリで次を実行すると入ります。\n  {install}\n別の場所にある場合はplugins.settings.gui.commandを指定してください。",
-        "sasacode-gui not found. This, run in the sasacode repository, installs it:\n  {install}\nIf it is somewhere else, set plugins.settings.gui.command.",
+        "sasacode-guiが見つかりません。ターミナルで次を実行すると、このマシンでビルドして入ります（Rustが要ります）。\n  {install}\n別の場所にある場合はplugins.settings.gui.commandを指定してください。",
+        "sasacode-gui not found. This, run in a terminal, builds it on this machine (Rust needed):\n  {install}\nIf it is somewhere else, set plugins.settings.gui.command.",
+    ),
+    (
+        "sasacode-guiは{gui}、sasacodeは{cli}です。`{install}`で、この版のGUIを作り直せます。",
+        "sasacode-gui is {gui} and sasacode {cli}: `{install}` builds the GUI again for this version.",
     ),
     (
         "sasacode-guiを起動できませんでした（{command}）: {reason}",

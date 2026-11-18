@@ -10,6 +10,7 @@ use std::time::{Duration, Instant};
 
 use sha2::{Digest, Sha256};
 
+use sasacode_bundled::gui::managed_gui;
 use sasacode_host::t;
 use sasacode_plugin_api::NotifyLevel;
 
@@ -369,11 +370,32 @@ fn with_suffix(path: &Path, suffix: &str) -> PathBuf {
 
 /// `sasacode update [--check] [tag]`: download the release for this machine and take its place.
 pub async fn update_command(args: &[String]) -> anyhow::Result<i32> {
-    update_command_in(args, &download_base(), &mut std::io::stdout()).await
+    // The window is built on this machine (`sasacode gui install`), so an update leaves it as it was:
+    // whoever has one is told.
+    let has_gui = managed_gui().is_file() || which::which("sasacode-gui").is_ok();
+    update_command_with(args, &download_base(), has_gui, &mut std::io::stdout()).await
 }
 
-/// [`update_command`] with the download base and the output given.
+/// [`update_command`] with the download base and the output given, for someone without the window.
 pub async fn update_command_in(args: &[String], base: &str, out: &mut (dyn Write + Send)) -> anyhow::Result<i32> {
+    update_command_with(args, base, false, out).await
+}
+
+/// What an update says to someone who has the window: it stays the version it was.
+pub fn gui_update_hint(to: &str) -> String {
+    t!(
+        "the desktop GUI is not updated with sasacode: sasacode gui install builds it for {to}",
+        to = to
+    )
+}
+
+/// [`update_command_in`], and [`gui_update_hint`] after an update when `has_gui`.
+pub async fn update_command_with(
+    args: &[String],
+    base: &str,
+    has_gui: bool,
+    out: &mut (dyn Write + Send),
+) -> anyhow::Result<i32> {
     let tag = args.iter().find(|a| !a.starts_with('-'));
     let wanted = match tag {
         Some(t) => t.clone(),
@@ -398,12 +420,21 @@ pub async fn update_command_in(args: &[String], base: &str, out: &mut (dyn Write
         return Ok(0);
     }
     let files = release_files(&release_target()?);
-    install(&format!("{base}/download/{wanted}"), &files, &target, out).await?;
+    let version = install(&format!("{base}/download/{wanted}"), &files, &target, out).await?;
+    if has_gui {
+        let _ = writeln!(out, "{}", gui_update_hint(&version));
+    }
     Ok(0)
 }
 
 /// Download the release files at `url`, check them, and put the binary in place of `target`.
-async fn install(url: &str, files: &ReleaseFiles, target: &Path, out: &mut (dyn Write + Send)) -> anyhow::Result<()> {
+/// Returns the version the new binary says it is.
+async fn install(
+    url: &str,
+    files: &ReleaseFiles,
+    target: &Path,
+    out: &mut (dyn Write + Send),
+) -> anyhow::Result<String> {
     let ReleaseFiles { archive, binary } = files;
     let dir = TempDir::new("sasacode-update-")?;
     let _ = writeln!(out, "{}", t!("downloading {url} …", url = format!("{url}/{archive}")));
@@ -462,7 +493,7 @@ async fn install(url: &str, files: &ReleaseFiles, target: &Path, out: &mut (dyn 
             target = target.display()
         )
     );
-    Ok(())
+    Ok(version)
 }
 
 #[cfg(test)]

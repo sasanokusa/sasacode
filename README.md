@@ -41,6 +41,7 @@ irm https://sasanokusa.com/sasacode/install.ps1 | iex
 - `SASACODE_VERSION=v0.15.2` で版を固定でき、`SASACODE_INSTALL_DIR` で置き場所を変えられる（どちらのインストーラーでも）。
 - 更新は`sasacode update`（インストーラーと同じ検証つき。`--check`で確認だけ）。新しい版が出ていると起動時に一度だけ静かに知らせる（`"updateCheck": false`で止める）。ソースから入れた場合は、`git pull`のあと下の`cargo install`をもう一度実行する。
 - Web検索（`web_search`）に使うRustXNGは `sasacode web-search install`（TUIでは `/web-search install`）で入る。公式リリースをチェックサムで確かめて `~/.sasacode/bin` に置き、再起動しなくても使える。もう一度実行すると最新版に更新する。
+- デスクトップGUI（開発中）は配布物に入っておらず、`sasacode gui install`でこのマシンでビルドして入れる（[Rust](https://rustup.rs)が要る。ないときは入れ方を案内して止まる）。`~/.sasacode/gui/bin`に入り、`sasacode update`では更新されない。sasacodeを更新したら、もう一度`sasacode gui install`を実行する（[docs/gui.md](docs/gui.md)）。
 
 ソースから使う場合（[Rust](https://www.rust-lang.org/)1.88以上）は次のとおり。
 
@@ -84,7 +85,8 @@ sasacode -r <id> -p "続き"            # セッション ID を指定して続�
 | `sasacode login [status\|logout]` | ChatGPTプランでログイン（`openai-codex/…` のモデル用） |
 | `sasacode update [--check] [tag]` | 最新のリリースを取得して入れ替える（チェックサムを検証。`--check`なら確認だけ） |
 | `sasacode web-search install [tag]` | `web_search`が使うRustXNGを入れる（チェックサムを検証） |
-| `sasacode gui [folder]` | デスクトップGUIをフォルダで開く（`sasacode-gui`が要る。[docs/gui.md](docs/gui.md)） |
+| `sasacode gui [folder]` | デスクトップGUIをフォルダで開く（`sasacode gui install`で入れる。[docs/gui.md](docs/gui.md)） |
+| `sasacode gui install [--path <dir>]` | デスクトップGUIを、このマシンでRustを使ってビルドして入れる（この版のタグから。`--path`ではチェックアウトから） |
 | `-h, --help` / `-v, --version` | 使い方 / 版を出す |
 
 `sasacode plugin`は0.20でなくなった。実行すると、プラグインはsasacodeに同梱になったこと（既定で無効のものは`plugins.enabled`で有効にする）と、ツールはMCPサーバーかSkillsで足すこと（[拡張のしかた](docs/plugins.md)）を示して、エラーで終わる。
@@ -309,7 +311,7 @@ sasacode -m llama/<モデル名>
 | `background-sessions` | `bg_start` ツール。ビルドやテストなど長いコマンドをバックグラウンドで動かし、終わったら終了コードと出力の末尾を会話に届ける（待機中なら自動で続きを始める）。bashと同じ権限ルールで判定する（`permissionsAs`）。sasacodeを終了してもジョブは続き、次の起動で結果を知らせる。`/bg` で一覧・詳細・停止。WindowsではGit Bashで動かす |
 | `auto-reconnect` | 実行がエラーで終わったとき、使用中のエンドポイントに届かなければ、復旧を待って作業を自動で再開する（既定は最大10分）。サーバーが一時的なエラー（429・5xx）を返し続けたときは、間を空けて最大4回再試行する。`/reconnect` で手動でも同じことをする |
 | `checkpoints` | write / editが変えたファイルの直前の内容をセッションに退避する。`/undo` で直近の1件から1つずつ戻せる（`/undo list` で一覧、`/undo <path>` で対象を絞る。bashの変更は対象外） |
-| `gui` | `/gui` コマンド。デスクトップGUI（`sasacode-gui`、開発中）をこのフォルダで開き、進行中の会話を読み込んだ状態にする。`sasacode-gui` はPATHから探す（`plugins.settings.gui.command` で場所を指定できる）。開いたあとは、TUIとGUIのどちらか一方で続ける（互いの発言は読み込まない） |
+| `gui` | `/gui` コマンド。デスクトップGUI（`sasacode-gui`、開発中）をこのフォルダで開き、進行中の会話を読み込んだ状態にする。`sasacode-gui` は、`plugins.settings.gui.command`、`sasacode gui install`で入れたもの、PATHの順に探す。開いたあとは、TUIとGUIのどちらか一方で続ける（互いの発言は読み込まない） |
 | `image-attach` | 画像対応モデルにメッセージと画像を送る。スクリーンショットは ⌘V（届かないターミナルでは ctrl+v）、ファイルはターミナルへドラッグ&ドロップすると、その場で読み込んで入力欄に `[Image #1]` と出る。続けてメッセージを書いて送れば一緒に届く。ほかに `@パス`、`/image パス…`、`/image` だけならクリップボード（macOS、Windows、Linuxは `wl-paste` か `xclip`）。形式は中身で判定（PNG / JPEG / GIF / WebP）、1枚 5 MB・1メッセージ 8 枚まで。`plugins.settings.image-attach` の `dropPaths: false` で `@` なしのパスを無視 |
 | `image-slim` | 履歴の画像を、毎回のリクエストで小さく送る。プロバイダーがどのみち縮める大きさ（約105万画素、`maxPixels`）を超える画像は縦横比を保って縮め、透明度のないPNGで100 KB以上のものはJPEG（品質90）にする。ツールが返した画像はその場で縮めてセッションに残し、座標を元の大きさに戻す倍率をモデルに伝える。古い画像は送らず短い注記に置き換え、新しい4〜11枚だけを送る（`keepImages`、`dropStep`。8枚ずつまとめて省くので、その間はプロンプトの先頭が変わらずキャッシュが効く）。最後のメッセージの画像は必ず送り、画像の合計が8 MiBを超えればさらに省く。`/image-slim` で直近のリクエストの枚数を出す。`models` で効かせるモデルを絞る |
 | `diagnostics` | APIの診断（既定で無効）。`/diagnostics on` で、リクエストの成否・停止理由・トークン数などのメタデータだけを記録し、`show` で直近100件を見る。本文や秘密値は記録しない |
@@ -394,7 +396,7 @@ cargo xtask build                 # 配布用のバイナリ
 | `sasacode-testing` | テスト用：応答を再生するプロバイダーと、偽のモデルサーバー |
 | `xtask` | リポジトリの作業：ビルド、検査、改善ループの計測、配布物の梱包 |
 
-デスクトップGUI（Rust、開発中）は `crates/` にある。`cargo run -p sasacode-gui -- <フォルダ>` で開き、入力ごとに `sasacode -p … --output jsonl --control stdio` をそのフォルダで動かす（`SASACODE_BIN` か `--sasacode` で実行ファイルを指定できる）。`cargo install --locked --path crates/sasacode-gui` で入れておけば、`sasacode gui [フォルダ]` と、TUIの `/gui`（進行中の会話を読み込んだ状態で開く）でも開ける。`cargo test` で、CLIの出力とセッションログを読めるかも確かめる。設計と段階は [docs/gui.md](docs/gui.md)、ほかのエージェントのGUIとの比べは [docs/gui-parity.md](docs/gui-parity.md)。
+デスクトップGUI（Rust、開発中）は `crates/` にある。`cargo run -p sasacode-gui -- <フォルダ>` で開き、入力ごとに `sasacode -p … --output jsonl --control stdio` をそのフォルダで動かす（`SASACODE_BIN` か `--sasacode` で実行ファイルを指定できる）。`sasacode gui install --path .` で入れておけば、`sasacode gui [フォルダ]` と、TUIの `/gui`（進行中の会話を読み込んだ状態で開く）でも開ける。`cargo test` で、CLIの出力とセッションログを読めるかも確かめる。設計と段階は [docs/gui.md](docs/gui.md)、ほかのエージェントのGUIとの比べは [docs/gui-parity.md](docs/gui-parity.md)。
 
 コア（`sasacode-ai`・`sasacode-agent`・`sasacode-plugin-api`・`sasacode-tools`）の行数の上限は12,500行で、1行は120桁まで（rustfmtの`max_width = 120`。ほとんどが1つの文字列リテラルの行は除く）。どちらかを超えると`cargo xtask checks`が落ちる。いまの行数は`cargo xtask improve`が出す。
 
