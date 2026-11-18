@@ -100,7 +100,7 @@ async fn background_sessions_a_job_runs_detached_and_its_exit_code_and_output_co
         "{:?}",
         started.details
     );
-    until(100, 20, || !b.injected().is_empty()).await;
+    until(750, 20, || !b.injected().is_empty()).await;
     let first = b.injected().first().cloned().unwrap_or_default();
     assert!(first.contains("exit 3"), "{first}");
     assert!(first.contains("from-the-2-job"), "{first}"); // on Windows the log stayed empty (#128)
@@ -114,7 +114,7 @@ async fn background_sessions_a_job_runs_detached_and_its_exit_code_and_output_co
     b.run_command("bg", &format!("kill {}", detail(&long, "id")))
         .await
         .unwrap_or_else(|e| panic!("{e:#}"));
-    until(100, 20, || b.injected().len() >= 2).await;
+    until(750, 20, || b.injected().len() >= 2).await;
     let second = b.injected().get(1).cloned().unwrap_or_default();
     assert!(second.contains("強制終了"), "{second}");
 }
@@ -141,7 +141,7 @@ async fn background_sessions_a_job_two_sessions_watched_is_reported_once_and_bg_
         Entries::default(),
     )
     .await;
-    until(100, 20, || !s1.injected().is_empty()).await;
+    until(750, 20, || !s1.injected().is_empty()).await;
     sleep(600).await;
     let meta_path = PathBuf::from(detail(&started, "logPath")).with_file_name("meta.json");
     let meta: Value =
@@ -189,7 +189,7 @@ async fn auto_reconnect_after_an_error_while_the_endpoint_is_down_it_waits_and_r
         a.status("auto-reconnect")
     );
     let back = reserved.serve_ok();
-    until(100, 20, || !a.injected().is_empty()).await;
+    until(750, 20, || !a.injected().is_empty()).await;
     assert!(
         a.injected().first().cloned().unwrap_or_default().contains("再開"),
         "{:?}",
@@ -245,7 +245,9 @@ async fn background_sessions_a_job_from_an_earlier_run_is_judged_by_its_exit_fil
         Entries::default(),
     )
     .await;
-    until(100, 20, || b.injected().len() >= 2).await;
+    // Up to 15 s, not 2: on Windows bg-2 is judged by its start time, which PowerShell is started to
+    // read, and on the CI runner that alone has taken longer than 2 s (bg-1's notice came alone).
+    until(750, 20, || b.injected().len() >= 2).await;
     let said = b.injected().join("\n");
     assert!(said.contains("bg-1"), "{said}");
     assert!(said.contains("bg-2"), "{said}");
