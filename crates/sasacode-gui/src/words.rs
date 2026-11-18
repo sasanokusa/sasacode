@@ -274,6 +274,12 @@ words! {
     part_look: "表示", "Appearance";
     part_notices: "通知", "Notifications";
     part_tools: "ツール", "Tools";
+    // The models, found as the command palette finds a command.
+    model_find_ph: "モデルを探す（名前の一部でよい）", "Find a model (any part of its name)";
+    model_use: "「{model}」を使う", "Use “{model}”";
+    model_default: "既定のモデルに戻す", "Back to the default model";
+    model_loading: "モデルを読み込み中…", "Reading the models…";
+    model_chosen: "選択中", "chosen";
     viewed: "見た", "Viewed";
     viewed_n: "{n}/{all}件見た", "{n}/{all} viewed";
     default_sure: "{branch}に直接書き込みます。もう一度押すと続けます", "This goes straight to {branch}. Press again to go on";
@@ -532,7 +538,7 @@ words! {
     k_forward: "戻る前の会話へ進む", "Forward again";
     k_pin: "ピン留めする・外す", "Pin or unpin";
     k_ask: "脇の質問をする", "Ask a side question";
-    k_model: "モデルの欄へ", "To the model field";
+    k_model: "モデルを選ぶ", "Choose the model";
     k_effort: "推論の深さを次へ", "Next effort";
     k_permission: "権限モードを次へ", "Next permission mode";
 }

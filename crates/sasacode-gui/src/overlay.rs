@@ -5,7 +5,7 @@
 use iced::Task;
 use iced::widget::operation;
 
-use crate::app::{App, Chat, Clip, Msg, PALETTE, RENAME, Tab};
+use crate::app::{App, Chat, Clip, Msg, PALETTE, PALETTE_LIST, RENAME, Tab};
 use crate::input::Command;
 use crate::keys::Act;
 use crate::layout::{ZOOM_MAX, ZOOM_MIN};
@@ -93,6 +93,8 @@ pub enum Pick {
     Split,
     /// The worktrees made here: a new one, or one to remove.
     Worktrees,
+    /// The models a run here can use, to start the next run with one.
+    Models,
 }
 
 impl Overlay {
@@ -303,6 +305,74 @@ impl App {
         all
     }
 
+    /// The models that have every word typed: the one the next run starts with first, then those
+    /// this folder's conversations used, newest first, then the rest as the CLI lists them. What
+    /// is typed can be used as it is, for a model the CLI does not list; and a model chosen can be
+    /// let go of for the default.
+    fn model_entries(&self, query: &str) -> Vec<Entry> {
+        let w = self.s.w();
+        let words: Vec<String> = query.split_whitespace().map(str::to_lowercase).collect();
+        let listed = self.listing.models.as_deref().unwrap_or_default();
+        let chosen = self.model.trim();
+        let current = if chosen.is_empty() {
+            listed.iter().find(|m| m.current).map(|m| m.id.as_str())
+        } else {
+            Some(chosen)
+        };
+        let mut ids: Vec<&str> = Vec::new();
+        let used = self.sessions.iter().filter_map(|x| x.model.as_deref());
+        for id in current
+            .into_iter()
+            .chain(used)
+            .chain(listed.iter().map(|m| m.id.as_str()))
+        {
+            if !id.is_empty() && !ids.contains(&id) {
+                ids.push(id);
+            }
+        }
+        let mut all: Vec<Entry> = ids
+            .into_iter()
+            .filter(|id| {
+                let id = id.to_lowercase();
+                words.iter().all(|w| id.contains(w))
+            })
+            .map(|id| {
+                let window = listed
+                    .iter()
+                    .find(|m| m.id == id)
+                    .and_then(|m| m.context_window)
+                    .map(crate::i18n::compact);
+                let keys = match (current == Some(id), window) {
+                    (true, Some(n)) => Some(format!("{} · {n}", w.model_chosen)),
+                    (true, None) => Some(w.model_chosen.to_owned()),
+                    (false, n) => n,
+                };
+                Entry {
+                    label: id.to_owned(),
+                    keys,
+                    msg: Msg::Model(id.to_owned()),
+                }
+            })
+            .collect();
+        // Offered when nothing listed has it, or once it is a whole `provider/model` of its own.
+        let typed = query.trim();
+        if !typed.is_empty() && (all.is_empty() || typed.contains('/')) && !all.iter().any(|e| e.label == typed) {
+            all.push(Entry {
+                label: crate::i18n::fill(w.model_use, "model", typed),
+                keys: None,
+                msg: Msg::Model(typed.to_owned()),
+            });
+        }
+        if !chosen.is_empty() && words.is_empty() {
+            all.push(Entry {
+                label: w.model_default.to_owned(),
+                keys: None,
+                msg: Msg::Model(String::new()),
+            });
+        }
+        all
+    }
+
     /// What the palette finds for what is typed: entries that have every word of it.
     pub(crate) fn found_entries(&self) -> Vec<Entry> {
         let Some(Overlay::Palette { query, pick, .. }) = &self.overlay else {
@@ -319,6 +389,9 @@ impl App {
         }
         if *pick == Pick::Outline {
             return self.outline_entries(query);
+        }
+        if *pick == Pick::Models {
+            return self.model_entries(query);
         }
         if *pick == Pick::Scripts {
             let words: Vec<String> = query.split_whitespace().map(str::to_lowercase).collect();
@@ -389,23 +462,31 @@ impl App {
                 self.overlay = overlay;
                 focus
             }
-            Msg::OverlayText(text) => {
-                match &mut self.overlay {
-                    Some(Overlay::Palette { query, at, .. }) => {
-                        *query = text;
-                        *at = 0;
-                    }
-                    Some(Overlay::Rename { name, .. }) | Some(Overlay::Group { name, .. }) => *name = text,
-                    _ => {}
+            Msg::OverlayText(text) => match &mut self.overlay {
+                Some(Overlay::Palette { query, at, .. }) => {
+                    *query = text;
+                    *at = 0;
+                    operation::snap_to(PALETTE_LIST, operation::RelativeOffset::START)
                 }
-                Task::none()
-            }
+                Some(Overlay::Rename { name, .. }) | Some(Overlay::Group { name, .. }) => {
+                    *name = text;
+                    Task::none()
+                }
+                _ => Task::none(),
+            },
             Msg::Arrow(step) => {
                 let found = self.found_entries().len();
                 if let Some(Overlay::Palette { at, .. }) = &mut self.overlay
                     && found > 0
                 {
                     *at = (*at as isize + step as isize).rem_euclid(found as isize) as usize;
+                    // The one chosen stays in sight in a list longer than the palette: as far down
+                    // the list as it is down what was found.
+                    let y = *at as f32 / (found.max(2) - 1) as f32;
+                    return Ok(operation::snap_to(
+                        PALETTE_LIST,
+                        operation::RelativeOffset { x: 0.0, y },
+                    ));
                 }
                 Task::none()
             }

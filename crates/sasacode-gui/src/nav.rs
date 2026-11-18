@@ -106,7 +106,9 @@ impl App {
                 ));
                 Task::none()
             }
-            Msg::FocusModel => operation::focus(crate::app::MODEL),
+            Msg::FocusModel => self.update(Msg::Show(Some(crate::app::Overlay::picker(
+                crate::overlay::Pick::Models,
+            )))),
             Msg::SideOpen => {
                 if self.aside.is_none() {
                     let mut side = crate::app::Chat::new(crate::app::SIDE);

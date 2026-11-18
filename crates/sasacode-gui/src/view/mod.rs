@@ -962,6 +962,31 @@ pub(crate) fn clip_start(s: &str, max: usize) -> String {
     s.to_owned()
 }
 
+/// [`clip`] that keeps both ends: for a `provider/model`, whose provider and version both tell.
+pub(crate) fn clip_middle(s: &str, max: usize) -> String {
+    if s.chars().map(cells).sum::<usize>() <= max {
+        return s.to_owned();
+    }
+    let keep = max.saturating_sub(1);
+    let (mut front, mut used) = (0, 0);
+    for (at, c) in s.char_indices() {
+        if used + cells(c) > keep / 2 {
+            front = at;
+            break;
+        }
+        used += cells(c);
+    }
+    let (mut back, mut used) = (s.len(), 0);
+    for (at, c) in s.char_indices().rev() {
+        if used + cells(c) > keep - keep / 2 {
+            break;
+        }
+        used += cells(c);
+        back = at;
+    }
+    format!("{}…{}", &s[..front], &s[back..])
+}
+
 /// A path as the conversation shows it: relative to the folder when it is inside it.
 pub(crate) fn short_path(path: &str, cwd: &Path) -> String {
     let p = Path::new(path);
@@ -982,6 +1007,17 @@ mod tests {
         assert_eq!(clip("再試行を指数バックオフにして", 8), "再試行を…");
         assert_eq!(clip_start("/Users/me/src/orders-api", 10), "…orders-api");
         assert_eq!(clip_start("短い", 10), "短い");
+        assert_eq!(clip_middle("cloud/big", 12), "cloud/big");
+        assert_eq!(
+            clip_middle("commandcode/deepseek/deepseek-v4.1-flash-fast", 21),
+            "commandcod…flash-fast"
+        );
+        assert_eq!(
+            clip_middle("commandcode/deepseek/deepseek-v4.1-flash-fast", 21)
+                .chars()
+                .count(),
+            21
+        );
         assert_eq!(
             short_path("/work/project/src/a.ts", Path::new("/work/project")),
             "src/a.ts"
