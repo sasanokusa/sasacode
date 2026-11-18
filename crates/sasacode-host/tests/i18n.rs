@@ -164,9 +164,10 @@ fn the_tables_hold_every_ts_entry() {
     // Counted from Object.keys of the TS tables when they were generated (273 and 158), plus the
     // three English texts 0.20 added (`plugins.enabled` in the trust list, the unknown thinking
     // level, `sasacode plugin` being removed) and less the one it dropped (project plugin code that
-    // could not be read for the trust decision), plus the four that `--allow` and `--slash` brought.
+    // could not be read for the trust decision), plus the four that `--allow` and `--slash` brought
+    // and the nine of `sasacode list` and `sasacode trust`, ported with the GUI's listings.
     assert_eq!(TO_EN.len(), 273);
-    assert_eq!(TO_JA.len(), 158 + 3 - 1 + 4);
+    assert_eq!(TO_JA.len(), 158 + 3 - 1 + 4 + 9);
 }
 
 #[test]

@@ -5,7 +5,7 @@
 //! Generated from `packages/host/src/messages-ja.ts` (every entry verbatim, in its order; a key the TS
 //! object listed twice appears once, with the value that won).
 
-/// 164 entries.
+/// 173 entries.
 pub static TO_JA: &[(&str, &str)] = &[
     (
         "sasacode — a small, pluggable coding agent\n\nUsage:\n  sasacode [prompt]              interactive session (optional first prompt)\n  sasacode -p \"<prompt>\"         run headless and print the answer\n\nOptions:\n  -p, --print <prompt>           headless mode (stdin is appended when piped)\n      --stdin                    with -p: wait for piped input however long it takes\n      --output <text|jsonl>      headless output format (default text)\n      --control stdio            with -p --output jsonl: the parent answers approvals, sends messages and can abort\n                                 over stdin as JSON Lines (stdin is then not appended to the prompt)\n  -m, --model <provider/model>   e.g. anthropic/claude-opus-5, openai/gpt-5.5, ollama/gemma4:e4b\n                                 (the TUI's /model lists what your providers offer)\n      --permission <mode>        {modes} (default edits)\n      --thinking <level>         off | low | medium | high | xhigh | max\n      --max-turns <n>            turns per run before stopping (default 200; 0 = no limit)\n  -c, --continue                 resume the most recent session in this directory\n  -r, --resume <id>              resume a session by id\n      --no-session               do not save this session\n      --append-system-prompt-file <path>\n                                 add the file's text to the system prompt, after the config's instructions\n      --trust-project            trust this project's endpoints, MCP servers, plugin settings and\n                                 permission settings without asking\n      --allow <rule>             allow calls matching a permission rule for this run, as answering \"always\" does\n                                 (repeatable; e.g. \"bash(npm test)\", the rules of approval_request)\n      --slash                    with -p: a prompt that starts with /<command> runs that plugin command\n\nSubcommands:\n  sasacode endpoint add <name> <url> [--key-env VAR] [--project]   add a server (format detected)\n  sasacode endpoint remove <name> [--project]\n  sasacode endpoint list\n  sasacode list models|commands|skills [--json]   what a run here can use (the GUI asks with --json)\n  sasacode trust [--yes] [--json]   is this folder trusted, and what would trust enable; --yes trusts it\n  sasacode plugin list --json       the bundled plugins and whether each is on (the GUI asks)\n  sasacode login [status|logout]    use a ChatGPT plan instead of an API key (openai-codex/… models)\n  sasacode update [--check] [tag]   download and install the newest release (checksum-verified)\n  sasacode web-search install [tag] install RustXNG for the web_search tool (checksum-verified)\n  sasacode gui [folder]             open the desktop GUI on a folder (needs sasacode-gui: docs/gui.md)\n  -h, --help\n  -v, --version",
@@ -56,6 +56,20 @@ pub static TO_JA: &[(&str, &str)] = &[
         "不明な web-search サブコマンド \"{sub}\"（install）",
     ),
     ("usage: sasacode gui [folder]", "使い方: sasacode gui [folder]"),
+    (
+        "usage: sasacode list models|commands|skills [--json]",
+        "使い方: sasacode list models|commands|skills [--json]",
+    ),
+    (
+        "usage: sasacode trust [--yes] [--json]",
+        "使い方: sasacode trust [--yes] [--json]",
+    ),
+    ("up to {size}", "最大{size}"),
+    ("TUI only", "TUIのみ"),
+    (
+        "(the bundled plugins' commands are listed by a run: the `commands` line of --control stdio)",
+        "（同梱プラグインのコマンドは、実行が一覧を出す。--control stdioの`commands`行）",
+    ),
     ("{path} is not a folder", "{path}はフォルダではない"),
     (
         "installed {version}: {path} (web_search uses it from the next request)",
@@ -68,6 +82,16 @@ pub static TO_JA: &[(&str, &str)] = &[
         "MCP サーバーはあなたの権限でコードを実行し、エンドポイントは会話とコードを受け取る。",
     ),
     ("Trust {cwd}? [y/N] ", "{cwd} を信頼する？ [y/N] "),
+    (
+        "{cwd}: nothing in this project needs trust",
+        "{cwd}: このプロジェクトには信頼が要るものがない",
+    ),
+    ("{cwd} is trusted", "{cwd}は信頼済み"),
+    ("{cwd} is not trusted", "{cwd}は信頼していない"),
+    (
+        "trust it with: sasacode trust --yes",
+        "信頼するには: sasacode trust --yes",
+    ),
     (
         "provider {name} has neither \"api\" nor \"baseUrl\"; ignored",
         "プロバイダー {name} は \"api\" も \"baseUrl\" もないため無視",

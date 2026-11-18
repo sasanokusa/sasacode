@@ -13,6 +13,7 @@ pub mod headless;
 pub mod json;
 pub mod keys;
 pub mod list_models;
+pub mod listings;
 pub mod setup;
 pub mod stdin;
 pub mod subcommands;

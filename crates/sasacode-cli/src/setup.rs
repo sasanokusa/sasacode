@@ -71,6 +71,63 @@ pub fn read_prompt_file(path: &str) -> anyhow::Result<String> {
         })
 }
 
+/// Which plugins a run loads, as the config says: `plugins.enabled`, `plugins.disabled`, and the
+/// jev-guard setting from when it was a separate plugin. `load_plugins` and the openai-codex load in
+/// `setup` decide with it, and `sasacode plugin list` reports the same answer.
+pub struct PluginChoice {
+    enabled: Vec<String>,
+    disabled: Vec<String>,
+    /// A config that turned jev-guard on through its own setting keeps it on (ADR-011).
+    jev_on: bool,
+}
+
+impl PluginChoice {
+    pub fn of(settings: &Settings) -> Self {
+        PluginChoice {
+            enabled: settings.enabled_plugins(),
+            disabled: settings.disabled_plugins(),
+            jev_on: settings
+                .plugin_settings("jev-guard")
+                .get("enabled")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+        }
+    }
+
+    fn disabled(&self, name: &str) -> bool {
+        self.disabled.iter().any(|d| d == name)
+    }
+
+    /// Whether the shipped plugin `p` loads.
+    pub fn loads(&self, p: &sasacode_bundled::Bundled) -> bool {
+        sasacode_bundled::wanted(p, &self.enabled, &self.disabled)
+            || (p.name == "jev-guard" && self.jev_on && !self.disabled("jev-guard"))
+    }
+
+    /// Skills load unless `plugins.disabled` names them.
+    pub fn skills(&self) -> bool {
+        !self.disabled("skills")
+    }
+
+    /// MCP loads unless `plugins.disabled` names it.
+    pub fn mcp(&self) -> bool {
+        !self.disabled("mcp")
+    }
+}
+
+/// The skills folders a run reads: the user's, then the project's (which wins for a skill of the
+/// same name). The built-in skills come before both, written out where [`skills_options`] says.
+pub fn skill_dirs(home: &Path, cwd: &Path) -> Vec<PathBuf> {
+    vec![home.join("skills"), cwd.join(".sasacode").join("skills")]
+}
+
+/// Where the skills plugin writes the built-in skills out.
+pub fn skills_options(home: &Path) -> sasacode_skills::SkillsOptions {
+    sasacode_skills::SkillsOptions {
+        builtin_dir: Some(home.join("builtin-skills")),
+    }
+}
+
 type Resolve = Arc<dyn Fn(&str) -> anyhow::Result<ModelInfo> + Send + Sync>;
 
 pub struct Harness {
@@ -321,8 +378,8 @@ pub async fn setup(mut opts: SetupOptions) -> anyhow::Result<Arc<Harness>> {
     host.load(sasacode_tools::PLUGIN_NAME, |api| sasacode_tools::plugin(api).boxed())
         .await;
     // Loaded now, not with the other plugins: /model lists its models at startup.
-    if !disabled.iter().any(|d| d == "openai-codex")
-        && let Some(codex) = sasacode_bundled::find("openai-codex")
+    if let Some(codex) = sasacode_bundled::find("openai-codex")
+        && PluginChoice::of(&settings).loads(codex)
     {
         host.load(codex.name, codex.plugin).await;
     }
@@ -605,24 +662,15 @@ impl Harness {
         self.loading
             .get_or_init(|| async move {
                 self.host.set_ui(ui);
-                let enabled = self.settings.enabled_plugins();
-                let disabled = self.settings.disabled_plugins();
-                // A config that turned jev-guard on through its own setting, from when it was a
-                // separate plugin, keeps it on (ADR-011).
-                let jev_on = self
-                    .settings
-                    .plugin_settings("jev-guard")
-                    .get("enabled")
-                    .and_then(Value::as_bool)
-                    .unwrap_or(false);
-                let mcp_off = disabled.iter().any(|d| d == "mcp");
+                let choice = PluginChoice::of(&self.settings);
+                let mcp_off = !choice.mcp();
                 let mut free_search = false;
                 for p in sasacode_bundled::PLUGINS {
+                    // Loaded by setup, before the session.
                     if p.name == "openai-codex" {
                         continue;
                     }
-                    let on = sasacode_bundled::wanted(p, &enabled, &disabled)
-                        || (p.name == "jev-guard" && jev_on && !disabled.iter().any(|d| d == "jev-guard"));
+                    let on = choice.loads(p);
                     if on && p.name == "free-search" && !mcp_off {
                         // Its server joins the mcp plugin's below, under one `/mcp`.
                         self.host.load(p.name, sasacode_bundled::free_search::joined).await;
@@ -634,16 +682,13 @@ impl Harness {
                         self.host.load(p.name, p.plugin).await;
                     }
                 }
-                if !disabled.iter().any(|d| d == "skills") {
-                    let dirs = vec![
-                        self.home.join("skills"),
-                        Path::new(&self.opts.cwd).join(".sasacode").join("skills"),
-                    ];
-                    let opts = sasacode_skills::SkillsOptions {
-                        builtin_dir: Some(self.home.join("builtin-skills")),
-                    };
+                if choice.skills() {
+                    let dirs = skill_dirs(&self.home, Path::new(&self.opts.cwd));
                     self.host
-                        .load("skills", sasacode_skills::create_skills_plugin(dirs, opts))
+                        .load(
+                            "skills",
+                            sasacode_skills::create_skills_plugin(dirs, skills_options(&self.home)),
+                        )
                         .await;
                 }
                 if !mcp_off {
