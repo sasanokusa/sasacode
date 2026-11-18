@@ -2802,8 +2802,8 @@ pub(crate) fn global_key(event: iced::Event, status: event::Status, _window: win
         return None;
     };
     if status == event::Status::Captured {
-        // A field that let go of the keyboard on Esc, the search or the model, gives it back to
-        // the input: the next Esc is the input's again.
+        // A field that let go of the keyboard on Esc, the search or a palette's (which closes),
+        // gives it back to the input: the next Esc is the input's again.
         return matches!(key, Key::Named(Named::Escape)).then_some(Msg::Escaped);
     }
     if modifiers.is_empty() {

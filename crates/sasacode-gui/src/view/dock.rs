@@ -945,7 +945,16 @@ fn composer(app: &App) -> El<'_> {
     // As much of a long name as the line leaves beside the pickers and the send button, its
     // provider and its end kept.
     let wide = room(app).min(col_w(app) + 48.0);
-    let fits = ((wide - 418.0) / 7.2).clamp(12.0, 44.0) as usize;
+    // The pickers and the send button; the choice of a worktree in a new conversation; the send
+    // button on a line of its own where the room is tight.
+    let mut taken = 418.0;
+    if app.offers_worktree() {
+        taken += if app.to_worktree { 160.0 } else { 124.0 };
+    }
+    if tight {
+        taken -= 86.0;
+    }
+    let fits = ((wide - taken) / 7.4).clamp(12.0, 44.0) as usize;
     let named: El<'_> = if chosen.is_empty() {
         text(s.model_ph).size(12).color(t.fg_3).into()
     } else {

@@ -315,8 +315,8 @@ fn row_of<'a>(app: &'a App, session: &'a SessionSummary, now: SystemTime, cells:
     let named = app.prefs.names.get(&session.id).map(String::as_str);
     let prompt = named.unwrap_or(session.first_prompt.trim());
     let hovered = app.row_hover.as_deref() == Some(session.id.as_str());
-    // Room for what can be done to it, while the pointer is on it.
-    let room = if hovered { cells.saturating_sub(15) } else { cells };
+    // Room for what can be done to it, while the pointer is on it, and its mark before that.
+    let room = if hovered { cells.saturating_sub(17) } else { cells };
     let title = if prompt.is_empty() {
         clip(&session.id, 8)
     } else {
@@ -385,7 +385,12 @@ fn row_of<'a>(app: &'a App, session: &'a SessionSummary, now: SystemTime, cells:
         let id = session.id.clone();
         // Red once pressed: the next press deletes.
         let sure = app.confirm_delete.as_deref() == Some(id.as_str());
-        title_row = title_row.push(Space::new().width(Length::Fill)).push(
+        title_row = title_row.push(Space::new().width(Length::Fill));
+        // What it is doing stays in sight before them.
+        if let Some((color, _)) = mark {
+            title_row = title_row.push(icon(Icon::Dot, 15.0, color));
+        }
+        title_row = title_row.push(
             row![
                 act(
                     Icon::Pin,
