@@ -99,16 +99,24 @@ async fn a_pass_says_nothing_and_a_run_that_changed_nothing_runs_nothing() {
         (StopCause::Done, 2, 0, 1)
     );
 
-    // The model ran the check itself after its last change, and it passed: not again.
+    // The model ran the check through project_check after its last change, and it passed: not again.
+    let ran = reply(vec![call("2", "project_check", json!({ "name": "test" }))]);
+    let script = vec![write("1", "src/a.ts", "y\n"), ran, says("Done.")];
+    let (cause, requests, sent) = run(dir.path(), check.clone(), script).await;
+    assert_eq!(
+        (cause, requests, sent.len(), runs(dir.path())),
+        (StopCause::Done, 3, 0, 2)
+    );
+    // Through bash it runs again: `bun test | tail` passes as tail does, so a bash pass says nothing.
     let script = vec![
-        write("1", "src/a.ts", "y\n"),
+        write("1", "src/a.ts", "z\n"),
         bash("2", "echo ran >> runs.log"),
         says("Done."),
     ];
     let (cause, requests, sent) = run(dir.path(), check, script).await;
     assert_eq!(
         (cause, requests, sent.len(), runs(dir.path())),
-        (StopCause::Done, 3, 0, 2)
+        (StopCause::Done, 3, 0, 4)
     );
 }
 

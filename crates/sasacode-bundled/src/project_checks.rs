@@ -305,9 +305,10 @@ struct RunState {
     changed: BTreeSet<String>,
     /// Files changed since every finish check last passed.
     unverified: bool,
-    /// Finish checks that passed since the last change.
+    /// Finish checks that passed since the last change (through project_check, or ours).
     passed: BTreeSet<String>,
-    /// Checks whose latest run failed: project_check, bash running a check's command, or ours.
+    /// Checks whose latest run failed: project_check, bash running a check's command, or ours (a
+    /// passing bash run does not count: a pipe may hide the exit code).
     failing: BTreeSet<String>,
     /// Skip markers the changes added.
     skips: BTreeSet<&'static str>,
@@ -371,11 +372,10 @@ pub fn runs_check(command: &str, check: &str) -> bool {
     })
 }
 
-/// A test file by its path in the project: under a test directory, or named as one.
+/// A test file by its path in the project ("/" between names): under a test directory, or named as one.
 fn is_test_file(path: &str) -> bool {
-    let rel = path.replace('\\', "/");
-    let name = rel.rsplit('/').next().unwrap_or_default();
-    rel.split('/')
+    let name = path.rsplit('/').next().unwrap_or_default();
+    path.split('/')
         .any(|part| matches!(part, "test" | "tests" | "__tests__" | "spec" | "specs"))
         || [".test.", ".spec.", "_test.", "_spec.", "_tests."]
             .iter()
@@ -406,8 +406,8 @@ fn record_change(run: &mut RunState, cwd: &Path, ev: &ToolResultEvent) {
         .unwrap_or(arg("path"));
     let rel = Path::new(path)
         .strip_prefix(cwd)
-        .map_or(path.to_string(), |p| p.to_string_lossy().into_owned());
-    run.changed.insert(rel);
+        .map_or(path.into(), |p| p.to_string_lossy());
+    run.changed.insert(rel.replace('\\', "/"));
     run.unverified = true;
     run.passed.clear();
     let (mut added, mut removed) = (Vec::new(), Vec::new());
@@ -489,9 +489,11 @@ fn verify_on_finish(api: &PluginApi, cwd: PathBuf, checks: Arc<IndexMap<String, 
             let mut run = lock(&st);
             let failed = ev.result.is_error();
             let arg = |k: &str| ev.call.input.get(k).and_then(Value::as_str).unwrap_or_default();
+            // A bash call counts only when it fails: `bun test | tail` exits as tail does, so its
+            // passing says nothing. project_check runs the exact command.
             let check = match ev.call.name.as_str() {
                 "project_check" => checks.get_key_value(arg("name")).map(|(n, _)| n.clone()),
-                "bash" => checks
+                "bash" if failed => checks
                     .iter()
                     .find(|(_, c)| runs_check(arg("command"), &c.command))
                     .map(|(n, _)| n.clone()),
