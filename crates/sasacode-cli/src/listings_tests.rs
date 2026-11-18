@@ -310,13 +310,18 @@ fn skills_are_the_built_in_ones_the_users_and_the_projects() {
         json!({
             "name": "mine",
             "description": "my own skill",
-            "path": d.home.join("skills/mine/SKILL.md").to_string_lossy(),
+            "path": d.home.join("skills").join("mine").join("SKILL.md").to_string_lossy(),
         })
     );
     let parsed: Vec<gui::Skill> = serde_json::from_str(&serde_json::to_string(&skills).unwrap()).unwrap();
     assert_eq!(
         parsed[2].path,
-        d.proj.join(".sasacode/skills/theirs/SKILL.md").to_string_lossy()
+        d.proj
+            .join(".sasacode")
+            .join("skills")
+            .join("theirs")
+            .join("SKILL.md")
+            .to_string_lossy()
     );
     assert_eq!(parsed[2].description, "the project's skill");
 }

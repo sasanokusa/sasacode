@@ -215,9 +215,7 @@ impl Ui {
     }
 
     async fn exited(self) -> (i32, FakeTerminal) {
-        // Leaving ends the plugins and closes the session; on the Windows runner that has taken
-        // longer than 10 s once in several runs (the e2e tests there wait 30 s too).
-        let code = match tokio::time::timeout(Duration::from_secs(30), self.run).await {
+        let code = match tokio::time::timeout(Duration::from_secs(10), self.run).await {
             Ok(Ok(Ok(code))) => code,
             other => panic!(
                 "the TUI did not exit: {other:?}; the screen:\n{}",
@@ -329,7 +327,9 @@ async fn a_session_is_continued_with_c_reopened_with_resume_and_forked() {
     ui.send("and then?").await;
     ui.until(0, "second answer").await;
     assert!(text_of(&fake.requests()[1]).contains("remember this"));
-    // ctrl+d on an empty input leaves too.
+    // ctrl+d on an empty input leaves too, once the run is over (while it runs, ctrl+d does
+    // nothing). The reply is drawn before the run ends: on the Windows runner ctrl+d came between.
+    h.agent.wait_for_idle().await;
     ui.key("ctrl+d").await;
     let (code, term) = ui.exited().await;
     assert_eq!(code, 0);
