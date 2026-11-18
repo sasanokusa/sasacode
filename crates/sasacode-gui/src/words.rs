@@ -257,7 +257,7 @@ words! {
     // The git tab's scopes, and more of what it does.
     scope_changes: "変更", "Changes";
     scope_branch: "ブランチ全体", "Whole branch";
-    scope_commit: "コミットを選ぶ", "Pick a commit";
+    scope_commit: "コミット", "Commit";
     scope_turn: "直前のターン", "Last turn";
     scope_turn_base: "この会話の直前のターンが変えたもの（始まりと終わりの作業ツリーの比較）", "What this conversation's last turn changed (the working tree as it began and ended)";
     scope_no_turn: "この会話は、このウィンドウでまだターンを走らせていません", "No turn of this conversation has run in this window yet";
@@ -269,7 +269,7 @@ words! {
     diff_nowrap: "折り返さない", "No wrap";
     fold_all: "全部たたむ", "Fold all";
     open_all: "全部開く", "Open all";
-    diff_view: "表示", "View";
+    diff_view: "差分の描き方", "How diffs are drawn";
     part_general: "一般", "General";
     part_look: "表示", "Appearance";
     part_notices: "通知", "Notifications";

@@ -781,21 +781,22 @@ fn scope_bar(app: &App) -> El<'_> {
     // How the diffs are drawn: in a menu, each way marked while it is on.
     let more = &app.prefs.more;
     let changed = more.split_diff || more.hide_whitespace || more.diff_nowrap;
-    let view = button(
-        row![
-            icon(Icon::Sliders, 12.0, if changed { t.accent } else { t.fg_2 }),
-            text(w.diff_view)
-                .size(11.5)
-                .color(t.fg_2)
-                .wrapping(text::Wrapping::None),
-            icon(Icon::ChevronDown, 10.0, t.fg_3),
-        ]
-        .spacing(5)
-        .align_y(Alignment::Center),
-    )
-    .padding([3, 8])
-    .style(t.ghost(t.fg_2, false))
-    .on_press(Msg::OpenMenu(crate::rows::MenuFor::DiffView));
+    let view = tip(
+        t,
+        button(
+            row![
+                icon(Icon::Sliders, 13.0, if changed { t.accent } else { t.fg_2 }),
+                icon(Icon::ChevronDown, 10.0, t.fg_3),
+            ]
+            .spacing(3)
+            .align_y(Alignment::Center),
+        )
+        .padding([4, 6])
+        .style(t.ghost(t.fg_2, false))
+        .on_press(Msg::OpenMenu(crate::rows::MenuFor::DiffView)),
+        w.diff_view.to_owned(),
+        tooltip::Position::Bottom,
+    );
     row![container(scopes.wrap()).width(Length::Fill), view]
         .spacing(6)
         .align_y(Alignment::Center)

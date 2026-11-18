@@ -390,7 +390,13 @@ fn exchange<'a>(app: &'a App, i: usize, ex: &'a Exchange) -> El<'a> {
     }
     // The reply as it was written, Markdown and all: its text cannot be selected here. Shown under
     // the pointer and under the last reply, in a place kept for it, so nothing moves when it shows.
-    let shown = last || app.reply_hover == Some(i);
+    // The last reply is the last exchange's that has one: a turn that ended without one after it
+    // does not take it away.
+    let latest = answer.is_some()
+        && !app.chat.transcript.exchanges[i + 1..]
+            .iter()
+            .any(|e| e.answer().is_some());
+    let shown = latest || app.reply_hover == Some(i);
     let copy = answer.map(|_| {
         if !shown {
             return container(Space::new()).height(FOOT).into();

@@ -299,9 +299,13 @@ fn the_bottom_bar_names_the_folder_and_the_cost_and_keeps_the_rest_in_tooltips()
     assert!(says(&app, "$0.0042"));
     app.chat.transcript.usage.cost = 1.234;
     assert!(says(&app, "$1.23"));
-    // The id is copied from the palette instead.
+    // The id is copied from the palette instead, and the bar says it was.
     let _ = app.update(Msg::Show(Some(crate::app::Overlay::palette())));
     assert!(says(&app, crate::words::JA.menu_copy_id));
+    let _ = app.update(Msg::Show(None));
+    assert!(!says(&app, app.s.copied));
+    let _ = app.update(Msg::Copy(Clip::Session));
+    assert!(says(&app, app.s.copied));
 }
 
 #[test]
@@ -1780,10 +1784,7 @@ fn the_git_tab_shows_the_branch_or_a_commit_side_by_side_with_files_marked_viewe
     let _ = app.update(Msg::SetDiffNowrap(true));
     assert!(app.prefs.more.diff_nowrap && !says(&app, "折り返さない"));
     // How the diffs are drawn is in the menu of the view button, which turns it off again.
-    act(&mut app, |ui| {
-        let _ = ui.click(crate::words::JA.diff_view).expect("the view button");
-    });
-    assert!(matches!(&app.menu, Some(m) if m.what == crate::rows::MenuFor::DiffView));
+    let _ = app.update(Msg::OpenMenu(crate::rows::MenuFor::DiffView));
     act(&mut app, |ui| {
         let _ = ui.click("折り返さない").expect("the menu offers it");
     });
@@ -2141,6 +2142,54 @@ fn what_can_be_done_with_a_reply_shows_under_the_last_and_under_the_one_pointed_
     assert_eq!(app.reply_hover, Some(1));
     let _ = app.update(Msg::ReplyHover(1, false));
     assert_eq!((app.reply_hover, first_fork(&app)), (None, Some(1)));
+    // A last turn that ended without a reply leaves them under the reply before it.
+    app.chat.transcript.send("三つ目", now);
+    now += std::time::Duration::from_secs(1);
+    app.chat.transcript.apply(
+        &sasacode_protocol::parse_event(r#"{"type":"agent_end","cause":"error"}"#).unwrap(),
+        now,
+    );
+    assert_eq!(first_fork(&app), Some(1));
+}
+
+#[test]
+fn a_right_click_on_a_changed_file_names_it_where_the_repository_has_it() {
+    use crate::rows::MenuFor;
+    let mut app = window("ja");
+    // The window's folder is below the repository's top.
+    let top = app.cwd.parent().unwrap().to_owned();
+    app.git = crate::git::Status {
+        repo: true,
+        top: top.clone(),
+        branch: Some("main".into()),
+        files: vec![crate::git::File {
+            path: "orders-api/a.txt".into(),
+            index: ' ',
+            tree: 'M',
+            staged_diff: crate::diff::Diff::default(),
+            unstaged_diff: crate::diff::Diff::parse("@@ -1 +1 @@\n-a\n+b\n"),
+        }],
+        ..Default::default()
+    };
+    app.tab = Tab::Git;
+    act(&mut app, |ui| {
+        use iced::mouse::{Button, Event as Mouse};
+        let at = ui.find("a.txt").expect("the file is listed").bounds().center();
+        ui.point_at(at);
+        let _ = ui.simulate([
+            iced::Event::Mouse(Mouse::CursorMoved { position: at }),
+            iced::Event::Mouse(Mouse::ButtonPressed(Button::Right)),
+            iced::Event::Mouse(Mouse::ButtonReleased(Button::Right)),
+        ]);
+    });
+    assert!(
+        matches!(&app.menu, Some(m) if m.what == MenuFor::File(top.join("orders-api/a.txt"))),
+        "{:?}",
+        app.menu.as_ref().map(|m| &m.what)
+    );
+    // Its menu is shown (viewing, the editor and its folder are offered there for a file that is
+    // on the disk; this one is not).
+    assert!(says(&app, crate::words::JA.menu_copy_path));
 }
 
 #[test]

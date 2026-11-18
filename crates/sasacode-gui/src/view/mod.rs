@@ -503,7 +503,7 @@ fn pill(app: &App) -> El<'_> {
             ..container::Style::default()
         });
     // Read back from a log: what it does not keep, said where it is asked about.
-    if matches!(app.status(), Status::Loaded) {
+    if app.chat.loaded && !matches!(app.status(), Status::Running | Status::Waiting) {
         let s = app.s;
         return tip(
             app.t,
@@ -638,7 +638,10 @@ fn status_bar(app: &App) -> El<'_> {
     }
     let mut right = row![].spacing(8).align_y(Alignment::Center);
     // Copied from the palette or `/export`, where there is no button to say so.
-    if app.copied == Some(Clip::Conversation) {
+    if matches!(
+        app.copied,
+        Some(Clip::Conversation | Clip::Session | Clip::Link | Clip::Log | Clip::Folder)
+    ) {
         rest += 8.0 + prose_width(s.copied);
         right = right.push(item(s.copied.to_owned()).color(t.accent));
     }
