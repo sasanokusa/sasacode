@@ -30,6 +30,8 @@ pub const SEARCH: &str = "search";
 pub const TIMELINE: &str = "timeline";
 /// The field of the command palette, and of a conversation's new name.
 pub const PALETTE: &str = "palette";
+/// What the palette found, scrolled to keep the one chosen in sight.
+pub const PALETTE_LIST: &str = "palette-list";
 pub const RENAME: &str = "rename";
 /// The field of a conversation's group.
 pub const GROUP: &str = "group";
@@ -37,8 +39,6 @@ pub const GROUP: &str = "group";
 pub const PR_TITLE: &str = "pr-title";
 /// The search inside the conversation shown.
 pub const FIND_IN: &str = "find-in";
-/// The model's field.
-pub const MODEL: &str = "model";
 
 /// How far from its newest the conversation still counts as at it, in pixels: a nudge of the
 /// trackpad is not reading back.
@@ -2802,8 +2802,8 @@ pub(crate) fn global_key(event: iced::Event, status: event::Status, _window: win
         return None;
     };
     if status == event::Status::Captured {
-        // A field that let go of the keyboard on Esc, the search or the model, gives it back to
-        // the input: the next Esc is the input's again.
+        // A field that let go of the keyboard on Esc, the search or a palette's (which closes),
+        // gives it back to the input: the next Esc is the input's again.
         return matches!(key, Key::Named(Named::Escape)).then_some(Msg::Escaped);
     }
     if modifiers.is_empty() {

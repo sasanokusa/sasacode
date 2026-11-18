@@ -94,8 +94,11 @@ pub struct Listing {
 impl Listing {
     /// What `other` learnt, over what was known.
     pub fn merge(&mut self, other: Listing) {
-        if other.models.is_some() {
-            self.models = other.models;
+        // A CLI that did not answer lists none: that does not undo a list already had.
+        if let Some(models) = other.models
+            && (!models.is_empty() || self.models.is_none())
+        {
+            self.models = Some(models);
         }
         if other.commands.is_some() {
             self.commands = other.commands;
@@ -195,7 +198,10 @@ pub fn listing(program: &Path, cwd: &Path, lang: Option<String>) -> Task<Msg> {
         let (program, cwd) = (program.to_owned(), cwd.to_owned());
         async move {
             Listing {
-                models: parsed(ask(program, cwd, vec!["list", "models", "--json"], lang).await),
+                // Asked and not answered is none listed: the models picker stops waiting for them.
+                models: Some(
+                    parsed(ask(program, cwd, vec!["list", "models", "--json"], lang).await).unwrap_or_default(),
+                ),
                 ..Listing::default()
             }
         }
@@ -329,6 +335,12 @@ mod tests {
             ..Listing::default()
         });
         assert!(listing.models.is_some() && listing.untrusted().is_some());
+        // Asked again and not answered, the models already listed stay.
+        listing.merge(Listing {
+            models: Some(Vec::new()),
+            ..Listing::default()
+        });
+        assert!(!listing.models.as_ref().unwrap().is_empty());
         assert_eq!(listing.untrusted().unwrap().mcp_servers, ["db"]);
     }
 
