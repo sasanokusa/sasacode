@@ -1,0 +1,881 @@
+//! What the window keeps from one launch to the next: how it was laid out (its size and the widths
+//! its side panels were given), the choices made in its settings, and the names, pins and archive
+//! given to conversations. It is kept in `gui.json` in sasacode's home, written when a panel's edge
+//! is let go, when the window has stopped being resized, and when a setting changes. What it holds
+//! is brought within what the window allows when it is read, so a file left by an edit, a crash or
+//! an older version cannot open a window too small to use.
+
+use std::collections::{BTreeMap, BTreeSet};
+use std::io;
+use std::path::Path;
+
+use iced::{Point, Size};
+use serde_json::{Value, json};
+
+use crate::app::{INSP_MAX, INSP_MIN, INSP_W, SIDE_MAX, SIDE_MIN, SIDE_W};
+
+/// The file in sasacode's home.
+pub const FILE: &str = "gui.json";
+/// The size the window opens at the first time.
+pub const SIZE: Size = Size::new(1280.0, 800.0);
+/// The smallest the window can be made: the conversation and one side panel at its narrowest,
+/// and the input under a few lines of the conversation.
+pub const MIN_SIZE: Size = Size::new(760.0, 520.0);
+
+/// How far the window's contents can be zoomed out and in.
+pub const ZOOM_MIN: f32 = 0.7;
+pub const ZOOM_MAX: f32 = 1.6;
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Layout {
+    /// The window's size as the system measures it, whatever the zoom.
+    pub size: Size,
+    pub side: f32,
+    pub inspector: f32,
+    /// Where the window's top left corner was, as the system measures it: where it opens again.
+    /// `None` the first time, and the system puts it.
+    pub at: Option<Point>,
+}
+
+impl Default for Layout {
+    fn default() -> Self {
+        Layout {
+            size: SIZE,
+            side: SIDE_W,
+            inspector: INSP_W,
+            at: None,
+        }
+    }
+}
+
+/// What `file` holds, or nothing when it is not there or cannot be read.
+fn held(file: &Path) -> Value {
+    std::fs::read_to_string(file)
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or(Value::Null)
+}
+
+impl Layout {
+    /// What `file` holds, within bounds. What it lacks, or holds that is not a number, is what the
+    /// window opens at the first time; a file that is not there or cannot be read is all of it.
+    pub fn read(file: &Path) -> Layout {
+        let held = held(file);
+        let number = |value: &Value| value.as_f64().map(|n| n as f32).filter(|n| n.is_finite());
+        let start = Layout::default();
+        Layout {
+            size: Size::new(
+                number(&held["window"]["width"]).unwrap_or(start.size.width),
+                number(&held["window"]["height"]).unwrap_or(start.size.height),
+            ),
+            side: number(&held["side"]).unwrap_or(start.side),
+            inspector: number(&held["inspector"]).unwrap_or(start.inspector),
+            at: number(&held["window"]["x"])
+                .zip(number(&held["window"]["y"]))
+                .map(|(x, y)| Point::new(x, y)),
+        }
+        .within()
+    }
+
+    /// No smaller than the window can be made, and the panels as wide as a drag of their edges can
+    /// make them.
+    fn within(self) -> Layout {
+        Layout {
+            size: Size::new(
+                self.size.width.max(MIN_SIZE.width),
+                self.size.height.max(MIN_SIZE.height),
+            ),
+            side: self.side.clamp(SIDE_MIN, SIDE_MAX),
+            inspector: self.inspector.clamp(INSP_MIN, INSP_MAX),
+            at: self.at,
+        }
+    }
+}
+
+/// The choices made in the window's settings, and what the user said about conversations.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Prefs {
+    /// Enter sends and Shift+Enter breaks the line; else Enter breaks it and the chord sends.
+    pub enter_sends: bool,
+    /// Light or dark; `None` follows the system.
+    pub dark: Option<bool>,
+    /// How large the window's contents are drawn.
+    pub zoom: f32,
+    /// The system says so when a run ends or waits for an answer while the window is not in front.
+    pub notify: bool,
+    /// The computer does not sleep while a run goes on.
+    pub awake: bool,
+    /// What a run did between its words (calls, notes) is shown, not only what was said.
+    pub steps: bool,
+    /// Names given to conversations, by session id.
+    pub names: BTreeMap<String, String>,
+    /// Conversations kept at the top of the list, the first pinned first.
+    pub pinned: Vec<String>,
+    /// Conversations taken out of the list.
+    pub archived: BTreeSet<String>,
+    /// A conversation is taken out of the list when its branch's pull request is merged or closed.
+    pub auto_archive: bool,
+    /// After a run ends, the model is asked what to say next, offered in the input.
+    pub suggest: bool,
+    /// The branch each conversation was started on, by session id.
+    pub branches: BTreeMap<String, String>,
+    /// The group of the list each conversation was put in, by session id.
+    pub groups: BTreeMap<String, String>,
+    /// Keys given to the window's actions in place of their own, by action: `cmd+shift+k`.
+    pub keys: BTreeMap<String, String>,
+    /// Each folder's scripts, run from the window: by the folder's path.
+    pub scripts: BTreeMap<String, Vec<Script>>,
+    pub more: More,
+}
+
+/// How wide the conversation and the input are drawn.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Width {
+    #[default]
+    Normal,
+    Wide,
+    Full,
+}
+
+/// Which conversations the list shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Show {
+    #[default]
+    All,
+    /// Those working now.
+    Running,
+    /// Those waiting for an approval.
+    Waiting,
+    /// Those with news, or marked unread.
+    Unread,
+    /// Those not working now: done, stopped, or never run here.
+    Done,
+}
+
+/// In which order the list shows them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Order {
+    /// The one written to last first.
+    #[default]
+    Updated,
+    /// The one started last first.
+    Created,
+}
+
+/// The choices added later, each kept under its own name at the top of the file. Two windows keep
+/// each other's: a choice this window did not change is taken from the file.
+#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct More {
+    /// Conversations the user marked unread, by session id.
+    pub unread: BTreeSet<String>,
+    pub chat_width: Width,
+    /// The window's language, `ja` or `en`; none follows the system.
+    pub lang: Option<String>,
+    /// Running everything without asking (`auto`) was agreed to once.
+    pub auto_agreed: bool,
+    /// How a pull request is merged: `merge`, `squash` or `rebase`.
+    pub merge_method: String,
+    /// Diffs side by side, and changes of white space left out of them.
+    pub split_diff: bool,
+    pub hide_whitespace: bool,
+    /// Diff lines of the git tab kept whole and scrolled sideways, not wrapped.
+    pub diff_nowrap: bool,
+    /// Files of the git tab marked as viewed, by branch: `path#hash` of their diff.
+    pub viewed: BTreeMap<String, BTreeSet<String>>,
+    /// Which conversations the list shows, and in which order.
+    pub list_show: Show,
+    pub list_order: Order,
+    /// The other folders sasacode was used in are listed under the conversations.
+    pub folders_open: bool,
+    /// Conversations not written to for this many days are archived; none keeps them.
+    pub archive_after: Option<u32>,
+    /// Conversations taken back from the archive by hand, which are not archived again for age.
+    pub kept: BTreeSet<String>,
+    /// Of the calls in the steps, only those that failed are shown.
+    pub failed_only: bool,
+    /// What the model thought is left out of the steps.
+    pub hide_thinking: bool,
+    /// Messages sent while a run works wait for it to end, each for a run of its own, rather than
+    /// reaching the model at its next turn.
+    pub queue: bool,
+    /// What "always" allowed in each conversation, by its id: rules every later run of it is
+    /// given (`--allow`).
+    pub allowed: BTreeMap<String, Vec<String>>,
+    /// A conversation the user has not named gets a title the model writes, after its first run.
+    pub auto_title: bool,
+    /// The editor files are opened in: a command and its arguments; empty, VS Code or the
+    /// system's.
+    pub editor: String,
+    /// sasacode's colour, over its green: a name of [`crate::theme::ACCENTS`] or `#RRGGBB`.
+    pub accent: String,
+    /// The fonts of the window's words and of code, by name; empty, the window's own.
+    pub ui_font: String,
+    pub code_font: String,
+    /// No notification when a run ends, or when one waits for an answer; a sound with those sent.
+    pub quiet_done: bool,
+    pub quiet_wait: bool,
+    pub sound: bool,
+    /// Notified with the window in front too, not only while it is behind others.
+    pub notify_always: bool,
+    /// What is typed in the files tab saved by itself a moment after the last key.
+    pub autosave: bool,
+    /// A pull request's checks that fail start a conversation that is given their logs to fix them.
+    pub auto_fix: bool,
+    /// Conversations whose run was stopped by closing the window, by session id: offered to go on
+    /// when shown again.
+    pub cut: BTreeSet<String>,
+    /// The model, permission and effort a folder starts with where it has none of its own: one
+    /// never run in, or whose last run left it unset. Of `Folder`, those three only.
+    pub defaults: Option<Folder>,
+    /// How the branch of a worktree made here starts; empty, `sasacode/`.
+    pub worktree_prefix: String,
+    /// The sasacode the window runs, over `sasacode` on PATH; empty, that one (or $SASACODE_BIN).
+    pub program: String,
+    /// What each folder's last run used, and the conversation last shown there, by its path.
+    pub folders: BTreeMap<String, Folder>,
+    /// What was typed and not sent in each conversation, by its id, kept over a restart.
+    pub drafts: BTreeMap<String, String>,
+    /// The automations of every folder, by id.
+    pub automations: BTreeMap<String, crate::automations::Automation>,
+}
+
+/// What a folder's window starts with.
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct Folder {
+    pub model: String,
+    pub permission: Option<String>,
+    pub effort: Option<String>,
+    /// The conversation last shown.
+    pub last: Option<String>,
+    /// What readies a worktree made of it, run in the worktree before its window opens.
+    pub setup: String,
+}
+
+impl More {
+    fn read(held: &Value) -> More {
+        serde_json::from_value(held.clone()).unwrap_or_default()
+    }
+
+    fn over(&self, kept: &More, disk: &More) -> More {
+        let object = |m: &More| match serde_json::to_value(m) {
+            Ok(Value::Object(o)) => o,
+            _ => serde_json::Map::new(),
+        };
+        let (mine, kept) = (object(self), object(kept));
+        let mut all = object(disk);
+        for (key, value) in mine {
+            let before = kept.get(&key);
+            if before == Some(&value) {
+                continue;
+            }
+            // A map goes entry by entry, as the names do: two windows of two folders keep both.
+            let merged = match (&value, before, all.get(&key)) {
+                (Value::Object(m), Some(Value::Object(k)), Some(Value::Object(d))) => {
+                    let map = |o: &serde_json::Map<String, Value>| -> BTreeMap<String, Value> {
+                        o.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
+                    };
+                    Value::Object(merge_map(&map(m), &map(k), &map(d)).into_iter().collect())
+                }
+                _ => value,
+            };
+            all.insert(key, merged);
+        }
+        serde_json::from_value(Value::Object(all)).unwrap_or_else(|_| self.clone())
+    }
+}
+
+/// A command a folder's scripts run, by the name it is listed as.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Script {
+    pub name: String,
+    pub command: String,
+}
+
+impl Default for Prefs {
+    fn default() -> Self {
+        Prefs {
+            enter_sends: true,
+            dark: None,
+            zoom: 1.0,
+            notify: true,
+            awake: true,
+            steps: true,
+            names: BTreeMap::new(),
+            pinned: Vec::new(),
+            archived: BTreeSet::new(),
+            auto_archive: false,
+            suggest: false,
+            branches: BTreeMap::new(),
+            groups: BTreeMap::new(),
+            keys: BTreeMap::new(),
+            scripts: BTreeMap::new(),
+            more: More::default(),
+        }
+    }
+}
+
+/// What `held` has under `key` as words by name, each trimmed, blank ones left out.
+fn words(held: &Value, key: &str) -> BTreeMap<String, String> {
+    held[key]
+        .as_object()
+        .map(|all| {
+            all.iter()
+                .filter_map(|(id, name)| Some((id.clone(), name.as_str()?.trim().to_owned())))
+                .filter(|(_, name)| !name.is_empty())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// `mine` laid over `disk` entry by entry: what this window changed since `kept`, added, changed or
+/// taken away, and what another window wrote for the rest.
+fn merge_map<V: PartialEq + Clone>(
+    mine: &BTreeMap<String, V>,
+    kept: &BTreeMap<String, V>,
+    disk: &BTreeMap<String, V>,
+) -> BTreeMap<String, V> {
+    let mut all = disk.clone();
+    for id in kept.keys().chain(mine.keys()) {
+        match mine.get(id) {
+            now if now == kept.get(id) => {}
+            Some(value) => {
+                all.insert(id.clone(), value.clone());
+            }
+            None => {
+                all.remove(id);
+            }
+        }
+    }
+    all
+}
+
+impl Prefs {
+    /// What `file` holds; what it lacks or holds wrong is as it is the first time.
+    pub fn read(file: &Path) -> Prefs {
+        let held = held(file);
+        let start = Prefs::default();
+        let flag = |key: &str, or: bool| held[key].as_bool().unwrap_or(or);
+        let ids = |key: &str| -> Vec<String> {
+            held[key]
+                .as_array()
+                .map(|all| all.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect())
+                .unwrap_or_default()
+        };
+        let mut pinned = ids("pinned");
+        pinned.dedup();
+        Prefs {
+            enter_sends: flag("enterSends", start.enter_sends),
+            dark: match held["theme"].as_str() {
+                Some("light") => Some(false),
+                Some("dark") => Some(true),
+                _ => None,
+            },
+            zoom: held["zoom"]
+                .as_f64()
+                .map(|z| z as f32)
+                .filter(|z| z.is_finite())
+                .map_or(start.zoom, |z| z.clamp(ZOOM_MIN, ZOOM_MAX)),
+            notify: flag("notify", start.notify),
+            awake: flag("awake", start.awake),
+            steps: flag("steps", start.steps),
+            names: words(&held, "names"),
+            pinned,
+            archived: ids("archived").into_iter().collect(),
+            auto_archive: flag("autoArchive", start.auto_archive),
+            suggest: flag("suggest", start.suggest),
+            branches: words(&held, "branches"),
+            groups: words(&held, "groups"),
+            keys: words(&held, "keys"),
+            scripts: held["scripts"]
+                .as_object()
+                .map(|all| {
+                    all.iter()
+                        .map(|(folder, list)| {
+                            let list = list
+                                .as_array()
+                                .into_iter()
+                                .flatten()
+                                .filter_map(|s| {
+                                    let name = s["name"].as_str()?.trim();
+                                    let command = s["command"].as_str()?.trim();
+                                    (!name.is_empty() && !command.is_empty()).then(|| Script {
+                                        name: name.to_owned(),
+                                        command: command.to_owned(),
+                                    })
+                                })
+                                .collect();
+                            (folder.clone(), list)
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
+            more: More::read(&held),
+        }
+    }
+
+    /// This window's choices laid over `disk`, what the file holds now, which another window may
+    /// have written since this one read or wrote `kept`: what this window changed since then is
+    /// taken from it, the rest from the file. Names, pins and the archive go entry by entry, so
+    /// two windows naming two conversations keep both names.
+    pub fn over(&self, kept: &Prefs, disk: &Prefs) -> Prefs {
+        fn pick<T: PartialEq + Clone>(mine: &T, kept: &T, disk: &T) -> T {
+            if mine != kept { mine.clone() } else { disk.clone() }
+        }
+        let names = merge_map(&self.names, &kept.names, &disk.names);
+        let mut archived = disk.archived.clone();
+        archived.extend(self.archived.difference(&kept.archived).cloned());
+        for id in kept.archived.difference(&self.archived) {
+            archived.remove(id);
+        }
+        let unpinned = |id: &String| kept.pinned.contains(id) && !self.pinned.contains(id);
+        let mut pinned: Vec<String> = disk.pinned.iter().filter(|id| !unpinned(id)).cloned().collect();
+        for id in &self.pinned {
+            if !kept.pinned.contains(id) && !pinned.contains(id) {
+                pinned.push(id.clone());
+            }
+        }
+        Prefs {
+            enter_sends: pick(&self.enter_sends, &kept.enter_sends, &disk.enter_sends),
+            dark: pick(&self.dark, &kept.dark, &disk.dark),
+            zoom: pick(&self.zoom, &kept.zoom, &disk.zoom),
+            notify: pick(&self.notify, &kept.notify, &disk.notify),
+            awake: pick(&self.awake, &kept.awake, &disk.awake),
+            steps: pick(&self.steps, &kept.steps, &disk.steps),
+            names,
+            pinned,
+            archived,
+            auto_archive: pick(&self.auto_archive, &kept.auto_archive, &disk.auto_archive),
+            suggest: pick(&self.suggest, &kept.suggest, &disk.suggest),
+            branches: merge_map(&self.branches, &kept.branches, &disk.branches),
+            groups: merge_map(&self.groups, &kept.groups, &disk.groups),
+            keys: merge_map(&self.keys, &kept.keys, &disk.keys),
+            scripts: merge_map(&self.scripts, &kept.scripts, &disk.scripts),
+            more: self.more.over(&kept.more, &disk.more),
+        }
+    }
+}
+
+/// Writes how the window is laid out and what was chosen to `file`, whole or not at all: a window
+/// closed while it writes leaves the last one there.
+pub fn write(file: &Path, layout: &Layout, prefs: &Prefs) -> io::Result<()> {
+    if let Some(dir) = file.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let whole = |n: f32| n.round() as i64;
+    let theme = match prefs.dark {
+        None => "system",
+        Some(false) => "light",
+        Some(true) => "dark",
+    };
+    let mut window = json!({ "width": whole(layout.size.width), "height": whole(layout.size.height) });
+    if let Some(at) = layout.at {
+        window["x"] = json!(whole(at.x));
+        window["y"] = json!(whole(at.y));
+    }
+    let mut all = json!({
+        "window": window,
+        "side": whole(layout.side),
+        "inspector": whole(layout.inspector),
+        "enterSends": prefs.enter_sends,
+        "theme": theme,
+        // Rounded as the number it is written as, so that 1.4 is not 1.399999976158142.
+        "zoom": (f64::from(prefs.zoom) * 100.0).round() / 100.0,
+        "notify": prefs.notify,
+        "awake": prefs.awake,
+        "steps": prefs.steps,
+        "names": prefs.names,
+        "pinned": prefs.pinned,
+        "archived": prefs.archived,
+        "autoArchive": prefs.auto_archive,
+        "suggest": prefs.suggest,
+        "branches": prefs.branches,
+        "groups": prefs.groups,
+        "keys": prefs.keys,
+        "scripts": prefs
+            .scripts
+            .iter()
+            .map(|(folder, list)| {
+                let list: Vec<Value> = list
+                    .iter()
+                    .map(|s| json!({ "name": s.name, "command": s.command }))
+                    .collect();
+                (folder.clone(), Value::Array(list))
+            })
+            .collect::<serde_json::Map<String, Value>>(),
+    });
+    if let (Some(all), Ok(Value::Object(more))) = (all.as_object_mut(), serde_json::to_value(&prefs.more)) {
+        all.extend(more);
+    }
+    let text = serde_json::to_string_pretty(&all)?;
+    let part = file.with_extension(format!("json.{}.part", std::process::id()));
+    std::fs::write(&part, text + "\n")?;
+    std::fs::rename(&part, file)
+}
+
+/// The window's size made no larger than the screen it is on, when it is larger: a size kept from a
+/// bigger screen would put the window's edges where they cannot be taken.
+pub fn fit(size: Size, screen: Size) -> Option<Size> {
+    let fit = Size::new(
+        size.width.min(screen.width).max(MIN_SIZE.width),
+        size.height.min(screen.height).max(MIN_SIZE.height),
+    );
+    (fit != size).then_some(fit)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use super::*;
+
+    #[test]
+    fn the_later_choices_are_kept_by_name_and_two_windows_keep_each_others() {
+        let dir = std::env::temp_dir().join(format!("sasacode-gui-more-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let file = dir.join("gui.json");
+        let kept = Prefs::default();
+        let mut first = kept.clone();
+        first.more.chat_width = Width::Wide;
+        write(&file, &Layout::default(), &first).unwrap();
+        let text = std::fs::read_to_string(&file).unwrap();
+        assert!(text.contains("\"chatWidth\": \"wide\""));
+        assert_eq!(Prefs::read(&file).more.chat_width, Width::Wide);
+        // Another window, which read the file before, changes the language only.
+        let mut second = kept.clone();
+        second.more.lang = Some("en".into());
+        let merged = second.over(&kept, &Prefs::read(&file));
+        assert_eq!(
+            (merged.more.chat_width, merged.more.lang.as_deref()),
+            (Width::Wide, Some("en"))
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn two_windows_keep_what_each_said_about_conversations() {
+        let dir = std::env::temp_dir().join(format!("sasacode-gui-two-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let file = dir.join("gui.json");
+        let mut first = Prefs::default();
+        first.names.insert("a".into(), "前からの名前".into());
+        first.pinned.push("p".into());
+        write(&file, &Layout::default(), &first).unwrap();
+
+        // Both windows open on what the file holds.
+        let kept = Prefs::read(&file);
+        let (mut one, mut two) = (kept.clone(), kept.clone());
+        // One names a conversation and archives another, and is written.
+        one.names.insert("b".into(), "一つ目の窓".into());
+        one.archived.insert("x".into());
+        let written = one.over(&kept, &Prefs::read(&file));
+        write(&file, &Layout::default(), &written).unwrap();
+        // The other, which still has neither, unpins one, names one, and zooms.
+        two.pinned.clear();
+        two.names.insert("c".into(), "二つ目の窓".into());
+        two.zoom = 1.2;
+        let written = two.over(&kept, &Prefs::read(&file));
+        write(&file, &Layout::default(), &written).unwrap();
+
+        let now = Prefs::read(&file);
+        assert_eq!(
+            now.names.keys().map(String::as_str).collect::<Vec<_>>(),
+            ["a", "b", "c"]
+        );
+        assert!(now.archived.contains("x"));
+        assert!(now.pinned.is_empty());
+        assert_eq!(now.zoom, 1.2);
+        // What neither changed stays as the file had it; a name taken away is gone.
+        let mut three = now.clone();
+        three.names.remove("a");
+        let after = three.over(&now, &now);
+        assert!(!after.names.contains_key("a") && after.zoom == 1.2);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    use crate::app::{App, Edge, Msg, Options};
+    use crate::i18n::Strings;
+
+    fn home(name: &str) -> PathBuf {
+        let home = std::env::temp_dir().join(format!("sasacode-gui-layout-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        home
+    }
+
+    fn layout(width: f32, height: f32, side: f32, inspector: f32) -> Layout {
+        Layout {
+            size: Size::new(width, height),
+            side,
+            inspector,
+            at: None,
+        }
+    }
+
+    #[test]
+    fn a_kept_layout_is_read_within_what_the_window_allows() {
+        let home = home("read");
+        std::fs::create_dir_all(&home).unwrap();
+        let file = home.join(FILE);
+        // None kept yet, or nothing that can be read: the window opens as the first time.
+        assert_eq!(Layout::read(&file), Layout::default());
+        std::fs::write(&file, "{ not json").unwrap();
+        assert_eq!(Layout::read(&file), Layout::default());
+
+        // What fits is taken as it is.
+        std::fs::write(
+            &file,
+            r#"{"window":{"width":1600,"height":1000},"side":300,"inspector":500}"#,
+        )
+        .unwrap();
+        assert_eq!(Layout::read(&file), layout(1600.0, 1000.0, 300.0, 500.0));
+
+        // Too small a window, a panel narrower or wider than a drag makes it: the nearest that is
+        // allowed. What is not a number is what the window opens at.
+        std::fs::write(
+            &file,
+            r#"{"window":{"width":-5,"height":"tall"},"side":20,"inspector":5000}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            Layout::read(&file),
+            layout(MIN_SIZE.width, SIZE.height, SIDE_MIN, INSP_MAX)
+        );
+        std::fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn the_layout_is_kept_when_an_edge_is_let_go_and_when_the_window_rests() {
+        let home = home("keep");
+        let file = home.join(FILE);
+        let options = Options {
+            program: "sasacode".into(),
+            cwd: "/tmp".into(),
+            session: None,
+            layout: layout(1440.0, 900.0, 300.0, 420.0),
+            prefs: Prefs::default(),
+            layout_file: Some(file.clone()),
+        };
+        let mut app = App::blank(options, Strings::get("ja"));
+        assert_eq!((app.width, app.side_w, app.insp_w), (1440.0, 300.0, 420.0));
+
+        // Nothing is written while the edge is held, and the home is made when it is let go.
+        let _ = app.update(Msg::Grab(Edge::Side));
+        let _ = app.update(Msg::Drag(320.0));
+        assert!(!file.exists());
+        let _ = app.update(Msg::Drop);
+        assert_eq!(Layout::read(&file), layout(1440.0, 900.0, 320.0, 420.0));
+        let _ = app.update(Msg::ResetWidth(Edge::Inspector));
+        assert_eq!(Layout::read(&file).inspector, INSP_W);
+
+        // A resize is kept once it has rested: only the last size of it.
+        let _ = app.update(Msg::Resized(Size::new(1500.0, 950.0)));
+        let _ = app.update(Msg::Resized(Size::new(1600.0, 1000.0)));
+        let _ = app.update(Msg::Rested(1));
+        assert_eq!(Layout::read(&file).size, Size::new(1440.0, 900.0));
+        let _ = app.update(Msg::Rested(2));
+        assert_eq!(Layout::read(&file).size, Size::new(1600.0, 1000.0));
+
+        // What has not changed is not written again. A panel folded by a drag keeps the width it
+        // had when its edge was taken, not the narrowest it passed through.
+        std::fs::remove_file(&file).unwrap();
+        let _ = app.update(Msg::Rested(2));
+        let _ = app.update(Msg::Grab(Edge::Side));
+        for x in [250.0, 180.0, 130.0, 60.0] {
+            let _ = app.update(Msg::Drag(x));
+        }
+        assert!(!app.side);
+        let _ = app.update(Msg::Drop);
+        assert!(!file.exists());
+        assert_eq!(app.side_w, 320.0);
+        std::fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn settings_are_kept_with_the_layout_and_read_within_bounds() {
+        let home = home("prefs");
+        let file = home.join(FILE);
+        let prefs = Prefs {
+            enter_sends: false,
+            dark: Some(true),
+            zoom: 1.2,
+            notify: false,
+            awake: false,
+            steps: false,
+            names: [("aaaa".to_owned(), "名前".to_owned())].into(),
+            pinned: vec!["bbbb".into(), "aaaa".into()],
+            archived: ["cccc".to_owned()].into(),
+            auto_archive: true,
+            suggest: true,
+            branches: [("aaaa".to_owned(), "topic/x".to_owned())].into(),
+            groups: [("bbbb".to_owned(), "調査".to_owned())].into(),
+            keys: [("palette".to_owned(), "cmd+shift+k".to_owned())].into(),
+            scripts: [(
+                "/work/p".to_owned(),
+                vec![Script {
+                    name: "テスト".into(),
+                    command: "cargo test".into(),
+                }],
+            )]
+            .into(),
+            more: More {
+                unread: ["dddd".to_owned()].into(),
+                chat_width: Width::Full,
+                lang: Some("en".into()),
+                auto_agreed: true,
+                merge_method: "squash".into(),
+                split_diff: true,
+                hide_whitespace: true,
+                diff_nowrap: true,
+                viewed: [("topic".to_owned(), ["a.rs#1".to_owned()].into())].into(),
+                list_show: Show::Unread,
+                list_order: Order::Created,
+                folders_open: true,
+                archive_after: Some(30),
+                kept: ["eeee".to_owned()].into(),
+                failed_only: true,
+                hide_thinking: true,
+                queue: true,
+                allowed: BTreeMap::from([("s1".into(), vec!["bash(npm test)".into()])]),
+                auto_title: true,
+                editor: "zed -n".into(),
+                accent: "blue".into(),
+                ui_font: "Noto Sans JP".into(),
+                code_font: "JetBrains Mono".into(),
+                quiet_done: true,
+                quiet_wait: false,
+                sound: true,
+                notify_always: true,
+                autosave: true,
+                auto_fix: true,
+                cut: BTreeSet::from(["s9".into()]),
+                worktree_prefix: "me/".into(),
+                defaults: Some(Folder {
+                    model: "local/gemma4".into(),
+                    effort: Some("high".into()),
+                    ..Folder::default()
+                }),
+                program: "/opt/sasacode/bin/sasacode".into(),
+                folders: BTreeMap::from([(
+                    "/w".into(),
+                    Folder {
+                        model: "local/gemma4".into(),
+                        permission: Some("ask".into()),
+                        effort: None,
+                        last: Some("s1".into()),
+                        setup: "npm install".into(),
+                    },
+                )]),
+                drafts: BTreeMap::from([("s1".into(), "途中".into())]),
+                automations: BTreeMap::from([(
+                    "a1".into(),
+                    crate::automations::Automation {
+                        name: "朝のCI確認".into(),
+                        folder: "/w".into(),
+                        prompt: "昨夜の失敗をまとめて".into(),
+                        every: crate::automations::Every::Weekdays { at: 510 },
+                        mode: "ask".into(),
+                        on: false,
+                        since: 1_763_000_000,
+                        last: Some(1_763_100_000),
+                    },
+                )]),
+            },
+        };
+        write(&file, &Layout::default(), &prefs).unwrap();
+        assert_eq!(Prefs::read(&file), prefs);
+        assert_eq!(Layout::read(&file), Layout::default());
+        assert!(std::fs::read_to_string(&file).unwrap().contains("\"zoom\": 1.2\n"));
+
+        // An older file has none of it; a zoom too large is the largest; a blank name is none.
+        std::fs::write(
+            &file,
+            r#"{"zoom":9,"theme":"blue","names":{"a":"  ","b":"B"},"pinned":"x"}"#,
+        )
+        .unwrap();
+        let read = Prefs::read(&file);
+        assert_eq!(read.zoom, ZOOM_MAX);
+        assert_eq!(read.dark, None);
+        assert_eq!(read.names.len(), 1);
+        assert!(read.pinned.is_empty() && read.enter_sends && read.steps);
+        std::fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn two_windows_keep_each_others_folders_and_drafts() {
+        let folder = |model: &str| Folder {
+            model: model.to_owned(),
+            ..Folder::default()
+        };
+        let kept = More::default();
+        // Another window, of another folder, wrote its own since this one read the file.
+        let mut disk = More::default();
+        disk.folders.insert("/b".into(), folder("b/m"));
+        disk.drafts.insert("s2".into(), "half".into());
+        disk.sound = true;
+        let mut mine = More::default();
+        mine.folders.insert("/a".into(), folder("a/m"));
+        let all = mine.over(&kept, &disk);
+        assert_eq!(all.folders.len(), 2);
+        assert_eq!(all.drafts.get("s2").map(String::as_str), Some("half"));
+        assert!(all.sound);
+        // An entry this window took away goes; one it changed is its.
+        let kept = all.clone();
+        let mut mine = all.clone();
+        mine.drafts.remove("s2");
+        mine.folders.insert("/b".into(), folder("b/n"));
+        let all = mine.over(&kept, &kept);
+        assert!(all.drafts.is_empty());
+        assert_eq!(all.folders["/b"].model, "b/n");
+    }
+
+    #[test]
+    fn a_window_kept_from_a_bigger_screen_is_fitted_to_this_one() {
+        let screen = Size::new(1440.0, 900.0);
+        assert_eq!(fit(Size::new(1280.0, 800.0), screen), None);
+        assert_eq!(fit(Size::new(2560.0, 1440.0), screen), Some(screen));
+        assert_eq!(fit(Size::new(2560.0, 700.0), screen), Some(Size::new(1440.0, 700.0)));
+        // Never under the smallest the window can be made.
+        assert_eq!(fit(Size::new(2000.0, 1000.0), Size::new(600.0, 400.0)), Some(MIN_SIZE));
+    }
+
+    #[test]
+    fn where_the_window_was_moved_is_where_it_opens_again() {
+        let home = home("moved");
+        let file = home.join(FILE);
+        // Kept with its place, read back with it; only half a place is none.
+        let at = Layout {
+            at: Some(iced::Point::new(120.0, -40.0)),
+            ..layout(1440.0, 900.0, 300.0, 420.0)
+        };
+        write(&file, &at, &Prefs::default()).unwrap();
+        assert_eq!(Layout::read(&file), at);
+        std::fs::write(&file, r#"{"window":{"width":1440,"height":900,"x":10}}"#).unwrap();
+        assert_eq!(Layout::read(&file).at, None);
+
+        // A drag of the window is many moves: the last is kept once it rests, as the system
+        // measures it (iced gives it less the zoom).
+        let options = Options {
+            program: "sasacode".into(),
+            cwd: "/tmp".into(),
+            session: None,
+            layout: layout(1440.0, 900.0, 300.0, 420.0),
+            prefs: Prefs {
+                zoom: 1.25,
+                ..Prefs::default()
+            },
+            layout_file: Some(file.clone()),
+        };
+        let mut app = App::blank(options, Strings::get("ja"));
+        assert_eq!(app.at, None);
+        let _ = app.update(Msg::Moved(iced::Point::new(100.0, 50.0)));
+        let _ = app.update(Msg::Moved(iced::Point::new(200.0, 80.0)));
+        let _ = app.update(Msg::Rested(1));
+        assert_eq!(Layout::read(&file).at, None);
+        let _ = app.update(Msg::Rested(2));
+        assert_eq!(Layout::read(&file).at, Some(iced::Point::new(250.0, 100.0)));
+        std::fs::remove_dir_all(home).unwrap();
+    }
+}

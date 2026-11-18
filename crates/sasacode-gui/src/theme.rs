@@ -1,5 +1,11 @@
 //! The window's colours and the look of its parts. One set of colours for light and one for dark;
 //! everything drawn takes its colours from here, not from iced's built-in themes.
+//!
+//! The look follows Solid Glass (github.com/deeplethe/solid-glass, MIT): neutral greys with no
+//! tint of their own, panes finished at the edge with a fine line and a soft shadow under them,
+//! one solid "ink" button, and colour kept for what it says (the state of a run, a change, a link).
+//! Its colours are oklch and partly clear; here each is the opaque colour it makes over what it is
+//! drawn on, since iced draws no blur behind a pane.
 
 use iced::widget::{button, container, overlay::menu, pick_list, rule, scrollable, text_editor, text_input};
 use iced::{Background, Border, Color, Shadow, Theme, Vector, border, theme::Palette};
@@ -17,16 +23,26 @@ pub struct Tokens {
     pub surface: Color,
     /// What sits on top: cards, the input.
     pub raised: Color,
-    /// What is set in: code, output, the user's message.
+    /// What is set in: code, output.
     pub inset: Color,
     pub line: Color,
     pub line_2: Color,
     pub fg: Color,
     pub fg_2: Color,
     pub fg_3: Color,
+    /// sasacode's own colour: what is running, done, new.
     pub accent: Color,
     pub on_accent: Color,
     pub accent_wash: Color,
+    /// The one solid button of a group, and a switch that is on.
+    pub ink: Color,
+    pub on_ink: Color,
+    /// Where a link goes.
+    pub link: Color,
+    /// What is chosen or under the pointer: a conversation, a tab, a row of a menu.
+    pub state: Color,
+    /// Text chosen in an input.
+    pub select: Color,
     pub warn: Color,
     pub warn_solid: Color,
     pub warn_wash: Color,
@@ -40,62 +56,110 @@ pub struct Tokens {
     pub del_wash: Color,
 }
 
+/// The colours offered for sasacode's own, by name: each as it is in light and in dark.
+pub const ACCENTS: [(&str, u32, u32); 4] = [
+    ("blue", 0x2563EB, 0x60A5FA),
+    ("violet", 0x7C3AED, 0xA78BFA),
+    ("amber", 0xB45309, 0xFBBF24),
+    ("rose", 0xBE185D, 0xF472B6),
+];
+
+/// `#RRGGBB` (or `RRGGBB`) as a colour.
+pub fn parse_hex(text: &str) -> Option<Color> {
+    let digits = text.trim().trim_start_matches('#');
+    if digits.len() != 6 {
+        return None;
+    }
+    u32::from_str_radix(digits, 16).ok().map(hex)
+}
+
+/// `t` with `accent` as sasacode's colour: a name of [`ACCENTS`] or `#RRGGBB`. Anything else, or
+/// nothing, keeps its green.
+pub fn with_accent(mut t: Tokens, accent: &str) -> Tokens {
+    let named = ACCENTS
+        .iter()
+        .find(|(name, ..)| *name == accent.trim())
+        .map(|(_, light, dark)| hex(if t.dark { *dark } else { *light }));
+    let Some(c) = named.or_else(|| parse_hex(accent)) else {
+        return t;
+    };
+    let mix = |a: Color, k: f32| Color::from_rgb(a.r + (c.r - a.r) * k, a.g + (c.g - a.g) * k, a.b + (c.b - a.b) * k);
+    t.accent = c;
+    t.accent_wash = mix(t.surface, if t.dark { 0.22 } else { 0.12 });
+    // What is written on it: dark on a light colour, light on a dark one.
+    let light = 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b > 0.55;
+    t.on_accent = if light { hex(0x0D0D0D) } else { hex(0xFCFCFC) };
+    t
+}
+
 pub const LIGHT: Tokens = Tokens {
     dark: false,
-    bg: hex(0xF2F4EF),
-    surface: hex(0xFBFCFA),
-    raised: hex(0xFFFFFF),
-    inset: hex(0xEAEDE6),
-    line: hex(0xDDE2D8),
-    line_2: hex(0xC6CDC0),
-    fg: hex(0x181D19),
-    fg_2: hex(0x4D584F),
-    fg_3: hex(0x626C63),
-    accent: hex(0x2A6B47),
-    on_accent: hex(0xFFFFFF),
-    accent_wash: hex(0xDFEDE3),
-    warn: hex(0x8F5208),
-    warn_solid: hex(0xD4861C),
-    warn_wash: hex(0xFAF0DB),
-    warn_line: hex(0xE8CE98),
-    err: hex(0xAC332B),
-    err_wash: hex(0xFAE9E6),
-    err_line: hex(0xEABDB7),
-    add: hex(0x1C6E38),
-    add_wash: hex(0xE2F2E6),
-    del: hex(0xAC332B),
-    del_wash: hex(0xFBEAE7),
+    bg: hex(0xE4E6EB),
+    surface: hex(0xECEDF1),
+    raised: hex(0xF5F6F9),
+    inset: hex(0xD8DADF),
+    line: hex(0xCDD0D6),
+    line_2: hex(0xBBBEC4),
+    fg: hex(0x0D0D0D),
+    fg_2: hex(0x383838),
+    fg_3: hex(0x585858),
+    accent: hex(0x006C4E),
+    on_accent: hex(0xFCFCFC),
+    accent_wash: hex(0xD9EDE9),
+    ink: hex(0x262727),
+    on_ink: hex(0xFAFAFA),
+    link: hex(0x0060C1),
+    state: hex(0xDADCE1),
+    select: hex(0xC4D8EE),
+    warn: hex(0x944E00),
+    warn_solid: hex(0xD87400),
+    warn_wash: hex(0xF1E6D9),
+    warn_line: hex(0xEAC295),
+    err: hex(0xC51E21),
+    err_wash: hex(0xF4DEE1),
+    err_line: hex(0xF1ADB2),
+    add: hex(0x10703A),
+    add_wash: hex(0xD7E9E2),
+    del: hex(0xC51E21),
+    del_wash: hex(0xF4DEE1),
 };
 
 pub const DARK: Tokens = Tokens {
     dark: true,
-    bg: hex(0x111512),
-    surface: hex(0x161B17),
-    raised: hex(0x1E241F),
-    inset: hex(0x222923),
-    line: hex(0x29302A),
-    line_2: hex(0x3A443B),
-    fg: hex(0xE2E7E0),
-    fg_2: hex(0xA7B2A7),
-    fg_3: hex(0x8C978D),
-    accent: hex(0x84C59A),
-    on_accent: hex(0x0E1610),
-    accent_wash: hex(0x1D2E23),
-    warn: hex(0xE6B261),
-    warn_solid: hex(0xDFA043),
-    warn_wash: hex(0x2C2513),
-    warn_line: hex(0x5A4820),
-    err: hex(0xEF867B),
-    err_wash: hex(0x311A17),
-    err_line: hex(0x6A2F29),
-    add: hex(0x7BC591),
-    add_wash: hex(0x15271B),
-    del: hex(0xEF867B),
-    del_wash: hex(0x301917),
+    bg: hex(0x0D0D0D),
+    surface: hex(0x141414),
+    raised: hex(0x222222),
+    inset: hex(0x1A1A1A),
+    line: hex(0x3A3A3A),
+    line_2: hex(0x4E4E4E),
+    fg: hex(0xF2F2F2),
+    fg_2: hex(0xC7C7C7),
+    fg_3: hex(0xA4A4A4),
+    accent: hex(0x54D2A4),
+    on_accent: hex(0x071A13),
+    accent_wash: hex(0x293B34),
+    ink: hex(0xD5D5D5),
+    on_ink: hex(0x121212),
+    link: hex(0x73B6FA),
+    // Over a card, where a menu's chosen row is: on the panels it is lighter still.
+    state: hex(0x333333),
+    select: hex(0x2D4964),
+    warn: hex(0xF79C40),
+    warn_solid: hex(0xED9235),
+    warn_wash: hex(0x403326),
+    warn_line: hex(0x73502E),
+    err: hex(0xFD7273),
+    err_wash: hex(0x432C2D),
+    err_line: hex(0x763B3C),
+    add: hex(0x5BCC80),
+    add_wash: hex(0x28392E),
+    del: hex(0xFD7273),
+    del_wash: hex(0x432C2D),
 };
 
-pub const RADIUS: f32 = 6.0;
-pub const RADIUS_L: f32 = 10.0;
+/// A control's corners, and a pane's.
+pub const RADIUS: f32 = 10.0;
+pub const RADIUS_L: f32 = 14.0;
 
 impl Tokens {
     /// The iced theme the built-in parts (markdown, selections, menus) take their colours from.
@@ -110,11 +174,29 @@ impl Tokens {
         Palette {
             background: self.bg,
             text: self.fg,
-            primary: self.accent,
+            // A switch that is on, a box that is ticked: ink, as the solid button.
+            primary: self.ink,
             success: self.add,
             warning: self.warn_solid,
             danger: self.err,
         }
+    }
+
+    /// A shadow of black at `a` in the light (`a_dark` in the dark), `y` down, `blur` wide.
+    fn shade(self, a: f32, a_dark: f32, y: f32, blur: f32) -> Shadow {
+        Shadow {
+            color: Color {
+                a: if self.dark { a_dark } else { a },
+                ..Color::BLACK
+            },
+            offset: Vector::new(0.0, y),
+            blur_radius: blur,
+        }
+    }
+
+    /// Where a pane meets what it stands on: a line of shadow just under it.
+    fn contact(self) -> Shadow {
+        self.shade(0.07, 0.4, 1.0, 3.0)
     }
 
     /// A filled area with no border.
@@ -126,7 +208,8 @@ impl Tokens {
         }
     }
 
-    /// A bordered box.
+    /// A bordered box. One that stands up (a card, filled `raised`) has a shadow under it; one set
+    /// in has none.
     pub fn boxed(self, fill: Color, line: Color, radius: f32) -> impl Fn(&Theme) -> container::Style {
         move |_| container::Style {
             background: Some(Background::Color(fill)),
@@ -136,11 +219,17 @@ impl Tokens {
                 width: 1.0,
                 radius: border::radius(radius),
             },
+            shadow: if fill == self.raised {
+                self.contact()
+            } else {
+                Shadow::default()
+            },
             ..container::Style::default()
         }
     }
 
-    /// A box that floats above the rest: the approval card, the palette.
+    /// A box that floats above the rest: the approval card, the palette. Thick glass: a deep, soft
+    /// shadow under it.
     pub fn floating(self, fill: Color, line: Color) -> impl Fn(&Theme) -> container::Style {
         move |_| container::Style {
             background: Some(Background::Color(fill)),
@@ -150,24 +239,17 @@ impl Tokens {
                 width: 1.0,
                 radius: border::radius(RADIUS_L),
             },
-            shadow: Shadow {
-                color: Color {
-                    a: if self.dark { 0.45 } else { 0.12 },
-                    ..Color::BLACK
-                },
-                offset: Vector::new(0.0, 6.0),
-                blur_radius: 22.0,
-            },
+            shadow: self.shade(0.16, 0.6, 14.0, 36.0),
             ..container::Style::default()
         }
     }
 
-    /// A small label with a tinted background.
+    /// A small label with a tinted background, round at the ends.
     pub fn tag(self, fill: Color, text: Color) -> impl Fn(&Theme) -> container::Style {
         move |_| container::Style {
             background: Some(Background::Color(fill)),
             text_color: Some(text),
-            border: border::rounded(4.0),
+            border: border::rounded(7.0),
             ..container::Style::default()
         }
     }
@@ -181,23 +263,33 @@ impl Tokens {
         }
     }
 
-    /// The one filled button of a group.
+    /// The one solid button of a group: ink, with a fine edge and a shadow under it.
     pub fn primary(self) -> impl Fn(&Theme, button::Status) -> button::Style {
         move |_, status| {
             let base = button::Style {
-                background: Some(Background::Color(self.accent)),
-                text_color: self.on_accent,
-                border: border::rounded(RADIUS),
+                background: Some(Background::Color(self.ink)),
+                text_color: self.on_ink,
+                border: Border {
+                    color: mix(self.ink, self.fg, 0.3),
+                    width: 1.0,
+                    radius: border::radius(RADIUS),
+                },
+                shadow: self.shade(0.22, 0.45, 1.0, 3.0),
                 ..button::Style::default()
             };
             match status {
                 button::Status::Hovered | button::Status::Pressed => button::Style {
-                    background: Some(Background::Color(mix(self.accent, self.fg, 0.14))),
+                    background: Some(Background::Color(mix(self.ink, self.bg, 0.14))),
                     ..base
                 },
                 button::Status::Disabled => button::Style {
-                    background: Some(Background::Color(self.line)),
+                    background: Some(Background::Color(self.inset)),
                     text_color: self.fg_3,
+                    border: Border {
+                        color: self.line,
+                        ..base.border
+                    },
+                    shadow: Shadow::default(),
                     ..base
                 },
                 button::Status::Active => base,
@@ -205,30 +297,32 @@ impl Tokens {
         }
     }
 
-    /// A button with an outline.
+    /// A button of glass: the card's colour, a fine edge, standing a little off what it is on.
     pub fn outline(self, text: Color) -> impl Fn(&Theme, button::Status) -> button::Style {
         move |_, status| {
             let base = button::Style {
                 background: Some(Background::Color(self.raised)),
                 text_color: text,
                 border: Border {
-                    color: self.line_2,
+                    color: self.line,
                     width: 1.0,
                     radius: border::radius(RADIUS),
                 },
+                shadow: self.contact(),
                 ..button::Style::default()
             };
             match status {
                 button::Status::Hovered | button::Status::Pressed => button::Style {
-                    background: Some(Background::Color(self.inset)),
+                    background: Some(Background::Color(mix(self.raised, self.state, 0.6))),
+                    border: Border {
+                        color: self.line_2,
+                        ..base.border
+                    },
                     ..base
                 },
                 button::Status::Disabled => button::Style {
                     text_color: self.fg_3,
-                    border: Border {
-                        color: self.line,
-                        ..base.border
-                    },
+                    shadow: Shadow::default(),
                     ..base
                 },
                 button::Status::Active => base,
@@ -237,12 +331,19 @@ impl Tokens {
     }
 
     /// A button that is only its content until the pointer is over it. `on` keeps it lit (the
-    /// open conversation, the chosen tab).
+    /// open conversation, the chosen tab): one state, the same grey for both.
     pub fn ghost(self, text: Color, on: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
         move |_, status| {
-            let lit = on || matches!(status, button::Status::Hovered | button::Status::Pressed);
+            let hot = matches!(status, button::Status::Hovered | button::Status::Pressed);
+            let fill = if on {
+                Some(self.state)
+            } else if hot {
+                Some(Color { a: 0.7, ..self.state })
+            } else {
+                None
+            };
             button::Style {
-                background: lit.then_some(Background::Color(if on { self.accent_wash } else { self.inset })),
+                background: fill.map(Background::Color),
                 text_color: if status == button::Status::Disabled {
                     self.fg_3
                 } else {
@@ -260,16 +361,18 @@ impl Tokens {
             border: Border::default(),
             placeholder: self.fg_3,
             value: self.fg,
-            selection: self.accent_wash,
+            selection: self.select,
         }
     }
 
+    /// A field: the card's colour set into what holds it; focused, its edge darkens to a line of
+    /// ink rather than taking a colour.
     pub fn input(self) -> impl Fn(&Theme, text_input::Status) -> text_input::Style {
         move |_, status| text_input::Style {
             background: Background::Color(self.raised),
             border: Border {
                 color: match status {
-                    text_input::Status::Focused { .. } => self.accent,
+                    text_input::Status::Focused { .. } => mix(self.ink, self.raised, 0.45),
                     text_input::Status::Hovered => self.line_2,
                     _ => self.line,
                 },
@@ -279,7 +382,7 @@ impl Tokens {
             icon: self.fg_3,
             placeholder: self.fg_3,
             value: self.fg,
-            selection: self.accent_wash,
+            selection: self.select,
         }
     }
 
@@ -291,7 +394,7 @@ impl Tokens {
             icon: self.fg_3,
             placeholder: self.fg_3,
             value: self.fg,
-            selection: self.accent_wash,
+            selection: self.select,
         }
     }
 
@@ -302,31 +405,25 @@ impl Tokens {
             handle_color: self.fg_3,
             background: Background::Color(match status {
                 pick_list::Status::Active => Color::TRANSPARENT,
-                _ => self.inset,
+                _ => self.state,
             }),
             border: border::rounded(RADIUS),
         }
     }
 
+    /// A menu that opens over the rest: a popover, the thickest glass.
     pub fn menu(self) -> impl Fn(&Theme) -> menu::Style {
         move |_| menu::Style {
             background: Background::Color(self.raised),
             border: Border {
-                color: self.line_2,
+                color: self.line,
                 width: 1.0,
                 radius: border::radius(RADIUS),
             },
             text_color: self.fg,
             selected_text_color: self.fg,
-            selected_background: Background::Color(self.accent_wash),
-            shadow: Shadow {
-                color: Color {
-                    a: if self.dark { 0.4 } else { 0.1 },
-                    ..Color::BLACK
-                },
-                offset: Vector::new(0.0, 4.0),
-                blur_radius: 14.0,
-            },
+            selected_background: Background::Color(self.state),
+            shadow: self.shade(0.14, 0.55, 10.0, 28.0),
         }
     }
 
@@ -402,6 +499,12 @@ mod tests {
                 (t.err, t.err_wash),
                 (t.add, t.add_wash),
                 (t.del, t.del_wash),
+                (t.on_ink, t.ink),
+                (t.link, t.raised),
+                (t.link, t.bg),
+                (t.fg, t.state),
+                (t.fg_3, t.state),
+                (t.fg, t.select),
             ];
             for (text, on) in pairs {
                 assert!(
