@@ -9,6 +9,7 @@ pub mod control;
 pub mod detect;
 pub mod endpoints;
 pub mod env;
+pub mod gui_install;
 pub mod headless;
 pub mod json;
 pub mod keys;

@@ -43,13 +43,45 @@ CLIのソースが正。`crates/sasacode-protocol/tests/fixtures`に実際の実
 
 ## 使い方
 
+### 入れ方（`sasacode gui install`）
+
+GUIはリリースに入っていない。`sasacode gui install`が、このマシンでビルドして入れる。
+
 ```bash
-cargo run -p sasacode-gui -- <フォルダ>                     # PATHの sasacode を使う
-SASACODE_BIN=/path/to/sasacode cargo run -p sasacode-gui    # 実行ファイルを指定（--sasacode でも同じ）
-cargo install --locked --path crates/sasacode-gui           # sasacode-gui をPATHに入れる
+sasacode gui install                     # このsasacodeの版のタグ（v<版>）からビルドして入れる
+sasacode gui install --path <チェックアウト>   # sasacodeのチェックアウトからビルドして入れる（開発中の版）
 ```
 
-`sasacode-gui`がPATHにあれば、sasacodeからも開ける。
+- Rust（cargo）が要る。cargoはPATH、`CARGO_HOME`の`bin`、`~/.cargo/bin`の順に探す（rustupで入れた直後の、PATHがまだ通っていないシェルでも見つかる）。どこにもなければ、[rustup.rs](https://rustup.rs)を案内して、終了コード1で止まる。OSごとのRustの入れ方は書かない（rustupのページが案内する）。ワークスペースの`rust-version`（1.88）より古いRustでは、cargoがその旨を出して止まる。
+- 中身は`cargo install --locked --force --root ~/.sasacode/gui`で、ソースは`--git https://github.com/sasanokusa/sasacode --tag v<版> sasacode-gui`か、`--path <チェックアウト>/crates/sasacode-gui`。`--locked`で、リポジトリの`Cargo.lock`（CIが確かめた版）のとおりにビルドする。窓は`~/.sasacode/gui/bin/sasacode-gui`（`SASACODE_HOME`があればその下）に入り、PATHには入れない。
+- cargoは`~/.sasacode/gui`で動かす。今のフォルダのプロジェクトの`rust-toolchain.toml`で、別のツールチェーンが選ばれないようにするため。環境変数は、bashなどの子プロセスと同じく、APIキーなどを除いて渡す。
+- タグからのビルドは、毎回はじめからになる（`cargo install`は使い捨てのフォルダでビルドする）。M1 Pro（AC電源、クレートはダウンロード済み）で154秒と163秒（同じ版の1回目と2回目）。sasacodeを更新するたびに、この時間がかかる。`--path`ではチェックアウトの`target`を使うので、初回は124秒、2回目は2秒だった。
+- `SASACODE_GUI_GIT`で、ソースを取るリポジトリを変えられる（ミラーやテスト用）。
+- v0.20.0にはまだタグがないので、引数なしではビルドできない。cargoのエラーのあとに、`--path`でチェックアウトからビルドするよう案内する。
+- `install`という名前のフォルダを開くときは、`sasacode gui ./install`と書く。
+
+### 版と更新
+
+- `sasacode update`はGUIを更新しない。GUIがあるとき（`~/.sasacode/gui/bin`か、PATHにある）は、更新のあとに、`sasacode gui install`でビルドし直せることを1行で知らせる。`--check`では知らせない。
+- `sasacode gui`と`/gui`は、自分で見つけた窓（`gui install`で入れたものか、PATHのもの）に`--version`を尋ねる（5秒まで）。sasacodeと版が違えば、`sasacode gui install`で作り直せることを知らせる。窓はそのまま開く。`plugins.settings.gui.command`で指定したものには尋ねない（引数を問わず窓を開くランチャーかもしれないため）。
+- 古いGUIで新しいsasacodeを動かしても、GUIは知らないイベントを読み飛ばす（`Event::Unknown`）。
+
+### 手元でビルドする理由
+
+2026-11-18に、GUIはリリースに入れず、使う人のマシンでビルドすると決めた。Rustは入れてもらう前提にする。
+
+- Appleの開発者プログラムに入っていないので、Developer IDの署名と公証を付けられない。署名のないアプリをブラウザで落とすと、macOSのGatekeeperが開かせない。
+- ただし、Gatekeeperが止めるのは、隔離の印（`com.apple.quarantine`）の付いたファイルだけ。この印はブラウザやメールのアプリが付け、curlやsasacode自身が落としたファイルには付かない（`install.sh`で入れた`sasacode`と、`web-search install`で入れた`rustxng`に付いていないことを確かめた）。そのため、`web-search install`と同じように、sasacodeがビルド済みのGUIを落として入れる形も、開発者プログラムなしで取れる。今そうしないのは、リリースのワークフローに対象ごとのGUIのビルドと、窓のプログラムの確かめを足すことになるため。Rustを必須にするのが重いと分かったら、この形に移れる。
+- 署名が要るのは、ブラウザで落とすアプリ（`.app`やdmg）にするときと、macOSの許可（書類フォルダへのアクセスなど）を同じアプリとして覚えてもらうとき（未決事項の、`open`で起動したときに止まった件）。
+
+### 開き方
+
+窓は、`plugins.settings.gui.command`、`sasacode gui install`で入れたもの、PATHの`sasacode-gui`の順に探す（`gui install`で入れたものをPATHより先に見るのは、手で入れた古いものがPATHにあると、作り直したものが使われなくなるため）。
+
+```bash
+cargo run -p sasacode-gui -- <フォルダ>                     # ソースから動かす。PATHの sasacode を使う
+SASACODE_BIN=/path/to/sasacode cargo run -p sasacode-gui    # 実行ファイルを指定（--sasacode でも同じ）
+```
 
 - `sasacode gui [フォルダ]`：そのフォルダ（省略すると今のフォルダ）で窓を開く。
 - TUIの`/gui`（同梱プラグイン`gui`）：今のフォルダで窓を開き、進行中の会話を読み込んだ状態にする（`sasacode-gui --session <id>`を使う。idは`sasacode -r`と同じ読み方で、そのフォルダの会話のid、idの先頭、ログのパスのどれか）。まだ何も送っていない会話にはログがないので、新しい会話で開く。
@@ -187,10 +219,10 @@ cargo test -p sasacode-gui -- --ignored snapshots   # 主な状態をtarget/snap
 
 ## 未決事項
 
-- 本体とGUIを別々のバイナリで配るか、`sasacode gui install` で後から入れる形（`web-search install` と同じ）にするか。`sasacode gui [フォルダ]`を窓を開くコマンドにしたので、`gui install`にすると`install`という名前のフォルダを開けなくなる（別の名前にするか、`./install`と書いてもらう）。
+- `sasacode gui install`（2026-11-18）を確かめたのはmacOSだけ。WindowsとLinuxでのビルドは、CIで`cargo build`が通ることしか確かめていない。Windowsでは、窓が開いているあいだに入れ直すと、動いている`sasacode-gui.exe`を置き換えられずにcargoが失敗するはず（確かめていない）。そのときもタグがないことを疑う案内が出る。
 - 入力ごとの再起動で体感が許せるか。遅ければ、`--control stdio` に「`agent_end` の後も終了せず次の入力を待つ」モードを足す。
 - TUIとGUIが同じセッションを同時に開いたときの扱い。`/gui`は進行中の会話を窓で開くので、この状態になりやすい。今は防がず、開いたときに「続きはどちらか一方で進める」と表示するだけ。
-- `sasacode gui`と`/gui`からの起動で確かめたこと（macOS、2026-11-16、偽のモデルサーバー）：上の`cargo install`で入れた`sasacode-gui`が、PATHから見つかって`sasacode gui <フォルダ>`で起動し、sasacodeの終了後も残る。その窓から送信すると返答が表示される。その会話をTUIで再開して`/gui`を打つと`--session <id>`つきで起動し、TUIの終了後も残る。その窓は会話を読み込んだ状態で開き、続きを送ると同じ会話のログに追記される。確かめていないこと：WindowsとLinuxで、sasacodeの終了後に窓が残るか（起動のしかたはバックグラウンド実行と同じ`detached`）。
+- `sasacode gui`と`/gui`からの起動で確かめたこと（macOS、2026-11-16、偽のモデルサーバー）：`cargo install --locked --path crates/sasacode-gui`で入れた`sasacode-gui`が、PATHから見つかって`sasacode gui <フォルダ>`で起動し、sasacodeの終了後も残る。その窓から送信すると返答が表示される。その会話をTUIで再開して`/gui`を打つと`--session <id>`つきで起動し、TUIの終了後も残る。その窓は会話を読み込んだ状態で開き、続きを送ると同じ会話のログに追記される。確かめていないこと：WindowsとLinuxで、sasacodeの終了後に窓が残るか（起動のしかたはバックグラウンド実行と同じ`detached`）。
 - 実モデルでの確認、実際のIME（変換中の文字と候補の位置）の確認、WindowsとLinuxでの見た目の確認。macOSでは、偽のモデルサーバーを相手に実際の窓で、送信、承認の3つの答え、理由つきの拒否、実行中の追加送信、中断、会話の読み込みと続き、エラーの表示まで通した（2026-11-16）。
 - アプリのバンドルにして`open`で起動したとき、実行の子プロセスが何も出力しないまま止まった（シェルから直接起動すると動く）。原因は確かめていない。候補は、新しいアプリとして扱われたことによる、macOSの書類フォルダへのアクセス許可の確認待ち（このときsasacodeのソースは`~/Documents`の下にあった）。配布（G4）の前に確かめる。
 - 操作性の手直し（キー、コピー、スクロール）を実際の窓で確かめたこと（macOS、2026-11-16、偽のモデルサーバー）：`⌘K`で検索に移って中身が全選択される。検索から`⌘L`で入力欄へ移り、Escでも入力欄へ戻る。長い返答の会話は最新の位置で開く。コードブロックの「コピー」でクリップボードにコードがそのまま入り、ボタンの文言が約1.6秒で戻る。ステータスバーのIDを押すとIDがクリップボードに入る。コマンドの出力が流れている間に上へスクロールすると「最新へ」が出て、出力が増えても読み返している位置は動かず、「最新へ」を押すと最新の位置に戻ってボタンが消える。このとき見つけて直した不具合：検索欄や入力欄で`⌘L`などを押すと、ショートカットが効かずに文字（`l`）が入力されていた（`view/chords.rs`）。

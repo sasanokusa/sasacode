@@ -36,14 +36,23 @@ fn place() -> Place {
 }
 
 /// A stand-in for sasacode-gui that stays for a while, as a window does: it writes where it was
-/// started and what it was given, and `<out>.stayed` when it leaves.
+/// started and what it was given, and `<out>.stayed` when it leaves. Asked `--version`, it answers
+/// at once with this sasacode's version, as sasacode-gui does.
 #[cfg(unix)]
 fn fake_gui(dir: &Path, name: &str, out: &Path) -> PathBuf {
+    fake_gui_of(dir, name, out, env!("CARGO_PKG_VERSION"))
+}
+
+/// [`fake_gui`] that says it is `version`.
+#[cfg(unix)]
+fn fake_gui_of(dir: &Path, name: &str, out: &Path, version: &str) -> PathBuf {
     use std::os::unix::fs::PermissionsExt;
+    std::fs::create_dir_all(dir).unwrap();
     let command = dir.join(name);
     let out = out.display();
     let script = format!(
         "#!/bin/sh\n\
+         if [ \"$1\" = --version ]; then echo 'sasacode-gui {version}'; exit 0; fi\n\
          {{ pwd; for a in \"$@\"; do printf '%s\\n' \"$a\"; done; }} > \"{out}.part\"\n\
          mv \"{out}.part\" \"{out}\"\n\
          sleep 2\n\
@@ -175,6 +184,52 @@ fn gui_the_program_is_the_one_the_users_config_names_never_one_a_projects_config
     assert_eq!(sasacode(&["gui"], &at, &[]).code, Some(0));
     assert!(appears(&at.bin.join("mine")));
     assert!(!at.bin.join("theirs").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn gui_the_window_gui_install_built_is_taken_before_paths_and_an_older_one_is_said_to_be_older() {
+    let at = place();
+    let on_path = at.bin.join("on-path");
+    fake_gui(&at.bin, "sasacode-gui", &on_path);
+    let built = at.bin.join("built");
+    fake_gui_of(&at.home.join("gui").join("bin"), "sasacode-gui", &built, "0.19.0");
+
+    let ran = sasacode(&["gui"], &at, &[]);
+    assert_eq!(ran.code, Some(0), "{}", ran.err);
+    assert!(appears(&built));
+    assert_eq!(lines(&built), given_args(&at.proj, true));
+    assert!(!on_path.exists());
+    let note = format!(
+        "sasacode-gui is 0.19.0 and sasacode {}: `sasacode gui install` builds the GUI again for this version.\n",
+        env!("CARGO_PKG_VERSION")
+    );
+    assert_eq!((ran.out.as_str(), ran.err.as_str()), ("", note.as_str()));
+}
+
+#[test]
+fn gui_install_without_cargo_says_where_rust_comes_from_and_starts_nothing() {
+    let at = place();
+    // No cargo on PATH, no CARGO_HOME (the environment is cleared) and none in HOME/.cargo/bin.
+    let path = at.bin.display().to_string();
+    let ran = sasacode(&["gui", "install"], &at, &[("PATH", path.as_str())]);
+    assert_eq!(ran.code, Some(1));
+    assert_eq!(ran.out, "");
+    assert!(ran.err.contains("cargo was not found"), "{}", ran.err);
+    assert!(ran.err.contains("\n  https://rustup.rs\n"), "{}", ran.err);
+    assert!(!at.home.join("gui").exists());
+
+    // A --path that is not a sasacode checkout is turned down first.
+    let elsewhere = sasacode(&["gui", "install", "--path", "."], &at, &[("PATH", path.as_str())]);
+    assert_eq!(elsewhere.code, Some(1));
+    assert!(
+        elsewhere.err.contains("is not a sasacode checkout"),
+        "{}",
+        elsewhere.err
+    );
+    let wrong = sasacode(&["gui", "install", "--bogus"], &at, &[("PATH", path.as_str())]);
+    assert_eq!(wrong.code, Some(1));
+    assert!(wrong.err.contains("usage: sasacode gui install"), "{}", wrong.err);
 }
 
 #[test]

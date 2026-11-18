@@ -3,7 +3,7 @@
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
-use sasacode_bundled::gui::{GuiTarget, open_gui, own_program};
+use sasacode_bundled::gui::{GuiTarget, open_gui, own_program, stale_note};
 use sasacode_bundled::openai_codex::{codex_login, codex_logout, codex_status};
 use sasacode_bundled::rustxng_install::{InstallOptions, install_rustxng};
 use sasacode_host::t;
@@ -55,6 +55,10 @@ pub async fn web_search(args: &[String]) -> anyhow::Result<i32> {
 
 /// `sasacode gui [folder]`: the desktop window (sasacode-gui) on a folder, left running on its own.
 pub async fn gui(args: &[String]) -> anyhow::Result<i32> {
+    // A folder named install is `./install`.
+    if args.first().is_some_and(|a| a == "install") {
+        return crate::gui_install::gui_install(&args[1..]).await;
+    }
     if args.len() > 1 || args.first().is_some_and(|a| a.starts_with('-')) {
         anyhow::bail!(t!("usage: sasacode gui [folder]"));
     }
@@ -74,7 +78,10 @@ pub async fn gui(args: &[String]) -> anyhow::Result<i32> {
         session: None,
         program: own_program(),
     };
-    open_gui(target, command, None).await?;
+    let opened = open_gui(target, command, None).await?;
+    if let Some(gui) = &opened.stale {
+        eprintln!("{}", stale_note(gui));
+    }
     Ok(0)
 }
 

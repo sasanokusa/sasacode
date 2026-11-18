@@ -21,15 +21,16 @@ use sasacode_agent::agent::{Agent, AgentOptions};
 use sasacode_agent::session::SessionFile;
 #[cfg(unix)]
 use sasacode_ai::{Message, UserContent, UserMessage};
-use sasacode_bundled::gui::{GuiTarget, gui_args, own_program_for};
+use sasacode_bundled::gui::{GuiTarget, gui_args, own_program_for, pick_gui, version_of};
 #[cfg(unix)]
-use sasacode_bundled::gui::{open_gui, own_program};
+use sasacode_bundled::gui::{Opened, open_gui, own_program};
 #[cfg(unix)]
 use sasacode_plugin_api::{CommandContext, Lang, NotifyLevel, PermissionMode};
 #[cfg(unix)]
 use support_net::*;
 
 /// A stand-in for sasacode-gui: writes where it was started and what it was given, then `then`.
+/// Asked `--version`, it says it is this sasacode's version and writes nothing.
 #[cfg(unix)]
 struct FakeGui {
     command: String,
@@ -39,6 +40,10 @@ struct FakeGui {
 #[cfg(unix)]
 impl FakeGui {
     fn new(root: &Path, name: &str, then: &str) -> FakeGui {
+        FakeGui::of_version(root, name, then, env!("CARGO_PKG_VERSION"))
+    }
+
+    fn of_version(root: &Path, name: &str, then: &str, version: &str) -> FakeGui {
         let dir = root.join(name);
         std::fs::create_dir_all(&dir).unwrap_or_else(|e| panic!("mkdir: {e}"));
         let command = dir.join("sasacode-gui");
@@ -48,7 +53,7 @@ impl FakeGui {
         write_script(
             &command,
             &format!(
-                "#!/bin/sh\n{{ pwd; for a in \"$@\"; do printf '%s\\n' \"$a\"; done; }} > \"{o}.part\"\n/bin/mv \"{o}.part\" \"{o}\"\n{then}\n"
+                "#!/bin/sh\nif [ \"$1\" = --version ]; then echo 'sasacode-gui {version}'; exit 0; fi\n{{ pwd; for a in \"$@\"; do printf '%s\\n' \"$a\"; done; }} > \"{o}.part\"\n/bin/mv \"{o}.part\" \"{o}\"\n{then}\n"
             ),
         );
         FakeGui {
@@ -194,10 +199,17 @@ fn the_window_is_found_on_path_when_no_command_is_set_at_the_time_it_is_asked_fo
     let (_d, root) = real_temp_dir("sasacode-gui-");
     // PATH is the stand-in's folder, still empty: nothing there yet.
     std::fs::create_dir_all(root.join("on-path")).unwrap_or_else(|e| panic!("{e}"));
-    run_child_blocking(test, &[("PATH", s(&root.join("on-path"))), ("NET_GUI_ROOT", s(&root))]);
+    // SASACODE_HOME: no copy built by `sasacode gui install` either (the user's own would be found).
+    let env = [
+        ("PATH", s(&root.join("on-path"))),
+        ("NET_GUI_ROOT", s(&root)),
+        ("SASACODE_HOME", s(&root.join("home"))),
+    ];
+    run_child_blocking(test, &env);
 }
 
-/// In the child: PATH is $NET_GUI_ROOT/on-path, which has no sasacode-gui yet.
+/// In the child: PATH is $NET_GUI_ROOT/on-path, which has no sasacode-gui yet, and SASACODE_HOME
+/// is $NET_GUI_ROOT/home, with no gui/bin/sasacode-gui yet.
 #[cfg(unix)]
 async fn found_on_path() {
     let _l = lang(Lang::Ja).await;
@@ -208,15 +220,33 @@ async fn found_on_path() {
     let (text, level) = first.unwrap_or_else(|| panic!("nothing said"));
     assert!(text.contains("sasacode-guiが見つかりません"), "{text}");
     assert_eq!(level, NotifyLevel::Error);
-    assert!(
-        text.contains("\n  cargo install --locked --path crates/sasacode-gui\n"),
-        "{text}"
-    );
+    assert!(text.contains("\n  sasacode gui install\n"), "{text}");
 
     // Installed meanwhile: the same session finds it.
     let fake = FakeGui::new(&root, "on-path", "exit 0");
     g.run().await;
     assert_eq!(fake.given().await, given(&root, None));
+    assert_eq!(g.texts().last().map(String::as_str), Some("GUIを開きました。"));
+    assert!(!g.texts().iter().any(|t| t.contains("作り直せます")), "{:?}", g.texts());
+
+    // Then built by `sasacode gui install` for an older sasacode: that copy is taken over PATH's,
+    // opened all the same, and the user is told how to build this version's.
+    let built = FakeGui::of_version(&root, "home/gui/bin", "exit 0", "0.19.0");
+    let before = g.texts().len();
+    g.run().await;
+    assert_eq!(built.given().await, given(&root, None));
+    let notes = g.notes.lock().unwrap_or_else(|e| e.into_inner())[before..].to_vec();
+    let stale = format!(
+        "sasacode-guiは0.19.0、sasacodeは{}です。`sasacode gui install`で、この版のGUIを作り直せます。",
+        env!("CARGO_PKG_VERSION")
+    );
+    assert_eq!(
+        notes,
+        [
+            (stale, NotifyLevel::Warning),
+            ("GUIを開きました。".to_string(), NotifyLevel::Info)
+        ]
+    );
 }
 
 #[cfg(unix)]
@@ -250,5 +280,45 @@ async fn a_window_that_leaves_at_once_with_an_error_is_reported_not_announced_as
     // A launcher that starts the window and leaves has not failed.
     let launcher = FakeGui::new(&root, "launcher", "exit 0");
     let opened = open_gui(target(None), Some(launcher.command.clone()), grace).await;
-    assert_eq!(opened.map_err(|e| e.to_string()), Ok(launcher.command.clone()));
+    // A command the user names is not asked its version (it may be a launcher that opens a window).
+    let expected = Opened {
+        program: launcher.command.clone(),
+        stale: None,
+    };
+    assert_eq!(opened.map_err(|e| e.to_string()), Ok(expected));
+}
+
+#[test]
+fn the_version_is_read_from_what_sasacode_gui_version_prints() {
+    assert_eq!(version_of("sasacode-gui 0.20.0\n").as_deref(), Some("0.20.0"));
+    assert_eq!(version_of("0.20.0").as_deref(), Some("0.20.0"));
+    assert_eq!(version_of("").as_deref(), None);
+    assert_eq!(version_of("sasacode-gui").as_deref(), None);
+    assert_eq!(version_of("Usage: sasacode-gui [folder]").as_deref(), None);
+}
+
+#[test]
+fn the_window_named_in_settings_comes_first_then_the_built_one_then_path() {
+    let dir = std::env::temp_dir().join(format!("sasacode-pick-{}", std::process::id()));
+    let built = dir.join("gui").join("bin").join("sasacode-gui");
+    std::fs::create_dir_all(built.parent().unwrap()).unwrap();
+    let missing = dir.join("missing");
+    let on_path = || Some(std::path::PathBuf::from("/usr/bin/sasacode-gui"));
+    let named = Some("/opt/gui".to_string());
+    assert_eq!(
+        pick_gui(named.clone(), &built, on_path),
+        Some(("/opt/gui".to_string(), false))
+    );
+    assert_eq!(
+        pick_gui(Some(String::new()), &missing, on_path),
+        Some(("/usr/bin/sasacode-gui".to_string(), true))
+    );
+    assert_eq!(pick_gui(None, &missing, || None), None);
+    std::fs::write(&built, "").unwrap();
+    assert_eq!(
+        pick_gui(None, &built, on_path),
+        Some((built.display().to_string(), true))
+    );
+    assert_eq!(pick_gui(named, &built, on_path), Some(("/opt/gui".to_string(), false)));
+    let _ = std::fs::remove_dir_all(&dir);
 }
