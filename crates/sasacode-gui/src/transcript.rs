@@ -8,9 +8,11 @@
 //! and no diffs, so a change read back from one is rebuilt from the call's arguments.
 
 use std::collections::HashMap;
-use std::time::{Duration, Instant};
+use std::path::Path;
+use std::time::{Duration, Instant, SystemTime};
 
 use iced::widget::markdown;
+use sasacode_protocol::event::{Command, NoticeLevel, UiAsk};
 use sasacode_protocol::{
     Content, Event, Message, SessionEntry, StopCause, StreamDelta, ToolCall, ToolResult, Usage, text_of,
 };
@@ -50,12 +52,18 @@ pub struct Exchange {
     pub started: Option<Instant>,
     /// From the prompt to the end of the run.
     pub elapsed: Option<Duration>,
+    /// When the message was sent, by the clock: as the log has it, or when it was sent here.
+    pub at: Option<SystemTime>,
+    /// Read from a log: the entry of the log the message is, where a conversation can be branched
+    /// off before it. None for one sent here, and for one only a compaction's rewrite has.
+    pub entry: Option<usize>,
 }
 
 #[derive(Debug)]
 pub enum Step {
     Thinking(String),
-    Text(Markdown),
+    /// Boxed: parsed Markdown is several times the size of the other steps.
+    Text(Box<Markdown>),
     /// Boxed: a call is several times the size of the other steps.
     Tool(Box<Tool>),
     Approval(Approval),
@@ -73,9 +81,17 @@ pub enum Note {
     },
     Error(String),
     ContextFull,
-    Compacted,
+    /// The conversation was summarised to save room: the summary, once it is known.
+    Compacted(Option<String>),
     /// A reply was thrown away and is asked again.
     Retrying,
+    /// A plugin's warning or error.
+    Notice(String),
+    /// A text a plugin showed whole.
+    Text {
+        title: String,
+        text: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -98,13 +114,18 @@ impl Markdown {
     pub fn new(text: &str) -> Self {
         Self {
             raw: text.to_owned(),
-            content: markdown::Content::parse(text),
+            content: markdown::Content::parse(&crate::figure::prepare(&crate::figure::alerts(text))),
         }
     }
 
+    /// More of it as it streams. With math in it the whole is parsed again: where its math ends
+    /// changes what came before.
     pub fn push(&mut self, delta: &str) {
         self.raw.push_str(delta);
-        self.content.push_str(delta);
+        match crate::figure::prepare(&self.raw) {
+            std::borrow::Cow::Borrowed(_) => self.content.push_str(delta),
+            std::borrow::Cow::Owned(prepared) => self.content = markdown::Content::parse(&prepared),
+        }
     }
 }
 
@@ -153,10 +174,15 @@ pub struct Tool {
     pub plan: Option<PlanUpdate>,
     /// What tool-repair mended in the call before it ran.
     pub repaired: Option<String>,
+    /// What the agent mode's judge said of it: allowed, or handed to the user, and why.
+    pub judged: Option<(bool, String)>,
     /// The call that made this one (a tool calling another tool).
     pub parent: Option<String>,
     pub started: Option<Instant>,
     pub elapsed: Option<Duration>,
+    /// The pictures its result holds (`read` of an image, an MCP tool's), each kept as a file to
+    /// be drawn from.
+    pub images: Vec<std::path::PathBuf>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -204,6 +230,8 @@ pub struct Approval {
     pub args: Value,
     pub reason: String,
     pub cwd: String,
+    /// The allow rules "always" adds, which later runs of the conversation are given (`--allow`).
+    pub rules: Vec<String>,
     pub answer: Option<Answer>,
 }
 
@@ -239,6 +267,36 @@ pub struct Transcript {
     repairs: HashMap<String, String>,
     /// Read from a log: a tool's result message is all there is of its run.
     replay: bool,
+    /// While a log is read: the entry being read, when it is a message of its own.
+    at_entry: Option<usize>,
+    /// The plugins' questions, open until they are answered or the run ends.
+    pub asks: Vec<Ask>,
+    /// The plugins' status items, by `plugin:key`, as the newest run left them.
+    pub status: std::collections::BTreeMap<String, String>,
+}
+
+/// How the summary compaction writes begins (`packages/bundled/src/compaction.ts`).
+/// What a stderr line warns of, as the CLI writes a warning in either language.
+pub fn warning_of(line: &str) -> Option<&str> {
+    ["warning: ", "警告: "]
+        .iter()
+        .find_map(|p| line.strip_prefix(p))
+        .map(str::trim)
+        .filter(|w| !w.is_empty())
+}
+
+pub const SUMMARY: &str = "[Summary of the earlier conversation, compacted to save context]";
+
+/// A plugin's question.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Ask {
+    pub id: String,
+    pub title: String,
+    pub ask: UiAsk,
+    /// The values ticked so far, when several may be.
+    pub chosen: std::collections::BTreeSet<String>,
+    /// What is typed so far, when the answer is a text.
+    pub typed: String,
 }
 
 /// What an event changed beyond the conversation.
@@ -248,6 +306,25 @@ pub struct Effect {
     pub ended: Option<StopCause>,
     /// An approval started to wait.
     pub approval: Option<String>,
+    /// A plugin asked something.
+    pub asked: Option<String>,
+    /// A plugin's notice.
+    pub notice: Option<(NoticeLevel, String)>,
+    /// The plugins' slash commands, as they are now.
+    pub commands: Option<Vec<Command>>,
+    /// The conversation was summarised: the summary is in its log.
+    pub compacted: bool,
+}
+
+/// The pictures some content holds, each kept as a file to draw.
+fn pictures(content: &[Content]) -> Vec<std::path::PathBuf> {
+    content
+        .iter()
+        .filter_map(|c| match c {
+            Content::Image { media_type, data } => crate::picture::kept(media_type, data),
+            _ => None,
+        })
+        .collect()
 }
 
 impl Tool {
@@ -266,9 +343,11 @@ impl Tool {
             change: None,
             plan: None,
             repaired: None,
+            judged: None,
             parent: None,
             started: None,
             elapsed: None,
+            images: Vec::new(),
         };
         t.change = match t.kind() {
             Kind::Edit => t.arg("path").map(|path| Change {
@@ -328,6 +407,7 @@ impl Tool {
 
     fn finish(&mut self, result: &ToolResult, now: Option<Instant>) {
         self.set_output(&text_of(&result.content));
+        self.images = pictures(&result.content);
         self.state = if result.is_error {
             ToolState::Failed
         } else {
@@ -377,6 +457,20 @@ impl Exchange {
             .filter_map(|t| t.change.as_ref().map(|c| (t, c)))
     }
 
+    /// All the model wrote in the exchange, its texts one after another.
+    pub fn answer_text(&self) -> String {
+        let texts: Vec<&str> = self
+            .steps
+            .iter()
+            .filter_map(|s| match s {
+                Step::Text(md) => Some(md.raw.trim()),
+                _ => None,
+            })
+            .filter(|t| !t.is_empty())
+            .collect();
+        texts.join("\n\n")
+    }
+
     /// The step that is the reply to the prompt: the text the exchange ends with.
     pub fn answer(&self) -> Option<usize> {
         match self.steps.last() {
@@ -392,6 +486,7 @@ impl Transcript {
         self.exchanges.push(Exchange {
             prompt: text.to_owned(),
             started: Some(now),
+            at: Some(SystemTime::now()),
             ..Exchange::default()
         });
         self.echoes.push(text.to_owned());
@@ -404,6 +499,51 @@ impl Transcript {
 
     pub fn note(&mut self, note: Note) {
         self.current().steps.push(Step::Note(note));
+    }
+
+    /// A warning the CLI wrote on stderr, noted once in the conversation: each run says it again.
+    pub fn warn(&mut self, text: &str) {
+        let seen = self
+            .exchanges
+            .iter()
+            .flat_map(|e| &e.steps)
+            .any(|s| matches!(s, Step::Note(Note::Notice(t)) if t == text));
+        if !seen {
+            self.note(Note::Notice(text.to_owned()));
+        }
+    }
+
+    /// Whether a compaction's summary is not known yet.
+    pub fn summary_missing(&self) -> bool {
+        self.exchanges
+            .iter()
+            .flat_map(|e| &e.steps)
+            .any(|s| matches!(s, Step::Note(Note::Compacted(None))))
+    }
+
+    /// The newest compaction's summary, read from the log once the run has written it.
+    pub fn fill_summary(&mut self, entries: &[SessionEntry]) {
+        let Some(summary) = entries.iter().rev().find_map(|e| match e {
+            SessionEntry::Replace { messages } => messages.iter().find_map(|m| match m {
+                Message::User { content, .. } => said(content).strip_prefix(SUMMARY).map(|s| s.trim().to_owned()),
+                _ => None,
+            }),
+            _ => None,
+        }) else {
+            return;
+        };
+        let last = self
+            .exchanges
+            .iter_mut()
+            .rev()
+            .flat_map(|e| e.steps.iter_mut().rev())
+            .find_map(|s| match s {
+                Step::Note(Note::Compacted(text)) => Some(text),
+                _ => None,
+            });
+        if let Some(text @ None) = last {
+            *text = Some(summary);
+        }
     }
 
     pub fn is_empty(&self) -> bool {
@@ -420,6 +560,11 @@ impl Transcript {
 
     pub fn tools(&self) -> impl Iterator<Item = &Tool> {
         self.exchanges.iter().flat_map(Exchange::tools)
+    }
+
+    /// Whether the run waits for the user: an approval, or a plugin's question.
+    pub fn waits(&self) -> bool {
+        self.pending_approval().is_some() || !self.asks.is_empty()
     }
 
     pub fn tool(&self, id: &str) -> Option<&Tool> {
@@ -462,6 +607,11 @@ impl Transcript {
         self.approvals().find(|a| a.call_id == call_id)
     }
 
+    /// The approval asked as `id`.
+    pub fn approval_by_id(&self, id: &str) -> Option<&Approval> {
+        self.approvals().find(|a| a.id == id)
+    }
+
     /// The approval to answer next: the one that has waited longest.
     pub fn pending_approval(&self) -> Option<&Approval> {
         self.approvals().find(|a| a.answer.is_none())
@@ -499,12 +649,19 @@ impl Transcript {
     pub fn close(&mut self, now: Instant) {
         self.settle(now);
         self.streaming.clear();
+        // Nobody is left to hear the answers.
+        self.asks.clear();
     }
 
     pub fn apply(&mut self, event: &Event, now: Instant) -> Effect {
         let mut effect = Effect::default();
         match event {
-            Event::Session { id, .. } => effect.session_id = id.clone(),
+            Event::Session { id, context_window, .. } => {
+                effect.session_id = id.clone();
+                if context_window.is_some() {
+                    self.context_window = *context_window;
+                }
+            }
             Event::AgentStart => {
                 self.current().started.get_or_insert(now);
             }
@@ -543,7 +700,10 @@ impl Transcript {
             }
             Event::Error { error } => self.note(Note::Error(error.clone())),
             Event::PluginError { plugin, hook, error } => self.note(Note::Error(format!("{plugin} ({hook}): {error}"))),
-            Event::MessagesReplaced => self.note(Note::Compacted),
+            Event::MessagesReplaced => {
+                self.note(Note::Compacted(None));
+                effect.compacted = true;
+            }
             Event::MessageDiscarded { .. } => {
                 // The reply that streamed in is asked again: drop what was shown of it.
                 let shown: Vec<usize> = self.streaming.drain().map(|(_, i)| i).collect();
@@ -582,6 +742,7 @@ impl Transcript {
                 args,
                 reason,
                 cwd,
+                rules,
             } => {
                 let approval = Step::Approval(Approval {
                     id: id.clone(),
@@ -590,6 +751,7 @@ impl Transcript {
                     args: args.clone(),
                     reason: reason.clone(),
                     cwd: cwd.clone(),
+                    rules: rules.clone(),
                     answer: None,
                 });
                 // The question comes before the call it is about.
@@ -602,7 +764,54 @@ impl Transcript {
                 effect.approval = Some(id.clone());
             }
             Event::ApprovalCancelled { id } => self.answer_approval(id, Answer::Cancelled),
+            // A call stopped just as it ended: nothing went wrong.
+            Event::ControlError { error } if error.starts_with("no running tool call") => {}
             Event::ControlError { error } => self.note(Note::Error(format!("control: {error}"))),
+            Event::UiRequest { id, ask, title } => {
+                let (chosen, typed) = match ask {
+                    UiAsk::SelectMany { selected, .. } => (selected.iter().cloned().collect(), String::new()),
+                    UiAsk::Input { initial, .. } => (Default::default(), initial.clone().unwrap_or_default()),
+                    _ => Default::default(),
+                };
+                self.asks.push(Ask {
+                    id: id.clone(),
+                    title: title.clone(),
+                    ask: ask.clone(),
+                    chosen,
+                    typed,
+                });
+                effect.asked = Some(id.clone());
+            }
+            Event::UiCancelled { id } => self.asks.retain(|a| a.id != *id),
+            Event::PluginNotify { level, text } => {
+                if *level != NoticeLevel::Info {
+                    self.note(Note::Notice(text.clone()));
+                }
+                effect.notice = Some((*level, text.clone()));
+            }
+            Event::PluginText { title, text, .. } => self.note(Note::Text {
+                title: title.clone(),
+                text: text.clone(),
+            }),
+            Event::PluginStatus { key, text } => match text {
+                Some(text) => {
+                    self.status.insert(key.clone(), text.clone());
+                }
+                None => {
+                    self.status.remove(key);
+                }
+            },
+            Event::Commands { commands } => effect.commands = Some(commands.clone()),
+            Event::Judged {
+                call_id,
+                verdict,
+                reason,
+                ..
+            } => {
+                if let Some(tool) = self.tool_mut(call_id) {
+                    tool.judged = Some((verdict == "allow", reason.clone()));
+                }
+            }
             Event::TurnStart { .. } | Event::TurnEnd { .. } | Event::Unknown(_) => {}
         }
         effect
@@ -614,9 +823,13 @@ impl Transcript {
             replay: true,
             ..Transcript::default()
         };
-        for e in entries {
+        for (k, e) in entries.iter().enumerate() {
             match e {
-                SessionEntry::Message { message } => t.message(message, None, true),
+                SessionEntry::Message { message } => {
+                    t.at_entry = Some(k);
+                    t.message(message, None, true);
+                    t.at_entry = None;
+                }
                 SessionEntry::Replace { messages } => {
                     // The conversation was rewritten. What its messages used is already counted.
                     t.exchanges.clear();
@@ -680,7 +893,7 @@ impl Transcript {
                 steps.push(if thinking {
                     Step::Thinking(delta.clone())
                 } else {
-                    Step::Text(Markdown::new(delta))
+                    Step::Text(Box::new(Markdown::new(delta)))
                 });
                 let at = steps.len() - 1;
                 self.streaming.insert(index, at);
@@ -690,7 +903,7 @@ impl Transcript {
 
     fn message(&mut self, message: &Message, now: Option<Instant>, count: bool) {
         match message {
-            Message::User { content, .. } => self.user(content, now),
+            Message::User { content, timestamp } => self.user(content, now, *timestamp),
             Message::Assistant(a) => {
                 if count {
                     self.usage.add(&a.usage);
@@ -711,7 +924,7 @@ impl Transcript {
                     }
                     match c {
                         Content::Text { text } if !text.trim().is_empty() => {
-                            self.current().steps.push(Step::Text(Markdown::new(text)))
+                            self.current().steps.push(Step::Text(Box::new(Markdown::new(text))))
                         }
                         Content::Thinking { thinking, .. } if !thinking.trim().is_empty() => {
                             self.current().steps.push(Step::Thinking(thinking.clone()))
@@ -734,6 +947,7 @@ impl Transcript {
                     // In a log this message is all there is of the call's run, or of why it had none.
                     Some(tool) if replay => {
                         tool.set_output(&output);
+                        tool.images = pictures(&r.content);
                         tool.state = match r.is_error {
                             true if NOT_RUN.iter().any(|said| output.starts_with(said)) => ToolState::Skipped,
                             true => ToolState::Failed,
@@ -768,20 +982,25 @@ impl Transcript {
         }
     }
 
-    fn user(&mut self, content: &[Content], now: Option<Instant>) {
+    /// `timestamp`: milliseconds since 1970, as the agent stamps a message; 0 when it has none.
+    fn user(&mut self, content: &[Content], now: Option<Instant>, timestamp: f64) {
         if let Some(note) = note_text(content) {
             return self.note(Note::Harness(note));
         }
-        let text = said(content);
+        let mut text = said(content);
+        // What compaction left in place of the earlier messages.
+        if let Some(summary) = text.strip_prefix(SUMMARY) {
+            return self.note(Note::Compacted(Some(summary.trim().to_owned())));
+        }
         if let Some((head, report)) = task_report(&text) {
             return self.note(Note::Task {
                 head: head.to_owned(),
                 report: report.to_owned(),
             });
         }
-        if let Some(pos) = self.queued.iter().position(|q| *q == text) {
-            self.queued.remove(pos);
-        } else if let Some(pos) = self.echoes.iter().position(|e| *e == text) {
+        if let Some(pos) = self.queued.iter().position(|q| sent_as(q, &text)) {
+            text = self.queued.remove(pos);
+        } else if let Some(pos) = self.echoes.iter().position(|e| sent_as(e, &text)) {
             self.echoes.remove(pos);
             return;
         }
@@ -790,9 +1009,13 @@ impl Transcript {
         {
             before.elapsed = before.started.map(|s| now.saturating_duration_since(s));
         }
+        let at = (timestamp.is_finite() && timestamp > 0.0)
+            .then(|| SystemTime::UNIX_EPOCH + Duration::from_millis(timestamp as u64));
         self.exchanges.push(Exchange {
             prompt: text,
             started: now,
+            at,
+            entry: self.at_entry,
             ..Exchange::default()
         });
     }
@@ -842,6 +1065,90 @@ impl Transcript {
                 _ => None,
             })
     }
+}
+
+/// Whether `arrived`, a message of the user's as the model was given it, is `sent`. The image
+/// plugin puts a label like `[Image 1: /work/shot.png]` where the message named an image it
+/// attached (`@shot.png`, or a path dropped in), so what is around the labels has to be the same and
+/// in the same order, and what stood in their place is not compared.
+pub(crate) fn sent_as(sent: &str, arrived: &str) -> bool {
+    if sent == arrived {
+        return true;
+    }
+    let mut around = Vec::new();
+    let (mut part, mut from) = (0, 0);
+    while let Some(found) = arrived[from..].find("[Image ") {
+        let start = from + found;
+        match label_len(&arrived[start..]) {
+            Some(len) => {
+                around.push(&arrived[part..start]);
+                part = start + len;
+                from = part;
+            }
+            None => from = start + 1,
+        }
+    }
+    if around.is_empty() {
+        return false;
+    }
+    around.push(&arrived[part..]);
+    let labels = around.len() - 1;
+    let (first, last) = (around[0], around[labels]);
+    let Some(mut left) = sent.strip_prefix(first) else {
+        return false;
+    };
+    for part in &around[1..labels] {
+        match left.find(part) {
+            Some(at) => left = &left[at + part.len()..],
+            None => return false,
+        }
+    }
+    left.ends_with(last)
+}
+
+/// `text`, a message of the user's as its log holds it, as it was typed: each label the image plugin
+/// put where it attached an image from a file goes back to `@path`, relative to `cwd` inside it. So
+/// it reads as it did when it was sent, and sent again, the plugin attaches the image again. A label
+/// that names no file (an image pasted into the terminal) is left as it is.
+pub(crate) fn as_typed(text: &str, cwd: &Path) -> String {
+    let mut out = String::new();
+    let mut rest = text;
+    while let Some(found) = rest.find("[Image ") {
+        out.push_str(&rest[..found]);
+        let at = &rest[found..];
+        let file = label_len(at).and_then(|len| {
+            let name = &at[at.find(": ")? + 2..len - 1];
+            Path::new(name).is_absolute().then_some((name, len))
+        });
+        match file {
+            Some((name, len)) => {
+                out.push_str(&crate::composer::path_ref(Path::new(name), cwd));
+                rest = &at[len..];
+                // A word of its own, or the plugin reads what follows as part of the path.
+                if rest.starts_with(|c: char| !c.is_whitespace()) {
+                    out.push(' ');
+                }
+            }
+            None => {
+                out.push_str("[Image ");
+                rest = &at["[Image ".len()..];
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+/// The length of the image plugin's label at the start of `text`, as in `[Image 1: /work/shot.png]`.
+fn label_len(text: &str) -> Option<usize> {
+    let after = text.strip_prefix("[Image ")?;
+    let name = after.trim_start_matches(|c: char| c.is_ascii_digit());
+    if name.len() == after.len() {
+        return None;
+    }
+    let name = name.strip_prefix(": ")?;
+    let end = name.find([']', '\n'])?;
+    name[end..].starts_with(']').then(|| text.len() - name.len() + end + 1)
 }
 
 /// What the user wrote in a message: its text without the agent's mark of an interruption. A
@@ -975,6 +1282,21 @@ mod tests {
 
     fn lines(e: &Exchange) -> Vec<String> {
         e.steps.iter().map(line).collect()
+    }
+
+    #[test]
+    fn a_picture_a_tool_read_is_kept_to_be_drawn() {
+        let log = [
+            r#"{"type":"message","message":{"role":"user","content":[{"type":"text","text":"画像を見て"}],"timestamp":1}}"#,
+            r#"{"type":"message","message":{"role":"assistant","content":[{"type":"tool_call","id":"c1","name":"read","input":{"path":"shot.png"}}],"api":"openai-chat","provider":"fake","model":"m","usage":{"input":1,"output":1,"cacheRead":0,"cacheWrite":0,"cost":0},"stopReason":"tool_use","timestamp":2}}"#,
+            r#"{"type":"message","message":{"role":"tool","toolCallId":"c1","toolName":"read","content":[{"type":"text","text":"Read image shot.png"},{"type":"image","mediaType":"image/png","data":"iVBORw0KGgo="}],"isError":false,"timestamp":3}}"#,
+        ];
+        let entries: Vec<SessionEntry> = log.iter().map(|l| serde_json::from_str(l).unwrap()).collect();
+        let t = Transcript::from_entries(&entries);
+        let tool = t.exchanges[0].tools().next().unwrap();
+        assert_eq!(tool.images.len(), 1);
+        assert_eq!(std::fs::read(&tool.images[0]).unwrap(), b"\x89PNG\r\n\x1a\n");
+        assert_eq!(tool.output, "Read image shot.png");
     }
 
     #[test]
@@ -1187,6 +1509,69 @@ mod tests {
         assert_eq!(t.exchanges[1].prompt, "やっぱり10秒でいい");
     }
 
+    /// The image plugin puts a label where the message named an image. It is still the message that
+    /// was sent: shown once, as it was typed.
+    #[test]
+    fn a_message_with_an_image_attached_is_shown_once_as_it_was_typed() {
+        let mut t = Transcript::default();
+        let now = Instant::now();
+        let given = |text: &str| {
+            let message = serde_json::json!({"type": "message_end", "message": {"role": "user", "timestamp": 1,
+                "content": [{"type": "text", "text": text}, {"type": "image", "mediaType": "image/png", "data": "AA=="}]}});
+            parse_event(&message.to_string()).unwrap()
+        };
+        t.send("@/work/shot.png この画面は何？", now);
+        t.apply(&given("[Image 1: /work/shot.png] この画面は何？"), now);
+        assert_eq!(t.exchanges.len(), 1);
+        assert_eq!(t.exchanges[0].prompt, "@/work/shot.png この画面は何？");
+
+        t.queue("@a.png と @b.png を比べて");
+        t.apply(&given("[Image 1: /work/a.png] と [Image 2: /work/b.png] を比べて"), now);
+        assert!(t.queued.is_empty());
+        assert_eq!(t.exchanges.len(), 2);
+        assert_eq!(t.exchanges[1].prompt, "@a.png と @b.png を比べて");
+    }
+
+    #[test]
+    fn a_message_read_from_its_log_names_its_images_as_they_were_typed() {
+        // The plugin writes the absolute path as the system writes it: `C:\…` on Windows.
+        let root = if cfg!(windows) { r"C:\" } else { "/" };
+        let cwd = Path::new(root).join("work").join("p");
+        let other = Path::new(root).join("else").join("b.png");
+        let label = |n: usize, path: &Path| format!("[Image {n}: {}]", path.display());
+        let cwd = cwd.as_path();
+        assert_eq!(
+            as_typed(&format!("{} これを見て", label(1, &cwd.join("shot.png"))), cwd),
+            "@shot.png これを見て"
+        );
+        assert_eq!(
+            as_typed(
+                &format!("{}{}と比べて", label(1, &cwd.join("a.png")), label(2, &other)),
+                cwd
+            ),
+            format!("@a.png @{} と比べて", other.display())
+        );
+        assert_eq!(as_typed(&label(1, &cwd.join("my shot.png")), cwd), "@\"my shot.png\"");
+        // Not a file's label, or not a label: left as it is.
+        assert_eq!(as_typed("[Image 1: image] 貼った", cwd), "[Image 1: image] 貼った");
+        assert_eq!(as_typed("[Image のこと", cwd), "[Image のこと");
+        assert_eq!(as_typed("ふつうの文", cwd), "ふつうの文");
+    }
+
+    #[test]
+    fn only_the_labels_of_images_are_passed_over_when_a_message_is_matched() {
+        assert!(sent_as("@a.png 見て", "[Image 1: /w/a.png] 見て"));
+        assert!(sent_as(
+            "前 @a.png 中 @b.png 後",
+            "前 [Image 1: /w/a.png] 中 [Image 2: /w/b.png] 後"
+        ));
+        assert!(sent_as("[Image x] そのまま", "[Image x] そのまま"));
+        assert!(!sent_as("@a.png 見て", "[Image 1: /w/a.png] 見ないで"));
+        assert!(!sent_as("前 @a.png 後", "後 [Image 1: /w/a.png] 前"));
+        assert!(!sent_as("[Image 1 見て", "[Image 1: /w/a.png 見て"));
+        assert!(!sent_as("別の文", "[Image : /w/a.png] 別の文"));
+    }
+
     #[test]
     fn a_session_log_reads_back_as_the_same_conversation() {
         let t = log("session.jsonl");
@@ -1350,5 +1735,30 @@ mod tests {
         let long = "あ".repeat(MAX_TOOL_OUTPUT);
         let cut = tail(&long);
         assert!(cut.starts_with('…') && cut.len() <= MAX_TOOL_OUTPUT + '…'.len_utf8());
+    }
+
+    #[test]
+    fn a_compactions_summary_is_a_note_to_open_not_a_message_from_the_user() {
+        let entry = |line: &str| -> SessionEntry { serde_json::from_str(line).unwrap() };
+        let summary = format!("{SUMMARY}\n\nThe user asked for retries; done in src/net.rs.");
+        let replace = entry(
+            &serde_json::json!({"type": "replace", "messages": [
+                {"role": "user", "timestamp": 1, "content": [{"type": "text", "text": summary}]},
+                {"role": "user", "timestamp": 2, "content": [{"type": "text", "text": "次はテスト"}]}
+            ]})
+            .to_string(),
+        );
+        let t = Transcript::from_entries(std::slice::from_ref(&replace));
+        assert_eq!(t.exchanges.len(), 2);
+        assert!(t.exchanges[0].prompt.is_empty());
+        assert!(matches!(&t.exchanges[0].steps[0],
+            Step::Note(Note::Compacted(Some(s))) if s == "The user asked for retries; done in src/net.rs."));
+        assert_eq!(t.exchanges[1].prompt, "次はテスト");
+        // In a run, the summary is read from the log once the run says it compacted.
+        let mut live = Transcript::default();
+        live.apply(&sasacode_protocol::Event::MessagesReplaced, Instant::now());
+        assert!(live.summary_missing());
+        live.fill_summary(&[replace]);
+        assert!(!live.summary_missing());
     }
 }

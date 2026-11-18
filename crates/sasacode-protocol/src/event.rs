@@ -32,6 +32,13 @@ pub const EVENT_TYPES: &[&str] = &[
     "approval_request",
     "approval_cancelled",
     "control_error",
+    "ui_request",
+    "ui_cancelled",
+    "plugin_notify",
+    "plugin_text",
+    "plugin_status",
+    "commands",
+    "judged",
 ];
 
 /// One line of the output.
@@ -42,6 +49,10 @@ pub enum Event {
     Session {
         id: Option<String>,
         path: Option<String>,
+        /// How many tokens the model takes in, as the CLI knows it at the start of the run. A CLI
+        /// before 0.8 does not say.
+        #[serde(default, rename = "contextWindow")]
+        context_window: Option<u64>,
     },
     AgentStart,
     TurnStart {
@@ -133,6 +144,10 @@ pub enum Event {
         reason: String,
         #[serde(default)]
         cwd: String,
+        /// The allow rules an `always` answer adds; each can be given to a later run with
+        /// `--allow`. A CLI before 0.8 does not say.
+        #[serde(default)]
+        rules: Vec<String>,
     },
     /// The run was interrupted before this request was answered.
     ApprovalCancelled {
@@ -142,9 +157,115 @@ pub enum Event {
     ControlError {
         error: String,
     },
+    /// `--control stdio`: a plugin asks the user something, and waits for
+    /// [`crate::ControlMessage::UiResponse`] with this `id` until it is answered or dismissed.
+    UiRequest {
+        id: String,
+        #[serde(flatten)]
+        ask: UiAsk,
+        #[serde(default)]
+        title: String,
+    },
+    /// The run was interrupted before this question was answered.
+    UiCancelled {
+        id: String,
+    },
+    /// A plugin's notice.
+    PluginNotify {
+        #[serde(default)]
+        level: NoticeLevel,
+        text: String,
+    },
+    /// A text a plugin shows whole (a report, a list).
+    PluginText {
+        #[serde(default)]
+        title: String,
+        text: String,
+        /// `markdown` or `text`.
+        #[serde(default)]
+        format: String,
+    },
+    /// A plugin's status item, keyed `plugin:key`; `None` when it went away.
+    PluginStatus {
+        key: String,
+        #[serde(default)]
+        text: Option<String>,
+    },
+    /// The slash commands the plugins offer now: at the start, then whenever they change.
+    Commands {
+        #[serde(default)]
+        commands: Vec<Command>,
+    },
+    /// The agent permission mode's judge on one call: allowed, or handed to the user.
+    Judged {
+        #[serde(rename = "callId")]
+        call_id: String,
+        tool: String,
+        verdict: String,
+        #[serde(default)]
+        reason: String,
+    },
     /// A line whose `type` this crate does not know. Kept whole so a caller can still show it.
     #[serde(skip)]
     Unknown(Value),
+}
+
+/// What a plugin's question is, and what it offers.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum UiAsk {
+    /// Answered with `true` or `false`.
+    Confirm {
+        #[serde(default)]
+        message: Option<String>,
+    },
+    /// Answered with one option's `value`.
+    Select { options: Vec<UiOption> },
+    /// Answered with a string.
+    Input {
+        #[serde(default)]
+        message: Option<String>,
+        #[serde(default)]
+        placeholder: Option<String>,
+        #[serde(default)]
+        initial: Option<String>,
+    },
+    /// Answered with the `value`s chosen.
+    SelectMany {
+        options: Vec<UiOption>,
+        #[serde(default)]
+        selected: Vec<String>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UiOption {
+    pub value: String,
+    pub label: String,
+    #[serde(default)]
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NoticeLevel {
+    #[default]
+    Info,
+    Warning,
+    Error,
+}
+
+/// A slash command a plugin offers.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Command {
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub argument_hint: Option<String>,
+    #[serde(default)]
+    pub owner: String,
 }
 
 /// The streaming step inside `message_update`.

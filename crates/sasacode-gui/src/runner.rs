@@ -25,6 +25,18 @@ pub struct RunSpec {
     pub permission: Option<String>,
     /// `--thinking`.
     pub thinking: Option<String>,
+    /// `--no-session`: the conversation is read, and nothing is written to it.
+    pub no_session: bool,
+    /// The language the window was set to, for what the CLI says (`SASACODE_LANG`).
+    pub lang: Option<String>,
+    /// Calls allowed without asking (`--allow`), as "always" allowed them in earlier runs.
+    pub allow: Vec<String>,
+    /// The folder's config is used though it was not trusted for good (`--trust-project`).
+    pub trust_project: bool,
+    /// The prompt is a plugin's slash command, run as one (`--slash`).
+    pub slash: bool,
+    /// Added to the system prompt (`--append-system-prompt-file`): what plan mode asks.
+    pub system_file: Option<PathBuf>,
 }
 
 impl RunSpec {
@@ -47,6 +59,23 @@ impl RunSpec {
         opt("-m", &self.model);
         opt("--permission", &self.permission);
         opt("--thinking", &self.thinking);
+        if self.no_session {
+            args.push("--no-session".into());
+        }
+        if self.trust_project {
+            args.push("--trust-project".into());
+        }
+        if self.slash {
+            args.push("--slash".into());
+        }
+        if let Some(file) = &self.system_file {
+            args.push("--append-system-prompt-file".into());
+            args.push(file.to_string_lossy().into_owned());
+        }
+        for rule in &self.allow {
+            args.push("--allow".into());
+            args.push(rule.clone());
+        }
         args
     }
 }
@@ -75,6 +104,7 @@ pub fn run(spec: RunSpec) -> impl Stream<Item = RunUpdate> {
             command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
             let mut child = match command
                 .args(spec.args())
+                .envs(spec.lang.iter().map(|l| ("SASACODE_LANG", l)))
                 .current_dir(&spec.cwd)
                 .stdin(Stdio::piped())
                 .stdout(Stdio::piped())

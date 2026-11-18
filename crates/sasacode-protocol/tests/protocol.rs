@@ -41,6 +41,27 @@ fn source_types(source: &str, pattern: &str, after: &str, until: &str) -> BTreeS
 }
 
 #[test]
+fn the_session_line_says_the_context_window_when_the_cli_knows_it() {
+    let line = r#"{"type":"session","id":"a","path":"/p","contextWindow":200000}"#;
+    assert!(matches!(
+        sasacode_protocol::parse_event(line).unwrap(),
+        Event::Session {
+            context_window: Some(200_000),
+            ..
+        }
+    ));
+    // An older CLI's line has none.
+    let line = r#"{"type":"session","id":null,"path":null}"#;
+    assert!(matches!(
+        sasacode_protocol::parse_event(line).unwrap(),
+        Event::Session {
+            context_window: None,
+            ..
+        }
+    ));
+}
+
+#[test]
 fn every_line_of_a_real_run_parses_as_a_known_event() {
     let events = run_events();
     assert!(events.iter().all(|e| !matches!(e, Event::Unknown(_))), "{events:#?}");
@@ -48,7 +69,8 @@ fn every_line_of_a_real_run_parses_as_a_known_event() {
         &events[0],
         Event::Session {
             id: Some(_),
-            path: Some(_)
+            path: Some(_),
+            ..
         }
     ));
     assert!(matches!(
@@ -158,6 +180,7 @@ fn control_messages_are_one_line_each_in_the_shape_the_cli_reads() {
         id: "approval-1".into(),
         decision: Decision::Allow,
         feedback: None,
+        args: None,
     };
     assert_eq!(
         allow.to_line(),
@@ -167,6 +190,7 @@ fn control_messages_are_one_line_each_in_the_shape_the_cli_reads() {
         id: "a".into(),
         decision: Decision::Deny,
         feedback: Some("理由".into()),
+        args: None,
     };
     assert_eq!(
         deny.to_line(),
@@ -179,7 +203,10 @@ fn control_messages_are_one_line_each_in_the_shape_the_cli_reads() {
         .to_line(),
         "{\"type\":\"message\",\"text\":\"テストも見て\"}\n"
     );
-    assert_eq!(ControlMessage::Abort.to_line(), "{\"type\":\"abort\"}\n");
+    assert_eq!(
+        ControlMessage::Abort { call_id: None }.to_line(),
+        "{\"type\":\"abort\"}\n"
+    );
 }
 
 // The CLI's sources are the source of truth: a type added there must be added here.
@@ -284,7 +311,7 @@ fn a_session_log_keeps_the_repairs_and_the_usage_outside_the_conversation() {
     let outside: Vec<(&str, u64)> = entries
         .iter()
         .filter_map(|e| match e {
-            SessionEntry::Usage { usage, source } => Some((source.as_str(), usage.input)),
+            SessionEntry::Usage { usage, source, .. } => Some((source.as_str(), usage.input)),
             _ => None,
         })
         .collect();

@@ -9,9 +9,24 @@ rust-version.workspace = true
 
 [dependencies]
 sasacode-protocol = { path = "../sasacode-protocol" }
+serde.workspace = true
 serde_json.workspace = true
-iced = { version = "0.14", features = ["markdown", "tokio", "advanced", "svg"] }
-tokio = { version = "1", features = ["process", "io-util", "sync", "rt", "macros"] }
+iced = { version = "0.14", features = ["markdown", "tokio", "advanced", "svg", "highlighter", "image"] }
+# Days in the local time zone, as /usage counts them.
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+# The system's own folder picker (⌘O): on Linux through the desktop portal, no GTK to build against.
+rfd = { version = "0.18", default-features = false, features = ["xdg-portal"] }
+tokio = { version = "1", features = ["process", "io-util", "sync", "rt", "macros", "time"] }
+# Math (KaTeX's layout, with its fonts in the program) and Mermaid diagrams in replies, drawn as SVG.
+ratex-parser = { version = "0.1.16", default-features = false }
+ratex-layout = { version = "0.1.16", default-features = false }
+ratex-svg = { version = "0.1.16", default-features = false, features = ["embed-fonts"] }
+mermaid-rs-renderer = { version = "0.3.1", default-features = false }
+
+# Whether a screen still shows where the window was last: Windows keeps one on a screen that is gone
+# where it is, out of sight. Already built for winit.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.52", features = ["Win32_Foundation", "Win32_Graphics_Gdi"] }
 
 [dev-dependencies]
 # Draws and drives the window without a display: the tests in `drive.rs`, and the snapshot test

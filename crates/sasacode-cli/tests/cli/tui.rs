@@ -217,7 +217,10 @@ impl Ui {
     async fn exited(self) -> (i32, FakeTerminal) {
         let code = match tokio::time::timeout(Duration::from_secs(10), self.run).await {
             Ok(Ok(Ok(code))) => code,
-            other => panic!("the TUI did not exit: {other:?}"),
+            other => panic!(
+                "the TUI did not exit: {other:?}; the screen:\n{}",
+                screen(&self.term.output(), WIDTH, HEIGHT).join("\n")
+            ),
         };
         (code, self.term)
     }
