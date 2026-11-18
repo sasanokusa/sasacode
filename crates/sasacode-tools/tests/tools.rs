@@ -215,21 +215,34 @@ async fn bash_reports_exit_codes_truncates_to_a_file_and_times_out() {
     assert!(out(&slow).contains("timed out after 0.3s"));
 }
 
-#[tokio::test]
-async fn bash_abort_kills_the_whole_process_group() {
+/// The test owns its runtime: dropping it waits for the threads still reading the command's output
+/// (Windows reads child pipes on blocking threads), so a process the abort left running shows up as
+/// time. On Windows, before job objects, that was 30 s: the whole `sleep 30`.
+#[test]
+fn bash_abort_kills_the_whole_process_group() {
     let d = sandbox();
     let c = ctx(d.path());
     let signal = c.signal.clone();
-    tokio::spawn(async move {
-        tokio::time::sleep(Duration::from_millis(200)).await;
-        signal.cancel();
-    });
-    let t0 = Instant::now();
-    let r = BashTool
-        .execute(args(json!({ "command": "sleep 30 & sleep 30; echo done" })), c)
-        .await
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
         .unwrap();
+    let t0 = Instant::now();
+    let r = rt.block_on(async move {
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            signal.cancel();
+        });
+        let command = json!({ "command": "sleep 30 & sleep 30; echo done" });
+        BashTool.execute(args(command), c).await.unwrap()
+    });
     assert!(t0.elapsed() < Duration::from_millis(3000));
+    drop(rt);
+    let held = t0.elapsed();
+    assert!(
+        held < Duration::from_secs(10),
+        "the command's output was held for {held:?}"
+    );
     assert!(out(&r).contains("interrupted by the user"));
     assert_eq!(r.details.as_ref().unwrap()["killedBy"], "abort");
 }
