@@ -24,7 +24,7 @@ words! {
     // The git tab: hunks, comments, branches.
     staged_head: "ステージ済み", "Staged";
     unstaged_head: "未ステージ", "Not staged";
-    comment_ph: "この行へのコメント。次のメッセージに添えて送ります（↵で足す）", "A comment on this line, sent with the next message (↵ adds it)";
+    comment_ph: "次のメッセージに添えるコメント（↵で足す）", "A comment sent with the next message (↵ adds it)";
     comment_add: "コメントを足す", "Add comment";
     comment_quote: "場所だけ入力欄へ", "Put the place in the input";
     cancel: "やめる", "Cancel";
