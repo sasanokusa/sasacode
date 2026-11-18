@@ -5,6 +5,9 @@
 //! `[ \t]*\r?\n`, optionally `^[ \t]*` before each line, `(?<![ \t])` before a blank first line),
 //! and none of them can backtrack into a different match, so they are hand-coded here. `^` keeps
 //! its JS multiline meaning: after `\n`, `\r`, U+2028 or U+2029.
+//!
+//! A failed edit says where to look: for an old_string not found, the file's lines most like it; for
+//! one found in several places, the line each starts on.
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -75,8 +78,9 @@ impl Tool for EditTool {
         }
         let count = before.matches(old).count();
         if count > 1 && !replace_all {
+            let at = at_lines(&before, before.match_indices(old).map(|(i, _)| i), count > 10);
             return Ok(ToolResult::error(format!(
-                "old_string appears {count} times in {path}. Add surrounding context to make it unique, or set replace_all."
+                "old_string appears {count} times in {path}{at}. Add surrounding context to make it unique, or set replace_all."
             )));
         }
         let (after, note) = if count == 0 {
@@ -180,12 +184,14 @@ fn loosely(path: &str, file: &str, old: &str, neu: &str) -> Result<Loose, String
     let ignoring = format!("ignoring {}", what.join(", "));
     if hits.is_empty() {
         return Err(format!(
-            "old_string not found in {path}, even {ignoring}. Re-read the file and match it exactly."
+            "old_string not found in {path}, even {ignoring}. Re-read the file and match it exactly.{}",
+            nearest(file, old_s)
         ));
     }
     if hits.len() > 1 {
+        let at = at_lines(file, hits.iter().map(|h| h.0), hits.len() > 10);
         return Err(format!(
-            "old_string appears more than once in {path}, {ignoring}. Add surrounding context to make it unique."
+            "old_string appears more than once in {path}, {ignoring}{at}. Add surrounding context to make it unique."
         ));
     }
     let (index, end) = hits[0];
@@ -248,6 +254,67 @@ fn loosely(path: &str, file: &str, old: &str, neu: &str) -> Result<Loose, String
         after: format!("{}{replacement}{}", &file[..index], &file[end..]),
         note: format!("[harness matched old_string {ignoring}]\n"),
     })
+}
+
+/// How many places of old_string are looked for: one more than the lines an error lists, to say "…".
+const HITS: usize = 11;
+
+/// " (lines 3, 17, …)": the 1-based lines where the first ten of `starts` (byte offsets) are.
+fn at_lines(file: &str, starts: impl Iterator<Item = usize>, more: bool) -> String {
+    let lines: Vec<String> = starts
+        .take(HITS - 1)
+        .map(|i| (file[..i].matches('\n').count() + 1).to_string())
+        .collect();
+    format!(" (lines {}{})", lines.join(", "), if more { ", …" } else { "" })
+}
+
+/// The file's lines most like old_string's first ten, with a line of context each side, numbered as
+/// read numbers them (edit takes that form back): the window whose lines share the most character
+/// pairs with old_string's, spaces aside. Nothing when the best shares under half.
+fn nearest(file: &str, old: &str) -> String {
+    let lines: Vec<&str> = file.split('\n').collect();
+    let theirs: Vec<Vec<(char, char)>> = lines.iter().copied().map(pairs).collect();
+    let ours: Vec<Vec<(char, char)>> = old.split('\n').take(HITS - 1).map(pairs).collect();
+    let score = |w: usize| {
+        let sum: f64 = ours.iter().zip(&theirs[w..]).map(|(a, b)| dice(a, b)).sum();
+        sum / ours.len() as f64
+    };
+    // The first of the best: max_by would keep the last.
+    let best = (0..lines.len())
+        .map(|w| (w, score(w)))
+        .fold((0, 0.0), |b, x| if x.1 > b.1 { x } else { b });
+    if best.1 < 0.5 {
+        return String::new();
+    }
+    let (from, to) = (best.0.saturating_sub(1), (best.0 + ours.len() + 1).min(lines.len()));
+    let shown: String = (from..to)
+        .map(|i| format!("\n{:>6}\t{}", i + 1, lines[i].trim_end_matches('\r')))
+        .collect();
+    format!(" The lines most like it:{shown}")
+}
+
+/// A line's adjacent character pairs, whitespace left out, sorted.
+fn pairs(line: &str) -> Vec<(char, char)> {
+    let chars: Vec<char> = line.chars().filter(|c| !c.is_whitespace()).collect();
+    let mut p: Vec<(char, char)> = chars.windows(2).map(|w| (w[0], w[1])).collect();
+    p.sort_unstable();
+    p
+}
+
+/// Sørensen–Dice over two sorted pair lists: 1 for the same pairs, 0 for none shared.
+fn dice(a: &[(char, char)], b: &[(char, char)]) -> f64 {
+    if a.is_empty() || b.is_empty() {
+        return f64::from(u8::from(a.len() == b.len()));
+    }
+    let (mut i, mut j, mut shared) = (0, 0, 0);
+    while i < a.len() && j < b.len() {
+        match a[i].cmp(&b[j]) {
+            std::cmp::Ordering::Less => i += 1,
+            std::cmp::Ordering::Greater => j += 1,
+            std::cmp::Ordering::Equal => (i, j, shared) = (i + 1, j + 1, shared + 1),
+        }
+    }
+    2.0 * f64::from(shared) / (a.len() + b.len()) as f64
 }
 
 /// How one line's indentation moved: old = s1 + s2, file = s3 + s2, s2 their longest common suffix
@@ -380,11 +447,11 @@ fn first_digits_line(s: &str) -> Option<(usize, &str)> {
     })
 }
 
-/// The first two places `needle` starts in `file`, overlaps counted (`(?=(needle))` with `g`).
+/// The first [`HITS`] places `needle` starts in `file`, overlaps counted (`(?=(needle))` with `g`).
 fn literal_hits(file: &str, needle: &str) -> Vec<(usize, usize)> {
     let mut hits = Vec::new();
     let mut from = 0;
-    while hits.len() < 2 && from <= file.len() {
+    while hits.len() < HITS && from <= file.len() {
         let Some(i) = file[from..].find(needle) else { break };
         let p = from + i;
         hits.push((p, p + needle.len()));
@@ -393,7 +460,7 @@ fn literal_hits(file: &str, needle: &str) -> Vec<(usize, usize)> {
     hits
 }
 
-/// The first two places the loose pattern for `lines` matches, overlaps counted. The pattern:
+/// The first [`HITS`] places the loose pattern for `lines` matches, overlaps counted. The pattern:
 /// `(?<![ \t])` if the first line is blank; each line literal, preceded by `^[ \t]*` in `indent`
 /// mode when not blank; lines joined by `[ \t]*\r?\n`.
 fn loose_hits(file: &str, lines: &[&str], indent: bool) -> Vec<(usize, usize)> {
@@ -401,7 +468,7 @@ fn loose_hits(file: &str, lines: &[&str], indent: bool) -> Vec<(usize, usize)> {
     let first = lines.first().copied().unwrap_or("");
     let mut hits = Vec::new();
     let mut p = 0;
-    while hits.len() < 2 && p <= file.len() {
+    while hits.len() < HITS && p <= file.len() {
         let candidate = if first.is_empty() {
             // A blank first line may start only where a run of blanks does: scanning the run from
             // each of its places is quadratic.
