@@ -358,4 +358,4 @@ before_request → stream_delta（生成中、差分ごと） → assistant_mess
 - 1.xの公開プラグインAPI（1.4.0で互換を約束し、最後の版は1.15.0）は、0.20のRustへの書き換えで終わった。外部のプラグインを使う人がいなかったため、プラグインのローダー、`sasacode plugin`、npmの`@sasacode/plugin-api`をなくし、外からの拡張はMCPとSkillsだけにした（`rust/DECISIONS.md`のADR-002）。
 - 同じAPIは、同梱プラグインのための内部のAPIとして残っている。組み込みのツールやコマンドも、これまでどおりこのAPIで登録する。`PLUGIN_API_VERSION`は記録のために`1.15.0`のまま置いている。
 - 公式プラグイン（ask-user、git-context、project-checks、workflows）とjev-guard、free-searchは、既定で無効の同梱プラグインになった（ADR-011）。
-- 0.20.0の次の版から、ask-userは既定で読み込む。
+- 0.20.1から、ask-userは既定で読み込む。

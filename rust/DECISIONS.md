@@ -105,7 +105,7 @@ installs in `~/.sasacode/plugins` are no longer loaded; the plugin names stay th
 `plugins.settings` for them keep working once enabled.
 jev-guard's own switch, `plugins.settings["jev-guard"].enabled: true`, also turns it on, so
 configs written for the installed plugin keep working.
-Amended 2026-11-19 (the user's call): ask-user is on by default; `plugins.disabled` turns it off.
+Amended 2026-11-19 (the user's call, v0.20.1): ask-user is on by default; `plugins.disabled` turns it off.
 The other five stay off. A config that names it in `plugins.enabled` is unaffected.
 
 ## ADR-012: Two `unsafe` sites: setsid before exec for bash, and the environment at startup

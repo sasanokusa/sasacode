@@ -38,7 +38,7 @@ irm https://sasanokusa.com/sasacode/install.ps1 | iex
 - macOS（arm64 / x64）、Linux（x64 / arm64、glibc / musl）、Windows（x64 / arm64）の単一バイナリ。x64版はどれもAVX2のないCPUでも動く（0.15までのbaseline版の名前でも、同じものを置いている）。
 - インストーラーもバイナリも、[GitHub Releases](https://github.com/sasanokusa/sasacode/releases) の最新版から取得してSHA256を検証する。sasanokusa.comのURLは、最新リリースの `install.sh` / `install.ps1` へのリダイレクト。
 - SHA256が防ぐのは壊れたダウンロードまで。ファイルがこのリポジトリのGitHub Actionsでビルドされたものかは、v0.9.8以降のリリースに付けた署名つきの来歴で確かめられる（`gh attestation verify sasacode-darwin-arm64.tar.gz --repo sasanokusa/sasacode`。リリースから落としたファイルに対して。`install.sh` も同じ）。
-- `SASACODE_VERSION=v0.15.2` で版を固定でき、`SASACODE_INSTALL_DIR` で置き場所を変えられる（どちらのインストーラーでも）。
+- `SASACODE_VERSION=v0.20.1` で版を固定でき、`SASACODE_INSTALL_DIR` で置き場所を変えられる（どちらのインストーラーでも）。
 - 更新は`sasacode update`（インストーラーと同じ検証つき。`--check`で確認だけ）。新しい版が出ていると起動時に一度だけ静かに知らせる（`"updateCheck": false`で止める）。ソースから入れた場合は、`git pull`のあと下の`cargo install`をもう一度実行する。
 - Web検索（`web_search`）に使うRustXNGは `sasacode web-search install`（TUIでは `/web-search install`）で入る。公式リリースをチェックサムで確かめて `~/.sasacode/bin` に置き、再起動しなくても使える。もう一度実行すると最新版に更新する。
 - デスクトップGUI（開発中）は配布物に入っておらず、`sasacode gui install`でこのマシンでビルドして入れる（[Rust](https://rustup.rs)が要る。ないときは入れ方を案内して止まる）。`~/.sasacode/gui/bin`に入り、`sasacode update`では更新されない。sasacodeを更新したら、もう一度`sasacode gui install`を実行する（[docs/gui.md](docs/gui.md)）。

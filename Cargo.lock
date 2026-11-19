@@ -5152,7 +5152,7 @@ dependencies = [
 
 [[package]]
 name = "sasacode-agent"
-version = "0.20.0"
+version = "0.20.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5177,7 +5177,7 @@ dependencies = [
 
 [[package]]
 name = "sasacode-ai"
-version = "0.20.0"
+version = "0.20.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5201,7 +5201,7 @@ dependencies = [
 
 [[package]]
 name = "sasacode-bundled"
-version = "0.20.0"
+version = "0.20.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5245,7 +5245,7 @@ dependencies = [
 
 [[package]]
 name = "sasacode-cli"
-version = "0.20.0"
+version = "0.20.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5277,7 +5277,7 @@ dependencies = [
 
 [[package]]
 name = "sasacode-gui"
-version = "0.20.0"
+version = "0.20.1"
 dependencies = [
  "chrono",
  "iced",
@@ -5296,7 +5296,7 @@ dependencies = [
 
 [[package]]
 name = "sasacode-host"
-version = "0.20.0"
+version = "0.20.1"
 dependencies = [
  "anyhow",
  "indexmap",
@@ -5311,7 +5311,7 @@ dependencies = [
 
 [[package]]
 name = "sasacode-mcp"
-version = "0.20.0"
+version = "0.20.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5333,7 +5333,7 @@ dependencies = [
 
 [[package]]
 name = "sasacode-plugin-api"
-version = "0.20.0"
+version = "0.20.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5351,7 +5351,7 @@ dependencies = [
 
 [[package]]
 name = "sasacode-protocol"
-version = "0.20.0"
+version = "0.20.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -5360,7 +5360,7 @@ dependencies = [
 
 [[package]]
 name = "sasacode-skills"
-version = "0.20.0"
+version = "0.20.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5374,7 +5374,7 @@ dependencies = [
 
 [[package]]
 name = "sasacode-testing"
-version = "0.20.0"
+version = "0.20.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5393,7 +5393,7 @@ dependencies = [
 
 [[package]]
 name = "sasacode-tools"
-version = "0.20.0"
+version = "0.20.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5412,7 +5412,7 @@ dependencies = [
 
 [[package]]
 name = "sasacode-tui"
-version = "0.20.0"
+version = "0.20.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -7801,7 +7801,7 @@ checksum = "ec7a2a501ed189703dba8b08142f057e887dfc4b2cc4db2d343ac6376ba3e0b9"
 
 [[package]]
 name = "xtask"
-version = "0.20.0"
+version = "0.20.1"
 dependencies = [
  "anyhow",
  "percent-encoding",
