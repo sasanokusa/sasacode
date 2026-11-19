@@ -314,10 +314,11 @@ sasacode -m llama/<モデル名>
 | `gui` | `/gui` コマンド。デスクトップGUI（`sasacode-gui`、開発中）をこのフォルダで開き、進行中の会話を読み込んだ状態にする。`sasacode-gui` は、`plugins.settings.gui.command`、`sasacode gui install`で入れたもの、PATHの順に探す。開いたあとは、TUIとGUIのどちらか一方で続ける（互いの発言は読み込まない） |
 | `image-attach` | 画像対応モデルにメッセージと画像を送る。スクリーンショットは ⌘V（届かないターミナルでは ctrl+v）、ファイルはターミナルへドラッグ&ドロップすると、その場で読み込んで入力欄に `[Image #1]` と出る。続けてメッセージを書いて送れば一緒に届く。ほかに `@パス`、`/image パス…`、`/image` だけならクリップボード（macOS、Windows、Linuxは `wl-paste` か `xclip`）。形式は中身で判定（PNG / JPEG / GIF / WebP）、1枚 5 MB・1メッセージ 8 枚まで。`plugins.settings.image-attach` の `dropPaths: false` で `@` なしのパスを無視 |
 | `image-slim` | 履歴の画像を、毎回のリクエストで小さく送る。プロバイダーがどのみち縮める大きさ（約105万画素、`maxPixels`）を超える画像は縦横比を保って縮め、透明度のないPNGで100 KB以上のものはJPEG（品質90）にする。ツールが返した画像はその場で縮めてセッションに残し、座標を元の大きさに戻す倍率をモデルに伝える。古い画像は送らず短い注記に置き換え、新しい4〜11枚だけを送る（`keepImages`、`dropStep`。8枚ずつまとめて省くので、その間はプロンプトの先頭が変わらずキャッシュが効く）。最後のメッセージの画像は必ず送り、画像の合計が8 MiBを超えればさらに省く。`/image-slim` で直近のリクエストの枚数を出す。`models` で効かせるモデルを絞る |
+| `ask-user` | `ask_user`ツール。モデルが推測で進めずに、選択肢つきの質問（1回に1〜4問）であなたに判断を仰ぐ。ヘッドレスでは尋ねず、モデルに自分で決めて前提を書くよう返す。0.15までは別に入れるプラグインだった（[詳しく](docs/plugins.md#ask-user)） |
 | `diagnostics` | APIの診断（既定で無効）。`/diagnostics on` で、リクエストの成否・停止理由・トークン数などのメタデータだけを記録し、`show` で直近100件を見る。本文や秘密値は記録しない |
 | `skills` / `mcp` | Agent SkillsとMCPのアダプタ |
 
-次の6つも同梱しているが、既定では読み込まない（0.15までは別に入れるプラグインだった）。`plugins.enabled`に名前を書くと読み込む。`plugins.disabled`にも書いてあれば、そちらが優先する。プロジェクトの設定に書いた`plugins.enabled`は、プロジェクトを信頼するまで使わない。
+次の5つも同梱しているが、既定では読み込まない（0.15までは別に入れるプラグインだった）。`plugins.enabled`に名前を書くと読み込む。`plugins.disabled`にも書いてあれば、そちらが優先する。プロジェクトの設定に書いた`plugins.enabled`は、プロジェクトを信頼するまで使わない。
 
 ```json
 { "plugins": { "enabled": ["git-context", "project-checks"] } }
@@ -325,7 +326,6 @@ sasacode -m llama/<モデル名>
 
 | 名前 | 内容 |
 | --- | --- |
-| `ask-user` | `ask_user`ツール。モデルが推測で進めずに、選択肢つきの質問（1回に1〜4問）であなたに判断を仰ぐ。ヘッドレスでは尋ねず、モデルに自分で決めて前提を書くよう返す（[詳しく](docs/plugins.md#ask-user)） |
 | `git-context` | `git_context`ツール。レビューに要るGitの状態・変更の統計・パッチを、1回の呼び出しで返す。読み取りだけで、Gitが要る（[詳しく](docs/plugins.md#git-context)） |
 | `project-checks` | `project_checks`・`project_check`ツールと`/checks`。テスト・lint・型検査などを名前で実行し、PASS / FAIL、終了コード、時間、ログを返す。bashと同じ権限ルールで判定する。`verifyOnFinish`に名前を書いた検査は、モデルが作業を終えようとしたときにも確認なしで実行し、落ちていれば出力の末尾を返して続けさせる（[詳しく](docs/plugins.md#project-checks)） |
 | `workflows` | `/workflow`。レビュー・失敗の調査・公開前の確認など、繰り返し使う依頼を呼び出す。設定で足す・上書きする・外すことができる（[詳しく](docs/plugins.md#workflows)） |

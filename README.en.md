@@ -314,10 +314,11 @@ Each is left unloaded when its name is in `plugins.disabled`, and its settings g
 | `gui` | The `/gui` command: opens the desktop GUI (`sasacode-gui`, in progress) on this folder, with the conversation under way loaded. `sasacode-gui` is looked for in `plugins.settings.gui.command`, then the copy `sasacode gui install` built, then on PATH. From then on, go on in one of the two: the TUI and the GUI do not read what the other adds |
 | `image-attach` | Sends images with a message to a vision model. Paste a screenshot with ⌘V (ctrl+v where the terminal does not pass it on) or drop a file into the terminal: it is read right away and shows as `[Image #1]` in the input, and the message you type goes with it. Also `@path`, `/image <path…>`, or `/image` alone for the clipboard (macOS, Windows; Linux with `wl-paste` or `xclip`). The type is read from the bytes (PNG, JPEG, GIF, WebP); 5 MB each, 8 per message. `dropPaths: false` in `plugins.settings.image-attach` ignores paths without `@` |
 | `image-slim` | Sends the history's images smaller in every request. An image over the size providers scale down to anyway (about 1.05 megapixels, `maxPixels`) is resized, aspect ratio kept, and an opaque PNG of 100 KB or more becomes a JPEG (quality 90). An image a tool returns is shrunk at once and kept that way in the session, and the model is told the factor that takes its positions back to the original. Old images are replaced by a short note: only the newest 4 to 11 go (`keepImages`, `dropStep`; they are left out 8 at a time, so in between the start of the prompt stays the same and the cache holds). The latest message's images always go, and more are left out past 8 MiB of images. `/image-slim` shows the counts for the last request; `models` limits it to some models |
+| `ask-user` | The `ask_user` tool: instead of guessing, the model asks you to decide, with choices (1 to 4 questions at a time). Headless runs ask nothing: the model is told to decide and state what it assumed. Installed separately up to 0.15 ([more](docs/plugins.md#ask-user)) |
 | `diagnostics` | API diagnostics (off by default). `/diagnostics on` records metadata only (whether requests succeeded, stop reasons, token counts), and `show` lists the last 100. No contents or secrets are recorded |
 | `skills` / `mcp` | Adapters for Agent Skills and MCP |
 
-These six are bundled too but not loaded by default (up to 0.15 they were installed separately). A name in `plugins.enabled` loads it; a name also in `plugins.disabled` stays unloaded. A `plugins.enabled` in a project's config is not used until the project is trusted.
+These five are bundled too but not loaded by default (up to 0.15 they were installed separately). A name in `plugins.enabled` loads it; a name also in `plugins.disabled` stays unloaded. A `plugins.enabled` in a project's config is not used until the project is trusted.
 
 ```json
 { "plugins": { "enabled": ["git-context", "project-checks"] } }
@@ -325,7 +326,6 @@ These six are bundled too but not loaded by default (up to 0.15 they were instal
 
 | Name | What it does |
 | --- | --- |
-| `ask-user` | The `ask_user` tool: instead of guessing, the model asks you to decide, with choices (1 to 4 questions at a time). Headless runs ask nothing: the model is told to decide and state what it assumed ([more](docs/plugins.md#ask-user)) |
 | `git-context` | The `git_context` tool: the Git state, the change statistics and the patch a review needs, in one call. Read-only; needs Git ([more](docs/plugins.md#git-context)) |
 | `project-checks` | The `project_checks` and `project_check` tools and `/checks`: run tests, lint, type checks and so on by name and get PASS / FAIL, the exit code, the time and the log. Judged by the same permission rules as bash. Checks named in `verifyOnFinish` also run, unasked, when the model is about to finish, and a failure's output goes back to it ([more](docs/plugins.md#project-checks)) |
 | `workflows` | `/workflow`: call up requests you make again and again, such as a review, looking into a failure or a check before release. The config can add, override and remove them ([more](docs/plugins.md#workflows)) |

@@ -1,5 +1,5 @@
 //! ask-user (`plugins/ask-user/index.ts`): lets the model ask the user multiple-choice questions
-//! instead of guessing. Off until `plugins.enabled` names it.
+//! instead of guessing. On by default; `plugins.disabled` turns it off.
 
 use async_trait::async_trait;
 use futures::future::BoxFuture;

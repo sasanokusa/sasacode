@@ -84,11 +84,11 @@ description: Write release notes from the commits since the last tag.
 | `tools.disabled` | ツールを名前で外す（どのプラグインが登録したものでも） |
 
 - `enabled`・`disabled`・`tools.disabled`は、グローバルとプロジェクトの両方を合わせる。プロジェクトの設定に書いた`plugins`（`enabled`・`disabled`・`settings`）は、プロジェクトを信頼するまで使わない。
-- 既定で読み込むもの：`tool-repair`、`text-tool-calls`、`repetition-guard`、`loop-guard`、`write-guard`、`agents-md`、`compaction`、`diagnostics`、`subagent`、`todo`、`progress-notes`、`web-fetch`、`web-search`、`permission-presets`、`agent-judge`、`browsr`、`openai-codex`、`usage`、`goal`、`background-sessions`、`auto-reconnect`、`checkpoints`、`gui`、`image-attach`、`image-slim`、`skills`、`mcp`。それぞれの内容は[README](../README.md)の同梱プラグインの表にある。
-- 既定で無効のもの：`ask-user`、`git-context`、`project-checks`、`workflows`、`jev-guard`、`free-search`。0.15までは別に入れるプラグインだった。名前も設定も当時のままなので、`enabled`に名前を足せば、それまでの`plugins.settings`がそのまま使える。
+- 既定で読み込むもの：`tool-repair`、`text-tool-calls`、`repetition-guard`、`loop-guard`、`write-guard`、`agents-md`、`compaction`、`diagnostics`、`subagent`、`todo`、`progress-notes`、`web-fetch`、`web-search`、`permission-presets`、`agent-judge`、`browsr`、`openai-codex`、`usage`、`goal`、`background-sessions`、`auto-reconnect`、`checkpoints`、`gui`、`image-attach`、`image-slim`、`ask-user`、`skills`、`mcp`。それぞれの内容は[README](../README.md)の同梱プラグインの表にある。
+- 既定で無効のもの：`git-context`、`project-checks`、`workflows`、`jev-guard`、`free-search`。`ask-user`と同じく、0.15までは別に入れるプラグインだった。名前も設定も当時のままなので、`enabled`に名前を足せば、それまでの`plugins.settings`がそのまま使える。
 - 0.15まで`~/.sasacode/plugins`やプロジェクトの`.sasacode/plugins`に置いたプラグインは読み込まない。同梱版と同じ名前のプラグインで置き換える仕組みもなくなった。
 
-以下は、既定で無効の6つ。
+以下は、0.15までは別に入れるプラグインだった6つ。`ask-user`は既定で読み込み、ほかの5つは既定で無効。
 
 ### ask-user
 
@@ -100,6 +100,7 @@ description: Write release notes from the commits since the last tag.
 - Escで閉じたとき、空のまま入力を確定したとき、複数選択で何も選ばずに確定したときは、そこで打ち切る。モデルには、答えを推測しないよう伝える。実行中に中断すると、ツールはエラーで終わる。
 - ヘッドレスでは何も尋ねない。モデルに、自分で決めて置いた前提を返信に書くよう返す。
 - 質問するための承認は意味がないので、`ask_user`のallowルールを足す。askモードでも確認なしで出る。止めたいときは`permissions.deny`に`ask_user`と書く（ユーザーのdenyルールが優先する）。
+- 既定で読み込む。ツールごと外すなら、`plugins.disabled`に`ask-user`と書く。
 
 ### git-context
 
@@ -357,3 +358,4 @@ before_request → stream_delta（生成中、差分ごと） → assistant_mess
 - 1.xの公開プラグインAPI（1.4.0で互換を約束し、最後の版は1.15.0）は、0.20のRustへの書き換えで終わった。外部のプラグインを使う人がいなかったため、プラグインのローダー、`sasacode plugin`、npmの`@sasacode/plugin-api`をなくし、外からの拡張はMCPとSkillsだけにした（`rust/DECISIONS.md`のADR-002）。
 - 同じAPIは、同梱プラグインのための内部のAPIとして残っている。組み込みのツールやコマンドも、これまでどおりこのAPIで登録する。`PLUGIN_API_VERSION`は記録のために`1.15.0`のまま置いている。
 - 公式プラグイン（ask-user、git-context、project-checks、workflows）とjev-guard、free-searchは、既定で無効の同梱プラグインになった（ADR-011）。
+- 0.20.0の次の版から、ask-userは既定で読み込む。
