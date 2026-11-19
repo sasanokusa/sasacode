@@ -25,9 +25,9 @@ const DEFAULT_TIMEOUT_S: f64 = 120.0;
 /// started (#90). Kept as the documented maximum.
 const MAX_TIMEOUT_S: f64 = 86_400.0;
 const MAX_OUTPUT: usize = 30_000;
-/// After the shell exits, output still in flight gets this long before the pipes are dropped
-/// (background jobs may keep them open).
-const EXIT_GRACE: Duration = Duration::from_millis(50);
+/// After the shell exits, the call ends once both pipes close, or after this long if something it
+/// started keeps them open (at 50 ms, a quick command's output once came back empty on Windows CI).
+const EXIT_GRACE: Duration = Duration::from_millis(500);
 /// SIGTERM first; SIGKILL this long after if the group is still there.
 const ESCALATION: Duration = Duration::from_secs(2);
 
@@ -232,7 +232,7 @@ async fn run(args: &JsonObject, ctx: &ToolContext) -> ToolResult {
     let mut grace: Option<Pin<Box<Sleep>>> = None;
     let mut status: Option<std::io::Result<std::process::ExitStatus>> = None;
     let mut stream_open = true;
-    loop {
+    while status.is_none() || stream_open {
         tokio::select! {
             chunk = rx.recv(), if stream_open => match chunk {
                 Some(s) => {
