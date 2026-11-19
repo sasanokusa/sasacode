@@ -468,6 +468,33 @@ fn a_project_changes_which_plugins_load_only_once_it_is_trusted() {
     assert!(!enabled(&plugins, "todo") && enabled(&plugins, "workflows"));
 }
 
+#[test]
+fn slim_profile_drops_heavy_plugins_and_skills_unless_explicitly_kept() {
+    let d = dirs();
+    d.global(json!({
+        "plugins": {
+            "enabled": ["slim-profile", "todo"],
+        },
+    }));
+    let plugins = plugin_listing_in(&d.home, &d.proj).unwrap();
+    assert!(enabled(&plugins, "slim-profile"));
+    assert!(enabled(&plugins, "todo")); // explicitly enabled overrides slim-profile drop
+    assert!(!enabled(&plugins, "subagent"));
+    assert!(!enabled(&plugins, "goal"));
+    assert!(!enabled(&plugins, "web-search"));
+    assert!(!enabled(&plugins, "skills"));
+    assert!(enabled(&plugins, "search-tools"));
+
+    d.global(json!({
+        "plugins": {
+            "enabled": ["slim-profile"],
+            "settings": { "slim-profile": { "dropSkills": false } },
+        },
+    }));
+    let plugins = plugin_listing_in(&d.home, &d.proj).unwrap();
+    assert!(enabled(&plugins, "skills"));
+}
+
 // ── trust ───────────────────────────────────────────────────────────
 
 #[test]

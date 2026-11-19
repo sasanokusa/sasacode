@@ -252,6 +252,30 @@ description: Write release notes from the commits since the last tag.
 { "plugins": { "enabled": ["free-search"] } }
 ```
 
+### hashline-edit
+
+`read` の各行の先頭を `<行番号>:<2桁ハッシュ>|` に変え、`hash_edit` ツールを足す。小型モデルが空白やインデントの一字一句コピーに失敗する問題を抑える。誤って `N:hh|` を付けたまま `write` を呼んだ場合は接頭辞を自動で外す。
+
+### clean-retry
+
+編集エラー（`consecutive_edit_errors`、既定4回）やテスト失敗（`triggerFailures`、既定3回）が続いたとき、変更したファイルをタスク開始前に自動で戻し、失敗の要約だけを残した綺麗なコンテキストでやり直す。`maxRetries`（既定 1）、`triggerFailures`（既定 3）、`triggerEditErrors`（既定 4）、`maxFileKB`（既定 1024）を設定できる。
+
+### slim-profile
+
+小型ローカルモデル向けに、`subagent`・`todo`・`goal`・`web-fetch`・`web-search`・`browsr`・`background-sessions`・`progress-notes` と Skills（`dropSkills: false` で維持）を自動で外し、システムプロンプトへ簡潔な行動規則を足し、`read`（`readMaxChars`、既定 16000）・`bash`（`bashMaxChars`、既定 8000）の単発出力の上限を切り詰める。
+
+```json
+{
+  "plugins": {
+    "enabled": ["slim-profile", "hashline-edit", "clean-retry"],
+    "settings": {
+      "thinking-budget": { "localMaxChars": 12000 },
+      "context-slim": { "triggerRatio": 0.55, "maskStep": 4 }
+    }
+  }
+}
+```
+
 ## API診断プラグイン
 
 同梱の`diagnostics`は、読み込むが記録は止まっている。`/diagnostics on` / `off`でこの起動中だけ切り替え、`show`で直近100件を出し、`clear`で消す。設定は`plugins.settings.diagnostics: {enabled: false, persist: false}`。`persist: true`を明示したときだけ、セッションログに診断のメタデータを足す。

@@ -79,18 +79,32 @@ pub struct PluginChoice {
     disabled: Vec<String>,
     /// A config that turned jev-guard on through its own setting keeps it on (ADR-011).
     jev_on: bool,
+    /// When `slim-profile` is active, omit heavy optional plugins and skills unless explicitly enabled.
+    slim_on: bool,
+    slim_drop_skills: bool,
 }
 
 impl PluginChoice {
     pub fn of(settings: &Settings) -> Self {
+        let enabled = settings.enabled_plugins();
+        let disabled = settings.disabled_plugins();
+        let slim_on = enabled.iter().any(|e| e == "slim-profile") && !disabled.iter().any(|d| d == "slim-profile");
+        let slim_drop_skills = slim_on
+            && settings
+                .plugin_settings("slim-profile")
+                .get("dropSkills")
+                .and_then(Value::as_bool)
+                != Some(false);
         PluginChoice {
-            enabled: settings.enabled_plugins(),
-            disabled: settings.disabled_plugins(),
+            enabled,
+            disabled,
             jev_on: settings
                 .plugin_settings("jev-guard")
                 .get("enabled")
                 .and_then(Value::as_bool)
                 .unwrap_or(false),
+            slim_on,
+            slim_drop_skills,
         }
     }
 
@@ -100,13 +114,19 @@ impl PluginChoice {
 
     /// Whether the shipped plugin `p` loads.
     pub fn loads(&self, p: &sasacode_bundled::Bundled) -> bool {
+        if self.slim_on
+            && sasacode_bundled::slim_profile::SLIM_DROPPED_PLUGINS.contains(&p.name)
+            && !self.enabled.iter().any(|e| e == p.name)
+        {
+            return false;
+        }
         sasacode_bundled::wanted(p, &self.enabled, &self.disabled)
             || (p.name == "jev-guard" && self.jev_on && !self.disabled("jev-guard"))
     }
 
-    /// Skills load unless `plugins.disabled` names them.
+    /// Skills load unless `plugins.disabled` names them (or `slim-profile` drops them).
     pub fn skills(&self) -> bool {
-        !self.disabled("skills")
+        !self.disabled("skills") && !(self.slim_drop_skills && !self.enabled.iter().any(|e| e == "skills"))
     }
 
     /// MCP loads unless `plugins.disabled` names it.

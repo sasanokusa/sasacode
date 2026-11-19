@@ -7,6 +7,7 @@
 
 use sasacode_plugin_api::PluginFn;
 
+pub mod action_nudge;
 pub mod agent_judge;
 pub mod agents_md;
 pub mod auto_reconnect;
@@ -14,7 +15,9 @@ pub mod background_sessions;
 pub mod browsr;
 pub mod checkpoints;
 pub mod compaction;
+pub mod context_slim;
 pub mod diagnostics;
+pub mod error_hints;
 pub mod goal;
 pub mod gui;
 pub mod image_attach;
@@ -27,8 +30,11 @@ pub mod progress_notes;
 pub mod repair;
 pub mod repetition_guard;
 pub mod rustxng_install;
+pub mod search_tools;
 pub mod subagent;
+pub mod syntax_check;
 pub mod text_tool_calls;
+pub mod thinking_budget;
 pub mod todo;
 pub mod tool_repair;
 pub mod usage;
@@ -36,12 +42,15 @@ pub mod web_fetch;
 pub mod web_search;
 pub mod write_guard;
 
-// Formerly separate packages (plugins/*, ~/.sasacode/plugins): off by default.
+// Off by default (`plugins.enabled` turns them on).
 pub mod ask_user;
+pub mod clean_retry;
 pub mod free_search;
 pub mod git_context;
+pub mod hashline_edit;
 pub mod jev_guard;
 pub mod project_checks;
+pub mod slim_profile;
 pub mod workflows;
 
 /// One shipped plugin.
@@ -76,9 +85,16 @@ pub const PLUGINS: &[Bundled] = &[
     // After tool-repair: hooks run in load order, and tool-repair mends the calls this one makes.
     on("text-tool-calls", text_tool_calls::plugin),
     on("repetition-guard", repetition_guard::plugin),
+    on("thinking-budget", thinking_budget::plugin),
+    // After tool-repair and before write-guard: strips N:hh| prefixes before write-guard inspects content.
+    off("hashline-edit", hashline_edit::plugin),
+    on("error-hints", error_hints::plugin),
     on("loop-guard", loop_guard::plugin),
     // After tool-repair: it strips line numbers from the repaired write.
     on("write-guard", write_guard::plugin),
+    on("search-tools", search_tools::plugin),
+    on("syntax-check", syntax_check::plugin),
+    on("action-nudge", action_nudge::plugin),
     on("agents-md", agents_md::plugin),
     on("compaction", compaction::plugin),
     on("diagnostics", diagnostics::plugin),
@@ -100,6 +116,8 @@ pub const PLUGINS: &[Bundled] = &[
     on("image-attach", image_attach::plugin),
     // After image-attach: it shrinks the images that one adds.
     on("image-slim", image_slim::plugin),
+    // After image-slim: masks oversized old tool outputs once images are accounted for.
+    on("context-slim", context_slim::plugin),
     // After the built-in ones, in the order a user would have installed them.
     off("ask-user", ask_user::plugin),
     off("git-context", git_context::plugin),
@@ -107,6 +125,9 @@ pub const PLUGINS: &[Bundled] = &[
     off("workflows", workflows::plugin),
     off("jev-guard", jev_guard::plugin),
     off("free-search", free_search::plugin),
+    // After syntax-check & hashline-edit: observes syntax errors and snapshots any edit tool.
+    off("clean-retry", clean_retry::plugin),
+    off("slim-profile", slim_profile::plugin),
 ];
 
 /// The shipped plugin called `name`.
@@ -135,8 +156,12 @@ mod tests {
         assert_eq!(sorted.len(), names.len());
         let at = |n: &str| names.iter().position(|x| *x == n).unwrap();
         assert!(at("tool-repair") < at("text-tool-calls"));
+        assert!(at("tool-repair") < at("hashline-edit"));
+        assert!(at("hashline-edit") < at("write-guard"));
         assert!(at("tool-repair") < at("write-guard"));
         assert!(at("image-attach") < at("image-slim"));
+        assert!(at("image-slim") < at("context-slim"));
+        assert!(at("syntax-check") < at("clean-retry"));
     }
 
     #[test]
