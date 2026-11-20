@@ -14,9 +14,10 @@ use serde_json::Value;
 
 use sasacode_host::t;
 use sasacode_mcp::{McpServerConfig, OnChange, ServerStates, Status, ToolNames, connect_servers};
-use sasacode_plugin_api::{Command, NotifyLevel, PluginApi, hook};
+use sasacode_plugin_api::{Command, NotifyLevel, PluginApi, apply_child_env, hook};
 
 use crate::net_util::{js_num_str, setting_str};
+use crate::project_bin::ProjectRoot;
 
 const INSTALL: &str = "uv tool install browsr-4-agent && browsr-agent setup";
 
@@ -46,15 +47,26 @@ fn truthy(v: Option<&Value>) -> bool {
     }
 }
 
+/// The program to start for `name`, by the path it is at. A bare name is looked up on PATH, and
+/// what is found inside the project (a `.` or an empty entry in PATH puts the working directory
+/// there) is never started: the model can write it. A name with a directory is the user's own say.
+fn resolve_command(name: &str, project: &ProjectRoot) -> Option<String> {
+    if name.contains(['/', '\\']) {
+        return Some(name.to_string());
+    }
+    project.find(name).map(|p| p.display().to_string())
+}
+
 /// What browsr-agent's `manifest` command reports (manifest v1), as JSON.
 async fn read_manifest(command: &str) -> anyhow::Result<Value> {
-    let out = tokio::process::Command::new(command)
-        .arg("manifest")
+    let mut cmd = tokio::process::Command::new(command);
+    cmd.arg("manifest")
         .stdin(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
-        .kill_on_drop(true)
-        .output()
-        .await?;
+        .kill_on_drop(true);
+    // Not the keys sasacode loaded for itself.
+    apply_child_env(&mut cmd, &[]);
+    let out = cmd.output().await?;
     if !out.status.success() {
         let code = out
             .status
@@ -160,9 +172,8 @@ async fn start(api: PluginApi, command: String, status: Arc<Mutex<String>>) {
 pub fn plugin(api: PluginApi) -> BoxFuture<'static, anyhow::Result<()>> {
     Box::pin(async move {
         let configured = setting_str(&api.settings(), "command");
-        let command = configured
-            .clone()
-            .or_else(|| which::which("browsr-agent").ok().map(|p| p.display().to_string()));
+        let project = ProjectRoot::new(&api.cwd());
+        let command = resolve_command(configured.as_deref().unwrap_or("browsr-agent"), &project);
         let status = Arc::new(Mutex::new(String::new()));
         let shown = status.clone();
         let run_api = api.clone();
@@ -210,6 +221,17 @@ pub fn plugin(api: PluginApi) -> BoxFuture<'static, anyhow::Result<()>> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn a_name_is_looked_up_outside_the_project_a_path_is_taken_as_given() {
+        let dir = tempfile::Builder::new().prefix("sasacode-browsr-").tempdir().unwrap();
+        let project = ProjectRoot::new(dir.path());
+        assert_eq!(
+            resolve_command("/opt/x/browsr-agent", &project).as_deref(),
+            Some("/opt/x/browsr-agent")
+        );
+        assert_eq!(resolve_command("sasacode-no-such-program-xyz", &project), None);
+    }
 
     #[test]
     fn values_print_as_js_templates_do() {
