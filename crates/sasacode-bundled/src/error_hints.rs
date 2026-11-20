@@ -476,7 +476,11 @@ pub fn plugin(api: PluginApi) -> BoxFuture<'static, anyhow::Result<()>> {
                     && text.contains("File not found:")
                     && let Some(req) = ev.call.input.get("path").and_then(Value::as_str)
                 {
-                    let matches = suggest_paths(&cwd, req);
+                    let cwd = cwd.clone();
+                    let req = req.to_string();
+                    let matches = tokio::task::spawn_blocking(move || suggest_paths(&cwd, &req))
+                        .await
+                        .map_err(anyhow::Error::from)?;
                     if !matches.is_empty() {
                         hints.push(format!("[hint] Did you mean: {}", matches.join(", ")));
                     }
@@ -486,9 +490,16 @@ pub fn plugin(api: PluginApi) -> BoxFuture<'static, anyhow::Result<()>> {
                     let called = text
                         .strip_prefix("Unknown tool \"")
                         .and_then(|rest| rest.split('"').next())
-                        .unwrap_or(&ev.call.name);
+                        .unwrap_or(&ev.call.name)
+                        .to_string();
                     let tools: Vec<String> = a.agent().tools().iter().map(|t| t.name().to_string()).collect();
-                    if let Some(h) = unknown_tool_hint(called, &home, &cwd, &tools) {
+                    let home = home.clone();
+                    let cwd = cwd.clone();
+                    if let Some(h) =
+                        tokio::task::spawn_blocking(move || unknown_tool_hint(&called, &home, &cwd, &tools))
+                            .await
+                            .map_err(anyhow::Error::from)?
+                    {
                         hints.push(h);
                     }
                 }
@@ -504,13 +515,19 @@ pub fn plugin(api: PluginApi) -> BoxFuture<'static, anyhow::Result<()>> {
                         .get("command")
                         .or_else(|| ev.call.input.get("name"))
                         .and_then(Value::as_str)
-                        .unwrap_or("");
-                    let targets = test_target_hints(&cwd, cmd, &text);
-                    if !targets.is_empty() {
-                        hints.push(format!(
-                            "[hint] Likely source file(s) under test: {}",
-                            targets.join(", ")
-                        ));
+                        .unwrap_or("")
+                        .to_string();
+                    if looks_like_test_run(&cmd, &text) {
+                        let cwd = cwd.clone();
+                        let targets = tokio::task::spawn_blocking(move || test_target_hints(&cwd, &cmd, &text))
+                            .await
+                            .map_err(anyhow::Error::from)?;
+                        if !targets.is_empty() {
+                            hints.push(format!(
+                                "[hint] Likely source file(s) under test: {}",
+                                targets.join(", ")
+                            ));
+                        }
                     }
                 }
 

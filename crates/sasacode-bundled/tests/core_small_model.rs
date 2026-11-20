@@ -10,6 +10,7 @@ use std::sync::Arc;
 use serde_json::{Value, json};
 
 use sasacode_agent::agent::{Agent, AgentOptions};
+use sasacode_agent::permission::PermissionPolicy;
 use sasacode_agent::plugins::{PluginHost, PluginHostOptions};
 use sasacode_agent::session::SessionFile;
 use sasacode_ai::{
@@ -17,7 +18,7 @@ use sasacode_ai::{
 };
 use sasacode_bundled::hashline_edit::line_hash;
 use sasacode_bundled::syntax_check::check_rust_syntax;
-use sasacode_plugin_api::{Lang, PermissionMode};
+use sasacode_plugin_api::{Lang, PermissionMode, PermissionRules};
 use sasacode_testing::{ReplayOptions, ReplayProvider};
 use support_core::*;
 
@@ -127,6 +128,199 @@ async fn search_tools_find_files_and_search_text_respect_gitignore_and_caps() {
     // bad regex is a clean tool error
     let r = l.invoke("search_text", json!({"query": "[", "regex": true})).await;
     assert!(r.is_error());
+}
+
+#[tokio::test]
+async fn search_tools_enforce_read_permissions_and_exclude_secret_files() {
+    let dir = temp_dir("sasacode-search-perms-");
+    let root = dir.path();
+    std::fs::create_dir_all(root.join("src")).unwrap();
+    std::fs::create_dir_all(root.join("sub")).unwrap();
+    std::fs::create_dir_all(root.join("certs")).unwrap();
+    std::fs::create_dir_all(root.join("ssh")).unwrap();
+    std::fs::write(root.join(".env"), "SECRET_TOKEN=root_secret\n").unwrap();
+    std::fs::write(root.join(".env.local"), "SECRET_TOKEN=local_secret\n").unwrap();
+    std::fs::write(root.join(".env.example"), "SECRET_TOKEN=example_placeholder\n").unwrap();
+    std::fs::write(root.join(".env.sample"), "SECRET_TOKEN=sample_placeholder\n").unwrap();
+    std::fs::write(root.join("sub/.env"), "SECRET_TOKEN=sub_secret\n").unwrap();
+    std::fs::write(root.join("sub/.env.production"), "SECRET_TOKEN=prod_secret\n").unwrap();
+    std::fs::write(root.join("certs/server.pem"), "SECRET_TOKEN=pem_secret\n").unwrap();
+    std::fs::write(root.join("certs/private.key"), "SECRET_TOKEN=key_secret\n").unwrap();
+    std::fs::write(root.join("ssh/id_rsa"), "SECRET_TOKEN=rsa_secret\n").unwrap();
+    std::fs::write(root.join("ssh/id_rsa.pub"), "SECRET_TOKEN=rsa_pub\n").unwrap();
+    std::fs::write(root.join("ssh/id_ed25519"), "SECRET_TOKEN=ed25519_secret\n").unwrap();
+    std::fs::write(root.join("src/main.rs"), "const SECRET_TOKEN: &str = \"public\";\n").unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(root.join(".env"), root.join("link_to_env")).unwrap();
+
+    let l = load_plugin("search-tools", bundled("search-tools"), &path_str(root), json!({})).await;
+    assert_eq!(l.tool("find_files").permissions_as().as_deref(), Some("read"));
+    assert_eq!(l.tool("search_text").permissions_as().as_deref(), Some("read"));
+
+    // User `read(**/.env)` deny rule blocks single-file search_text and find_files in edits mode.
+    let deny_env = Arc::new(
+        PermissionPolicy::new(
+            PermissionMode::Edits,
+            &PermissionRules {
+                deny: vec!["read(**/.env)".into()],
+                ..Default::default()
+            },
+        )
+        .unwrap(),
+    );
+    l.agent.set_permissions(deny_env);
+
+    for (tool, args) in [
+        ("search_text", json!({"path": ".env", "query": "."})),
+        ("search_text", json!({"path": "sub/.env", "query": "."})),
+        ("find_files", json!({"path": ".env"})),
+    ] {
+        let r = l.invoke(tool, args.clone()).await;
+        assert!(r.is_error(), "{tool}({args}) should be denied: {}", text_of(&r));
+        assert!(text_of(&r).contains("Permission denied"), "{}", text_of(&r));
+    }
+    #[cfg(unix)]
+    {
+        let r = l
+            .invoke("search_text", json!({"path": "link_to_env", "query": "."}))
+            .await;
+        assert!(r.is_error(), "symlink to .env should be denied: {}", text_of(&r));
+    }
+
+    // Directory walks and search output exclude secret-looking files, while keeping .env.example/.env.sample.
+    let r = l.invoke("find_files", json!({})).await;
+    let listed_text = text_of(&r);
+    let listed: Vec<&str> = listed_text.lines().collect();
+    assert!(listed.contains(&".env.example"), "{listed:?}");
+    assert!(listed.contains(&".env.sample"), "{listed:?}");
+    assert!(listed.contains(&"src/main.rs"), "{listed:?}");
+    for forbidden in [
+        ".env",
+        ".env.local",
+        "sub/.env",
+        "sub/.env.production",
+        "certs/server.pem",
+        "certs/private.key",
+        "ssh/id_rsa",
+        "ssh/id_rsa.pub",
+        "ssh/id_ed25519",
+    ] {
+        assert!(!listed.contains(&forbidden), "{forbidden} leaked in {listed:?}");
+    }
+
+    let r = l.invoke("search_text", json!({"query": "SECRET_TOKEN"})).await;
+    let t = text_of(&r);
+    assert!(t.contains(".env.example:1:"), "{t}");
+    assert!(t.contains(".env.sample:1:"), "{t}");
+    assert!(t.contains("src/main.rs:1:"), "{t}");
+    for leaked in [
+        "root_secret",
+        "local_secret",
+        "sub_secret",
+        "prod_secret",
+        "pem_secret",
+        "key_secret",
+        "rsa_secret",
+        "rsa_pub",
+        "ed25519_secret",
+    ] {
+        assert!(!t.contains(leaked), "{leaked} leaked in {t}");
+    }
+
+    // In ask mode, search_text prompts (and fails in non-interactive runs).
+    l.agent.set_permissions(policy(PermissionMode::Ask));
+    let r = l
+        .invoke("search_text", json!({"path": "src/main.rs", "query": "SECRET_TOKEN"}))
+        .await;
+    assert!(r.is_error(), "ask mode should require approval: {}", text_of(&r));
+}
+
+#[tokio::test]
+async fn search_tools_supports_gitignore_negation_nested_gitignore_and_skips_symlinks() {
+    // 1. Allow-list style .gitignore (`*` + `!src/` + `!src/**`)
+    let dir1 = temp_dir("sasacode-gi-allowlist-");
+    let r1 = dir1.path();
+    std::fs::create_dir_all(r1.join("src/nested")).unwrap();
+    std::fs::create_dir_all(r1.join("other")).unwrap();
+    std::fs::write(r1.join(".gitignore"), "*\n!src/\n!src/**\n").unwrap();
+    std::fs::write(r1.join("root.txt"), "x\n").unwrap();
+    std::fs::write(r1.join("other/skip.rs"), "x\n").unwrap();
+    std::fs::write(r1.join("src/main.rs"), "fn main() {}\n").unwrap();
+    std::fs::write(r1.join("src/nested/util.ts"), "export const x = 1;\n").unwrap();
+
+    let l1 = load_plugin("search-tools", bundled("search-tools"), &path_str(r1), json!({})).await;
+    let res = text_of(&l1.invoke("find_files", json!({})).await);
+    let lines: Vec<&str> = res.lines().collect();
+    assert_eq!(lines, vec!["src/main.rs", "src/nested/util.ts"]);
+
+    // 2. Allow-list style (`*` + `!*/` + `!*.rs`) keeps .rs files in subdirectories while skipping .txt/.ts
+    std::fs::write(r1.join(".gitignore"), "*\n!*/\n!*.rs\n").unwrap();
+    let res = text_of(&l1.invoke("find_files", json!({})).await);
+    assert_eq!(res, "other/skip.rs\nsrc/main.rs");
+
+    // 3. Nested .gitignore, negation overrides, re-ignore, dir-only trailing slash, and symlinks
+    let dir2 = temp_dir("sasacode-gi-nested-");
+    let r2 = dir2.path();
+    std::fs::create_dir_all(r2.join("sub/deep")).unwrap();
+    std::fs::write(
+        r2.join(".gitignore"),
+        "*.log\n!root_keep.log\n!reignored.log\nreignored.log\ndir_only/\n",
+    )
+    .unwrap();
+    std::fs::write(r2.join("sub/.gitignore"), "!keep.log\n*.tmp\n/local_only.txt\n").unwrap();
+    std::fs::write(r2.join("a.log"), "1\n").unwrap();
+    std::fs::write(r2.join("root_keep.log"), "1\n").unwrap();
+    std::fs::write(r2.join("reignored.log"), "1\n").unwrap();
+    std::fs::write(r2.join("dir_only"), "regular file named dir_only\n").unwrap();
+    std::fs::write(r2.join("root.tmp"), "1\n").unwrap();
+    std::fs::write(r2.join("local_only.txt"), "1\n").unwrap();
+    std::fs::write(r2.join("sub/drop.log"), "1\n").unwrap();
+    std::fs::write(r2.join("sub/keep.log"), "1\n").unwrap();
+    std::fs::write(r2.join("sub/drop.tmp"), "1\n").unwrap();
+    std::fs::write(r2.join("sub/deep/drop2.tmp"), "1\n").unwrap();
+    std::fs::write(r2.join("sub/local_only.txt"), "1\n").unwrap();
+    std::fs::write(r2.join("sub/deep/local_only.txt"), "1\n").unwrap();
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(r2.join("root_keep.log"), r2.join("link.log")).unwrap();
+        std::os::unix::fs::symlink(r2, r2.join("loop_dir")).unwrap();
+    }
+
+    let l2 = load_plugin("search-tools", bundled("search-tools"), &path_str(r2), json!({})).await;
+    let res = text_of(&l2.invoke("find_files", json!({})).await);
+    let lines: Vec<&str> = res.lines().collect();
+    assert_eq!(
+        lines,
+        vec![
+            ".gitignore",
+            "dir_only",
+            "local_only.txt",
+            "root.tmp",
+            "root_keep.log",
+            "sub/.gitignore",
+            "sub/deep/local_only.txt",
+            "sub/keep.log",
+        ]
+    );
+
+    let search_res = text_of(&l2.invoke("search_text", json!({"query": "1"})).await);
+    assert!(search_res.contains("sub/keep.log:1:"), "{search_res}");
+    assert!(
+        !search_res.contains("a.log")
+            && !search_res.contains("drop.log")
+            && !search_res.contains("reignored.log")
+            && !search_res.contains("drop.tmp")
+            && !search_res.contains("link.log"),
+        "{search_res}"
+    );
+
+    // Searching directly inside `sub` still respects root `.gitignore` (`*.log`) and `sub/.gitignore` (`!keep.log`).
+    let sub_res = text_of(&l2.invoke("find_files", json!({"path": "sub"})).await);
+    let sub_lines: Vec<&str> = sub_res.lines().collect();
+    assert_eq!(
+        sub_lines,
+        vec!["sub/.gitignore", "sub/deep/local_only.txt", "sub/keep.log"]
+    );
 }
 
 #[tokio::test]

@@ -61,43 +61,168 @@ pub(crate) fn slash_path(p: &Path) -> String {
     p.to_string_lossy().replace('\\', "/")
 }
 
-/// Parse simple positive rules from `.gitignore` into a `GlobSet` relative to `root`.
-fn load_gitignore(root: &Path) -> GlobSet {
-    let mut builder = GlobSetBuilder::new();
-    let Ok(bytes) = std::fs::read(root.join(".gitignore")) else {
-        return GlobSet::empty();
-    };
+/// Secret-looking filenames always excluded from directory walks.
+///
+/// Limitation: `PluginApi` / `HostServices` does not expose `PermissionPolicy` or user `deny` rules
+/// (such as `read(secrets/**)`) to plugins (`api.settings()` only returns this plugin's own
+/// settings). While `.permissions_as("read")` enforces `read(...)` rules on the tool's declared
+/// `path` (protecting single-file calls like `search_text(path=".env", ...)`), directory walks
+/// cannot evaluate arbitrary user `read` deny rules per candidate and therefore unconditionally
+/// skip common secret files here.
+fn is_secret_file(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    if lower == ".env" || (lower.starts_with(".env.") && !matches!(lower.as_str(), ".env.example" | ".env.sample")) {
+        return true;
+    }
+    lower.ends_with(".pem")
+        || lower.ends_with(".key")
+        || lower.ends_with(".p12")
+        || lower.ends_with(".pfx")
+        || lower.starts_with("id_rsa")
+        || lower.starts_with("id_ed25519")
+        || lower.starts_with("id_ecdsa")
+        || lower.starts_with("id_dsa")
+}
+
+struct GitignoreRule {
+    negated: bool,
+    dir_only: bool,
+}
+
+struct GitignoreLayer {
+    /// Byte offset into `rel_from_origin` where paths relative to this `.gitignore`'s directory start.
+    prefix_len: usize,
+    rules: Vec<GitignoreRule>,
+    rule_of_glob: Vec<usize>,
+    set: GlobSet,
+}
+
+impl GitignoreLayer {
+    fn match_state(&self, entry_from_origin: &str, is_dir: bool, scratch: &mut Vec<usize>) -> Option<bool> {
+        let rel = entry_from_origin.get(self.prefix_len..)?;
+        if rel.is_empty() {
+            return None;
+        }
+        scratch.clear();
+        self.set.matches_into(rel, scratch);
+        let latest = scratch
+            .iter()
+            .filter_map(|&gi| {
+                let rule_idx = self.rule_of_glob[gi];
+                let rule = &self.rules[rule_idx];
+                if rule.dir_only && !is_dir { None } else { Some(rule_idx) }
+            })
+            .max()?;
+        Some(!self.rules[latest].negated)
+    }
+}
+
+/// Escape literal `{` and `}` so `globset` does not treat `.gitignore` braces as alternation.
+fn escape_gitignore_glob(pat: &str) -> String {
+    let mut out = String::with_capacity(pat.len());
+    let mut chars = pat.chars();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '\\' => {
+                out.push('\\');
+                if let Some(next) = chars.next() {
+                    out.push(next);
+                }
+            }
+            '{' | '}' => {
+                out.push('\\');
+                out.push(ch);
+            }
+            _ => out.push(ch),
+        }
+    }
+    out
+}
+
+/// Parse `.gitignore` rules (including `!pattern` negation and trailing `/` dir-only) at `dir`.
+fn load_gitignore(dir: &Path, prefix_len: usize) -> Option<GitignoreLayer> {
+    let bytes = std::fs::read(dir.join(".gitignore")).ok()?;
     let text = String::from_utf8_lossy(&bytes);
+    let mut builder = GlobSetBuilder::new();
+    let mut rules = Vec::new();
+    let mut rule_of_glob = Vec::new();
+
     for raw in text.lines() {
         let line = raw.trim_end_matches('\r').trim();
-        if line.is_empty() || line.starts_with('#') || line.starts_with('!') {
+        if line.is_empty() || line.starts_with('#') {
             continue;
         }
-        let pat = line.strip_prefix("./").unwrap_or(line);
+        let (negated, rest) = if let Some(r) = line.strip_prefix('!') {
+            (true, r)
+        } else {
+            (false, line)
+        };
+        let pat = rest.strip_prefix("./").unwrap_or(rest);
         let anchored = pat.starts_with('/');
-        let pat = pat.strip_prefix('/').unwrap_or(pat);
-        let pat = pat.strip_suffix('/').unwrap_or(pat);
+        let pat = pat.trim_start_matches('/');
+        let dir_only = pat.ends_with('/');
+        let pat = pat.trim_end_matches('/');
         if pat.is_empty() {
             continue;
         }
         let has_slash = pat.contains('/');
-        let patterns: Vec<String> = if anchored || has_slash {
-            vec![pat.to_string(), format!("{pat}/**")]
-        } else {
-            vec![
-                pat.to_string(),
-                format!("**/{pat}"),
-                format!("{pat}/**"),
-                format!("**/{pat}/**"),
-            ]
+        let pat = escape_gitignore_glob(pat);
+
+        let mut add_rule = |globs: Vec<String>, rule_dir_only: bool| {
+            let rule_idx = rules.len();
+            let mut added = false;
+            for p in globs {
+                if let Ok(g) = GlobBuilder::new(&p)
+                    .literal_separator(true)
+                    .backslash_escape(true)
+                    .build()
+                {
+                    builder.add(g);
+                    rule_of_glob.push(rule_idx);
+                    added = true;
+                }
+            }
+            if added {
+                rules.push(GitignoreRule {
+                    negated,
+                    dir_only: rule_dir_only,
+                });
+            }
         };
-        for p in patterns {
-            if let Ok(g) = GlobBuilder::new(&p).literal_separator(true).build() {
-                builder.add(g);
+
+        if anchored || has_slash {
+            add_rule(vec![pat.clone()], dir_only);
+            if !negated {
+                add_rule(vec![format!("{pat}/**")], false);
+            }
+        } else {
+            add_rule(vec![pat.clone(), format!("**/{pat}")], dir_only);
+            if !negated {
+                add_rule(vec![format!("{pat}/**"), format!("**/{pat}/**")], false);
             }
         }
     }
-    builder.build().unwrap_or_else(|_| GlobSet::empty())
+
+    if rules.is_empty() {
+        return None;
+    }
+    let set = builder.build().ok()?;
+    Some(GitignoreLayer {
+        prefix_len,
+        rules,
+        rule_of_glob,
+        set,
+    })
+}
+
+fn is_ignored(layers: &[GitignoreLayer], entry_from_origin: &str, is_dir: bool, scratch: &mut Vec<usize>) -> bool {
+    let mut ignored = false;
+    for layer in layers {
+        if let Some(decision) = layer.match_state(entry_from_origin, is_dir, scratch) {
+            ignored = decision;
+        }
+    }
+    ignored
 }
 
 /// Deterministic, bounded walk under `root`, returning `/` relative paths sorted by name.
@@ -108,22 +233,48 @@ pub(crate) fn walk_project_files(
     max_entries: usize,
     signal: Option<&CancellationToken>,
 ) -> Vec<String> {
-    let mut ignores = vec![load_gitignore(root)];
+    let mut layers = Vec::new();
+    let mut initial_rel = String::new();
     if let Some(extra) = extra_ignore_root
-        && extra != root
+        && let Ok(rel) = root.strip_prefix(extra)
+        && !rel.as_os_str().is_empty()
     {
-        ignores.push(load_gitignore(extra));
+        if let Some(layer) = load_gitignore(extra, 0) {
+            layers.push(layer);
+        }
+        let mut cur = extra.to_path_buf();
+        let comps: Vec<_> = rel.components().collect();
+        for comp in &comps[..comps.len().saturating_sub(1)] {
+            cur.push(comp);
+            let seg = comp.as_os_str().to_string_lossy();
+            if !initial_rel.is_empty() {
+                initial_rel.push('/');
+            }
+            initial_rel.push_str(&seg);
+            if let Some(layer) = load_gitignore(&cur, initial_rel.len() + 1) {
+                layers.push(layer);
+            }
+        }
+        initial_rel = slash_path(rel);
     }
+    let target_prefix_len = if initial_rel.is_empty() {
+        0
+    } else {
+        initial_rel.len() + 1
+    };
+
     struct WalkCtx<'a> {
         max_depth: usize,
         max_entries: usize,
-        ignores: &'a [GlobSet],
+        target_prefix_len: usize,
+        layers: Vec<GitignoreLayer>,
+        scratch: Vec<usize>,
         signal: Option<&'a CancellationToken>,
         visited: usize,
         out: Vec<String>,
     }
 
-    fn visit(dir: &Path, rel: &str, depth: usize, ctx: &mut WalkCtx<'_>) {
+    fn visit(dir: &Path, rel_from_origin: &str, depth: usize, ctx: &mut WalkCtx<'_>) {
         if depth > ctx.max_depth
             || ctx.visited >= ctx.max_entries
             || ctx.signal.is_some_and(CancellationToken::is_cancelled)
@@ -133,17 +284,29 @@ pub(crate) fn walk_project_files(
         let Ok(rd) = std::fs::read_dir(dir) else {
             return;
         };
+        let layer_prefix_len = if rel_from_origin.is_empty() {
+            0
+        } else {
+            rel_from_origin.len() + 1
+        };
+        let pushed_layer = if let Some(layer) = load_gitignore(dir, layer_prefix_len) {
+            ctx.layers.push(layer);
+            true
+        } else {
+            false
+        };
+
         let mut entries: Vec<_> = rd.flatten().collect();
         entries.sort_by_key(|e| e.file_name());
         for entry in entries {
             if ctx.visited >= ctx.max_entries || ctx.signal.is_some_and(CancellationToken::is_cancelled) {
-                return;
+                break;
             }
             let Ok(ft) = entry.file_type() else {
                 continue;
             };
-            // Do not traverse symlinked directories to avoid cycles.
-            if ft.is_symlink() && ft.is_dir() {
+            // Symlinks are not followed (DirEntry::file_type does not traverse them, avoiding cycles and escapes).
+            if ft.is_symlink() {
                 continue;
             }
             let name = entry.file_name().to_string_lossy().into_owned();
@@ -151,32 +314,42 @@ pub(crate) fn walk_project_files(
             if is_dir && SKIP_DIRS.contains(&name.as_str()) {
                 continue;
             }
-            let rel_path = if rel.is_empty() {
+            if !is_dir && is_secret_file(&name) {
+                continue;
+            }
+            let entry_from_origin = if rel_from_origin.is_empty() {
                 name.clone()
             } else {
-                format!("{rel}/{name}")
+                format!("{rel_from_origin}/{name}")
             };
-            if ctx.ignores.iter().any(|ig| ig.is_match(&rel_path)) {
+            if is_ignored(&ctx.layers, &entry_from_origin, is_dir, &mut ctx.scratch) {
                 continue;
             }
             ctx.visited += 1;
             if is_dir {
-                visit(&entry.path(), &rel_path, depth + 1, ctx);
+                visit(&entry.path(), &entry_from_origin, depth + 1, ctx);
             } else if ft.is_file() {
-                ctx.out.push(rel_path);
+                let rel_to_target = &entry_from_origin[ctx.target_prefix_len..];
+                ctx.out.push(rel_to_target.to_string());
             }
+        }
+
+        if pushed_layer {
+            ctx.layers.pop();
         }
     }
 
     let mut ctx = WalkCtx {
         max_depth,
         max_entries,
-        ignores: &ignores,
+        target_prefix_len,
+        layers,
+        scratch: Vec::new(),
         signal,
         visited: 0,
         out: Vec::new(),
     };
-    visit(root, "", 0, &mut ctx);
+    visit(root, &initial_rel, 0, &mut ctx);
     ctx.out
 }
 
@@ -473,6 +646,7 @@ pub fn plugin(api: PluginApi) -> BoxFuture<'static, anyhow::Result<()>> {
             )
             .concurrent(true)
             .always_load(true)
+            .permissions_as("read")
             .paths(move |a, c| find_paths(a, c))
             .summary(|a| {
                 let p = str_arg(a, "pattern");
@@ -503,6 +677,7 @@ pub fn plugin(api: PluginApi) -> BoxFuture<'static, anyhow::Result<()>> {
             )
             .concurrent(true)
             .always_load(true)
+            .permissions_as("read")
             .paths(move |a, c| find_paths2(a, c))
             .summary(|a| str_arg(a, "query").to_string())
             .into_ref(),
