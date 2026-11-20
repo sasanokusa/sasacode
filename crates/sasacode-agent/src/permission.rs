@@ -144,6 +144,16 @@ impl PermissionPolicy {
         v(decision, reason.into(), VerdictSource::Mode)
     }
 
+    /// What the deny, softDeny and ask rules alone say about this call (no mode, no allow rules).
+    pub fn rule_decision(&self, c: &PermissionCheck) -> Option<Decision> {
+        let rules = self.rules.read().unwrap_or_else(|e| e.into_inner());
+        let hit = |list: &[ParsedRule]| list.iter().any(|r| rule_matches(r, c, false));
+        if hit(&rules.deny) || hit(&rules.soft_deny) {
+            return Some(Decision::Deny);
+        }
+        hit(&rules.ask).then_some(Decision::Ask)
+    }
+
     fn mode_decision(&self, c: &PermissionCheck) -> (Decision, &'static str) {
         // Through a symlink, a path inside the project can point anywhere: judge where it really goes.
         let cwd = try_real_path(&c.cwd).unwrap_or_else(|| c.cwd.clone());
@@ -315,8 +325,19 @@ fn escape_extglob(s: &str) -> String {
     out
 }
 
-/// A compiled glob as Bun.Glob matched it: `*` stops at `/`, `**` crosses it, `\` escapes.
+/// A compiled glob as Bun.Glob matched it: `*` stops at `/`, `**` crosses it, `\` escapes. Kept: a walk asks per file.
 fn glob(pattern: &str) -> globset::GlobMatcher {
+    static SEEN: OnceLock<Mutex<HashMap<String, globset::GlobMatcher>>> = OnceLock::new();
+    let seen = SEEN.get_or_init(Mutex::default);
+    let mut seen = seen.lock().unwrap_or_else(|e| e.into_inner());
+    if seen.len() > 512 {
+        seen.clear();
+    }
+    let g = seen.entry(pattern.to_string()).or_insert_with(|| compile_glob(pattern));
+    g.clone()
+}
+
+fn compile_glob(pattern: &str) -> globset::GlobMatcher {
     let pattern = &bun_glob_syntax(pattern);
     let built = globset::GlobBuilder::new(pattern)
         .literal_separator(true)
@@ -492,6 +513,9 @@ fn anchored(dir: &str, pattern: &str, fold: Option<bool>) -> String {
 fn glob_path(p: &str, fold: Option<bool>) -> String {
     let (s, wide) = (slashes(p), fold == Some(true));
     let s = if fold.is_some() { s.to_lowercase() } else { s };
+    if s.is_ascii() {
+        return s; // already NFC, and folded as far as fold_char would
+    }
     let s: String = s.chars().map(|c| fold_char(c, wide)).collect();
     s.nfc().collect()
 }

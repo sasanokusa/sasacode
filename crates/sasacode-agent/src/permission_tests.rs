@@ -552,3 +552,18 @@ fn edits_mode_asks_before_a_write_that_could_make_a_folder_a_git_repository() {
     assert_eq!(d(&edits(), &call(read_tool(), "config", &cwd)), Allow);
     assert_eq!(d(&edits(), &call(read_tool(), "HEAD", &cwd)), Allow);
 }
+
+#[test]
+fn rule_decision_looks_at_deny_and_ask_rules_only() {
+    let p = policy(
+        M::Ask,
+        json!({ "allow": ["read(**)"], "deny": ["read(secrets/**)"], "softDeny": ["read(keys/**)"], "ask": ["read(docs/**)"] }),
+    );
+    let at = |path: &str| p.rule_decision(&call(read_tool(), path, CWD));
+    assert_eq!(at("secrets/a.conf"), Some(Deny));
+    assert_eq!(at("keys/k"), Some(Deny));
+    assert_eq!(at("docs/x.md"), Some(Ask));
+    // No rule: neither the mode (ask) nor an allow rule has a say.
+    assert_eq!(at("src/main.rs"), None);
+    assert_eq!(edits().rule_decision(&call(read_tool(), "secrets/a.conf", CWD)), None);
+}

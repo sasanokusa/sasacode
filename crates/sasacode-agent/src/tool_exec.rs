@@ -14,7 +14,7 @@ use tokio_util::sync::CancellationToken;
 
 use sasacode_ai::{AssistantContent, AssistantMessage, JsonObject, ToolCall, ToolResultMessage, UserContent, now_ms};
 use sasacode_plugin_api::{
-    CallTool, Decision, HookName, HookRunner, PermissionRules, ToolContext, ToolRef, ToolResult, Verdict,
+    CallTool, Decision, HookName, HookRunner, PermissionRules, ReadRule, ToolContext, ToolRef, ToolResult, Verdict,
     VerdictSource, error_result as err, hook, validate,
 };
 
@@ -787,11 +787,20 @@ async fn run_tool(
             })
         })
     };
+    let read_rule: ReadRule = {
+        let (policy, tool, cwd) = (ctx.permissions.clone(), tool.clone(), ctx.cwd.clone());
+        Arc::new(move |p: &std::path::Path| {
+            let args = JsonObject::from_iter([("path".to_string(), Value::from(p.to_string_lossy()))]);
+            let (tool, cwd) = (tool.clone(), cwd.clone());
+            policy.rule_decision(&PermissionCheck { tool, args, cwd })
+        })
+    };
     let tctx = ToolContext {
         cwd: PathBuf::from(&ctx.cwd),
         signal: own.clone(),
         on_update: Some(on_update),
         call_tool: Some(call_tool),
+        read_rule: Some(read_rule),
     };
     let result = match AssertUnwindSafe(tool.execute(args, tctx)).catch_unwind().await {
         Ok(Ok(r)) => r,

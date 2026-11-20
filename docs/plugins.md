@@ -377,7 +377,7 @@ pub const PLUGINS: &[Bundled] = &[
 | `log(message)` | `SASACODE_DEBUG`があるときだけstderrに出す |
 
 - ツールは`ToolDef::new(名前, 説明, 引数のJSON Schema, ToolKind, 本体)`で作り、`.concurrent`・`.always_load`・`.summary`・`.match_target`・`.paths`・`.permissions_as`を足して`.into_ref()`で渡す（`Tool`トレイトを直接実装してもよい）。`ToolKind`は`Read` / `Edit` / `Exec` / `Other`で、既定のeditsモードで確認なしに動くのは作業ディレクトリ内のRead / Editだけ。本体が`Err`を返すと、エラーの結果としてモデルに返り、ループは止まらない。
-- 本体の`ToolContext`には`cwd`、`signal`（中断）、`on_update`、`call_tool`（ほかのツールを、検証・フック・権限の判定を通して呼ぶ）がある。
+- 本体の`ToolContext`には`cwd`、`signal`（中断）、`on_update`、`call_tool`（ほかのツールを、検証・フック・権限の判定を通して呼ぶ）、`read_rule`（そのツールがあるパスを読むことに、denyやaskのルールが当たるか。ディレクトリを歩いて見つけたファイルのように、権限の判定を通っていないパスに使う）がある。
 - フックは`crates/sasacode-plugin-api/src/hooks.rs`の`hook`にある：`SessionStart`、`SessionEnd`、`UserPrompt`、`SystemPrompt`、`BeforeRequest`、`StreamDelta`、`AssistantMessage`、`ToolCallRaw`、`ToolCall`、`Permission`、`ToolResult`、`TurnEnd`、`Usage`、`AgentEnd`、`ContextLimit`。ハンドラは登録の順に呼ばれ、`Ok(None)`なら変えず、`Ok(Some(結果))`で変え、`Err`はプラグインのエラーとして表示して次のハンドラに進む。第2引数の`HookContext`の`agent`は、メインのエージェントなら`None`、サブエージェントなら実行ごとに違う値になる。
 - コマンドを実行するプラグインは、`child_env`か`apply_child_env`で環境変数を渡す（`~/.sasacode/.env`から読んだキーを子プロセスに渡さないため）。長い出力は`save_output`で`~/.sasacode/tmp`に保存できる。
 
