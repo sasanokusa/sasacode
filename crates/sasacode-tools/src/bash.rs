@@ -116,7 +116,7 @@ impl Output {
         if let Some(file) = &self.file {
             use std::io::Write;
             if let Ok(mut f) = std::fs::OpenOptions::new().append(true).open(file) {
-                let _ = f.write_all(s.as_bytes());
+                let _ = f.write_all(sasacode_plugin_api::redact_secrets(s).as_bytes());
             }
         } else if self.size > MAX_OUTPUT && !self.unsaved {
             match save_output("bash", &format!("{}{s}", self.tail)) {

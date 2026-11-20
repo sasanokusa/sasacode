@@ -21,12 +21,14 @@ pub async fn resolve_api_key(provider: &str, cfg: Option<&ProviderConfig>) -> Op
         && let Ok(v) = std::env::var(var)
         && !v.is_empty()
     {
+        sasacode_plugin_api::hide_secrets([&v]);
         return Some(v);
     }
     if let Some(hit) = cache().lock().unwrap_or_else(|e| e.into_inner()).get(provider) {
         return hit.clone();
     }
     let key = keychain(provider).await;
+    sasacode_plugin_api::hide_secrets(&key);
     cache()
         .lock()
         .unwrap_or_else(|e| e.into_inner())
