@@ -86,3 +86,27 @@ async fn setup_resolves_a_model_on_a_url_only_provider() {
     );
     assert!(t.home.join("endpoints.json").exists());
 }
+
+/// The agent is not kept alive by the closures it hands its own options: once the harness is
+/// dropped, the agent goes with it.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_agent_is_freed_when_the_harness_is_dropped() {
+    let Some(t) = child() else { return };
+    t.config(&json!({ "plugins": { "disabled": ["openai-codex"] } }));
+    let h = setup(SetupOptions {
+        no_session: true,
+        ..SetupOptions::new(t.cwd())
+    })
+    .await
+    .expect("setup");
+    // Held only by a listener of the agent's own bus, so it goes when the agent does.
+    let alive = std::sync::Arc::new(());
+    let seen = std::sync::Arc::downgrade(&alive);
+    h.agent.events().on(move |_| {
+        let _ = &alive;
+    });
+    assert!(seen.upgrade().is_some());
+    h.shutdown().await;
+    drop(h);
+    assert!(seen.upgrade().is_none(), "the agent outlived its harness");
+}

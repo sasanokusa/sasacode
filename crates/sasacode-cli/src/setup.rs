@@ -166,10 +166,39 @@ pub struct Harness {
     pub judged: sasacode_bundled::agent_judge::Verdicts,
     resolve: Resolve,
     catalog: ModelCatalog,
+    /// How the agent's own options read its model; emptied with the harness (see [`AgentSlot`]).
+    session: AgentSlot,
     opts: SetupOptions,
     home: PathBuf,
     session_entries: Mutex<Vec<SessionEntry>>,
     loading: tokio::sync::OnceCell<()>,
+}
+
+/// The agent, for the closures its own options hold that read its current model. Those closures are
+/// kept by the agent, so they hold it through this slot, which the harness empties when it is
+/// dropped: the agent is not kept alive by itself.
+#[derive(Clone, Default)]
+pub(crate) struct AgentSlot(Arc<Mutex<Option<Agent>>>);
+
+impl AgentSlot {
+    fn fill(&self, agent: &Agent) {
+        *self.0.lock().unwrap_or_else(|e| e.into_inner()) = Some(agent.clone());
+    }
+
+    fn agent(&self) -> Option<Agent> {
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
+    fn empty(&self) {
+        let agent = self.0.lock().unwrap_or_else(|e| e.into_inner()).take();
+        drop(agent);
+    }
+}
+
+impl Drop for Harness {
+    fn drop(&mut self) {
+        self.session.empty();
+    }
 }
 
 /// The first provider whose API key is set; with no key at all but a ChatGPT login, that plan.
@@ -486,11 +515,11 @@ pub async fn setup(mut opts: SetupOptions) -> anyhow::Result<Arc<Harness>> {
     agent_opts.get_api_key = Some(key.clone());
     let picked = chosen_models(&config, &model_spec);
     // Filled once the agent exists: what /model and -r switched to is the user's choice too.
-    let session: Arc<OnceLock<Agent>> = Arc::new(OnceLock::new());
+    let session = AgentSlot::default();
     agent_opts.resolve_model = Some({
         let session = session.clone();
         let current: CurrentModel = Arc::new(move || {
-            let m = session.get()?.model();
+            let m = session.agent()?.model();
             Some(format!("{}/{}", m.provider, m.id))
         });
         let resolve = limited_resolve(resolve.clone(), providers.clone(), picked, current);
@@ -504,15 +533,15 @@ pub async fn setup(mut opts: SetupOptions) -> anyhow::Result<Arc<Harness>> {
     agent_opts.max_retries = settings.max_retries.map(|n| n as u32);
     agent_opts.tool_search = settings.tool_search_config();
     let agent = Agent::new(agent_opts);
-    let _ = session.set(agent.clone());
+    session.fill(&agent);
 
     let catalog = ModelCatalog::new(providers.clone(), key.clone(), {
-        let agent = agent.clone();
-        Arc::new(move || agent.model().provider)
+        let session = session.clone();
+        Arc::new(move || session.agent().map(|a| a.model().provider).unwrap_or_default())
     });
     let _ = catalog_cell.set(catalog.clone());
 
-    turn_end_listing(&agent, &providers, &catalog, &resolve, &settings);
+    turn_end_listing(&agent, &session, &providers, &catalog, &resolve, &settings);
 
     let host = PluginHost::new(PluginHostOptions {
         agent: agent.clone(),
@@ -577,6 +606,7 @@ pub async fn setup(mut opts: SetupOptions) -> anyhow::Result<Arc<Harness>> {
         judged: Default::default(),
         resolve,
         catalog,
+        session,
         opts,
         home,
         session_entries: Mutex::new(Vec::new()),
@@ -625,17 +655,18 @@ pub async fn setup(mut opts: SetupOptions) -> anyhow::Result<Arc<Harness>> {
 /// again. Telling a server apart is the provider's, so it is counted by the provider's name.
 fn turn_end_listing(
     agent: &Agent,
+    session: &AgentSlot,
     providers: &Providers,
     catalog: &ModelCatalog,
     resolve: &Resolve,
     settings: &Settings,
 ) {
     let asked: Arc<Mutex<HashMap<String, u32>>> = Arc::new(Mutex::new(HashMap::new()));
-    let (agent2, providers, catalog, resolve) = (agent.clone(), providers.clone(), catalog.clone(), resolve.clone());
+    let (session, providers, catalog, resolve) = (session.clone(), providers.clone(), catalog.clone(), resolve.clone());
     let overrides = settings.model_overrides.clone().unwrap_or_default();
     agent.hooks().on::<hook::TurnEnd, _, _>("sasacode", move |_e, _ctx| {
-        let (agent, providers, catalog, resolve, asked, overrides) = (
-            agent2.clone(),
+        let (session, providers, catalog, resolve, asked, overrides) = (
+            session.clone(),
             providers.clone(),
             catalog.clone(),
             resolve.clone(),
@@ -643,6 +674,8 @@ fn turn_end_listing(
             overrides.clone(),
         );
         async move {
+            // Held through the slot: the hook is the agent's own, and must not keep it alive.
+            let Some(agent) = session.agent() else { return Ok(None) };
             let model = agent.model();
             let spec = model.spec();
             let name = model.provider.clone();

@@ -157,11 +157,11 @@ fn take_over(path: &Path, mark: &str, stale: std::time::Duration) {
     if std::fs::rename(path, &moved).is_err() {
         return;
     }
-    if is_stale(&moved, stale) {
-        let _ = std::fs::remove_file(&moved);
-    } else if std::fs::hard_link(&moved, path).is_ok() {
-        let _ = std::fs::remove_file(&moved);
+    // Not old after all: put back, unless another process has made a lock there meanwhile.
+    if !is_stale(&moved, stale) {
+        let _ = std::fs::hard_link(&moved, path);
     }
+    let _ = std::fs::remove_file(&moved);
 }
 
 impl Drop for Lock {
