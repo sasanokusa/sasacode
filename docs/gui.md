@@ -48,14 +48,14 @@ CLIのソースが正。`crates/sasacode-protocol/tests/fixtures`に実際の実
 GUIはリリースに入っていない。`sasacode gui install`が、このマシンでビルドして入れる。
 
 ```bash
-sasacode gui install                     # このsasacodeの版のタグ（v<版>）からビルドして入れる
+sasacode gui install                     # このsasacodeをビルドしたコミットからビルドして入れる（手元でビルドしたsasacodeはタグv<版>から）
 sasacode gui install --path <チェックアウト>   # sasacodeのチェックアウトからビルドして入れる（開発中の版）
 ```
 
 - Rust（cargo）が要る。cargoはPATH、`CARGO_HOME`の`bin`、`~/.cargo/bin`の順に探す（rustupで入れた直後の、PATHがまだ通っていないシェルでも見つかる）。どこにもなければ、[rustup.rs](https://rustup.rs)を案内して、終了コード1で止まる。OSごとのRustの入れ方は書かない（rustupのページが案内する）。ワークスペースの`rust-version`（1.88）より古いRustでは、cargoがその旨を出して止まる。
-- 中身は`cargo install --locked --force --root ~/.sasacode/gui`で、ソースは`--git https://github.com/sasanokusa/sasacode --tag v<版> sasacode-gui`か、`--path <チェックアウト>/crates/sasacode-gui`。`--locked`で、リポジトリの`Cargo.lock`（CIが確かめた版）のとおりにビルドする。窓は`~/.sasacode/gui/bin/sasacode-gui`（`SASACODE_HOME`があればその下）に入り、PATHには入れない。
+- 中身は`cargo install --locked --force --root ~/.sasacode/gui`で、ソースは`--git https://github.com/sasanokusa/sasacode --rev <コミット> sasacode-gui`か、`--path <チェックアウト>/crates/sasacode-gui`。コミットは、リリースのワークフローがビルド時に環境変数`SASACODE_COMMIT`で渡し、バイナリに埋め込まれている（タグは付け替えられるが、コミットは付け替えられないため）。手元でビルドしたsasacodeにはコミットがないので、`--tag v<版>`でビルドする。`--locked`で、リポジトリの`Cargo.lock`（CIが確かめた版）のとおりにビルドする。窓は`~/.sasacode/gui/bin/sasacode-gui`（`SASACODE_HOME`があればその下）に入り、PATHには入れない。
 - cargoは`~/.sasacode/gui`で動かす。今のフォルダのプロジェクトの`rust-toolchain.toml`で、別のツールチェーンが選ばれないようにするため。環境変数は、bashなどの子プロセスと同じく、APIキーなどを除いて渡す。
-- タグからのビルドは、毎回はじめからになる（`cargo install`は使い捨てのフォルダでビルドする）。M1 Pro（AC電源、クレートはダウンロード済み）で154秒と163秒（同じ版の1回目と2回目）。sasacodeを更新するたびに、この時間がかかる。`--path`ではチェックアウトの`target`を使うので、初回は124秒、2回目は2秒だった。
+- コミットやタグからのビルドは、毎回はじめからになる（`cargo install`は使い捨てのフォルダでビルドする）。M1 Pro（AC電源、クレートはダウンロード済み）で154秒と163秒（同じ版の1回目と2回目）。sasacodeを更新するたびに、この時間がかかる。`--path`ではチェックアウトの`target`を使うので、初回は124秒、2回目は2秒だった。
 - `SASACODE_GUI_GIT`で、ソースを取るリポジトリを変えられる（ミラーやテスト用）。
 - v0.20.0にはまだタグがないので、引数なしではビルドできない。cargoのエラーのあとに、`--path`でチェックアウトからビルドするよう案内する。
 - `install`という名前のフォルダを開くときは、`sasacode gui ./install`と書く。

@@ -5,7 +5,7 @@
 //! Generated from `packages/host/src/messages-ja.ts` (every entry verbatim, in its order; a key the TS
 //! object listed twice appears once, with the value that won).
 
-/// 190 entries.
+/// 191 entries.
 pub static TO_JA: &[(&str, &str)] = &[
     (
         "sasacode — a small, pluggable coding agent\n\nUsage:\n  sasacode [prompt]              interactive session (optional first prompt)\n  sasacode -p \"<prompt>\"         run headless and print the answer\n\nOptions:\n  -p, --print <prompt>           headless mode (stdin is appended when piped)\n      --stdin                    with -p: wait for piped input however long it takes\n      --output <text|jsonl>      headless output format (default text)\n      --control stdio            with -p --output jsonl: the parent answers approvals, sends messages and can abort\n                                 over stdin as JSON Lines (stdin is then not appended to the prompt)\n  -m, --model <provider/model>   e.g. anthropic/claude-opus-5, openai/gpt-5.5, ollama/gemma4:e4b\n                                 (the TUI's /model lists what your providers offer)\n      --permission <mode>        {modes} (default edits)\n      --thinking <level>         off | low | medium | high | xhigh | max\n      --max-turns <n>            turns per run before stopping (default 200; 0 = no limit)\n  -c, --continue                 resume the most recent session in this directory\n  -r, --resume <id>              resume a session by id\n      --no-session               do not save this session\n      --append-system-prompt-file <path>\n                                 add the file's text to the system prompt, after the config's instructions\n      --trust-project            trust this project's endpoints, MCP servers, plugin settings and\n                                 permission settings without asking\n      --allow <rule>             allow calls matching a permission rule for this run, as answering \"always\" does\n                                 (repeatable; e.g. \"bash(npm test)\", the rules of approval_request)\n      --slash                    with -p: a prompt that starts with /<command> runs that plugin command\n\nSubcommands:\n  sasacode endpoint add <name> <url> [--key-env VAR] [--project]   add a server (format detected)\n  sasacode endpoint remove <name> [--project]\n  sasacode endpoint list\n  sasacode list models|commands|skills [--json]   what a run here can use (the GUI asks with --json)\n  sasacode trust [--yes] [--json]   is this folder trusted, and what would trust enable; --yes trusts it\n  sasacode plugin list --json       the bundled plugins and whether each is on (the GUI asks)\n  sasacode login [status|logout]    use a ChatGPT plan instead of an API key (openai-codex/… models)\n  sasacode update [--check] [tag]   download and install the newest release (checksum-verified)\n  sasacode web-search install [tag] install RustXNG for the web_search tool (checksum-verified)\n  sasacode gui [folder]             open the desktop GUI on a folder (sasacode gui install puts it in)\n  sasacode gui install [--path <dir>]   build the desktop GUI on this machine with Rust (docs/gui.md)\n  -h, --help\n  -v, --version",
@@ -521,5 +521,9 @@ pub static TO_JA: &[(&str, &str)] = &[
     (
         "build provenance check failed for {file}; nothing was installed:\n{said}",
         "{file}のビルドの来歴を確かめられなかったので、何も入れていない:\n{said}",
+    ),
+    (
+        "this sasacode was built from \"{rev}\", which is not a commit hash: build from a checkout with sasacode gui install --path <checkout>",
+        "このsasacodeは\"{rev}\"からビルドされていて、これはコミットのハッシュではない。チェックアウトから、sasacode gui install --path <checkout>でビルドする",
     ),
 ];

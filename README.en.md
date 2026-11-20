@@ -86,7 +86,7 @@ sasacode -r <id> -p "go on"          # continue a session by id (a conversation 
 | `sasacode update [--check] [tag]` | Download and install the newest release (checksum-verified; `--check` only reports) |
 | `sasacode web-search install [tag]` | Install RustXNG for the `web_search` tool (checksum-verified) |
 | `sasacode gui [folder]` | Open the desktop GUI on a folder (`sasacode gui install` puts it in; [docs/gui.md](docs/gui.md)) |
-| `sasacode gui install [--path <dir>]` | Build the desktop GUI on this machine with Rust (from this version's tag; from a checkout with `--path`) |
+| `sasacode gui install [--path <dir>]` | Build the desktop GUI on this machine with Rust (from the commit this version was built from; from a checkout with `--path`) |
 | `-h, --help` / `-v, --version` | Print the usage / the version |
 
 `sasacode plugin` is gone in 0.20. Run, it says that the plugins now ship with sasacode (the optional ones are turned on with `plugins.enabled`) and that tools are added with MCP servers or Skills ([extending sasacode](docs/plugins.md)), and exits with an error.

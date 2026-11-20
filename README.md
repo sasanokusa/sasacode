@@ -86,7 +86,7 @@ sasacode -r <id> -p "続き"            # セッション ID を指定して続�
 | `sasacode update [--check] [tag]` | 最新のリリースを取得して入れ替える（チェックサムを検証。`--check`なら確認だけ） |
 | `sasacode web-search install [tag]` | `web_search`が使うRustXNGを入れる（チェックサムを検証） |
 | `sasacode gui [folder]` | デスクトップGUIをフォルダで開く（`sasacode gui install`で入れる。[docs/gui.md](docs/gui.md)） |
-| `sasacode gui install [--path <dir>]` | デスクトップGUIを、このマシンでRustを使ってビルドして入れる（この版のタグから。`--path`ではチェックアウトから） |
+| `sasacode gui install [--path <dir>]` | デスクトップGUIを、このマシンでRustを使ってビルドして入れる（この版をビルドしたコミットから。`--path`ではチェックアウトから） |
 | `-h, --help` / `-v, --version` | 使い方 / 版を出す |
 
 `sasacode plugin`は0.20でなくなった。実行すると、プラグインはsasacodeに同梱になったこと（既定で無効のものは`plugins.enabled`で有効にする）と、ツールはMCPサーバーかSkillsで足すこと（[拡張のしかた](docs/plugins.md)）を示して、エラーで終わる。

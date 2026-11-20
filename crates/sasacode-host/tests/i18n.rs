@@ -167,9 +167,10 @@ fn the_tables_hold_every_ts_entry() {
     // could not be read for the trust decision), plus the four that `--allow` and `--slash` brought
     // and the nine of `sasacode list` and `sasacode trust`, ported with the GUI's listings. Then
     // `sasacode gui install`: ten English texts, and the GUI's version note in Japanese. Then the
-    // release's build provenance check (`sasacode update`): seven English texts.
+    // release's build provenance check (`sasacode update`): seven English texts, and one for a
+    // release built from something that is not a commit.
     assert_eq!(TO_EN.len(), 273 + 1);
-    assert_eq!(TO_JA.len(), 158 + 3 - 1 + 4 + 9 + 10 + 7);
+    assert_eq!(TO_JA.len(), 158 + 3 - 1 + 4 + 9 + 10 + 7 + 1);
 }
 
 #[test]
