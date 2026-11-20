@@ -104,11 +104,9 @@ pub fn restore(entries: &[SessionEntry]) -> Restored {
 
 /// Where sasacode keeps its files: `$SASACODE_HOME`, or `~/.sasacode`.
 pub fn sasacode_home() -> Option<PathBuf> {
-    if let Some(h) = std::env::var_os("SASACODE_HOME") {
-        return Some(PathBuf::from(h));
-    }
-    let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"))?;
-    Some(PathBuf::from(home).join(".sasacode"))
+    // An empty value counts as unset: it would make a path of the current folder.
+    let var = |name: &str| std::env::var_os(name).filter(|v| !v.is_empty()).map(PathBuf::from);
+    var("SASACODE_HOME").or_else(|| Some(var("HOME").or_else(|| var("USERPROFILE"))?.join(".sasacode")))
 }
 
 /// The real path of `cwd` as Node's `realpathSync` gives it (no `\\?\` prefix on Windows), or

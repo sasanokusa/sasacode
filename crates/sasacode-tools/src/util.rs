@@ -10,11 +10,8 @@ use sasacode_plugin_api::JsonObject;
 /// `resolvePath`: `~` and `~/...` expand to the home directory; an absolute path is returned as it
 /// is (not normalised, like Node); a relative one is resolved against `cwd` and normalised.
 pub fn resolve_path(p: &str, cwd: &Path) -> String {
-    let p = if p == "~" || p.starts_with("~/") {
-        format!("{}{}", sasacode_plugin_api::home_dir().display(), &p[1..])
-    } else {
-        p.to_string()
-    };
+    let home = sasacode_plugin_api::home_dir().filter(|_| p == "~" || p.starts_with("~/"));
+    let p = home.map_or(p.to_string(), |h| format!("{}{}", h.display(), &p[1..])); // no home: `~` as written
     // Node's isAbsolute: a root, with or without a drive letter on Windows.
     if Path::new(&p).has_root() {
         return p;
@@ -235,7 +232,7 @@ mod tests {
         assert_eq!(resolve_path("", cwd), native("/w/p"));
         // Absolute paths and ~ expansions are taken as they are, `..` and all.
         assert_eq!(resolve_path("/a/../b", cwd), "/a/../b");
-        let home = sasacode_plugin_api::home_dir().display().to_string();
+        let home = sasacode_plugin_api::home_dir().unwrap().display().to_string();
         assert_eq!(resolve_path("~/x/../y", cwd), format!("{home}/x/../y"));
         assert_eq!(resolve_path("~", cwd), home);
         assert_eq!(resolve_path("~x", cwd), native("/w/p/~x"));
