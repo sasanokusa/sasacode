@@ -170,7 +170,7 @@ pub struct Harness {
 }
 
 /// The first provider whose API key is set; with no key at all but a ChatGPT login, that plan.
-fn default_model(providers: &IndexMap<String, ProviderConfig>, codex: bool) -> String {
+pub(crate) fn default_model(providers: &IndexMap<String, ProviderConfig>, codex: bool) -> String {
     let any_key = providers.values().any(|p| {
         p.api_key_env
             .as_deref()

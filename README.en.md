@@ -81,7 +81,7 @@ sasacode -r <id> -p "go on"          # continue a session by id (a conversation 
 | `sasacode endpoint remove <name> [--project]` / `sasacode endpoint list` | Remove an added server / list them |
 | `sasacode list models\|commands\|skills [--json]` | What a run in this folder can use. `models` is the TUI's `/model` list (`[{"id":"provider/model","contextWindow"?,"maxContext"?,"server"?,"current"?}]`), `skills` is `[{"name","description","path"}]`, `commands` the TUI's commands and the skills' (`[{"name","description","argumentHint"?,"owner","headless"}]`). The bundled plugins' commands are not listed here, since loading a plugin runs its startup work: a `--control stdio` run reports them in its `commands` line |
 | `sasacode plugin list --json` | The bundled plugins, as `[{"name","source":"bundled","enabled"}]`. `enabled` follows the config (`plugins.enabled` and `plugins.disabled`). It is all that is left of `sasacode plugin` in 0.20, kept for the GUI |
-| `sasacode trust [--yes] [--json]` | Whether this folder is trusted, and what trust would enable (`{"cwd","trusted","needed","complete","items","plugins","mcpServers","endpoints","allow","mode"}`). `--yes` saves the trust, as answering "y" at the start-up question does. 0.20 does not load project plugins, so `plugins` is empty and `complete` is always `true` |
+| `sasacode trust [--yes] [--json]` | Whether this folder is trusted, and what trust would enable (`{"cwd","trusted","needed","complete","items","plugins","mcpServers","endpoints","allow","mode","mcpServerDetails","model","judgeModel","models","modelOverrides","pluginSettings"}`; `mcpServerDetails` gives each server's command or URL and the names of its environment variables and headers, never their values). `--yes` saves the trust, as answering "y" at the start-up question does. 0.20 does not load project plugins, so `plugins` is empty and `complete` is always `true` |
 | `sasacode login [status\|logout]` | Sign in with a ChatGPT plan (for `openai-codex/…` models) |
 | `sasacode update [--check] [tag]` | Download and install the newest release (checksum-verified; `--check` only reports) |
 | `sasacode web-search install [tag]` | Install RustXNG for the `web_search` tool (checksum-verified) |
@@ -180,7 +180,7 @@ Models are named `<provider>/<model>`.
 
 | provider | API | Key |
 | --- | --- | --- |
-| `anthropic` | Anthropic Messages | `ANTHROPIC_API_KEY` (empty: `ANTHROPIC_AUTH_TOKEN` from the environment as a bearer token, else the `ant auth login` profile) |
+| `anthropic` | Anthropic Messages | `ANTHROPIC_API_KEY` (empty: `ANTHROPIC_AUTH_TOKEN` from the environment as a bearer token, else the `ant auth login` profile. These two variables are for `anthropic` only; other Anthropic-format providers use their own `apiKeyEnv` alone) |
 | `openai` / `openai-chat` | OpenAI Responses / Chat Completions | `OPENAI_API_KEY` |
 | `openrouter` | Chat Completions | `OPENROUTER_API_KEY` |
 | `commandcode` / `commandcode-responses` / `commandcode-anthropic` | Command Code's Chat Completions / Responses / Messages | `CMD_API_KEY` |
@@ -278,9 +278,9 @@ With `"plugins": { "enabled": ["jev-guard"] }` instead, it is only loaded and th
 
 A cloned repository can, by itself, only make things stricter. The following can run code or change where data goes, so they are ignored until you trust the project:
 
-- in `.sasacode/config.json`: `providers` (endpoints), `modelOverrides`, `plugins` (enabling, disabling and settings), `mcpServers`, `allow` rules, a permission mode looser than the global one, a `maxTurns` (0 = unlimited) or `maxRetries` above the global one, and a `model`, `models` or `judgeModel` that points at a provider only the project defines
+- in `.sasacode/config.json`: `providers` (endpoints), `modelOverrides`, `plugins` (enabling, disabling and settings), `mcpServers`, `allow` rules, a permission mode looser than the global one, a `maxTurns` (0 = unlimited) or `maxRetries` above the global one, and a `model`, `models` or `judgeModel` that points at a provider the global config (or, without a model there, the default model) does not use
 
-In such a project, sasacode lists them at start and asks whether to trust it (headless: `--trust-project`). The answer is saved in `~/.sasacode/trust.json` and asked again when those settings change. Projects in the global `trustedProjects` are trusted without asking. The model choice, `thinking`, `instructions`, added deny / ask rules and disabled tools, a stricter permission mode and lower limits apply without trust. Up to 0.15 the plugins in `.sasacode/plugins` were covered too; 0.20 does not load that folder, so they are no longer part of the decision (a project without project plugins that was trusted under 0.15 stays trusted).
+In such a project, sasacode lists them at start and asks whether to trust it (headless: `--trust-project`). The answer is saved in `~/.sasacode/trust.json` and asked again when those settings change. Projects in the global `trustedProjects` are trusted without asking. The list also shows what each MCP server runs (command and arguments, or URL), the names of the environment variables and headers it gets (never their values), and plugin settings and `modelOverrides` as written (long ones cut). A model choice within the global config's providers, `thinking`, `instructions`, added deny / ask rules and disabled tools, a stricter permission mode and lower limits apply without trust. Up to 0.15 the plugins in `.sasacode/plugins` were covered too; 0.20 does not load that folder, so they are no longer part of the decision (a project without project plugins that was trusted under 0.15 stays trusted). A project that picks its `model` or `judgeModel` is warned about, trusted or not.
 
 ## Plugins, MCP and Skills
 

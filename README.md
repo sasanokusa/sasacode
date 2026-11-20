@@ -81,7 +81,7 @@ sasacode -r <id> -p "続き"            # セッション ID を指定して続�
 | `sasacode endpoint remove <name> [--project]` / `sasacode endpoint list` | 足したサーバーを外す / 一覧 |
 | `sasacode list models\|commands\|skills [--json]` | このフォルダでの実行が使えるもの。`models` はTUIの `/model` と同じ一覧（`[{"id":"provider/model","contextWindow"?,"maxContext"?,"server"?,"current"?}]`）、`skills` は `[{"name","description","path"}]`、`commands` はTUIのコマンドとSkillsのコマンド（`[{"name","description","argumentHint"?,"owner","headless"}]`）。同梱プラグインのコマンドは、読み込むとプラグインの起動時の処理が走るのでここには出さず、`--control stdio` の実行が `commands` 行で知らせる |
 | `sasacode plugin list --json` | 同梱プラグインを `[{"name","source":"bundled","enabled"}]` で。`enabled` は設定（`plugins.enabled` と `plugins.disabled`）で決まる。0.20の `sasacode plugin` で残るのはこれだけで、GUIが使う |
-| `sasacode trust [--yes] [--json]` | このフォルダを信頼しているかと、信頼すると有効になるもの（`{"cwd","trusted","needed","complete","items","plugins","mcpServers","endpoints","allow","mode"}`）。`--yes` で、起動時の確認に「y」と答えたのと同じく信頼を保存する。0.20はプロジェクトのプラグインを読まないので、`plugins` は空、`complete` は常に `true` |
+| `sasacode trust [--yes] [--json]` | このフォルダを信頼しているかと、信頼すると有効になるもの（`{"cwd","trusted","needed","complete","items","plugins","mcpServers","endpoints","allow","mode","mcpServerDetails","model","judgeModel","models","modelOverrides","pluginSettings"}`。`mcpServerDetails`はサーバーごとに起動するコマンドかURLと、環境変数とヘッダーの名前（値は出さない））。`--yes` で、起動時の確認に「y」と答えたのと同じく信頼を保存する。0.20はプロジェクトのプラグインを読まないので、`plugins` は空、`complete` は常に `true` |
 | `sasacode login [status\|logout]` | ChatGPTプランでログイン（`openai-codex/…` のモデル用） |
 | `sasacode update [--check] [tag]` | 最新のリリースを取得して入れ替える（チェックサムを検証。`--check`なら確認だけ） |
 | `sasacode web-search install [tag]` | `web_search`が使うRustXNGを入れる（チェックサムを検証） |
@@ -180,7 +180,7 @@ stdinは1行1件のJSON（JSON Lines）で読む。
 
 | provider | API形式 | キー |
 | --- | --- | --- |
-| `anthropic` | Anthropic Messages | `ANTHROPIC_API_KEY`（空なら環境変数`ANTHROPIC_AUTH_TOKEN`をBearerトークンとして、それもなければ`ant auth login`のプロファイルを使う） |
+| `anthropic` | Anthropic Messages | `ANTHROPIC_API_KEY`（空なら環境変数`ANTHROPIC_AUTH_TOKEN`をBearerトークンとして、それもなければ`ant auth login`のプロファイルを使う。この2つの環境変数は`anthropic`にだけ使い、ほかのAnthropic形式のプロバイダーは自分の`apiKeyEnv`だけを使う） |
 | `openai` / `openai-chat` | OpenAI Responses / Chat Completions | `OPENAI_API_KEY` |
 | `openrouter` | Chat Completions | `OPENROUTER_API_KEY` |
 | `commandcode` / `commandcode-responses` / `commandcode-anthropic` | Command CodeのChat Completions / Responses / Messages | `CMD_API_KEY` |
@@ -278,9 +278,9 @@ sasacode -m llama/<モデル名>
 
 クローンしたリポジトリは、そのままでは「制限を強める」ことしかできない。次のものは、コードを実行するか、データの送り先を変えうるので、プロジェクトを信頼するまで使わない。
 
-- `.sasacode/config.json`の`providers`（エンドポイント）、`modelOverrides`、`plugins`（有効化・無効化と設定）、`mcpServers`、`allow`ルール、全体設定より緩い権限モード、全体設定より大きい`maxTurns`（0は上限なし）と`maxRetries`、そのプロジェクトにしかないプロバイダーを指す`model`・`models`・`judgeModel`
+- `.sasacode/config.json`の`providers`（エンドポイント）、`modelOverrides`、`plugins`（有効化・無効化と設定）、`mcpServers`、`allow`ルール、全体設定より緩い権限モード、全体設定より大きい`maxTurns`（0は上限なし）と`maxRetries`、全体設定（なければ既定のモデル）が使っていないプロバイダーを指す`model`・`models`・`judgeModel`
 
-これらがあるプロジェクトで起動すると、最初に一覧を出して信頼するかを尋ねる（ヘッドレスでは`--trust-project`）。答えは`~/.sasacode/trust.json`に保存し、上の設定が変わったら再び尋ねる。全体設定の`trustedProjects`に入れたプロジェクトは、尋ねずに信頼する。モデルの選択、`thinking`、`instructions`、deny / askルールやツール無効化の追加、より厳しい権限モードや小さい上限などは、信頼しなくても使う。0.15までは`.sasacode/plugins`のプラグインも信頼の対象だったが、0.20からはそのフォルダを読み込まないので、対象から外した（プロジェクトのプラグインがなく、0.15で信頼したプロジェクトは、そのまま信頼される）。
+これらがあるプロジェクトで起動すると、最初に一覧を出して信頼するかを尋ねる（ヘッドレスでは`--trust-project`）。答えは`~/.sasacode/trust.json`に保存し、上の設定が変わったら再び尋ねる。全体設定の`trustedProjects`に入れたプロジェクトは、尋ねずに信頼する。一覧には、MCPサーバーが起動するコマンドと引数（またはURL）、渡す環境変数とヘッダーの名前（値は出さない）、プラグインの設定と`modelOverrides`の中身（長いものは切る）も出す。全体設定と同じプロバイダーの中でのモデルの選択、`thinking`、`instructions`、deny / askルールやツール無効化の追加、より厳しい権限モードや小さい上限などは、信頼しなくても使う。0.15までは`.sasacode/plugins`のプラグインも信頼の対象だったが、0.20からはそのフォルダを読み込まないので、対象から外した（プロジェクトのプラグインがなく、0.15で信頼したプロジェクトは、そのまま信頼される）。プロジェクトが`model`や`judgeModel`を選んだときは、信頼していても警告を出す。
 
 ## プラグイン・MCP・Skills
 
