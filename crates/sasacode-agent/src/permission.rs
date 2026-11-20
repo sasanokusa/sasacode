@@ -144,6 +144,16 @@ impl PermissionPolicy {
         v(decision, reason.into(), VerdictSource::Mode)
     }
 
+    /// What the deny, softDeny and ask rules alone say about this call (no mode, no allow rules).
+    pub fn rule_decision(&self, c: &PermissionCheck) -> Option<Decision> {
+        let rules = self.rules.read().unwrap_or_else(|e| e.into_inner());
+        let hit = |list: &[ParsedRule]| list.iter().any(|r| rule_matches(r, c, false));
+        if hit(&rules.deny) || hit(&rules.soft_deny) {
+            return Some(Decision::Deny);
+        }
+        hit(&rules.ask).then_some(Decision::Ask)
+    }
+
     fn mode_decision(&self, c: &PermissionCheck) -> (Decision, &'static str) {
         // Through a symlink, a path inside the project can point anywhere: judge where it really goes.
         let cwd = try_real_path(&c.cwd).unwrap_or_else(|| c.cwd.clone());

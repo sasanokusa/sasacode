@@ -72,6 +72,9 @@ pub fn error_result(message: impl Into<String>) -> ToolResult {
 pub type CallTool = Arc<dyn Fn(String, JsonObject) -> BoxFuture<'static, ToolResult> + Send + Sync>;
 /// Stream partial output (e.g. bash stdout) to the UI while the tool runs.
 pub type OnUpdate = Arc<dyn Fn(String) + Send + Sync>;
+/// What a deny (Deny) or ask (Ask) rule for this tool, or the one in its permissionsAs, says about
+/// reading `path`; `None`: no such rule. For files the tool reaches on its own (a directory walk).
+pub type ReadRule = Arc<dyn Fn(&Path) -> Option<crate::Decision> + Send + Sync>;
 
 #[derive(Clone)]
 pub struct ToolContext {
@@ -79,6 +82,7 @@ pub struct ToolContext {
     pub signal: CancellationToken,
     pub on_update: Option<OnUpdate>,
     pub call_tool: Option<CallTool>,
+    pub read_rule: Option<ReadRule>,
 }
 
 impl ToolContext {
@@ -88,6 +92,7 @@ impl ToolContext {
             signal: CancellationToken::new(),
             on_update: None,
             call_tool: None,
+            read_rule: None,
         }
     }
     pub fn update(&self, text: impl Into<String>) {
