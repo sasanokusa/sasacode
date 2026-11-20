@@ -410,6 +410,22 @@ words! {
     trust_save: "信頼する", "Trust";
     trust_once: "このウィンドウでだけ使う", "Use in this window only";
     trust_partial: "プラグインのコードをすべては読めなかったので、信頼を保存できません", "Its plugins' code could not all be read, so trust cannot be saved";
+    /// What the folder's config would turn on, line by line under the trust card's items.
+    trust_mcp: "MCPサーバー「{name}」", "MCP server “{name}”";
+    trust_runs: "起動するもの：", "Starts: ";
+    trust_url: "接続先：", "Connects to: ";
+    trust_cwd: "作業フォルダ：", "Working folder: ";
+    trust_env: "環境変数（名前だけ）：", "Environment variables (names only): ";
+    trust_headers: "ヘッダー（名前だけ）：", "Headers (names only): ";
+    trust_model: "モデル：", "Model: ";
+    trust_judge: "判定モデル：", "Judge model: ";
+    trust_models: "モデルの一覧：", "Models: ";
+    trust_overrides: "modelOverrides：", "modelOverrides: ";
+    trust_plugin_settings: "プラグインの設定：", "Plugin settings: ";
+    /// The approval card's call, longer than the card shows.
+    appr_more: "続きがあります（スクロールするか、すべて表示）", "There is more (scroll, or show all)";
+    appr_all: "すべて表示", "Show all";
+    appr_less: "たたむ", "Show less";
     ext_title: "プラグイン・スキル・MCP", "Plugins, skills and MCP";
     ext_plugins: "プラグイン", "Plugins";
     ext_skills: "スキル", "Skills";

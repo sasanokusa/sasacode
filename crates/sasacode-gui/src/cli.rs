@@ -77,6 +77,133 @@ pub struct Trust {
     pub items: Vec<String>,
     #[serde(default)]
     pub mcp_servers: Vec<String>,
+    /// What each MCP server the folder adds starts, or connects to. These and the rest below are
+    /// said by a CLI from 0.20.1; an older one says none of them.
+    #[serde(default)]
+    pub mcp_server_details: Vec<TrustServer>,
+    /// The model, judge model and models the folder picks from providers not in use.
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub judge_model: Option<String>,
+    #[serde(default)]
+    pub models: Vec<String>,
+    /// As the folder's config writes them.
+    #[serde(default)]
+    pub model_overrides: serde_json::Map<String, serde_json::Value>,
+    #[serde(default)]
+    pub plugin_settings: serde_json::Map<String, serde_json::Value>,
+}
+
+/// An MCP server a folder's config adds: what it starts, and the names (never the values) of what
+/// it is given.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(default)]
+pub struct TrustServer {
+    pub name: String,
+    pub command: Option<String>,
+    pub args: Vec<String>,
+    pub url: Option<String>,
+    pub cwd: Option<String>,
+    pub env: Vec<String>,
+    pub headers: Vec<String>,
+}
+
+/// How long a setting's value is shown before it is cut; a command, an address or a model's name
+/// never is.
+const VALUE_MAX: usize = 160;
+
+/// A word of a command line as a shell would need it written: quoted when it holds a space, a
+/// quote or nothing.
+fn shell_word(word: &str) -> String {
+    let word = crate::plain::plain_line(word);
+    if !word.is_empty() && !word.contains(|c: char| c.is_whitespace() || "'\"\\$`".contains(c)) {
+        return word;
+    }
+    format!("'{}'", word.replace('\'', "'\\''"))
+}
+
+/// `value` under `path`, one line per string, number or flag in it: a string named as a command, an
+/// address, a model or a path in full, any other cut when long.
+fn leaves(path: &str, value: &serde_json::Value, out: &mut Vec<String>) {
+    use serde_json::Value;
+    let whole = ["command", "cmd", "url", "model", "path", "program", "args", "bin"];
+    match value {
+        Value::Object(all) if !all.is_empty() => {
+            for (k, v) in all {
+                leaves(&format!("{path}.{}", crate::plain::plain_line(k)), v, out);
+            }
+        }
+        Value::String(s) => {
+            let key = path.rsplit('.').next().unwrap_or_default().to_ascii_lowercase();
+            let shown = if whole.iter().any(|w| key.contains(w)) {
+                crate::plain::plain_line(s)
+            } else {
+                crate::plain::plain_clipped(s, VALUE_MAX)
+            };
+            out.push(format!("{path} = {shown}"));
+        }
+        Value::Array(all) if all.iter().all(|v| v.is_string()) => {
+            let words: Vec<String> = all.iter().filter_map(|v| v.as_str()).map(shell_word).collect();
+            out.push(format!("{path} = [{}]", words.join(", ")));
+        }
+        other => out.push(format!(
+            "{path} = {}",
+            crate::plain::plain_clipped(&other.to_string(), VALUE_MAX)
+        )),
+    }
+}
+
+impl Trust {
+    /// What trusting the folder turns on, beyond its items: one line each, with no control
+    /// character and no character that would reorder it. A line under another starts with spaces.
+    pub fn details(&self, w: &crate::words::Words) -> Vec<String> {
+        use crate::plain::plain_line;
+        let names = |all: &[String]| all.iter().map(|s| plain_line(s)).collect::<Vec<_>>().join(", ");
+        let mut out = Vec::new();
+        for s in &self.mcp_server_details {
+            out.push(crate::i18n::fill(w.trust_mcp, "name", plain_line(&s.name)));
+            if let Some(command) = &s.command {
+                let line: Vec<String> = std::iter::once(command).chain(&s.args).map(|a| shell_word(a)).collect();
+                out.push(format!("  {}{}", w.trust_runs, line.join(" ")));
+            }
+            if let Some(url) = &s.url {
+                out.push(format!("  {}{}", w.trust_url, plain_line(url)));
+            }
+            if let Some(cwd) = &s.cwd {
+                out.push(format!("  {}{}", w.trust_cwd, plain_line(cwd)));
+            }
+            if !s.env.is_empty() {
+                out.push(format!("  {}{}", w.trust_env, names(&s.env)));
+            }
+            if !s.headers.is_empty() {
+                out.push(format!("  {}{}", w.trust_headers, names(&s.headers)));
+            }
+        }
+        if let Some(model) = &self.model {
+            out.push(format!("{}{}", w.trust_model, plain_line(model)));
+        }
+        if let Some(judge) = &self.judge_model {
+            out.push(format!("{}{}", w.trust_judge, plain_line(judge)));
+        }
+        if !self.models.is_empty() {
+            out.push(format!("{}{}", w.trust_models, names(&self.models)));
+        }
+        for (head, all) in [
+            (w.trust_overrides, &self.model_overrides),
+            (w.trust_plugin_settings, &self.plugin_settings),
+        ] {
+            let mut lines = Vec::new();
+            for (k, v) in all {
+                leaves(&plain_line(k), v, &mut lines);
+            }
+            if !lines.is_empty() {
+                out.push(head.trim_end().to_owned());
+                out.extend(lines.into_iter().map(|l| format!("  {l}")));
+            }
+        }
+        out
+    }
 }
 
 /// What was learnt; each part is there once its answer came.
@@ -362,5 +489,52 @@ mod tests {
         .unwrap();
         assert_eq!(compaction_point(Some(&home), &cwd), None);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_trust_card_says_what_each_item_starts_and_is_given_with_no_control_character() {
+        let trust: Trust = serde_json::from_str(
+            r#"{"trusted":false,"needed":true,"complete":true,"items":["MCP server db"],"mcpServers":["db"],
+                "mcpServerDetails":[{"name":"d\u202eb","command":"npx","args":["-y","db-server","/a b"],"url":null,
+                  "cwd":"/srv","env":["DB_TOKEN"],"headers":[]},
+                  {"name":"api","command":null,"args":[],"url":"https://example.invalid/mcp","cwd":null,"env":[],"headers":["Authorization"]}],
+                "model":"far/away-model-with-a-long-name","judgeModel":null,"models":["far/a","far/b"],
+                "modelOverrides":{"far/a":{"contextWindow":1000}},
+                "pluginSettings":{"syntax-check":{"externalCheck":"/opt/check --all","note":"x\u001b[2Ky"}}}"#,
+        )
+        .unwrap();
+        let lines = trust.details(&crate::words::JA);
+        assert_eq!(
+            lines,
+            [
+                "MCPサーバー「db」",
+                "  起動するもの：npx -y db-server '/a b'",
+                "  作業フォルダ：/srv",
+                "  環境変数（名前だけ）：DB_TOKEN",
+                "MCPサーバー「api」",
+                "  接続先：https://example.invalid/mcp",
+                "  ヘッダー（名前だけ）：Authorization",
+                "モデル：far/away-model-with-a-long-name",
+                "モデルの一覧：far/a, far/b",
+                "modelOverrides：",
+                "  far/a.contextWindow = 1000",
+                "プラグインの設定：",
+                "  syntax-check.externalCheck = /opt/check --all",
+                "  syntax-check.note = x␛[2Ky",
+            ]
+        );
+        // A long value is cut, but never a command, an address or a model's name.
+        let long = "z".repeat(400);
+        let mut out = Vec::new();
+        leaves("p", &serde_json::json!({ "note": long, "command": long }), &mut out);
+        let (note, command) = (&out[0], &out[1]);
+        assert!(
+            note.chars().count() < 200 && note.ends_with('…') && command.ends_with(&long),
+            "{out:?}"
+        );
+        // What an older CLI says has none of it.
+        let old: Trust =
+            serde_json::from_str(r#"{"trusted":false,"needed":true,"complete":true,"items":["x"]}"#).unwrap();
+        assert!(old.details(&crate::words::EN).is_empty());
     }
 }

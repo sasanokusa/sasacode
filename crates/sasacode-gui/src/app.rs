@@ -260,6 +260,8 @@ pub struct App {
     pub(crate) handoff: Option<crate::worktrees::Handoff>,
     /// A message handed over by the window that made this worktree, sent once git is read.
     pub(crate) send_handoff: bool,
+    /// The approval waiting, by id, is shown whole ([`Msg::ApprovalWhole`]).
+    pub(crate) approval_whole: Option<String>,
     /// The permission mode before plan mode was chosen.
     pub(crate) before_plan: Option<&'static str>,
     /// The automation being written.
@@ -793,6 +795,8 @@ pub enum Msg {
     StopCall(String),
     /// The waiting call's arguments edited, then allowed with them.
     ArgsOpen,
+    /// The approval card shown whole, not in its scrolled box; or back in it.
+    ApprovalWhole(bool),
     ArgsEdit(text_editor::Action),
     ArgsSend,
     /// A rule "always" added for the conversation shown, taken back.
@@ -1177,6 +1181,7 @@ impl App {
             to_worktree: false,
             handoff: None,
             send_handoff: false,
+            approval_whole: None,
             before_plan: None,
             auto_form: crate::automations::Form::default(),
             gisting: false,

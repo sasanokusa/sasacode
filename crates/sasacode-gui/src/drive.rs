@@ -4302,3 +4302,55 @@ fn listed_trusted() -> crate::cli::Listing {
     l.trust.as_mut().unwrap().trusted = true;
     l
 }
+
+#[test]
+fn the_trust_card_shows_what_trust_would_start_without_control_characters() {
+    let mut app = window("ja");
+    app.listing = listed();
+    let trust = app.listing.trust.as_mut().unwrap();
+    trust.items = vec!["MCP server d\u{202e}b\u{7}".into()];
+    trust.mcp_server_details = vec![crate::cli::TrustServer {
+        name: "db".into(),
+        command: Some("npx".into()),
+        args: vec!["db-server".into()],
+        ..Default::default()
+    }];
+    let details = app.listing.trust.as_ref().unwrap().details(&crate::words::JA);
+    assert!(says(&app, "・MCP server db") && says(&app, &details.join("\n")));
+    assert!(details.iter().any(|l| l == "  起動するもの：npx db-server"));
+}
+
+#[test]
+fn a_call_longer_than_the_approval_card_says_so_and_can_be_shown_whole() {
+    let (mut app, _written, id) = waiting();
+    let w = crate::words::JA;
+    assert!(!says(&app, w.appr_more), "a short call fits");
+    let long: String = (0..40).map(|n| format!("echo {n}\u{202e}\n")).collect();
+    for step in app
+        .chat
+        .transcript
+        .exchanges
+        .iter_mut()
+        .flat_map(|e| e.steps.iter_mut())
+    {
+        if let Step::Tool(t) = step
+            && t.input["command"] == "echo one"
+        {
+            t.input["command"] = long.clone().into();
+        }
+        if let Step::Approval(a) = step
+            && a.id == id
+        {
+            a.args["command"] = long.clone().into();
+        }
+    }
+    assert!(says(&app, w.appr_more) && says(&app, w.appr_all));
+    act(&mut app, |ui| {
+        ui.click(w.appr_all).expect("the button is there");
+    });
+    assert_eq!(app.approval_whole.as_deref(), Some(id.as_str()));
+    assert!(says(&app, w.appr_less) && !says(&app, w.appr_more));
+    // What the model wrote is shown with no character that would reorder it.
+    let shown: String = (0..40).map(|n| format!("echo {n}\n")).collect();
+    assert!(says(&app, &format!("$ {}", shown.trim_end_matches('\n'))) || says(&app, &format!("$ {shown}")));
+}

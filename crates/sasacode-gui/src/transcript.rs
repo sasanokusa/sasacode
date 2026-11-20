@@ -353,12 +353,16 @@ impl Tool {
             Kind::Edit => t.arg("path").map(|path| Change {
                 path: path.to_owned(),
                 created: Some(false),
-                diff: Diff::replace(t.arg("old_string").unwrap_or(""), t.arg("new_string").unwrap_or("")),
+                // Shown with no control character and none that would reorder a line.
+                diff: Diff::replace(
+                    &crate::plain::plain(t.arg("old_string").unwrap_or("")),
+                    &crate::plain::plain(t.arg("new_string").unwrap_or("")),
+                ),
             }),
             Kind::Write => t.arg("path").map(|path| Change {
                 path: path.to_owned(),
                 created: None,
-                diff: Diff::create(t.arg("content").unwrap_or("")),
+                diff: Diff::create(&crate::plain::plain(t.arg("content").unwrap_or(""))),
             }),
             _ => None,
         };

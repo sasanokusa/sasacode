@@ -14,6 +14,7 @@ use crate::app::{App, EFFORTS, INPUT, Msg, PERMISSIONS, shortcut};
 use crate::i18n::fill;
 use crate::icons::{Icon, icon};
 use crate::input::{Offer, OfferKind};
+use crate::plain::{plain, plain_line};
 use crate::theme::RADIUS_L;
 use crate::transcript::{Approval, Ask, Kind};
 use sasacode_protocol::event::UiAsk;
@@ -712,7 +713,24 @@ fn trust_card<'a>(app: &'a App, trust: &'a crate::cli::Trust) -> El<'a> {
     ]
     .spacing(6);
     for item in &trust.items {
+        let item = crate::plain::plain_line(item);
         body = body.push(text(format!("・{item}")).size(12.5).color(t.fg_2));
+    }
+    // What each item is: the commands, addresses, models and settings, in full.
+    let details = trust.details(w);
+    if !details.is_empty() {
+        body = body.push(
+            container(
+                text(details.join("\n"))
+                    .size(12)
+                    .font(mono())
+                    .color(t.fg_2)
+                    .wrapping(text::Wrapping::WordOrGlyph),
+            )
+            .width(Length::Fill)
+            .padding([8, 10])
+            .style(t.boxed(t.inset, t.inset, crate::theme::RADIUS)),
+        );
     }
     let mut buttons = row![].spacing(8).align_y(Alignment::Center);
     if trust.complete {
@@ -741,6 +759,15 @@ fn trust_card<'a>(app: &'a App, trust: &'a crate::cli::Trust) -> El<'a> {
 /// The text a plugin's question is answered with.
 pub const ASK: &str = "ask";
 
+/// How high the box of the approval card's call is, and about how many of its rows fit in it.
+const BOX_HEIGHT: f32 = 260.0;
+const BOX_ROWS: usize = 14;
+
+/// About how many rows `text` takes in the box: its lines, a long one wrapped every 90 characters.
+fn rows_of(text: &str) -> usize {
+    text.lines().map(|l| 1 + l.chars().count() / 90).sum()
+}
+
 fn approval_card<'a>(app: &'a App, approval: &'a Approval) -> El<'a> {
     let (t, s) = (app.t, app.s);
     let tool = app.chat.transcript.tool(&approval.call_id);
@@ -755,7 +782,7 @@ fn approval_card<'a>(app: &'a App, approval: &'a Approval) -> El<'a> {
     let mut head = row![
         icon(Icon::Alert, 15.0, t.warn),
         text(s.appr_title).size(13.5).font(bold()).color(t.fg),
-        tag(t, approval.tool.as_str(), t.inset, t.fg_2),
+        tag(t, plain_line(&approval.tool), t.inset, t.fg_2),
         Space::new().width(Length::Fill),
     ]
     .spacing(8)
@@ -778,13 +805,19 @@ fn approval_card<'a>(app: &'a App, approval: &'a Approval) -> El<'a> {
         .padding([8, 10])
         .style(t.boxed(t.inset, t.inset, crate::theme::RADIUS))
     };
-    // All of what is asked, however long: nothing is approved unseen.
-    let body: El<'a> = match (kind, tool.and_then(|tool| tool.change.as_ref())) {
-        (Kind::Bash, _) => code_block(format!("$ {}", arg("command").unwrap_or_default())).into(),
+    // All of what is asked, however long: nothing is approved unseen. What the model wrote is
+    // shown with no control character and none that would reorder it.
+    let (body, rows): (El<'a>, usize) = match (kind, tool.and_then(|tool| tool.change.as_ref())) {
+        (Kind::Bash, _) => {
+            let command = plain(arg("command").unwrap_or_default());
+            let rows = rows_of(&command);
+            (code_block(format!("$ {command}")).into(), rows)
+        }
         (Kind::Edit | Kind::Write, Some(change)) => {
+            let rows = change.diff.lines.len() + 2;
             let mut what = column![
                 row![
-                    text(short_path(&change.path, &app.cwd))
+                    text(short_path(&plain_line(&change.path), &app.cwd))
                         .size(12.5)
                         .font(mono())
                         .color(t.fg),
@@ -800,10 +833,16 @@ fn approval_card<'a>(app: &'a App, approval: &'a Approval) -> El<'a> {
                 // replaced is not known before the call runs.
                 what = what.push(text(s.appr_write).size(12).color(t.fg_3));
             }
-            what.into()
+            (what.into(), rows)
         }
-        _ => code_block(serde_json::to_string_pretty(&approval.args).unwrap_or_default()).into(),
+        _ => {
+            let args = plain(&serde_json::to_string_pretty(&approval.args).unwrap_or_default());
+            let rows = rows_of(&args);
+            (code_block(args).into(), rows)
+        }
     };
+    let whole = app.approval_whole.as_deref() == Some(approval.id.as_str());
+    let longer = rows > BOX_ROWS;
 
     // A rule of the tool's name alone allows any call of it (an MCP tool's, one with no path).
     let whole_tool = approval.rules.iter().any(|r| !r.contains('('));
@@ -816,8 +855,11 @@ fn approval_card<'a>(app: &'a App, approval: &'a Approval) -> El<'a> {
     // Each on a line of its own when the card is narrow, never cut.
     let reason = row![
         text(s.appr_reason).size(12).color(t.fg_3),
-        text(approval.reason.as_str()).size(12).font(mono()).color(t.fg_2),
-        text(clip_start(&approval.cwd, 44)).size(12).font(mono()).color(t.fg_3),
+        text(plain_line(&approval.reason)).size(12).font(mono()).color(t.fg_2),
+        text(clip_start(&plain_line(&approval.cwd), 44))
+            .size(12)
+            .font(mono())
+            .color(t.fg_3),
     ]
     .spacing(8)
     .align_y(Alignment::Center)
@@ -826,7 +868,7 @@ fn approval_card<'a>(app: &'a App, approval: &'a Approval) -> El<'a> {
     let rule: Option<El<'a>> = (!approval.rules.is_empty()).then(|| {
         let mut line = row![
             text(s.w().appr_rule).size(12).color(t.fg_3),
-            text(approval.rules.join(", "))
+            text(plain_line(&approval.rules.join(", ")))
                 .size(12)
                 .font(mono())
                 .color(t.fg_2)
@@ -866,20 +908,36 @@ fn approval_card<'a>(app: &'a App, approval: &'a Approval) -> El<'a> {
     }
     let buttons = buttons.wrap();
 
-    let mut card = column![
-        head,
-        // Scrolls inside the card, so the answers stay in reach under a long call.
+    // Scrolls inside the card, so the answers stay in reach under a long call; or shown whole.
+    let body: El<'a> = if whole {
+        body
+    } else {
         container(
             scrollable(body)
                 .direction(scrollable::Direction::Vertical(
-                    scrollable::Scrollbar::new().width(6).scroller_width(6).margin(1)
+                    scrollable::Scrollbar::new().width(6).scroller_width(6).margin(1),
                 ))
-                .style(t.scroll())
+                .style(t.scroll()),
         )
-        .max_height(260),
-        reason,
-    ]
-    .spacing(10);
+        .max_height(BOX_HEIGHT)
+        .into()
+    };
+    let mut card = column![head, body].spacing(10);
+    // Longer than the box: said, with the way to see it all.
+    if longer {
+        let mut more = row![].spacing(8).align_y(Alignment::Center);
+        if !whole {
+            more = more.push(text(s.w().appr_more).size(12).color(t.warn));
+        }
+        more = more.push(
+            button(text(if whole { s.w().appr_less } else { s.w().appr_all }).size(12))
+                .padding([2, 8])
+                .style(t.ghost(t.fg_2, false))
+                .on_press(Msg::ApprovalWhole(!whole)),
+        );
+        card = card.push(more.wrap());
+    }
+    card = card.push(reason);
     if let Some(rule) = rule {
         card = card.push(rule);
     }
