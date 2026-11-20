@@ -447,7 +447,7 @@ fn plugin_listing_in(home: &Path, cwd: &Path) -> anyhow::Result<Vec<ListedPlugin
 }
 
 /// `sasacode trust [--yes|-y] [--json]`; `args` is what follows `trust`. With `--yes` the project
-/// is trusted; the exit code is 1 only when it still is not.
+/// is trusted and the folder is one git may run in; the exit code is 1 only when it still is not.
 pub fn trust_command(args: &[String], cwd: &Path) -> anyhow::Result<i32> {
     trust_command_in(args, cwd, &sasacode_home(), &mut std::io::stdout().lock())
 }
@@ -463,9 +463,10 @@ fn trust_command_in(args: &[String], cwd: &Path, home: &Path, out: &mut dyn Writ
     let project = assess_files(cwd, read_config_files_from(&home.join("config.json"), cwd)?);
     if yes && !project.items.is_empty() && !is_trusted_in(home, &cwd_text, &project) {
         save_trust_in(home, &cwd_text, &project)?;
-        // Its git is trusted with it, as a run that finds the trust kept would decide.
-        let _ = sasacode_protocol::git_folders::add(home, cwd, &[]);
     }
+    // --yes also lets the shipped plugins run git here, whether or not anything needs trust: a
+    // headless user has no other way to allow it.
+    let git_added = yes && sasacode_protocol::git_folders::add(home, cwd, &[]).is_ok();
     let status = trust_status(home, cwd, &project)?;
     if parsed.flag("json") {
         print_json(out, &status)?;
@@ -489,6 +490,9 @@ fn trust_command_in(args: &[String], cwd: &Path, home: &Path, out: &mut dyn Writ
         if !status.trusted {
             writeln!(out, "{}", t!("trust it with: sasacode trust --yes"))?;
         }
+    }
+    if git_added && !parsed.flag("json") {
+        writeln!(out, "{}", t!("{cwd}: git may run here", cwd = cwd_shown))?;
     }
     Ok(if yes && !status.trusted { 1 } else { 0 })
 }

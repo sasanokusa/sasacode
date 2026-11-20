@@ -51,7 +51,7 @@ Subcommands:
   sasacode endpoint remove <name> [--project]
   sasacode endpoint list
   sasacode list models|commands|skills [--json]   what a run here can use (the GUI asks with --json)
-  sasacode trust [--yes] [--json]   is this folder trusted, and what would trust enable; --yes trusts it
+  sasacode trust [--yes] [--json]   is this folder trusted, and what would trust enable; --yes trusts it and lets git run here
   sasacode plugin list --json       the bundled plugins and whether each is on (the GUI asks)
   sasacode login [status|logout]    use a ChatGPT plan instead of an API key (openai-codex/… models)
   sasacode update [--check] [tag]   download and install the newest release (checksum-verified)

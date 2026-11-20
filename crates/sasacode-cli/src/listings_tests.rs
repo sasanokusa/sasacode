@@ -628,13 +628,20 @@ fn a_plain_folder_needs_no_trust() {
             "pluginSettings": {},
         })
     );
+    assert!(!sasacode_protocol::git_folders::is_known(&d.home, &d.proj));
     assert_eq!(
         d.trust(&["--yes"]),
-        (0, format!("{}: nothing in this project needs trust\n", d.cwd()))
+        (
+            0,
+            format!(
+                "{0}: nothing in this project needs trust\n{0}: git may run here\n",
+                d.cwd()
+            )
+        )
     );
-    // --yes had nothing to save, and nothing makes the folder one git may run in.
+    // --yes had nothing to save, but the folder is one git may run in from now on.
     assert!(!d.home.join("trust.json").exists());
-    assert!(!sasacode_protocol::git_folders::is_known(&d.home, &d.proj));
+    assert!(sasacode_protocol::git_folders::is_known(&d.home, &d.proj));
 }
 
 #[test]

@@ -292,7 +292,7 @@ The bundled `git-context` and `jev-guard` run git. A repository's config (`.git/
 
 - With either plugin on, starting on a terminal in a folder not on the list asks once whether git may run in it. Yes adds it to the list; no runs no git in that run (the no is not kept, so the next run asks again).
 - A headless run (`-p`), or one whose standard input is not a terminal, asks nothing and runs git only in a folder on the list.
-- Trusting the project at the trust question (`sasacode trust --yes` too), or allowing it in the GUI, also adds it. `--trust-project` allows git for that run only, when something in the project needs trust.
+- Trusting the project at the trust question, or allowing it in the GUI, also adds it. For headless use only, `sasacode trust --yes` in the folder adds it, whether or not anything needs trust. `--trust-project` allows git for that run only, when something in the project needs trust.
 - The first time, when there is no list yet, the folders sasacode keeps conversations for (and, from the GUI, the folders opened in it) are put on it.
 
 ## Plugins, MCP and Skills

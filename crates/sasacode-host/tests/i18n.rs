@@ -175,7 +175,10 @@ fn the_tables_hold_every_ts_entry() {
     // MCP entry that starts nothing itself or lies on a global server: two English texts. Then the
     // question before git is run in a folder: one English text.
     assert_eq!(TO_EN.len(), 273 + 1 + 1);
-    assert_eq!(TO_JA.len(), 158 + 3 - 1 + 4 + 9 + 10 - 3 + 6 + 1 + 7 + 1 + 2 + 2 + 1);
+    assert_eq!(
+        TO_JA.len(),
+        158 + 3 - 1 + 4 + 9 + 10 - 3 + 6 + 1 + 7 + 1 + 2 + 2 + 1 + 1
+    );
 }
 
 #[test]
