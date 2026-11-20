@@ -4,7 +4,7 @@
 //! Generated from `packages/host/src/messages-en.ts` (every entry verbatim, in its order; a key the TS
 //! object listed twice appears once, with the value that won).
 
-/// 274 entries.
+/// 276 entries.
 pub static TO_EN: &[(&str, &str)] = &[
     ("↓ 最新へ (ctrl+end)", "↓ latest (ctrl+end)"),
     (
@@ -636,5 +636,13 @@ pub static TO_EN: &[(&str, &str)] = &[
     (
         "次回の起動では環境変数 SASACODE_LANG={env} が優先されます",
         "At the next start, the SASACODE_LANG={env} environment variable takes precedence",
+    ),
+    (
+        "RustXNGは{pinned}だけを入れられます（{tag}のチェックサムはsasacodeが持っていません）。新しい版は、sasacodeの更新で入ります",
+        "only RustXNG {pinned} can be installed (sasacode has no checksum for {tag}); a newer one comes with an update of sasacode",
+    ),
+    (
+        "RustXNG {tag}の{target}向けのチェックサムはsasacodeが持っていません",
+        "sasacode has no checksum for RustXNG {tag} on {target}",
     ),
 ];

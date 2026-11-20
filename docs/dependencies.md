@@ -19,7 +19,6 @@
 | `bytes` | ai、bundled | ストリームで受け取る本文 | — |
 | `http` | bundled | `diagnostics`が観測した応答を、元のバイト列のまま組み立て直す | — |
 | `url` | ai、bundled、tui、cli | URLの組み立てと解釈 | — |
-| `percent-encoding` | bundled | URLのエンコードとデコード（RustXNGのリリースの名前など） | — |
 | `regex` | ai、plugin-api、agent、bundled、tui、cli | 正規表現 | — |
 | `fancy-regex` | plugin-api、bundled | TS版の正規表現が使っていた先読み・後読み・後方参照（`regex`にはない。`rust/PORTING.md`）。引数の検証の`pattern`と`text-tool-calls`など | — |
 | `globset` | agent、bundled | 権限ルールのパス（`edit(src/**)`など）の照合と、jev-guardでのglobの展開（TS版の`Bun.Glob`の代わり） | — |
