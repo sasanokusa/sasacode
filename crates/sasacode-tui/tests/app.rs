@@ -1301,6 +1301,14 @@ async fn a_paste_while_the_conversation_search_is_open_goes_to_the_search_not_th
     .await;
     s.term.key("ctrl+shift+f").await;
     s.term.paste("hello").await;
+    // The search showing it, with its (empty) result, first: drawn late, that frame landed after the
+    // mark below (macOS CI).
+    let searched = until(|| {
+        let t = s.term.text(0);
+        t.find("hello")
+            .is_some_and(|at| t[at..].contains("一致するものがありません"))
+    });
+    assert!(searched.await, "{}", s.term.text(0));
     s.term.key("escape").await; // closes the search
     let from = s.term.mark();
     s.term.typ("!").await;

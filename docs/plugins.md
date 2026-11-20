@@ -252,6 +252,42 @@ description: Write release notes from the commits since the last tag.
 { "plugins": { "enabled": ["free-search"] } }
 ```
 
+### hashline-edit
+
+`read` の各行の先頭を `<行番号>:<2桁ハッシュ>|` に変え、`hash_edit` ツールを足す。小型モデルが空白やインデントの一字一句コピーに失敗する問題を抑える。誤って `N:hh|` を付けたまま `write` を呼んだ場合は接頭辞を自動で外す。
+
+2桁のハッシュでは同じ内容の行（`}`など）を区別できないため、`hash_edit`はハッシュの一致だけでなく、範囲内のすべての行がそのエージェントに見せた位置のままであることを確かめる。自分の`hash_edit`以外（`edit`・`write`・別のエージェント・利用者）でファイルが変わると、そのファイルのアンカーはすべて無効になり、もう一度`read`が必要になる。`slim-profile`と併用したときは、切り詰め後に残った行にだけアンカーを付ける。
+
+判断がつかないときは編集せず、読み直しを求める。そのエージェントがそのファイルを読んでいない、または記録が消えた（多数のファイルやサブエージェントを扱った後、`/resume`の後など）ときや、どのエージェントの呼び出しか特定できないときがこれに当たる。2MBを超えるファイルにはアンカーを付けず、`hash_edit`も受け付けない（`edit`を使う）。同じファイルへの`hash_edit`は1つずつ実行し、書き込む直前にファイルが変わっていれば書かずに止める。並行するサブエージェントの編集が互いを消さないようにするため。
+
+### clean-retry
+
+編集エラー（`consecutive_edit_errors`、既定4回）やテスト失敗（`triggerFailures`、既定3回）が続いたとき、変更したファイルをタスク開始前に自動で戻し、失敗の要約だけを残した綺麗なコンテキストでやり直す。`maxRetries`（既定 1）、`triggerFailures`（既定 3）、`triggerEditErrors`（既定 4）、`maxFileKB`（既定 1024）を設定できる。
+
+### slim-profile
+
+小型ローカルモデル向けに、`subagent`・`todo`・`goal`・`web-fetch`・`web-search`・`browsr`・`background-sessions`・`progress-notes` と Skills（`dropSkills: false` で維持）を自動で外し、システムプロンプトへ簡潔な行動規則を足し、`read`（`readMaxChars`、既定 16000）・`bash`（`bashMaxChars`、既定 8000）の単発出力の上限を切り詰める。
+
+### ローカルモデル向けの既定プラグイン（thinking-budget / action-nudge / context-slim）
+
+`thinking-budget`・`action-nudge`・`context-slim`の3つは既定で有効だが、クラウドモデルでは挙動を変えないよう**ローカルモデルだけで動作する**。ローカルモデルとみなすのは、`model.server`が設定されている（`ollama` / `llamacpp` / `lmstudio`）、または`model.baseUrl`がこのマシンやローカルネットワークを指す（プライベートIP、`localhost`などドットのない名前、`.localhost` / `.local` / `.lan` / `.internal`で終わる名前）場合。ただし、ローカルOllama経由で呼び出すOllamaクラウドモデル（モデルIDの末尾が`-cloud`、または`:cloud`・`-cloud:`を含むもの）はクラウド扱いとして対象外になる。
+
+- **thinking-budget**：ローカルモデルの思考ブロックが上限（`localMaxChars`、既定`12000`。モデルや用途に合わせて設定で引き上げられる）を超えると生成を止め、ツール呼び出しや最終回答へ進むよう促す。`maxChars`や`cloudMaxChars`（既定`0`）を明示したときはクラウドモデルにも効く（`maxStopsPerRun`、既定`2`）。
+- **action-nudge**：ローカルモデルがツールを呼ばずにターンを終えたとき、応答の最終文・最終行だけを見て実行意図の宣言（「確認します」「Let me check...」など）であればすぐツールを呼ぶよう促す（`maxNudges`既定`2`、`maxChars`既定`1200`）。疑問文、完了報告、長文解説、「必要であれば」「必要なら」「ご希望なら」「よろしければ」「if you want」「if you'd like」「once you confirm」「let me know」などの条件付き提案には反応しない。
+- **context-slim**：ローカルモデルで推定トークン数がコンテキスト長の閾値（`triggerRatio`、既定`0.55`）を超えたとき、直近の履歴（`keepRecent`、既定`6`）を残したまま古い大きな結果だけを`maskStep`（既定`4`）刻みで短い注記に畳み、ステップ境界のあいだはKVキャッシュを保つ（`minChars`、既定`1200`）。対象は`read`（`SKILL.md`の読み取りは除外）・`bash`・`find_files`・`search_text`（および`grep` / `glob` / `ls`）の結果だけで、`task`によるサブエージェント報告やその他のツール結果は畳まない。
+
+```json
+{
+  "plugins": {
+    "enabled": ["slim-profile", "hashline-edit", "clean-retry"],
+    "settings": {
+      "thinking-budget": { "localMaxChars": 12000 },
+      "context-slim": { "triggerRatio": 0.55, "maskStep": 4 }
+    }
+  }
+}
+```
+
 ## API診断プラグイン
 
 同梱の`diagnostics`は、読み込むが記録は止まっている。`/diagnostics on` / `off`でこの起動中だけ切り替え、`show`で直近100件を出し、`clear`で消す。設定は`plugins.settings.diagnostics: {enabled: false, persist: false}`。`persist: true`を明示したときだけ、セッションログに診断のメタデータを足す。

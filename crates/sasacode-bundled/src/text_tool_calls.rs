@@ -279,7 +279,7 @@ pub fn extract_text_calls(text: &str) -> Option<TextCalls> {
 
 /// A server on this machine or the local network: a private address, or a name without a dot or
 /// with a local suffix.
-fn local_server(base_url: Option<&str>) -> bool {
+pub(crate) fn local_server(base_url: Option<&str>) -> bool {
     let host = url::Url::parse(base_url.unwrap_or(""))
         .ok()
         .and_then(|u| u.host_str().map(str::to_string))

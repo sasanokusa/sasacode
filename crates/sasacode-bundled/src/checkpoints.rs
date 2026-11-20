@@ -27,8 +27,8 @@ use sasacode_plugin_api::{Command, NotifyLevel, PluginApi, SelectOption, ToolKin
 use crate::repair::js::{js_trim, num_setting};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-struct Change {
-    path: String,
+pub(crate) struct Change {
+    pub(crate) path: String,
     /// 退避した内容（戻せるときだけ）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     before: Option<String>,
@@ -56,7 +56,7 @@ impl Change {
     fn created(&self) -> bool {
         self.created == Some(true)
     }
-    fn skipped(&self) -> bool {
+    pub(crate) fn skipped(&self) -> bool {
         self.skipped == Some(true)
     }
     fn content(&self) -> Vec<u8> {
@@ -102,7 +102,7 @@ fn stack(api: &PluginApi) -> Vec<Checkpoint> {
         .collect()
 }
 
-fn snapshot(path: &str, max_kb: f64) -> Change {
+pub(crate) fn snapshot(path: &str, max_kb: f64) -> Change {
     let p = Path::new(path);
     if !p.exists() {
         return Change {
@@ -147,9 +147,9 @@ fn snapshot(path: &str, max_kb: f64) -> Change {
     }
 }
 
-/// 1件の変更を巻き戻す。ファイルごとに1行の報告。
-fn restore(c: &Checkpoint) -> Vec<String> {
-    c.changes
+/// 変更リストを巻き戻す。ファイルごとに1行の報告。
+pub(crate) fn restore_changes(changes: &[Change]) -> Vec<String> {
+    changes
         .iter()
         .map(|ch| {
             let path = &ch.path;
@@ -164,12 +164,22 @@ fn restore(c: &Checkpoint) -> Vec<String> {
                     std::fs::remove_file(path)?;
                     return Ok(t!("{path}: 削除しました（変更前はなかったため）", path = path));
                 }
+                if let Some(parent) = Path::new(path).parent()
+                    && !parent.as_os_str().is_empty()
+                {
+                    let _ = std::fs::create_dir_all(parent);
+                }
                 std::fs::write(path, ch.content())?;
                 Ok(t!("{path}: 戻しました", path = path))
             })();
             done.unwrap_or_else(|e| t!("{path}: 戻せませんでした（{error}）", path = path, error = e))
         })
         .collect()
+}
+
+/// 1件の変更を巻き戻す。ファイルごとに1行の報告。
+fn restore(c: &Checkpoint) -> Vec<String> {
+    restore_changes(&c.changes)
 }
 
 /// `new Date(at).toLocaleTimeString()` in the interface's language.

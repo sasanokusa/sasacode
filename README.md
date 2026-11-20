@@ -293,8 +293,13 @@ sasacode -m llama/<モデル名>
 | `tool-repair` | 検証の前に、形式の崩れたツール呼び出しを直す。直す対象は、JSONの崩れ（末尾カンマ、閉じ括弧、クォートのないキー、`True`/`None`、コードフェンス、二重エンコード）、キー名（`file` → `path`）、型（`"20"` → `20`）、ツール名のtypo、MCPの接頭辞を省いた名前（`get_file_contents` → `mcp__github__get_file_contents`）と、ほかのハーネスでの組み込みツールの名前（`read_file`、`str_replace_editor`、`run_command`など。`str_replace_editor`の`command`が`view` / `create`なら`read` / `write`に回す）。候補が1つに絞れるときだけ直す。直したことはモデルに短く伝え、履歴には直した後の形を残し、元の出力はセッションに記録する |
 | `text-tool-calls` | ツール呼び出しを本文に書いてしまう応答（llama.cppなどで、チャットテンプレートがtool callに対応していないとき）から呼び出しを拾い、実行する。対象は、このマシンかローカルネットワークで動くモデル（`baseUrl`がプライベートアドレス、`localhost`などドットのない名前、`.localhost` / `.local` / `.lan` / `.internal`で終わる名前）だけ。クラウドのAPIのモデルはネイティブに呼び出せるので、本文の呼び出しは例とみなす（`plugins.settings.text-tool-calls`の`always: true`で、どのモデルからも拾う）。拾う形は`<tool_call>{"name": …, "arguments": …}</tool_call>`（Qwen / Hermes）、`{"name": …, "arguments": …}`（または`"parameters"`）だけを入れた`json`のコードフェンス、`<function=名前>{…}</function>`（Llama 3.x）。対象は、ネイティブの呼び出しがなく、途中で切れていない応答の、本文の末尾にある呼び出しだけ。後ろに文が続く例やコードブロック（閉じていないものも）の中の例は拾わず、`json`のコードフェンスは前の文が300字以内のときだけ拾う。ツール名は既知のものか、tool-repairと同じ規則（typoは除く）で1つに決まるものだけで、ほかは応答に触れない。署名付きのthinkingを含む応答にも触れない。崩れたJSONはtool-repairが直す。読み取り以外の呼び出しは、例かもしれないので、autoモード以外では先に確認する（editsモードなら確認なしで動く書き込みや編集も、agentモードでagent-judgeが判定するものも）。確認できないヘッドレス（`sasacode -p`）ではそれらを実行しないので、autoモードかallowルールを使う。拾ったことはモデルに伝え（前の文に残って実行しなかった呼び出しがあれば、コードの中の例を除いたその数も）、元の本文はセッションに記録する。既定で有効（拾わなければ、この形の応答はツールを使わない最終回答として扱われ、実行が終わるため） |
 | `repetition-guard` | 生成中に同じ文を繰り返し始めたら止め、1回分だけ残して、続きを促す（「なるほど。」のような短い繰り返しも、長く続けば止める） |
+| `thinking-budget` | ローカルモデルだけ（`server`設定済み、または`baseUrl`がローカル／プライベートアドレスのもの。ID末尾が`-cloud`や`:cloud`/`-cloud:`を含むOllamaクラウドモデルは除外。`maxChars`や`cloudMaxChars`明示時はクラウドでも有効）の思考ブロックが上限（`localMaxChars`、既定12,000文字。設定で引き上げ可）を超えたら生成を止め、手元の情報でツール呼び出しや回答へ進むよう促す |
+| `error-hints` | `read` / `edit` のファイル未検出時に近い実在パス（`Did you mean:`）、`Unknown tool` が Skill 名のときは `SKILL.md` のパス（または類似ツール名）、テスト失敗時はインポートやスタックトレースからテスト対象の実装ファイル候補を追記する |
 | `loop-guard` | 同じツール呼び出し（またはA→B→A→Bのような3手までの周期）が同じ結果で続いたら、3回目に注意を添え、5回目からはその周期の呼び出しをすべて止める（ファイルを変更するか、次の依頼で解除）。同じ応答の中で、間に状態を変えうる呼び出しがない重複は1回だけ実行する。同じエラーの繰り返し（引数の不備などで実行されなかった呼び出しを含む）も知らせる。ツールが1件も実行されないターンが5回続いたら、実行を止める |
 | `write-guard` | `write`の内容が`read`の出力の写しなら、行番号を外して書き込み、外したことをモデルに伝える（どの行も空白で始まる行番号を持ち、1つずつ増えているときだけ。行の抜けや追加で数が飛んでいれば書き込まない）。行番号の数字とタブだけを消して、桁揃えの空白（1〜5個）が全行の先頭に残った形でファイルを書き戻したときも、その空白を外して伝える。20行以上ある既存のファイルを半分未満の行数で上書きしようとしたら、書き込まずに`edit`を使うよう返す。同じ内容の`write`がもう一度来れば、そのまま書き込む。`lineNumbers: false` / `shrink: false`で外し、`minLines`で行数を変える |
+| `search-tools` | `.gitignore` と `.git` / `node_modules` / `target` などを除いて件数上限つき（既定 50 件、最大 200 件）で探す `find_files`・`search_text` ツールを足す |
+| `syntax-check` | `edit` / `write` / `hash_edit` 成功直後に構文を軽く確かめ（JSON、Rust、JS/TSは `bun` / `node`、Pythonは `python3`）、その編集で壊れたときだけ該当行の抜粋付きで `[syntax-check]` の注意をその場で返す。外部の検査はプロジェクト外の専用ディレクトリで動き、プロジェクト内のコードは実行しない |
+| `action-nudge` | ローカルモデルだけ（判定は`thinking-budget`と同じ）が、最終文・最終行で「確認します」「Let me check...」のようにやるつもりだけ書いてツールを呼ばずにターンを終えたとき、すぐツールを呼ぶよう促す（1回の依頼につき既定2回まで。質問、「必要であれば」「if you want」などの条件付き提案、完了報告、長文解説には反応しない） |
 | `agents-md` | `~/.sasacode/AGENTS.md` と、リポジトリのルートから作業ディレクトリまでの `AGENTS.md` を読む（CLAUDE.mdは読まない） |
 | `compaction` | コンテキストが 80% に達するか上限に来たら、古い履歴を要約する。`/compact` で手動実行。要約を頼むリクエストはコンテキスト長に収まる大きさにするので、小さいコンテキスト長のローカルモデルでも動く（要約はその15%まで、履歴が入りきらなければ古い部分を省く）。自動の圧縮では、直近の履歴（コンテキスト長の15%、最大4万トークン）を要約せずにそのまま残す。1つの指示のあとツール呼び出しが長く続いていても、直近の手順は残る。`/compact` は全部を要約する。画面の会話はどちらでもそのまま残る（再開したときも、要約する前の会話から表示する） |
 | `subagent` | `task` ツール。別の履歴を持つサブエージェントに作業を任せ、報告だけを受け取る（1ターンに複数あれば並行して動く）。`background: true` なら待たずに作業を続け、終わると報告がメッセージで届く（メインをEscで止めると一緒に止まる）。`task_status`・`task_send`・`task_stop` で進み具合を見る・指示を足す・止める。途中で失敗したときは理由と最後の発言・ツール呼び出しを返す。ユーザーは `/task`（一覧・詳細、`/task send <id> <内容>`、`/task stop <id>`）で同じことができる。サブエージェントは `task` 系・`todo_write`・`set_goal` を使えない（呼び出し元のTODOとゴールを書き換えないため） |
@@ -314,10 +319,11 @@ sasacode -m llama/<モデル名>
 | `gui` | `/gui` コマンド。デスクトップGUI（`sasacode-gui`、開発中）をこのフォルダで開き、進行中の会話を読み込んだ状態にする。`sasacode-gui` は、`plugins.settings.gui.command`、`sasacode gui install`で入れたもの、PATHの順に探す。開いたあとは、TUIとGUIのどちらか一方で続ける（互いの発言は読み込まない） |
 | `image-attach` | 画像対応モデルにメッセージと画像を送る。スクリーンショットは ⌘V（届かないターミナルでは ctrl+v）、ファイルはターミナルへドラッグ&ドロップすると、その場で読み込んで入力欄に `[Image #1]` と出る。続けてメッセージを書いて送れば一緒に届く。ほかに `@パス`、`/image パス…`、`/image` だけならクリップボード（macOS、Windows、Linuxは `wl-paste` か `xclip`）。形式は中身で判定（PNG / JPEG / GIF / WebP）、1枚 5 MB・1メッセージ 8 枚まで。`plugins.settings.image-attach` の `dropPaths: false` で `@` なしのパスを無視 |
 | `image-slim` | 履歴の画像を、毎回のリクエストで小さく送る。プロバイダーがどのみち縮める大きさ（約105万画素、`maxPixels`）を超える画像は縦横比を保って縮め、透明度のないPNGで100 KB以上のものはJPEG（品質90）にする。ツールが返した画像はその場で縮めてセッションに残し、座標を元の大きさに戻す倍率をモデルに伝える。古い画像は送らず短い注記に置き換え、新しい4〜11枚だけを送る（`keepImages`、`dropStep`。8枚ずつまとめて省くので、その間はプロンプトの先頭が変わらずキャッシュが効く）。最後のメッセージの画像は必ず送り、画像の合計が8 MiBを超えればさらに省く。`/image-slim` で直近のリクエストの枚数を出す。`models` で効かせるモデルを絞る |
+| `context-slim` | ローカルモデルだけ（判定は`thinking-budget`と同じ）で、推定トークン数がコンテキスト長の閾値（既定55%）を超えると、直近の履歴を残したまま古い大きなツール出力（`read`〔`SKILL.md`を除く〕・`bash`・`find_files`・`search_text`・`grep`/`glob`/`ls`。`task`のサブエージェント報告やその他のツール結果は対象外）だけを`maskStep`（既定4件）刻みで短い注記に畳み、ステップ境界の間はプロンプト先頭を変えずKVキャッシュを保つ |
 | `diagnostics` | APIの診断（既定で無効）。`/diagnostics on` で、リクエストの成否・停止理由・トークン数などのメタデータだけを記録し、`show` で直近100件を見る。本文や秘密値は記録しない |
 | `skills` / `mcp` | Agent SkillsとMCPのアダプタ |
 
-次の6つも同梱しているが、既定では読み込まない（0.15までは別に入れるプラグインだった）。`plugins.enabled`に名前を書くと読み込む。`plugins.disabled`にも書いてあれば、そちらが優先する。プロジェクトの設定に書いた`plugins.enabled`は、プロジェクトを信頼するまで使わない。
+次の9つも同梱しているが、既定では読み込まない（最初の6つは0.15までは別に入れるプラグインだった）。`plugins.enabled`に名前を書くと読み込む。`plugins.disabled`にも書いてあれば、そちらが優先する。プロジェクトの設定に書いた`plugins.enabled`は、プロジェクトを信頼するまで使わない。
 
 ```json
 { "plugins": { "enabled": ["git-context", "project-checks"] } }
@@ -325,12 +331,15 @@ sasacode -m llama/<モデル名>
 
 | 名前 | 内容 |
 | --- | --- |
+| `hashline-edit` | `read` の各行に `<行番号>:<2桁ハッシュ>|` を付け、空白の完全一致なしで編集できる `hash_edit` ツールを足す。`write` に混入した `N:hh|` 接頭辞も外す（[詳しく](docs/plugins.md#hashline-edit)） |
 | `ask-user` | `ask_user`ツール。モデルが推測で進めずに、選択肢つきの質問（1回に1〜4問）であなたに判断を仰ぐ。ヘッドレスでは尋ねず、モデルに自分で決めて前提を書くよう返す（[詳しく](docs/plugins.md#ask-user)） |
 | `git-context` | `git_context`ツール。レビューに要るGitの状態・変更の統計・パッチを、1回の呼び出しで返す。読み取りだけで、Gitが要る（[詳しく](docs/plugins.md#git-context)） |
 | `project-checks` | `project_checks`・`project_check`ツールと`/checks`。テスト・lint・型検査などを名前で実行し、PASS / FAIL、終了コード、時間、ログを返す。bashと同じ権限ルールで判定する。`verifyOnFinish`に名前を書いた検査は、モデルが作業を終えようとしたときにも確認なしで実行し、落ちていれば出力の末尾を返して続けさせる（[詳しく](docs/plugins.md#project-checks)） |
 | `workflows` | `/workflow`。レビュー・失敗の調査・公開前の確認など、繰り返し使う依頼を呼び出す。設定で足す・上書きする・外すことができる（[詳しく](docs/plugins.md#workflows)） |
 | `jev-guard` | 実行前のツール呼び出しをJevに判定させる。有効にする方法は上の「Jevによる実行前判断」にある（[詳しく](docs/plugins.md#jev-guard)） |
 | `free-search` | MCPサーバー`uvx free-search-mcp`を`free-search`という名前でつなぐ（キー不要でローカルで動くWeb検索。複数の検索エンジン、ページの取得、文書の読み取り）。ツールは`mcp__free-search__<tool>`になる。[uv](https://docs.astral.sh/uv/)が要る（[詳しく](docs/plugins.md#free-search)） |
+| `clean-retry` | 編集エラーやテスト失敗が連続したとき、変更したファイルをタスク開始前に巻き戻し、失敗要約だけを残した綺麗な履歴でやり直す（[詳しく](docs/plugins.md#clean-retry)） |
+| `slim-profile` | 小型ローカルモデル向けに補助的なプラグイン群（`subagent`、`todo`、`goal`、Web系、Skills など）を自動で省き、指示の簡潔化と `read` / `bash` 単発出力の上限カットを行う（[詳しく](docs/plugins.md#slim-profile)） |
 
 ### MCP
 
