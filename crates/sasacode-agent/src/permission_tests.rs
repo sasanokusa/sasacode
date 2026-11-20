@@ -381,7 +381,7 @@ fn globs_match_as_bun_glob_did() {
         if WINDOWS && path.contains('\\') {
             continue;
         }
-        if glob(pattern, None).is_match(path) != want {
+        if glob(pattern, None).is_match(path.as_bytes()) != want {
             wrong.push(format!("{pattern:?} {path:?}: bun {want}"));
         }
     }
@@ -399,6 +399,11 @@ fn globs_match_as_bun_glob_did() {
 #[test]
 fn backslash_escapes_read_as_bun_glob_did() {
     for (pattern, path, want) in [
+        ("/p/s?", "/p/sß", true),
+        ("/p/s??", "/p/sß", false),
+        ("/p/[!a]x", "/p/éx", true),
+        ("/p/[é]x", "/p/éx", true),
+        ("/p/日?/x", "/p/日本/x", true),
         ("/p/a\\b", "/p/a\u{8}", true),
         ("/p/a\\b", "/p/ab", false),
         ("/p/a\\n", "/p/a\n", true),
@@ -410,7 +415,11 @@ fn backslash_escapes_read_as_bun_glob_did() {
         ("/p/\\{a,b}", "/p/{a,b}", true),
         ("/p/\\{a,b}", "/p/a", false),
     ] {
-        assert_eq!(glob(pattern, None).is_match(path), want, "{pattern:?} {path:?}");
+        assert_eq!(
+            glob(pattern, None).is_match(path.as_bytes()),
+            want,
+            "{pattern:?} {path:?}"
+        );
     }
 }
 
@@ -644,6 +653,31 @@ fn deny_rules_fold_case_where_the_working_directory_does_not() {
     // Windows always folds case.
     let want = if cfg!(windows) { Allow } else { Ask };
     assert_eq!(d(&ask, &call(read_tool(), "DOCS/a", CWD)), want);
+}
+
+/// Deny and ask rules hit as written too: folding alone would take `S` out of `[!a-z]` and `ß` out of `?`. Allow
+/// rules are no wider for it.
+#[cfg(not(windows))]
+#[test]
+fn deny_and_ask_rules_hit_as_written_or_folded() {
+    let p = policy(
+        M::Auto,
+        json!({ "deny": ["read([!a-z]x)", "read(secret?)"], "ask": ["edit([!a-z]x)"] }),
+    );
+    let check = |tool: ToolRef, path: &str| d(&p, &call(tool, path, CWD));
+    assert_eq!(check(read_tool(), "Sx"), Deny);
+    assert_eq!(check(read_tool(), "secretß"), Deny);
+    assert_eq!(check(read_tool(), "SECRETS"), Deny);
+    assert_eq!(check(edit_tool(), "Sx"), Ask);
+    assert_eq!(check(read_tool(), "sx"), Allow);
+    let allow = policy(M::Ask, json!({ "allow": ["read([!a-z]x)", "read(secret?)"] }));
+    let check = |path: &str| d(&allow, &call(read_tool(), path, CWD));
+    assert_eq!(check("Sx"), Allow);
+    assert_eq!(check("secrets"), Allow);
+    assert_eq!(check("sx"), Ask);
+    // As written, as before: `ß` is one letter to `?`, and no case is folded.
+    assert_eq!(check("secretß"), Allow);
+    assert_eq!(check("SECRETS"), Ask);
 }
 
 /// A folded rule reads its backslashes as written: `\B` is a `B` (so any case of it), `\b` stays a backspace.
