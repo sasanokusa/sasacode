@@ -213,23 +213,6 @@ pub fn listing(program: &Path, cwd: &Path, lang: Option<String>) -> Task<Msg> {
 }
 
 impl App {
-    /// Whether git may be run here unasked (the git tab's status, the snapshots of a turn, the
-    /// files git lists): once the CLI has said the folder is trusted, or it is used in this
-    /// window. A repository's own config can name programs that such a run starts.
-    pub(crate) fn git_allowed(&self) -> bool {
-        self.trust_once || self.listing.trust.as_ref().is_some_and(|t| t.trusted)
-    }
-
-    /// What was held back until git could be run, once it can: the repository read, the
-    /// conversations of merged branches looked for, the files listed again by git.
-    fn git_now_allowed(&mut self, before: bool) -> Task<Msg> {
-        if before || !self.git_allowed() {
-            return Task::none();
-        }
-        self.files_asked = false;
-        Task::batch([self.refresh_git(), self.sweep()])
-    }
-
     /// Asks the CLI again what a run in this folder can use.
     pub(crate) fn relist_cli(&mut self) -> Task<Msg> {
         listing(&self.program, &self.cwd, self.prefs.more.lang.clone())
@@ -261,9 +244,8 @@ impl App {
     pub(crate) fn update_cli(&mut self, msg: Msg) -> Result<Task<Msg>, Msg> {
         let task = match msg {
             Msg::Listed(listing) => {
-                let before = self.git_allowed();
                 self.listing.merge(*listing);
-                self.git_now_allowed(before)
+                Task::none()
             }
             Msg::Relist => self.relist_cli(),
             Msg::TrustFolder => {
@@ -275,12 +257,11 @@ impl App {
             }
             Msg::Trusted(answer) => match answer {
                 Ok(text) => {
-                    let before = self.git_allowed();
                     if let Ok(trust) = serde_json::from_str::<Trust>(text.trim()) {
                         self.listing.trust = Some(trust);
                     }
-                    // Its plugins, commands and skills are used from now on.
-                    Task::batch([self.relist_cli(), self.git_now_allowed(before)])
+                    // Its plugins, commands and skills are used from now on, and git is run here.
+                    Task::batch([self.relist_cli(), self.know_git_here()])
                 }
                 Err(error) => {
                     self.toast = Some(error);

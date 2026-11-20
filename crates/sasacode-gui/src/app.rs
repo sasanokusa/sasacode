@@ -949,6 +949,8 @@ pub enum Msg {
     Indexed(Vec<(PathBuf, std::time::SystemTime, String)>),
     /// The repository looked at again, and as it was found.
     GitRefresh,
+    /// The user asked for this folder's repository to be read: git is run here from now on.
+    GitShow,
     GitStatus(Box<crate::git::Status>),
     /// Something done from the git tab, and what came of it.
     GitDo(crate::git::Op),
@@ -1048,6 +1050,7 @@ impl App {
             .map(crate::composer::read_history)
             .unwrap_or_default();
         app.reload_sessions();
+        app.seed_git_folders();
         if let Some(home) = &app.home {
             crate::rows::purge_trash(home);
         }

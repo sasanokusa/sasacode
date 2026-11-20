@@ -25,6 +25,7 @@ mod icons;
 mod input;
 mod jobs;
 mod keys;
+mod known;
 mod layout;
 mod link;
 mod list;

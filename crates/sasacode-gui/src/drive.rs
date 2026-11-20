@@ -1747,7 +1747,7 @@ fn the_git_tab_shows_the_branch_or_a_commit_side_by_side_with_files_marked_viewe
     let mut app = window("ja");
     app.tab = Tab::Git;
     app.insp = true;
-    app.listing.trust = listed_trusted().trust;
+    app.know_git(&app.cwd.clone());
     app.git = crate::git::Status {
         repo: true,
         branch: Some("topic".into()),
@@ -1828,7 +1828,7 @@ fn the_git_tab_shows_what_the_shown_conversations_last_turn_changed() {
     let w = crate::words::JA;
     app.tab = Tab::Git;
     app.insp = true;
-    app.listing.trust = listed_trusted().trust;
+    app.know_git(&app.cwd.clone());
     app.git = crate::git::Status {
         repo: true,
         branch: Some("topic".into()),
@@ -4232,28 +4232,69 @@ fn the_approval_card_shows_the_rule_always_adds_and_when_it_is_the_whole_tool() 
 }
 
 #[test]
-fn git_is_not_run_in_a_folder_until_the_cli_says_it_is_trusted() {
+fn git_is_not_run_in_a_folder_until_it_is_known() {
     let mut app = window("ja");
     let w = crate::words::JA;
     app.tab = Tab::Git;
-    // Not known yet: nothing is run, and the tab says why.
-    assert!(app.listing.trust.is_none() && !app.git_allowed());
+    // Not known: nothing is run, and the tab says why and offers to.
+    assert!(!app.git_allowed());
     assert_eq!(app.refresh_git().units(), 0);
-    assert!(says(&app, w.git_after_trust) && !says(&app, w.git_init));
-    // The folder's config waits for trust: still nothing.
-    let task = app.update(Msg::Listed(Box::new(listed())));
-    assert_eq!(task.units(), 0);
-    assert!(!app.git_allowed() && app.refresh_git().units() == 0);
-    // Used in this window: the repository is read now.
-    let task = app.update(Msg::TrustOnce);
-    assert!(app.git_allowed() && task.units() > 0);
-    // A folder the CLI says is trusted (one with nothing that needs trust, for one) is read as
-    // soon as it says so.
-    let mut app = window("ja");
+    assert!(says(&app, w.git_unread) && says(&app, w.git_show) && !says(&app, w.git_init));
+    // What the CLI says of trust does not make it known.
     let task = app.update(Msg::Listed(Box::new(listed_trusted())));
-    assert!(app.git_allowed() && task.units() > 0);
-    // Saying so again reads nothing more.
-    assert_eq!(app.update(Msg::Listed(Box::new(listed_trusted()))).units(), 0);
+    assert!(task.units() == 0 && !app.git_allowed());
+    // Asked for by the button: known from now on, and read now.
+    act(&mut app, |ui| {
+        ui.click(w.git_show).expect("the button is there");
+    });
+    assert!(app.git_allowed() && app.git_known(&app.cwd.clone()));
+    assert!(app.refresh_git().units() > 0);
+    assert_eq!(
+        app.update(Msg::GitShow).units(),
+        0,
+        "known already: nothing more is run"
+    );
+}
+
+#[test]
+fn trusting_the_folder_makes_it_known_and_reads_it() {
+    let mut app = window("ja");
+    app.listing = listed();
+    let trust = r#"{"trusted":true,"needed":true,"complete":true,"items":["plugin lint"]}"#;
+    let task = app.update(Msg::Trusted(Ok(trust.into())));
+    assert!(app.git_known(&app.cwd.clone()) && task.units() > 0);
+    // Used in this window only: git is run here, and the folder is not kept as known.
+    let mut once = window("ja");
+    once.listing = listed();
+    let task = once.update(Msg::TrustOnce);
+    assert!(once.git_allowed() && !once.git_known(&once.cwd.clone()) && task.units() > 0);
+}
+
+#[test]
+fn the_folders_used_before_are_known_after_the_update_and_a_worktree_made_here_is_known() {
+    let dir = tempfile::tempdir().unwrap();
+    let (used, other, tree) = (
+        dir.path().join("used"),
+        dir.path().join("other"),
+        dir.path().join("tree"),
+    );
+    for d in [&used, &other, &tree] {
+        std::fs::create_dir_all(d).unwrap();
+    }
+    let mut app = window("ja");
+    app.home = None;
+    app.prefs
+        .more
+        .folders
+        .insert(used.to_string_lossy().into_owned(), Default::default());
+    app.seed_git_folders();
+    assert!(app.git_known(&used) && !app.git_known(&other));
+    // Once only: a folder dropped from what was used before is not brought back.
+    app.prefs.more.git_folders.as_mut().unwrap().clear();
+    app.seed_git_folders();
+    assert!(!app.git_known(&used));
+    let _ = app.update(Msg::WorktreeMade(Ok((tree.clone(), None))));
+    assert!(app.git_known(&tree));
 }
 
 fn listed_trusted() -> crate::cli::Listing {

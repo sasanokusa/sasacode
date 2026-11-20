@@ -311,6 +311,8 @@ impl App {
                         let _ = self.put_in_input(&handoff.text);
                     }
                 }
+                // Made here: its window reads its repository without asking.
+                self.know_git(&path);
                 // Readied or not, it opens: what failed is said, to be done by hand there.
                 self.toast = Some(match note {
                     Some(why) => format!("{made}\n{}", crate::i18n::fill(w.worktree_setup_failed, "why", why)),

@@ -860,7 +860,7 @@ const CASCADE: f32 = 28.0;
 impl App {
     /// The repository looked at again, away from the window.
     pub(crate) fn refresh_git(&mut self) -> Task<Msg> {
-        // Read once the folder is trusted ([`App::git_allowed`]).
+        // Read once the folder is known ([`App::git_allowed`]).
         if !self.git_allowed() {
             return Task::none();
         }
@@ -880,6 +880,7 @@ impl App {
         use crate::git::Op;
         let task = match msg {
             Msg::GitRefresh => self.refresh_git(),
+            Msg::GitShow => self.know_git_here(),
             Msg::GitStatus(status) => {
                 // Another branch has another pull request, if any.
                 let moved = self.git.branch != status.branch;

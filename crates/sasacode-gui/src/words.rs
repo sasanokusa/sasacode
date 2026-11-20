@@ -284,8 +284,9 @@ words! {
     viewed_n: "{n}/{all}件見た", "{n}/{all} viewed";
     default_sure: "{branch}に直接書き込みます。もう一度押すと続けます", "This goes straight to {branch}. Press again to go on";
     git_init: "ここでgitを始める", "Start git here";
-    /// The git tab before the folder is trusted: git is not run in it until then.
-    git_after_trust: "このフォルダを信頼すると、gitの状態を表示します", "The git status is shown once this folder is trusted";
+    /// The git tab in a folder git has not been run in from here: it is, once asked.
+    git_unread: "このフォルダのgitの状態はまだ読んでいません。読むと、リポジトリの設定にあるプログラムが動くことがあります。", "This folder's git status has not been read yet. Reading it can start programs the repository's config names.";
+    git_show: "gitの状態を表示する", "Show the git status";
     pull: "取り込む", "Pull";
     behind: "↓{n}", "↓{n}";
     update_branch: "ベースを取り込む", "Update from base";
