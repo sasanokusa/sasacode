@@ -86,16 +86,7 @@ impl Output {
 }
 
 /// ESC shows as ␛; other control characters but newline and tab are dropped.
-pub fn plain(s: &str) -> String {
-    s.chars()
-        .filter_map(|c| match c {
-            '\x1b' => Some('␛'),
-            '\n' | '\t' => Some(c),
-            '\x00'..='\x1f' | '\x7f'..='\u{9f}' => None,
-            _ => Some(c),
-        })
-        .collect()
-}
+pub use sasacode_host::plain;
 
 fn stop_hint(cause: StopCause) -> Option<&'static str> {
     match cause {

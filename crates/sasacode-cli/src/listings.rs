@@ -13,12 +13,12 @@ use serde_json::Value;
 use sasacode_agent::agent::{Agent, AgentOptions};
 use sasacode_agent::plugins::{PluginHost, PluginHostOptions};
 use sasacode_ai::{ModelInfo, fmt_tokens};
-use sasacode_host::{current_lang, t};
+use sasacode_host::{current_lang, plain_line, t};
 use sasacode_skills::{discover_skills_in, materialize_builtin_skills, project_skills_dir};
 
 use crate::args::{boolean, parse_args};
 use crate::catalog::ModelChoice;
-use crate::config::{Settings, load_config, read_config_files_from, sasacode_home};
+use crate::config::{Settings, load_config, mcp_server_extras, read_config_files_from, sasacode_home};
 use crate::setup::{PluginChoice, SetupOptions, setup, skill_dirs, skills_options};
 use crate::trust::{ProjectTrust, assess_files, is_trusted_in, save_trust_in};
 
@@ -136,6 +136,22 @@ pub struct TrustEndpoint {
     pub url: Option<String>,
 }
 
+/// An MCP server the project's config adds: what it starts, and the names (not the values) of what
+/// it is given.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct TrustMcpServer {
+    pub name: String,
+    /// Its command; null for a server reached by URL.
+    pub command: Option<String>,
+    pub args: Vec<String>,
+    pub url: Option<String>,
+    pub cwd: Option<String>,
+    /// The names of the environment variables it sets.
+    pub env: Vec<String>,
+    /// The names of the headers it sends.
+    pub headers: Vec<String>,
+}
+
 /// `sasacode trust --json`: whether the folder is trusted and what trusting it turns on.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -157,6 +173,15 @@ pub struct TrustStatus {
     pub allow: Vec<String>,
     /// The permission mode the project asks for, when it is looser than the user's.
     pub mode: Option<String>,
+    /// What each of `mcpServers` starts.
+    pub mcp_server_details: Vec<TrustMcpServer>,
+    /// The model, judge model and models the project picks from providers the user does not use.
+    pub model: Option<String>,
+    pub judge_model: Option<String>,
+    pub models: Vec<String>,
+    /// `modelOverrides` and `plugins.settings` as the project writes them.
+    pub model_overrides: serde_json::Map<String, Value>,
+    pub plugin_settings: serde_json::Map<String, Value>,
 }
 
 /// What `sasacode list` lists.
@@ -274,7 +299,7 @@ async fn model_listing(cwd: &Path) -> anyhow::Result<Vec<ListedModel>> {
     opts.trust_project = trusted;
     opts.preloaded = Some((project.files, project.warnings));
     let h = setup(opts).await?;
-    let warn = |w: String| eprintln!("{}", t!("warning: {warning}", warning = w));
+    let warn = |w: String| eprintln!("{}", t!("warning: {warning}", warning = sasacode_host::plain(&w)));
     for w in h.warnings() {
         warn(w);
     }
@@ -430,6 +455,7 @@ fn trust_command_in(args: &[String], cwd: &Path, home: &Path, out: &mut dyn Writ
     }
     let yes = parsed.flag("yes");
     let cwd_text = cwd.to_string_lossy().into_owned();
+    let cwd_shown = plain_line(&cwd_text);
     let project = assess_files(cwd, read_config_files_from(&home.join("config.json"), cwd)?);
     if yes && !project.items.is_empty() && !is_trusted_in(home, &cwd_text, &project) {
         save_trust_in(home, &cwd_text, &project)?;
@@ -441,13 +467,13 @@ fn trust_command_in(args: &[String], cwd: &Path, home: &Path, out: &mut dyn Writ
         writeln!(
             out,
             "{}",
-            t!("{cwd}: nothing in this project needs trust", cwd = cwd_text)
+            t!("{cwd}: nothing in this project needs trust", cwd = cwd_shown)
         )?;
     } else {
         let line = if status.trusted {
-            t!("{cwd} is trusted", cwd = cwd_text)
+            t!("{cwd} is trusted", cwd = cwd_shown)
         } else {
-            t!("{cwd} is not trusted", cwd = cwd_text)
+            t!("{cwd} is not trusted", cwd = cwd_shown)
         };
         writeln!(out, "{line}")?;
         writeln!(out, "{}", t!("This project wants to use:"))?;
@@ -470,6 +496,28 @@ fn trust_status(home: &Path, cwd: &Path, project: &ProjectTrust) -> anyhow::Resu
             .unwrap_or_default()
     };
     let permissions = elevated.get("permissions");
+    let object = |v: Option<&Value>| v.and_then(Value::as_object).cloned().unwrap_or_default();
+    let text = |key: &str| elevated.get(key).and_then(Value::as_str).map(str::to_string);
+    let mcp_server_details = object(elevated.get("mcpServers"))
+        .iter()
+        .map(|(name, v)| {
+            let server = sasacode_mcp::McpServerConfig::from_json(v);
+            let (env, headers, cwd) = mcp_server_extras(&server);
+            let (command, args, url) = match server.transport {
+                sasacode_mcp::McpTransportConfig::Stdio { command, args, .. } => (Some(command), args, None),
+                sasacode_mcp::McpTransportConfig::Http { url, .. } => (None, Vec::new(), Some(url)),
+            };
+            TrustMcpServer {
+                name: name.clone(),
+                command,
+                args,
+                url,
+                cwd,
+                env,
+                headers,
+            }
+        })
+        .collect();
     Ok(TrustStatus {
         trusted: is_trusted_in(home, &cwd_text, project),
         needed: !project.items.is_empty(),
@@ -496,6 +544,12 @@ fn trust_status(home: &Path, cwd: &Path, project: &ProjectTrust) -> anyhow::Resu
             .and_then(|p| p.get("mode"))
             .and_then(Value::as_str)
             .map(str::to_string),
+        mcp_server_details,
+        model: text("model"),
+        judge_model: text("judgeModel"),
+        models: strings(elevated.get("models")),
+        model_overrides: object(elevated.get("modelOverrides")),
+        plugin_settings: object(elevated.get("plugins").and_then(|p| p.get("settings"))),
         cwd: cwd_text,
     })
 }

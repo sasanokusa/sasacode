@@ -265,3 +265,113 @@ fn settings_read_the_typed_view() {
     assert_eq!(s.plugin_settings("todo"), json!({ "remindAfter": 3 }));
     assert_eq!(s.plugin_settings("other"), json!({}));
 }
+
+#[test]
+fn a_model_from_a_provider_the_user_does_not_use_needs_trust_one_they_use_is_announced() {
+    english(|| {
+        let f = Fixture::new();
+        f.write(
+            json!({ "model": "anthropic/claude-opus-5", "models": ["ollama/qwen"] }),
+            json!({
+                "model": "commandcode-anthropic/x",
+                "judgeModel": "anthropic/claude-haiku-5",
+                "models": ["ollama/llama", "openai/gpt-5.5"],
+            }),
+        );
+        let untrusted = f.load(false);
+        assert_eq!(untrusted.elevated["model"], "commandcode-anthropic/x");
+        assert_eq!(untrusted.elevated["models"], json!(["openai/gpt-5.5"]));
+        assert_eq!(untrusted.config["model"], "anthropic/claude-opus-5");
+        assert_eq!(untrusted.config["judgeModel"], "anthropic/claude-haiku-5");
+        assert_eq!(untrusted.config["models"], json!(["ollama/llama"]));
+        let warnings = untrusted.warnings.join("\n");
+        assert!(warnings.contains("this project selects the judge model anthropic/claude-haiku-5"));
+        assert!(warnings.contains("not applied until you trust this project (model commandcode-anthropic/x;"));
+        // Trusted: the other provider's model is used, and a same-provider pick is still announced.
+        f.write(
+            json!({ "model": "anthropic/claude-opus-5" }),
+            json!({ "model": "anthropic/claude-sonnet-5", "providers": { "x": { "baseUrl": "http://h" } } }),
+        );
+        let trusted = f.load(true);
+        assert_eq!(trusted.config["model"], "anthropic/claude-sonnet-5");
+        assert!(
+            trusted
+                .warnings
+                .join("\n")
+                .contains("this project selects the model anthropic/claude-sonnet-5")
+        );
+        // A provider the user's config only sets up is not one they use; one of their models is.
+        f.write(
+            json!({ "model": "anthropic/claude-opus-5", "providers": { "commandcode-anthropic": {} } }),
+            json!({ "model": "commandcode-anthropic/x" }),
+        );
+        assert_eq!(f.load(false).elevated["model"], "commandcode-anthropic/x");
+        f.write(
+            json!({ "model": "anthropic/claude-opus-5", "models": ["commandcode-anthropic/y"] }),
+            json!({ "model": "commandcode-anthropic/x" }),
+        );
+        assert!(f.load(false).elevated.is_empty());
+    });
+}
+
+#[test]
+fn without_a_model_in_the_global_config_the_default_ones_provider_is_the_users() {
+    let project = obj(json!({ "model": "commandcode-anthropic/x", "judgeModel": "openai/gpt-5.5" }));
+    let (safe, elevated) = split_project_config_with(&project, &Config::new(), || "anthropic/claude-opus-5".into());
+    assert!(safe.is_empty());
+    assert_eq!(sorted_keys(&elevated), ["judgeModel", "model"]);
+    let (safe, elevated) = split_project_config_with(&project, &Config::new(), || "openai/gpt-5.5".into());
+    assert_eq!(sorted_keys(&safe), ["judgeModel"]);
+    assert_eq!(sorted_keys(&elevated), ["model"]);
+}
+
+#[test]
+fn the_trust_list_shows_what_each_entry_runs_and_sets_on_one_line_without_control_characters() {
+    english(|| {
+        let long = "y".repeat(300);
+        let padded = format!("echo {long}; touch /tmp/x");
+        let elevated = obj(json!({
+            "providers": { "p": { "baseUrl": format!("https://api.example/{long}@other.example/") } },
+            "mcpServers": {
+                "docs\r\u{1b}[2K  - maxRetries 9": {
+                    "command": "sh", "args": ["-c", padded],
+                    "env": { "TOKEN": "secret-value" }, "cwd": "/w",
+                },
+                "web": { "url": "https://mcp.example/\u{202e}x", "headers": { "Authorization": "Bearer secret-value" } },
+            },
+            "modelOverrides": { "a/b": { "contextWindow": 1000 } },
+            "plugins": { "settings": { "todo": { "note": "a\nb", "long": long, "after": 1 } } },
+            "permissions": { "allow": [format!("bash({long} rm *)")] },
+        }));
+        let items = describe_elevated(&elevated);
+        // Commands, URLs and rules are shown whole.
+        assert_eq!(
+            items[0],
+            format!("endpoint p (https://api.example/{long}@other.example/)")
+        );
+        assert_eq!(items[1], "model override a/b: contextWindow=1000");
+        assert_eq!(
+            items[2],
+            format!("MCP server docs␛[2K  - maxRetries 9: sh -c \"{padded}\"; in /w; environment TOKEN")
+        );
+        assert_eq!(items[3], "MCP server web: https://mcp.example/x; headers Authorization");
+        // A long setting is cut, and the keys after it still show.
+        assert!(
+            items[4].starts_with("settings for plugin todo: note=\"a\\nb\", long=\"yyy"),
+            "{}",
+            items[4]
+        );
+        assert!(items[4].ends_with("…, after=1"), "{}", items[4]);
+        assert_eq!(items[5], format!("allow rules bash({long} rm *)"));
+        assert!(items.iter().all(|i| !i.contains("secret-value") && !i.contains('\n')));
+    });
+}
+
+#[test]
+fn an_unknown_key_is_named_without_its_control_characters() {
+    english(|| {
+        let mut warnings = Vec::new();
+        sanitize_config(&json!({ "\u{1b}]0;T\u{7}\rok\nx": 1 }), "p", &mut warnings);
+        assert_eq!(warnings, ["p: unknown key \"␛]0;Tok\\nx\" ignored"]);
+    });
+}

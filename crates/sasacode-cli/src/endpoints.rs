@@ -209,7 +209,7 @@ pub async fn endpoint_command_in(
         let models = match serde_json::from_value::<ProviderConfig>(Value::Object(entry.clone())) {
             Ok(provider) => {
                 let deadline = Deadline::after(Duration::from_millis(10_000));
-                list_models(&provider, keyed, &deadline.token, None)
+                list_models(name, &provider, keyed, &deadline.token, None)
                     .await
                     .unwrap_or_default()
             }

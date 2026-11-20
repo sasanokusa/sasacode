@@ -404,8 +404,9 @@ impl Handle {
         rx.await.ok()
     }
 
+    /// Notices from commands and plugins carry text from config, servers and models: shown plain.
     fn notify(&self, text: impl Into<String>, color: fn(&str) -> String) {
-        let text = text.into();
+        let text = plain(&text.into());
         self.send(move |app| app.notify(&text, color));
     }
 
@@ -618,7 +619,7 @@ impl App {
             chat.push((
                 next_id,
                 Box::new(Notice::colored(
-                    &t("警告: {warning}", &[("warning", &w)]),
+                    &t("警告: {warning}", &[("warning", &plain(&w))]),
                     theme::yellow,
                 )),
             ));
@@ -1429,7 +1430,11 @@ impl App {
                 self.add_chat(Box::new(Notice::colored(
                     &t(
                         "プラグイン {plugin} の {hook} ハンドラでエラー: {error}",
-                        &[("plugin", &plugin), ("hook", &hook), ("error", &error)],
+                        &[
+                            ("plugin", &plain(&plugin)),
+                            ("hook", &plain(&hook)),
+                            ("error", &plain(&error)),
+                        ],
                     ),
                     theme::red,
                 )));
@@ -1932,7 +1937,7 @@ impl App {
             t("なし", &[])
         };
         let mut parts = vec![
-            theme::gray(&format!("{}/{}", model.provider, model.id)),
+            theme::gray(&plain(&format!("{}/{}", model.provider, model.id))),
             theme::gray(&t("推論: {level}", &[("level", &level)])),
             if mode == PermissionMode::Auto {
                 theme::red(&theme::bold(&mode_text))
@@ -2365,7 +2370,10 @@ async fn language_command(h: &Handle, args: &str) -> anyhow::Result<()> {
             Ok(()) => true,
             Err(e) => {
                 app.notify(
-                    &t("設定に保存できませんでした: {error}", &[("error", &e)]),
+                    &t(
+                        "設定に保存できませんでした: {error}",
+                        &[("error", &plain(&e.to_string()))],
+                    ),
                     theme::yellow,
                 );
                 false
@@ -2511,7 +2519,7 @@ async fn warn_context(h: &Handle) {
     }
     let text = t(
         "{spec} には num_ctx が設定されていません。Ollama を OLLAMA_CONTEXT_LENGTH で起動していなければ、Ollama の既定の長さ（数千トークン）を超えた入力は黙って切り詰められます。Modelfile に PARAMETER num_ctx 32768 などを書くか、OLLAMA_CONTEXT_LENGTH を設定してください（このモデルは最大 {max}）。",
-        &[("spec", &spec), ("max", &fmt_tokens(max))],
+        &[("spec", &plain(&spec)), ("max", &fmt_tokens(max))],
     );
     h.send(move |app| {
         if app.warned_context.insert(spec) {

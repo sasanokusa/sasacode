@@ -34,6 +34,15 @@ pub async fn resolve_api_key(provider: &str, cfg: Option<&ProviderConfig>) -> Op
     key
 }
 
+/// Whether the keychain was already asked for `provider` this process and had a key (never asks it).
+pub fn cached_key(provider: &str) -> bool {
+    cache()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(provider)
+        .is_some_and(Option::is_some)
+}
+
 async fn keychain(account: &str) -> Option<String> {
     let cmd: &[&str] = if cfg!(target_os = "macos") {
         &[

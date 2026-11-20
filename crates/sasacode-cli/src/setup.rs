@@ -170,7 +170,7 @@ pub struct Harness {
 }
 
 /// The first provider whose API key is set; with no key at all but a ChatGPT login, that plan.
-fn default_model(providers: &IndexMap<String, ProviderConfig>, codex: bool) -> String {
+pub(crate) fn default_model(providers: &IndexMap<String, ProviderConfig>, codex: bool) -> String {
     let any_key = providers.values().any(|p| {
         p.api_key_env
             .as_deref()
@@ -200,6 +200,39 @@ fn merge_provider(base: Option<&ProviderConfig>, over: &Value) -> ProviderConfig
         a.entry("api").or_insert_with(|| json!(""));
     }
     serde_json::from_value(v).unwrap_or_default()
+}
+
+/// Whether the user has a key or a login for provider `name`: its apiKeyEnv set, a key the keychain
+/// already gave this process, the ChatGPT login (openai-codex) or an `ant auth login` profile (anthropic).
+fn has_credentials(name: &str, cfg: Option<&ProviderConfig>) -> bool {
+    let env = cfg
+        .and_then(|c| c.api_key_env.as_deref())
+        .and_then(|v| std::env::var(v).ok())
+        .is_some_and(|v| !v.trim().is_empty());
+    env || crate::keys::cached_key(name)
+        || (name == "openai-codex" && sasacode_bundled::openai_codex::read_codex_auth().is_some())
+        || (name == "anthropic"
+            && crate::anthropic_profile::load(&crate::anthropic_profile::Env::process()).is_ok_and(|p| p.is_some()))
+}
+
+/// [`Resolve`] for a model the model itself names (a subagent's `model`): only on a provider the run
+/// already uses (`picked`: its model, models, judgeModel and the models plugin settings name) or one
+/// the user has a key or login for, so the conversation never goes to a provider the user did not
+/// choose. Checked before any request; the error says which providers can be used.
+pub(crate) fn limited_resolve(resolve: Resolve, providers: Providers, picked: Vec<String>) -> Resolve {
+    Arc::new(move |spec: &str| {
+        let list = providers.read().unwrap_or_else(|e| e.into_inner()).clone();
+        let usable = |name: &str| picked.iter().any(|p| p == name) || has_credentials(name, list.get(name));
+        let name = crate::config::provider_of(spec);
+        if !usable(name) {
+            let names: Vec<&str> = list.keys().map(String::as_str).filter(|n| usable(n)).collect();
+            anyhow::bail!(
+                "\"{spec}\": {name} is not a provider this session uses or has a key for; use a model from one of: {}",
+                names.join(", ")
+            );
+        }
+        resolve(spec)
+    })
 }
 
 fn get_key(providers: &Providers) -> GetKey {
@@ -362,8 +395,21 @@ pub async fn setup(mut opts: SetupOptions) -> anyhow::Result<Arc<Harness>> {
     agent_opts.permissions = Some(Arc::new(PermissionPolicy::new(mode, &permissions.rules)?));
     let key = get_key(&providers);
     agent_opts.get_api_key = Some(key.clone());
+    let picked: Vec<String> = [Some(model_spec.clone()), settings.judge_model.clone()]
+        .into_iter()
+        .flatten()
+        .chain(settings.models.clone().unwrap_or_default())
+        .chain(settings.plugins.iter().flat_map(|p| {
+            let models = p
+                .settings
+                .values()
+                .filter_map(|s| s.get("model")?.as_str().map(str::to_string));
+            models.collect::<Vec<_>>()
+        }))
+        .map(|s| crate::config::provider_of(&s).to_string())
+        .collect();
     agent_opts.resolve_model = Some({
-        let resolve = resolve.clone();
+        let resolve = limited_resolve(resolve.clone(), providers.clone(), picked);
         Arc::new(move |s: &str| resolve(s))
     });
     let max_turns = opts
@@ -835,3 +881,7 @@ impl Harness {
         &self.opts.cwd
     }
 }
+
+#[cfg(test)]
+#[path = "setup_tests.rs"]
+mod tests;

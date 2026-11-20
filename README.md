@@ -81,7 +81,7 @@ sasacode -r <id> -p "続き"            # セッション ID を指定して続�
 | `sasacode endpoint remove <name> [--project]` / `sasacode endpoint list` | 足したサーバーを外す / 一覧 |
 | `sasacode list models\|commands\|skills [--json]` | このフォルダでの実行が使えるもの。`models` はTUIの `/model` と同じ一覧（`[{"id":"provider/model","contextWindow"?,"maxContext"?,"server"?,"current"?}]`）、`skills` は `[{"name","description","path"}]`、`commands` はTUIのコマンドとSkillsのコマンド（`[{"name","description","argumentHint"?,"owner","headless"}]`）。同梱プラグインのコマンドは、読み込むとプラグインの起動時の処理が走るのでここには出さず、`--control stdio` の実行が `commands` 行で知らせる |
 | `sasacode plugin list --json` | 同梱プラグインを `[{"name","source":"bundled","enabled"}]` で。`enabled` は設定（`plugins.enabled` と `plugins.disabled`）で決まる。0.20の `sasacode plugin` で残るのはこれだけで、GUIが使う |
-| `sasacode trust [--yes] [--json]` | このフォルダを信頼しているかと、信頼すると有効になるもの（`{"cwd","trusted","needed","complete","items","plugins","mcpServers","endpoints","allow","mode"}`）。`--yes` で、起動時の確認に「y」と答えたのと同じく信頼を保存する。0.20はプロジェクトのプラグインを読まないので、`plugins` は空、`complete` は常に `true` |
+| `sasacode trust [--yes] [--json]` | このフォルダを信頼しているかと、信頼すると有効になるもの（`{"cwd","trusted","needed","complete","items","plugins","mcpServers","endpoints","allow","mode","mcpServerDetails","model","judgeModel","models","modelOverrides","pluginSettings"}`。`mcpServerDetails`はサーバーごとに起動するコマンドと引数かURLと、環境変数とヘッダーの名前（値は出さない））。`--yes` で、起動時の確認に「y」と答えたのと同じく信頼を保存する。0.20はプロジェクトのプラグインを読まないので、`plugins` は空、`complete` は常に `true` |
 | `sasacode login [status\|logout]` | ChatGPTプランでログイン（`openai-codex/…` のモデル用） |
 | `sasacode update [--check] [tag]` | 最新のリリースを取得して入れ替える（チェックサムを検証。`--check`なら確認だけ） |
 | `sasacode web-search install [tag]` | `web_search`が使うRustXNGを入れる（チェックサムを検証） |
@@ -180,7 +180,7 @@ stdinは1行1件のJSON（JSON Lines）で読む。
 
 | provider | API形式 | キー |
 | --- | --- | --- |
-| `anthropic` | Anthropic Messages | `ANTHROPIC_API_KEY`（空なら環境変数`ANTHROPIC_AUTH_TOKEN`をBearerトークンとして、それもなければ`ant auth login`のプロファイルを使う） |
+| `anthropic` | Anthropic Messages | `ANTHROPIC_API_KEY`（空なら環境変数`ANTHROPIC_AUTH_TOKEN`をBearerトークンとして、それもなければ`ant auth login`のプロファイルを使う。この2つの環境変数は`anthropic`にだけ使い、ほかのAnthropic形式のプロバイダーは自分の`apiKeyEnv`だけを使う） |
 | `openai` / `openai-chat` | OpenAI Responses / Chat Completions | `OPENAI_API_KEY` |
 | `openrouter` | Chat Completions | `OPENROUTER_API_KEY` |
 | `commandcode` / `commandcode-responses` / `commandcode-anthropic` | Command CodeのChat Completions / Responses / Messages | `CMD_API_KEY` |
@@ -198,7 +198,7 @@ sasacode endpoint list
 sasacode -m llama/<モデル名>
 ```
 
-`GET /v1/models`の応答から、OpenAI形式（Chat Completionsで呼ぶ）かAnthropic形式（Messagesで呼ぶ）かを自動で判別し、URLも各形式に合わせて整える。llama.cpp、Ollama、LM Studio（0.3.6以降）は、それぞれ`/props`、`/api/show`、`/api/v0/models`から実際のコンテキスト長も取る（LM Studioを見分けなかった以前のバージョンで追加したサーバーも、モデル一覧を取るときに見分ける）。追加したサーバーのモデルは、`/model`の一覧に自動で出る。設定ファイルに`"providers": { "llama": { "baseUrl": "http://…" } }`とURLだけ書いた場合も、起動時に判別する（結果は`~/.sasacode/endpoints.json`にキャッシュする）。
+`GET /v1/models`の応答から、OpenAI形式（Chat Completionsで呼ぶ）かAnthropic形式（Messagesで呼ぶ）かを自動で判別し、URLも各形式に合わせて整える。llama.cpp、Ollama、LM Studio（0.3.6以降）は、それぞれ`/props`、`/api/show`、`/api/v0/models`から実際のコンテキスト長も取る（LM Studioを見分けなかった以前のバージョンで追加したサーバーも、モデル一覧を取るときに見分ける）。追加したサーバーのモデルは、`/model`の一覧に自動で出る。設定ファイルに`"providers": { "llama": { "baseUrl": "http://…" } }`とURLだけ書いた場合も、起動時に判別する（結果は`~/.sasacode/endpoints.json`にキャッシュする）。環境変数の`ANTHROPIC_CUSTOM_HEADERS`は組み込みの`anthropic`にだけ、`OPENAI_CUSTOM_HEADERS`は`openai`と`openai-chat`にだけ付く。追加したサーバーに送るヘッダーは、`"providers": { "llama": { "headers": { "名前": "値" } } }`のように書く（値はそのまま送る）。
 
 プロジェクトの `.sasacode/config.json` に書いたエンドポイントは、そのプロジェクトを信頼するまで使わない（[プロジェクトの信頼](#プロジェクトの信頼)）。キーを使わないサーバーでも、会話とコードが送られるため。
 
@@ -280,9 +280,9 @@ sasacode -m llama/<モデル名>
 
 クローンしたリポジトリは、そのままでは「制限を強める」ことしかできない。次のものは、コードを実行するか、データの送り先を変えうるので、プロジェクトを信頼するまで使わない。
 
-- `.sasacode/config.json`の`providers`（エンドポイント）、`modelOverrides`、`plugins`（有効化・無効化と設定）、`mcpServers`、`allow`ルール、全体設定より緩い権限モード、全体設定より大きい`maxTurns`（0は上限なし）と`maxRetries`、そのプロジェクトにしかないプロバイダーを指す`model`・`models`・`judgeModel`
+- `.sasacode/config.json`の`providers`（エンドポイント）、`modelOverrides`、`plugins`（有効化・無効化と設定）、`mcpServers`、`allow`ルール、全体設定より緩い権限モード、全体設定より大きい`maxTurns`（0は上限なし）と`maxRetries`、全体設定（なければ既定のモデル）が使っていないプロバイダーを指す`model`・`models`・`judgeModel`
 
-これらがあるプロジェクトで起動すると、最初に一覧を出して信頼するかを尋ねる（ヘッドレスでは`--trust-project`）。答えは`~/.sasacode/trust.json`に保存し、上の設定が変わったら再び尋ねる。全体設定の`trustedProjects`に入れたプロジェクトは、尋ねずに信頼する。モデルの選択、`thinking`、`instructions`、deny / askルールやツール無効化の追加、より厳しい権限モードや小さい上限などは、信頼しなくても使う。0.15までは`.sasacode/plugins`のプラグインも信頼の対象だったが、0.20からはそのフォルダを読み込まないので、対象から外した（プロジェクトのプラグインがなく、0.15で信頼したプロジェクトは、そのまま信頼される）。
+これらがあるプロジェクトで起動すると、最初に一覧を出して信頼するかを尋ねる（ヘッドレスでは`--trust-project`）。答えは`~/.sasacode/trust.json`に保存し、上の設定が変わったら再び尋ねる。全体設定の`trustedProjects`に入れたプロジェクトは、尋ねずに信頼する。一覧には、MCPサーバーが起動するコマンドと引数（またはURL）、渡す環境変数とヘッダーの名前（値は出さない）、プラグインの設定と`modelOverrides`のキーと値（長い値は切る）も出す。全体設定と同じプロバイダーの中でのモデルの選択、`thinking`、`instructions`、deny / askルールやツール無効化の追加、より厳しい権限モードや小さい上限などは、信頼しなくても使う。0.15までは`.sasacode/plugins`のプラグインも信頼の対象だったが、0.20からはそのフォルダを読み込まないので、対象から外した（プロジェクトのプラグインがなく、0.15で信頼したプロジェクトは、そのまま信頼される）。プロジェクトが`model`や`judgeModel`を選んだときは、信頼していても警告を出す。
 
 ## プラグイン・MCP・Skills
 
@@ -304,7 +304,7 @@ sasacode -m llama/<モデル名>
 | `action-nudge` | ローカルモデルだけ（判定は`thinking-budget`と同じ）が、最終文・最終行で「確認します」「Let me check...」のようにやるつもりだけ書いてツールを呼ばずにターンを終えたとき、すぐツールを呼ぶよう促す（1回の依頼につき既定2回まで。質問、「必要であれば」「if you want」などの条件付き提案、完了報告、長文解説には反応しない） |
 | `agents-md` | `~/.sasacode/AGENTS.md` と、リポジトリのルートから作業ディレクトリまでの `AGENTS.md` を読む（CLAUDE.mdは読まない） |
 | `compaction` | コンテキストが 80% に達するか上限に来たら、古い履歴を要約する。`/compact` で手動実行。要約を頼むリクエストはコンテキスト長に収まる大きさにするので、小さいコンテキスト長のローカルモデルでも動く（要約はその15%まで、履歴が入りきらなければ古い部分を省く）。自動の圧縮では、直近の履歴（コンテキスト長の15%、最大4万トークン）を要約せずにそのまま残す。1つの指示のあとツール呼び出しが長く続いていても、直近の手順は残る。`/compact` は全部を要約する。画面の会話はどちらでもそのまま残る（再開したときも、要約する前の会話から表示する） |
-| `subagent` | `task` ツール。別の履歴を持つサブエージェントに作業を任せ、報告だけを受け取る（1ターンに複数あれば並行して動く）。`background: true` なら待たずに作業を続け、終わると報告がメッセージで届く（メインをEscで止めると一緒に止まる）。`task_status`・`task_send`・`task_stop` で進み具合を見る・指示を足す・止める。途中で失敗したときは理由と最後の発言・ツール呼び出しを返す。ユーザーは `/task`（一覧・詳細、`/task send <id> <内容>`、`/task stop <id>`）で同じことができる。サブエージェントは `task` 系・`todo_write`・`set_goal` を使えない（呼び出し元のTODOとゴールを書き換えないため） |
+| `subagent` | `task` ツール。別の履歴を持つサブエージェントに作業を任せ、報告だけを受け取る（1ターンに複数あれば並行して動く）。`background: true` なら待たずに作業を続け、終わると報告がメッセージで届く（メインをEscで止めると一緒に止まる）。`task_status`・`task_send`・`task_stop` で進み具合を見る・指示を足す・止める。途中で失敗したときは理由と最後の発言・ツール呼び出しを返す。ユーザーは `/task`（一覧・詳細、`/task send <id> <内容>`、`/task stop <id>`）で同じことができる。サブエージェントは `task` 系・`todo_write`・`set_goal` を使えない（呼び出し元のTODOとゴールを書き換えないため）。モデルが `model` で選べるのは、起動時のモデル、`models`、`judgeModel`、プラグイン設定の `model` のプロバイダーと、キーかログインがあるプロバイダーだけで、ほかを指すと送信前にエラーになる |
 | `todo` | `todo_write` ツール。作業計画をセッションに残し、進捗をフッターに出す。未完了の項目を残したままツールを10回呼んでも更新しなければ、ツールの結果のあとに、計画の中身と更新を促す一言を足す（モデルへのメッセージとして履歴に残り、画面には薄い1行で出る。`remindAfter` で回数を変え、0で止める） |
 | `progress-notes` | 作業中の進捗の一言を促す。システムプロンプトで、最初のツール呼び出しの前に何をするかを一文で、その後も見つけたこと・終えたこと・方針の変更を短く書くよう頼む。説明なしのツール呼び出しが5回続いたら、ツールの結果のあとに一言足して促す（`todo` と同じく履歴に残り、画面には薄い1行で出る。`remindAfter` で回数を変え、0で促すのだけ止める）。サブエージェントには付けない |
 | `web-fetch` | `web_fetch` ツール。URLを取ってきてテキストにする。メニュー・目次・言語一覧・広告まわり・インラインのCSSやJSを除き、ページが本文の場所（`main`、`article`、Wikipediaの本文など）を示していればそこを読む（その中の折りたたまれた部分も読む）。サイトのナビゲーションのリンクは、本文のあとに1行（最大25件）で残す。ページ内のリンクは絶対URLの番号付き一覧にして返し、推測でURLを組み立てずに辿れるようにする。404のときは、サイトの `llms.txt` / `sitemap.xml` があればそれと検索を案内する。リダイレクトは一つずつたどり、リダイレクト先が内部アドレス（ループバック、プライベート、リンクローカルなど）なら止める（最初のURLは承認で見たものなので、手元の開発サーバーでも読む。最初のURLと同じオリジンへのリダイレクトも通す）。リダイレクトされたときは、結果に取得元のURLを書く |

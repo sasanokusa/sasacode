@@ -299,7 +299,7 @@ impl Inner {
         };
         let models: Vec<ListedModel> = match own {
             Some(listed) => listed?.into_iter().map(ListedModel::from).collect(),
-            None => list_models(&p, key.as_deref(), &signal, native).await?,
+            None => list_models(&primary, &p, key.as_deref(), &signal, native).await?,
         };
         let server = if p.ollama == Some(true) {
             Some("ollama")

@@ -296,7 +296,7 @@ impl Profile {
 /// (`parseTokenResponse`). Error bodies are redacted: they may echo the refresh token.
 async fn refresh(base: &str, client_id: &Value, refresh_token: &Value) -> anyhow::Result<Value> {
     let body = json!({ "grant_type": "refresh_token", "refresh_token": refresh_token, "client_id": client_id });
-    let resp = sasacode_ai::http::client()
+    let resp = sasacode_ai::http::api_client()
         .post(format!("{base}{TOKEN_ENDPOINT}"))
         .header("content-type", "application/json")
         .header("anthropic-beta", OAUTH_BETA)
