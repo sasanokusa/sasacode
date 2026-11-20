@@ -152,10 +152,8 @@ impl PermissionPolicy {
             .map(|p| try_real_path(&p).unwrap_or(p))
             .collect();
         let inside_cwd = real.iter().all(|p| is_inside(p, &cwd));
-        // Edits under .git (hooks, config) or .sasacode (plugins, rules) run code at the next git command
-        // or start (#127).
         let has_paths = c.tool.paths(&c.args, std::path::Path::new(&c.cwd)).is_some();
-        let runs_code = real.iter().any(|p| runs_code_re().is_match(&paths::relative(&cwd, p)));
+        let runs_code = real.iter().any(|p| runs_code(&cwd, p));
         let kind = c.tool.kind();
         match self.mode() {
             PermissionMode::Auto => (Decision::Allow, "mode auto"),
@@ -212,6 +210,16 @@ fn runs_code_re() -> &'static Regex {
     static R: OnceLock<Regex> = OnceLock::new();
     // INFALLIBLE: a constant pattern.
     R.get_or_init(|| Regex::new(r"(?i)(^|[\\/])\.(git|sasacode)([\\/]|$)").expect("valid regex"))
+}
+
+/// Edits under .git (hooks, config) or .sasacode (plugins, rules) run code at the next git command or start (#127).
+/// Git takes a folder with HEAD, objects/ and refs/ for a repository: a HEAD, or a config beside them, could make one.
+fn runs_code(cwd: &str, p: &str) -> bool {
+    let path = std::path::Path::new(p);
+    let (name, dir) = (path.file_name().unwrap_or_default(), path.parent().unwrap_or(path));
+    let has = |n: &str, is_dir: bool| dir.join(n).metadata().is_ok_and(|m| m.is_dir() == is_dir);
+    let config = name.eq_ignore_ascii_case("config") && has("HEAD", false) && has("objects", true) && has("refs", true);
+    runs_code_re().is_match(&paths::relative(cwd, p)) || name.eq_ignore_ascii_case("HEAD") || config
 }
 
 /// Escape `\ * ? [ ] { } ! ( ) + @` with a backslash (`/[\\*?[\]{}!()+@]/g` → `\\$&`).

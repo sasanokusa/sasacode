@@ -516,3 +516,39 @@ fn deny_and_ask_rules_fold_letters_that_fold_to_another_allow_rules_do_not() {
     assert_eq!(check("ſrc/a.rs"), Allow);
     assert_eq!(check("src/a.rs"), Ask);
 }
+
+/// Git takes a folder with HEAD, objects/ and refs/ for a repository, and runs what its config
+/// says. In edits mode a write that could make one is asked about; ordinary files named config are not.
+#[test]
+fn edits_mode_asks_before_a_write_that_could_make_a_folder_a_git_repository() {
+    let tmp = tempfile::tempdir().unwrap();
+    let cwd = tmp.path().to_string_lossy().to_string();
+    let write = |path: &str| d(&edits(), &call(write_tool(), path, &cwd));
+    // A file named HEAD, anywhere.
+    assert_eq!(write("HEAD"), Ask);
+    assert_eq!(write("sub/HEAD"), Ask);
+    assert_eq!(write("Head"), Ask);
+    assert_eq!(write("HEAD.md"), Allow);
+    // config, before and after the folder has the rest of a repository's shape.
+    assert_eq!(write("config"), Allow);
+    std::fs::write(tmp.path().join("HEAD"), "ref: refs/heads/main\n").unwrap();
+    assert_eq!(write("config"), Allow);
+    std::fs::create_dir(tmp.path().join("objects")).unwrap();
+    assert_eq!(write("config"), Allow);
+    std::fs::create_dir(tmp.path().join("refs")).unwrap();
+    assert_eq!(write("config"), Ask);
+    assert_eq!(write("CONFIG"), Ask);
+    // Elsewhere in such a project, nothing changes.
+    for path in [
+        "config/app.yml",
+        "src/config",
+        "config.json",
+        "objects/a.txt",
+        "refs/notes.md",
+    ] {
+        assert_eq!(write(path), Allow, "{path}");
+    }
+    // Reading is not writing.
+    assert_eq!(d(&edits(), &call(read_tool(), "config", &cwd)), Allow);
+    assert_eq!(d(&edits(), &call(read_tool(), "HEAD", &cwd)), Allow);
+}
