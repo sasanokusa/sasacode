@@ -565,7 +565,7 @@ fn real(p: &str) -> String {
 
 /// git's output, or None when it fails or takes over two seconds.
 async fn git(cwd: &str, args: &[&str]) -> Option<String> {
-    let mut cmd = tokio::process::Command::new("git");
+    let mut cmd = crate::git_args::command();
     cmd.arg("-C").arg(cwd).args(args);
     apply_child_env(&mut cmd, &[]);
     cmd.stdin(Stdio::null())

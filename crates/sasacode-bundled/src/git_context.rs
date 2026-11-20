@@ -22,10 +22,8 @@ const MAX_BUFFER: usize = 8 * 1024 * 1024;
 
 /// Git receives argv, never shell text. External diff/textconv helpers are disabled.
 async fn git(cwd: &Path, args: &[&str], signal: &CancellationToken) -> anyhow::Result<String> {
-    let mut cmd = tokio::process::Command::new("git");
-    cmd.args(["--no-pager", "-c", "core.fsmonitor=false"])
-        .args(args)
-        .current_dir(cwd);
+    let mut cmd = crate::git_args::command();
+    cmd.arg("--no-pager").args(args).current_dir(cwd);
     let extra: Vec<(String, String)> = [
         ("GIT_OPTIONAL_LOCKS", "0"),
         ("GIT_TERMINAL_PROMPT", "0"),
@@ -40,7 +38,7 @@ async fn git(cwd: &Path, args: &[&str], signal: &CancellationToken) -> anyhow::R
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
-    let command = format!("git --no-pager -c core.fsmonitor=false {}", args.join(" "));
+    let command = format!("git --no-pager {}", args.join(" "));
     let mut child = cmd.spawn()?;
     let (Some(mut out), Some(mut err)) = (child.stdout.take(), child.stderr.take()) else {
         anyhow::bail!("Command failed: {command}");
@@ -143,8 +141,8 @@ pub async fn collect_context(args: &JsonObject, ctx: &ToolContext) -> anyhow::Re
     let diff = |options: &'static str| {
         let mut a: Vec<String> = [
             "diff",
-            "--no-ext-diff",
-            "--no-textconv",
+            crate::git_args::NO_DIFF_HELPERS[0],
+            crate::git_args::NO_DIFF_HELPERS[1],
             "--no-color",
             "--ignore-submodules=all",
             options,

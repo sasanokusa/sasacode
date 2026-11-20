@@ -18,6 +18,7 @@ pub mod compaction;
 pub mod context_slim;
 pub mod diagnostics;
 pub mod error_hints;
+pub mod git_args;
 pub mod goal;
 pub mod gui;
 pub mod image_attach;
