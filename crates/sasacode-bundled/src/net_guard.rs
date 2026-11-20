@@ -217,12 +217,33 @@ fn pinned_client(url: &url::Url, ips: &[IpAddr]) -> Result<reqwest::Client, Stri
         .map_err(|e| e.to_string())
 }
 
+/// How a URL that is not judged is reached: whether its origin can be reached again without a judgment
+/// (an IP literal, or a name connected to one answer), and the client that does it, when it is pinned.
+/// A name that does not resolve here (a proxy resolves it) cannot be pinned.
+async fn pin_unjudged(url: &url::Url, route: &Route) -> (bool, Option<reqwest::Client>) {
+    let domain = match url.host() {
+        Some(url::Host::Domain(d)) => d,
+        Some(_) => return (true, None),
+        None => return (false, None),
+    };
+    match (route.lookup)(domain.to_string()).await {
+        Ok(ips) if !ips.is_empty() => match pinned_client(url, &ips) {
+            Ok(client) => (true, Some(client)),
+            Err(_) => (false, None),
+        },
+        _ => (false, None),
+    }
+}
+
 /// GET `first` and follow redirects (at most `max_redirects`), judging hops as `check` says and
 /// connecting each judged hop to the address that was judged. All of it, the name resolution
 /// included, runs under `signal` and `limit`.
 ///
 /// Where a redirect stays on the first URL's origin (scheme, host and port), `Check::Redirects` does not
-/// judge it: it is the place the first URL already reached, and nothing new can be seen there.
+/// judge it: it is the place the first URL already reached, and nothing new can be seen there. It is
+/// connected to the addresses the first URL's name resolved to (the name is not resolved again, where
+/// an answer that changed could lead somewhere the first URL never went); when the name could not be
+/// resolved here (behind a proxy, say), such a redirect is judged like any other.
 ///
 /// Behind an HTTP proxy (reqwest reads the environment's) the proxy resolves the name and makes the
 /// connection, so the pinning here does not apply; the check of the resolved address still runs.
@@ -239,6 +260,10 @@ pub(crate) async fn get_following(
     let mut deadline = started + limit.length();
     let mut next = first.clone();
     let mut hops = 0;
+    // The client the first URL was reached with, when only redirects are judged: its name pinned to
+    // the addresses it resolved to.
+    let mut first_client: Option<reqwest::Client> = None;
+    let mut first_again = false;
     loop {
         if hops > 0 && matches!(limit, Limit::PerHop(_)) {
             started = Instant::now();
@@ -257,10 +282,22 @@ pub(crate) async fn get_following(
         }
         let judged = match check {
             Check::All => true,
-            Check::Redirects => hops > 0 && next.origin() != first.origin(),
+            Check::Redirects => hops > 0 && !(next.origin() == first.origin() && first_again),
             Check::Never => false,
         };
-        let client = if judged {
+        let client = if check == Check::Redirects && hops == 0 {
+            // Not judged (the user asked for this URL), but its name is connected to one answer only.
+            let pinned = tokio::select! {
+                _ = signal.cancelled() => return Err(GetError::failed("The operation was aborted.")),
+                _ = tokio::time::sleep_until(deadline) => return Err(GetError::failed("The operation timed out.")),
+                r = pin_unjudged(&next, route) => r,
+            };
+            first_again = pinned.0;
+            first_client = pinned.1;
+            first_client.clone().unwrap_or_else(|| no_redirects().clone())
+        } else if check == Check::Redirects && !judged {
+            first_client.clone().unwrap_or_else(|| no_redirects().clone())
+        } else if judged {
             let vetted = tokio::select! {
                 _ = signal.cancelled() => return Err(GetError::failed("The operation was aborted.")),
                 _ = tokio::time::sleep_until(deadline) => return Err(GetError::failed("The operation timed out.")),
@@ -757,6 +794,73 @@ mod tests {
             .err()
             .expect("refused");
         assert_eq!(err.message, "not a public address");
+    }
+
+    #[tokio::test]
+    async fn a_redirect_on_the_first_origin_connects_to_the_address_its_name_resolved_to_first() {
+        // The name answers with this machine once, then with an internal address: a second lookup
+        // would lead there, so the redirect must go where the first answer did.
+        static ANSWERS: AtomicUsize = AtomicUsize::new(0);
+        fn rebinding(_host: String) -> BoxFuture<'static, Result<Vec<IpAddr>, String>> {
+            Box::pin(async {
+                Ok(vec![if ANSWERS.fetch_add(1, Ordering::SeqCst) == 0 {
+                    IpAddr::V4(Ipv4Addr::LOCALHOST)
+                } else {
+                    IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1))
+                }])
+            })
+        }
+        let route = Route {
+            lookup: rebinding,
+            internal: internal_ip,
+        };
+        let site = listen(vec![("/", "/next".into()), ("/again", "/next".into())]).await;
+        let answer = get(
+            &format!("http://rebind.test:{}/", site.port),
+            Check::Redirects,
+            10,
+            &route,
+        )
+        .await
+        .expect("fetched");
+        assert_eq!(answer.text, format!("200 ok:{}/next", site.port));
+        assert_eq!(ANSWERS.load(Ordering::SeqCst), 1);
+        assert_eq!(site.hits(), 2);
+    }
+
+    #[tokio::test]
+    async fn a_redirect_to_another_origin_by_a_name_that_now_resolves_inside_is_refused() {
+        // Same name, another port: another origin, judged by a fresh lookup, which says internal.
+        static ANSWERS: AtomicUsize = AtomicUsize::new(0);
+        fn rebinding(_host: String) -> BoxFuture<'static, Result<Vec<IpAddr>, String>> {
+            Box::pin(async {
+                Ok(vec![if ANSWERS.fetch_add(1, Ordering::SeqCst) == 0 {
+                    IpAddr::V4(Ipv4Addr::LOCALHOST)
+                } else {
+                    IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1))
+                }])
+            })
+        }
+        let route = Route {
+            lookup: rebinding,
+            internal: internal_ip,
+        };
+        let other = listen(vec![]).await;
+        let site = listen(vec![("/", format!("http://rebind.test:{}/x", other.port))]).await;
+        let err = get(
+            &format!("http://rebind.test:{}/", site.port),
+            Check::Redirects,
+            10,
+            &route,
+        )
+        .await
+        .err()
+        .expect("refused");
+        assert!(
+            err.refused && err.message.ends_with("refused: not a public address"),
+            "{err:?}"
+        );
+        assert_eq!(other.hits(), 0);
     }
 
     #[tokio::test]

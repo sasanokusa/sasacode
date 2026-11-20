@@ -443,3 +443,49 @@ fn auto_reconnect_without_a_base_url_it_checks_the_providers_own_api_not_a_third
     let target = auto_reconnect::target(None, &m);
     assert!(target.starts_with("https://api.anthropic.com"), "{target}");
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn bg_start_judges_shows_and_runs_in_the_directory_it_is_given() {
+    let root = temp_dir("sasacode-adopted-");
+    let home = root.path().join("home");
+    let work = root.path().join("work");
+    std::fs::create_dir_all(work.join("sub")).unwrap_or_else(|e| panic!("{e}"));
+    let b = fake(
+        background_sessions::plugin,
+        &work,
+        bg_settings(&home, 50),
+        Entries::default(),
+    )
+    .await;
+    let tool = b.tool("bg_start");
+    let args = |v: Value| match v {
+        Value::Object(m) => m,
+        _ => panic!("not an object"),
+    };
+
+    // A relative directory is resolved from the working directory, an absolute one as it is, and the
+    // permission check is given it.
+    let relative = args(json!({ "command": "make", "cwd": "sub/../sub" }));
+    assert_eq!(tool.paths(&relative, &work), Some(vec![s(&work.join("sub"))]));
+    let absolute = args(json!({ "command": "make", "cwd": s(root.path()) }));
+    assert_eq!(tool.paths(&absolute, &work), Some(vec![s(root.path())]));
+    let up = args(json!({ "command": "make", "cwd": "../home" }));
+    assert_eq!(tool.paths(&up, &work), Some(vec![s(&home)]));
+    // Without one the job runs where the session is: nothing more to judge.
+    assert_eq!(tool.paths(&args(json!({ "command": "make" })), &work), Some(vec![]));
+
+    // The approval shows where the command runs.
+    assert_eq!(tool.summary(&relative).as_deref(), Some("make (in sub/../sub)"));
+    assert_eq!(
+        tool.summary(&args(json!({ "command": "make" }))).as_deref(),
+        Some("make")
+    );
+
+    // And that is where it runs.
+    let started = b.exec("bg_start", json!({ "command": "pwd", "cwd": "sub" })).await;
+    assert!(
+        first_text(&started).contains(&s(&work.join("sub"))),
+        "{}",
+        first_text(&started)
+    );
+}

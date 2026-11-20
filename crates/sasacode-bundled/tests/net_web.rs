@@ -315,7 +315,7 @@ fn html_to_text_numbers_links_as_absolute_urls_once_each_and_leaves_out_the_ones
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn web_fetch_lists_the_links_of_the_part_it_shows_and_a_missing_page_points_at_the_sites_index_and_a_search() {
+async fn web_fetch_lists_the_links_of_the_part_it_shows_and_a_missing_page_points_at_a_search() {
     let page = format!(
         r#"<p><a href="/a">A</a></p><p>{}</p><p><a href="/b">B</a></p>"#,
         "x".repeat(50)
@@ -354,13 +354,12 @@ async fn web_fetch_lists_the_links_of_the_part_it_shows_and_a_missing_page_point
         .await;
     assert!(missing.is_error());
     let note = first_text(&missing);
+    // The site's index is on this machine here, and an address that is not public is not looked at
+    // for the page's host: no index is offered.
     assert!(
-        note.contains(&format!(
-            "Do not guess another URL: fetch {origin}/llms.txt (the site's own index) or start from a page"
-        )),
+        note.contains("Do not guess another URL: start from a page") && !note.contains("llms.txt"),
         "{note}"
     );
-    assert!(!note.contains("sitemap.xml")); // it answered 404 too
     server.stop().await;
 }
 
@@ -804,4 +803,37 @@ fn free_search_runs_uvx_free_search_mcp_as_the_mcp_server_free_search() {
         (command.as_str(), args, env.is_empty(), cwd),
         ("uvx", vec!["free-search-mcp".to_string()], true, None)
     );
+}
+
+/// A `rustxng` in the working directory is not started even when PATH puts the working directory on
+/// the search path (`.`).
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn web_search_does_not_use_a_rustxng_that_lives_in_the_project() {
+    let test = "web_search_does_not_use_a_rustxng_that_lives_in_the_project";
+    let envs = [
+        ("PATH", ".".to_string()),
+        ("SASACODE_HOME", "/nonexistent-sasacode-home".to_string()),
+    ];
+    if !in_child(test, &envs) {
+        return;
+    }
+    let dir = temp_dir("sasacode-bundled-");
+    write_script(&dir.path().join("rustxng"), "#!/bin/sh\nexit 0\n");
+    // In the child process, which runs this one test: PATH's `.` is this directory.
+    std::env::set_current_dir(dir.path()).unwrap_or_else(|e| panic!("cd: {e}"));
+    let opts = SetupOpts {
+        cwd: Some(s(dir.path())),
+        ..SetupOpts::default()
+    };
+    let st = setup(vec![], &["web-search"], opts).await;
+    assert!(!st.tool_names().contains(&"web_search".to_string()));
+    // The same name given as the setting is looked up the same way.
+    let opts = SetupOpts {
+        cwd: Some(s(dir.path())),
+        settings: [("web-search".to_string(), json!({ "command": "rustxng" }))].into(),
+        ..SetupOpts::default()
+    };
+    let st = setup(vec![], &["web-search"], opts).await;
+    assert!(!st.tool_names().contains(&"web_search".to_string()));
 }

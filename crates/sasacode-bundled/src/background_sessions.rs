@@ -839,11 +839,7 @@ impl Bg {
         if js_trim(&command).is_empty() {
             return error_result("command is empty; pass the shell command to run");
         }
-        let run_cwd = match args.get("cwd").and_then(Value::as_str).filter(|c| !c.is_empty()) {
-            Some(c) if Path::new(c).is_absolute() => PathBuf::from(c),
-            Some(c) => ctx_cwd.join(c),
-            None => ctx_cwd.to_path_buf(),
-        };
+        let run_cwd = start_dir(args, ctx_cwd).unwrap_or_else(|| ctx_cwd.to_path_buf());
         let shown_cwd = run_cwd.display().to_string();
         match std::fs::metadata(&run_cwd) {
             Ok(m) if !m.is_dir() => return error_result(format!("{shown_cwd} is not a directory; pass a valid cwd")),
@@ -1205,6 +1201,23 @@ impl Bg {
     }
 }
 
+/// The directory `bg_start` runs in when the call names one (`~` and relative paths resolved from the
+/// session's working directory, as the other tools resolve a path): what the permission check sees
+/// and what the command starts in. `None`: the session's own directory.
+fn start_dir(args: &sasacode_ai::JsonObject, cwd: &Path) -> Option<PathBuf> {
+    let named = args.get("cwd").and_then(Value::as_str).filter(|c| !c.is_empty())?;
+    Some(PathBuf::from(sasacode_tools::util::resolve_path(named, cwd)))
+}
+
+/// What an approval shows of a `bg_start`: the command, and the directory when it is not the session's.
+fn start_summary(args: &sasacode_ai::JsonObject) -> String {
+    let command = args.get("command").and_then(Value::as_str).unwrap_or("");
+    match args.get("cwd").and_then(Value::as_str).filter(|c| !c.is_empty()) {
+        Some(dir) => format!("{command} (in {dir})"),
+        None => command.to_string(),
+    }
+}
+
 fn job_id_param() -> Value {
     json!({ "type": "string", "description": "Job id from bg_start, e.g. bg-3" })
 }
@@ -1329,10 +1342,12 @@ pub fn plugin(api: PluginApi) -> BoxFuture<'static, anyhow::Result<()>> {
             )
             .concurrent(true)
             .match_target(|a| a.get("command").and_then(Value::as_str).unwrap_or("").to_string())
+            // The directory it runs in, resolved as the tool resolves it, is a path of the call.
+            .paths(|a, cwd| start_dir(a, cwd).map(|d| d.display().to_string()).into_iter().collect())
             // Judged by the rules written for bash (guard preset, the user's bash(sudo *) deny rules,
             // bash(...) allow rules) against the command: no way around them.
             .permissions_as("bash")
-            .summary(|a| a.get("command").and_then(Value::as_str).unwrap_or("").to_string())
+            .summary(start_summary)
             .into_ref(),
         );
 

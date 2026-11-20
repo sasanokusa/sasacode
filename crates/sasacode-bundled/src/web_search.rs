@@ -22,6 +22,7 @@ use sasacode_plugin_api::{
 pub use crate::net_guard::private_address;
 use crate::net_guard::{Check, Limit, SYSTEM, get_following};
 use crate::net_util::{js_num_str, js_trim, js_words, setting_number, setting_str, utf16_len, utf16_prefix};
+use crate::project_bin::ProjectRoot;
 use crate::rustxng_install::{InstallOptions, RUSTXNG_RELEASES, install_rustxng, managed_rustxng};
 use crate::web_fetch::{USER_AGENT, content_type, html_to_text, read_capped, readable, send_within};
 
@@ -260,6 +261,16 @@ pub fn format_results(query: &str, data: &SearxResponse) -> String {
 /// The sidecar being started, shared by every search that waits for it.
 type Starting = Shared<BoxFuture<'static, Result<(), String>>>;
 
+/// Where the sidecar runs: sasacode's own directory, else the temporary one; never the project.
+fn sidecar_dir() -> std::path::PathBuf {
+    let home = sasacode_plugin_api::sasacode_home();
+    if std::fs::create_dir_all(&home).is_ok() {
+        home
+    } else {
+        std::env::temp_dir()
+    }
+}
+
 /// The plugin's settings and what it found, shared by its tool, command and hook.
 struct WebSearch {
     api: PluginApi,
@@ -286,20 +297,21 @@ impl WebSearch {
         if self.url.is_some() {
             return None;
         }
+        // A program inside the project is never started by name: PATH can put the working directory on
+        // the search path (`.`, an empty entry), and what is there the model could have written.
+        let project = ProjectRoot::new(&self.api.cwd());
         if let Some(configured) = &self.configured {
-            return which::which(configured)
-                .ok()
-                .map(|p| p.display().to_string())
-                .or_else(|| Path::new(configured).exists().then(|| configured.clone()));
+            // A path is the user's own say; a bare name is looked up as below.
+            if configured.contains(['/', '\\']) {
+                return Path::new(configured).exists().then(|| configured.clone());
+            }
+            return project.find(configured).map(|p| p.display().to_string());
         }
-        // PATH as it is now: `which` reads it on every call.
-        which::which("rustxng")
-            .ok()
-            .map(|p| p.display().to_string())
-            .or_else(|| {
-                let managed = managed_rustxng();
-                managed.exists().then(|| managed.display().to_string())
-            })
+        // PATH as it is now: the lookup reads it on every call.
+        project.find("rustxng").map(|p| p.display().to_string()).or_else(|| {
+            let managed = managed_rustxng();
+            managed.exists().then(|| managed.display().to_string())
+        })
     }
 
     fn command(&self) -> Option<String> {
@@ -344,6 +356,9 @@ impl WebSearch {
         // Detached: it outlives this session and ends on its own idle timeout. (Not on Windows, where
         // there is no process group to leave: there it is per session.)
         let mut cmd = tokio::process::Command::new(&command);
+        // Started outside the project: it reads no file of the working directory, and what is there is
+        // not its to run from.
+        cmd.current_dir(sidecar_dir());
         cmd.args(["--bind", "127.0.0.1", "--port", &port])
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
