@@ -55,7 +55,7 @@ fn secrets_other_than_the_key_in_use_are_hidden_in_the_jsonl_output_and_in_the_s
                     "headers": { "Authorization": "Bearer ${SASACODE_TEST_MCP_TOKEN}", "X-Short": SHORT },
                     "disabled": true,
                 },
-                "tool": { "command": "none", "env": { "LITERAL": MCP_ENV }, "disabled": true },
+                "tool": { "command": "none", "env": { "SERVICE_TOKEN": MCP_ENV }, "disabled": true },
             },
         }),
     );
