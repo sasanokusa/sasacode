@@ -404,8 +404,9 @@ impl Handle {
         rx.await.ok()
     }
 
+    /// Notices from commands and plugins carry text from config, servers and models: shown plain.
     fn notify(&self, text: impl Into<String>, color: fn(&str) -> String) {
-        let text = text.into();
+        let text = plain(&text.into());
         self.send(move |app| app.notify(&text, color));
     }
 
@@ -473,9 +474,8 @@ impl UiBridge for Bridge {
     fn interactive(&self) -> bool {
         true
     }
-    // Plugin and MCP server messages carry text from config, servers and models.
     fn notify(&self, message: &str, level: NotifyLevel) {
-        self.0.notify(plain(message), level_color(level));
+        self.0.notify(message, level_color(level));
     }
     async fn show_text(&self, options: ShowTextOptions) {
         let _ = self
@@ -2370,7 +2370,10 @@ async fn language_command(h: &Handle, args: &str) -> anyhow::Result<()> {
             Ok(()) => true,
             Err(e) => {
                 app.notify(
-                    &t("設定に保存できませんでした: {error}", &[("error", &e)]),
+                    &t(
+                        "設定に保存できませんでした: {error}",
+                        &[("error", &plain(&e.to_string()))],
+                    ),
                     theme::yellow,
                 );
                 false
@@ -2516,7 +2519,7 @@ async fn warn_context(h: &Handle) {
     }
     let text = t(
         "{spec} には num_ctx が設定されていません。Ollama を OLLAMA_CONTEXT_LENGTH で起動していなければ、Ollama の既定の長さ（数千トークン）を超えた入力は黙って切り詰められます。Modelfile に PARAMETER num_ctx 32768 などを書くか、OLLAMA_CONTEXT_LENGTH を設定してください（このモデルは最大 {max}）。",
-        &[("spec", &spec), ("max", &fmt_tokens(max))],
+        &[("spec", &plain(&spec)), ("max", &fmt_tokens(max))],
     );
     h.send(move |app| {
         if app.warned_context.insert(spec) {

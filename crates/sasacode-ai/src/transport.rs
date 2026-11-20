@@ -648,7 +648,7 @@ impl ApiClient {
                 remaining -= 1;
                 continue;
             }
-            if let Some(to) = resp.headers().get("location") {
+            if let Some(to) = resp.headers().get("location").filter(|_| status.is_redirection()) {
                 anyhow::bail!("{status}: redirect to {to:?} not followed; set the provider's baseUrl to it instead");
             }
             let text = tokio::select! {

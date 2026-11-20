@@ -538,7 +538,7 @@ fn trust_reports_what_the_project_needs_and_yes_trusts_it_until_it_changes() {
             "allow": ["bash"],
             "mode": "auto",
             "mcpServerDetails": [
-                { "name": "fx", "command": "true", "url": null, "cwd": null, "env": [], "headers": [] },
+                { "name": "fx", "command": "true", "args": [], "url": null, "cwd": null, "env": [], "headers": [] },
             ],
             "model": null,
             "judgeModel": null,
@@ -680,8 +680,8 @@ fn trust_json_says_what_each_server_runs_and_names_its_variables_and_headers_wit
     assert_eq!(
         status["mcpServerDetails"],
         json!([
-            { "name": "fx", "command": "npx -y \"a b\"", "url": null, "cwd": null, "env": ["TOKEN"], "headers": [] },
-            { "name": "web", "command": null, "url": "https://mcp.example", "cwd": null, "env": [], "headers": ["Authorization"] },
+            { "name": "fx", "command": "npx", "args": ["-y", "a b"], "url": null, "cwd": null, "env": ["TOKEN"], "headers": [] },
+            { "name": "web", "command": null, "args": [], "url": "https://mcp.example", "cwd": null, "env": [], "headers": ["Authorization"] },
         ])
     );
     assert_eq!(status["model"], "openrouter/some-lab/model");

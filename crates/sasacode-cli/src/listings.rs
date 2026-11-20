@@ -18,7 +18,7 @@ use sasacode_skills::{discover_skills, materialize_builtin_skills};
 
 use crate::args::{boolean, parse_args};
 use crate::catalog::ModelChoice;
-use crate::config::{Settings, load_config, mcp_server_extras, mcp_server_run, read_config_files_from, sasacode_home};
+use crate::config::{Settings, load_config, mcp_server_extras, read_config_files_from, sasacode_home};
 use crate::setup::{PluginChoice, SetupOptions, setup, skill_dirs, skills_options};
 use crate::trust::{ProjectTrust, assess_files, is_trusted_in, save_trust_in};
 
@@ -141,8 +141,9 @@ pub struct TrustEndpoint {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct TrustMcpServer {
     pub name: String,
-    /// Its command and arguments, one string; null for a server reached by URL.
+    /// Its command; null for a server reached by URL.
     pub command: Option<String>,
+    pub args: Vec<String>,
     pub url: Option<String>,
     pub cwd: Option<String>,
     /// The names of the environment variables it sets.
@@ -501,12 +502,15 @@ fn trust_status(home: &Path, cwd: &Path, project: &ProjectTrust) -> anyhow::Resu
         .map(|(name, v)| {
             let server = sasacode_mcp::McpServerConfig::from_json(v);
             let (env, headers, cwd) = mcp_server_extras(&server);
-            let stdio = matches!(server.transport, sasacode_mcp::McpTransportConfig::Stdio { .. });
-            let run = mcp_server_run(&server);
+            let (command, args, url) = match server.transport {
+                sasacode_mcp::McpTransportConfig::Stdio { command, args, .. } => (Some(command), args, None),
+                sasacode_mcp::McpTransportConfig::Http { url, .. } => (None, Vec::new(), Some(url)),
+            };
             TrustMcpServer {
                 name: name.clone(),
-                command: stdio.then(|| run.clone()),
-                url: (!stdio).then_some(run),
+                command,
+                args,
+                url,
                 cwd,
                 env,
                 headers,

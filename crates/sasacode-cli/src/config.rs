@@ -343,18 +343,27 @@ fn strings(v: Option<&Value>) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// How much of one value a trust line shows.
+/// How much of one plugin setting or model override value a trust line shows.
 const SHOWN: usize = 200;
 
-/// A value from the project's config as a trust line shows it: one line, no control characters, cut
-/// when long.
+/// A value from the project's config as a trust line shows it: whole, on one line, without control
+/// characters.
 fn shown(s: &str) -> String {
-    plain_clipped(s, SHOWN)
+    plain_line(s)
 }
 
-/// A JSON value (plugin settings, a model override) on one line.
-fn shown_json(v: &Value) -> String {
-    shown(&serde_json::to_string(v).unwrap_or_default())
+/// Plugin settings or a model override: every key, each value on one line and cut when long, so a
+/// long value cannot push the keys after it out of sight.
+fn shown_entries(v: &Value) -> String {
+    let value = |v: &Value| plain_clipped(&serde_json::to_string(v).unwrap_or_default(), SHOWN);
+    match v.as_object() {
+        Some(o) => o
+            .iter()
+            .map(|(k, v)| format!("{}={}", shown(k), value(v)))
+            .collect::<Vec<_>>()
+            .join(", "),
+        None => value(v),
+    }
 }
 
 /// What an MCP server entry starts: its command and arguments (an argument with spaces or quotes
@@ -417,7 +426,7 @@ pub fn describe_elevated(e: &Config) -> Vec<String> {
         out.push(t!(
             "model override {model}: {value}",
             model = shown(spec),
-            value = shown_json(v)
+            value = shown_entries(v)
         ));
     }
     for (n, v) in e.get("mcpServers").and_then(Value::as_object).into_iter().flatten() {
@@ -453,7 +462,7 @@ pub fn describe_elevated(e: &Config) -> Vec<String> {
         out.push(t!(
             "settings for plugin {name}: {value}",
             name = shown(n),
-            value = shown_json(v)
+            value = shown_entries(v)
         ));
     }
     let permissions = e.get("permissions");

@@ -329,36 +329,40 @@ fn without_a_model_in_the_global_config_the_default_ones_provider_is_the_users()
 fn the_trust_list_shows_what_each_entry_runs_and_sets_on_one_line_without_control_characters() {
     english(|| {
         let long = "y".repeat(300);
+        let padded = format!("echo {long}; touch /tmp/x");
         let elevated = obj(json!({
+            "providers": { "p": { "baseUrl": format!("https://api.example/{long}@other.example/") } },
             "mcpServers": {
                 "docs\r\u{1b}[2K  - maxRetries 9": {
-                    "command": "sh", "args": ["-c", "touch /tmp/x"],
+                    "command": "sh", "args": ["-c", padded],
                     "env": { "TOKEN": "secret-value" }, "cwd": "/w",
                 },
                 "web": { "url": "https://mcp.example/\u{202e}x", "headers": { "Authorization": "Bearer secret-value" } },
             },
             "modelOverrides": { "a/b": { "contextWindow": 1000 } },
-            "plugins": { "settings": { "todo": { "note": "a\nb", "long": long } } },
+            "plugins": { "settings": { "todo": { "note": "a\nb", "long": long, "after": 1 } } },
+            "permissions": { "allow": [format!("bash({long} rm *)")] },
         }));
         let items = describe_elevated(&elevated);
+        // Commands, URLs and rules are shown whole.
         assert_eq!(
-            items[..3],
-            [
-                "model override a/b: {\"contextWindow\":1000}",
-                "MCP server docs␛[2K  - maxRetries 9: sh -c \"touch /tmp/x\"; in /w; environment TOKEN",
-                "MCP server web: https://mcp.example/x; headers Authorization",
-            ]
+            items[0],
+            format!("endpoint p (https://api.example/{long}@other.example/)")
         );
+        assert_eq!(items[1], "model override a/b: contextWindow=1000");
+        assert_eq!(
+            items[2],
+            format!("MCP server docs␛[2K  - maxRetries 9: sh -c \"{padded}\"; in /w; environment TOKEN")
+        );
+        assert_eq!(items[3], "MCP server web: https://mcp.example/x; headers Authorization");
+        // A long setting is cut, and the keys after it still show.
         assert!(
-            items[3].starts_with("settings for plugin todo: {\"note\":\"a\\nb\",\"long\":\"yyy"),
+            items[4].starts_with("settings for plugin todo: note=\"a\\nb\", long=\"yyy"),
             "{}",
-            items[3]
+            items[4]
         );
-        assert!(
-            items[3].ends_with('…') && items[3].chars().count() < 250,
-            "{}",
-            items[3]
-        );
+        assert!(items[4].ends_with("…, after=1"), "{}", items[4]);
+        assert_eq!(items[5], format!("allow rules bash({long} rm *)"));
         assert!(items.iter().all(|i| !i.contains("secret-value") && !i.contains('\n')));
     });
 }
