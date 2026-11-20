@@ -738,13 +738,13 @@ pub struct CallFacts<'a> {
     pub user_request: Option<&'a str>,
     /// `os.homedir()`.
     pub home: &'a str,
-    /// The project is trusted. Untrusted, git is not run: what it would say of the targets is
+    /// Git may be run in the folder. Otherwise it is not: what it would say of the targets is
     /// left unknown, and so not taken to be restorable.
     pub trusted: bool,
 }
 
 /// A target's git state where git is not run.
-const GIT_UNREAD: &str = "unknown: git is not run in a project that is not trusted (do not assume it can be restored)";
+const GIT_UNREAD: &str = "unknown: git is not run in a folder not allowed for it (do not assume it can be restored)";
 
 /// The state Jev judges: facts the harness gathered, and the user's own words.
 pub async fn build_state(f: &CallFacts<'_>) -> JsonObject {

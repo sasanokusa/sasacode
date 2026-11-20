@@ -305,7 +305,7 @@ async fn state_in_a_project_not_trusted_leaves_git_unread_and_the_targets_not_re
     for t in targets {
         assert_eq!(t["location"], "inside the workspace");
         let git = t["git"].as_str().unwrap();
-        assert!(git.contains("not trusted") && git.contains("do not assume"), "{git}");
+        assert!(git.contains("not allowed") && git.contains("do not assume"), "{git}");
     }
 }
 

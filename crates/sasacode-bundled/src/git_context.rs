@@ -183,9 +183,10 @@ pub async fn collect_context(args: &JsonObject, ctx: &ToolContext) -> anyhow::Re
     Ok(ToolResult::text(text).with_details(details))
 }
 
-/// Said instead of the context in a project that is not trusted: git runs what a repository's
+/// Said instead of the context in a folder git is not allowed in: git runs what a repository's
 /// config names, so it is not run there.
-pub const UNTRUSTED: &str = "git_context is not available until this project is trusted (sasacode trust).";
+pub const UNTRUSTED: &str = "git_context is not available until git is allowed in this folder (answer yes when sasacode \
+                              asks on a terminal here, or allow it in the window's git tab).";
 
 pub fn plugin(api: PluginApi) -> BoxFuture<'static, anyhow::Result<()>> {
     Box::pin(async move {

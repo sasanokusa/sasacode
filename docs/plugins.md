@@ -115,6 +115,7 @@ description: Write release notes from the commits since the last tag.
 | `maxChars` | `16000` | 出力全体の文字数の上限。1000〜60000 |
 
 - 作業ディレクトリの中だけを読む。Gitの外部diff・textconv・fsmonitorは使わず、変更もfetchもしない。権限は通常のreadとして判定する。
+- gitを走らせてよいフォルダ（`~/.sasacode/git-folders.json`）でなければ、gitを呼ばずにそう返す（[README](../README.md#gitを走らせるフォルダ)）。
 - 作業ツリーの状態はどの`scope`でも出すので、branchのパッチに入らない未コミットの変更もわかる。
 - 未追跡のファイルは名前だけで、サブモジュールの差分は対象外。ステージで変えて作業ツリーで戻した箇所は`working`では相殺されるので、要るなら`staged`も調べる。
 - 上限を超えた出力は、省いたことを明記する。Gitの各プロセスは15秒・8 MiBまでで、超える差分はエラーになる（`patch: false`か、ファイルを個別に読む）。upstreamがなければ`base`を指定する。
@@ -234,6 +235,7 @@ description: Write release notes from the commits since the last tag.
   OpenRouterとVercelは、チャット用にキーを持っているだけの人に判定を送らないよう、名前を指定したときだけ使う。`endpoint`と`apiKeyEnv`で接続先のURLとキーの変数を変えられる（プロキシなど）。実際のAPIで確かめたのは`commandcode`と`chat`だけで、`typesafe` / `openrouter` / `vercel`は公開されている仕様どおりの形で送る（テストは模擬サーバー）。
 - `chat`はJevの代わりにチャットモデルへ同じ質問をし、JSONで答えさせる。確率が較正されていない代用品で、遅い。実際のコマンドで比べると、DeepSeek V4.1 Flashは止めるべき呼び出しをJevより多く通した（[ベンチマーク](benchmarks.md)）。ローカルモデルは1回に数十秒かかり、実用的でない。Jevに接続できない環境で、判定の仕組みだけを使いたいとき向け。
 - 有効にすると、ツール呼び出しの内容（コマンド、変更されうるパスとそのgitの状態、ユーザーの直近の依頼）が接続先に送られる。APIキーやトークンらしき文字列は、送る前に伏せる（ベストエフォート）。
+- gitを走らせてよいフォルダ（`~/.sasacode/git-folders.json`）でなければ、対象のgitの状態を読まず、戻せるとは見なさない（[README](../README.md#gitを走らせるフォルダ)）。
 - 判定を変えるのは次の場合だけ。
   - 確認なしで実行されるはずだった呼び出し（allowルール、`auto`モード）：危険なら拒否、要確認なら確認に回す。
   - `agent`モードで確認に回るはずだった呼び出し：安全なら確認なしで実行する（モデルによる判定の代わり）。Jevが判断を保留したときは、これまでどおりモデルが判定する。
