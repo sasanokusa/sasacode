@@ -24,7 +24,7 @@ sasacodeのツール・コマンド・フックは、どれもプラグインが
 | --- | --- |
 | `command` / `args` | stdioのサーバーを起動するコマンドと引数。`command`があればstdioのサーバー、なければ`url`のサーバーとして読む |
 | `env` | stdioのサーバーに渡す環境変数。サーバーが受け取るのは、`HOME`・`LOGNAME`・`PATH`・`SHELL`・`TERM`・`USER`（Windowsでは`APPDATA`・`PATH`・`USERPROFILE`など）と、ここに書いたものだけ。値の`${VAR}`は起動時に環境変数から展開する |
-| `cwd` | stdioのサーバーの作業ディレクトリ。既定はsasacodeの作業ディレクトリ |
+| `cwd` | stdioのサーバーの作業ディレクトリ。既定は、グローバルの`~/.sasacode/config.json`に書いたサーバーなら、プロジェクトの外にある専用のフォルダ（`<sasacodeのホーム>/tmp/mcp/<サーバー名>`。名前の英数字・`_`・`-`以外は`%XX`にする。Unixでは0700）。プロジェクトの`.sasacode/config.json`に書いたサーバー（信頼したあと）なら、sasacodeの作業ディレクトリ。`${SASACODE_PROJECT}`と書くと、sasacodeの作業ディレクトリ（プロジェクト）になる（`"${SASACODE_PROJECT}/tools"`のように続けてもよい）。このほかの`${VAR}`は展開しない。相対パスは、sasacodeを起動したディレクトリから見る |
 | `url` / `headers` | Streamable HTTPのサーバー。どちらも`${VAR}`を展開する |
 | `disabled` | `true`なら接続しない |
 | `alwaysLoad` | ツールの遅延ロードが有効でも、このサーバーのツールの定義を常に送る |
@@ -36,6 +36,7 @@ sasacodeのツール・コマンド・フックは、どれもプラグインが
 - サーバーのpromptsは`mcp__<server>__<prompt>`という名前のスラッシュコマンドになる。
 - 落ちたサーバーは、間隔を空けて5回まで自動で再接続する（`plugins.settings.mcp.reconnectDelayMs`で間隔を縮められる）。`/mcp`で接続の状態を見て、`/mcp reconnect [name]`で手動でつなぎ直す。フッターには`MCP <接続中>/<全体>`を出す。
 - サーバーのツールの一覧が変わったら、一覧から外れたツールはモデルに渡さなくなる。
+- 既定の作業ディレクトリをプロジェクトの外にするのは、`npx`や`uvx`がカレントの`node_modules`、`uv.toml`、`pyproject.toml`を先に見るためである。グローバルのサーバーでプロジェクトの中身（ファイルや`node_modules`）に頼るものには、`"cwd": "${SASACODE_PROJECT}"`を足す。同梱の`free-search`も`browsr`も、同じ専用のフォルダで起動する。
 - プロジェクトの`.sasacode/config.json`に書いたサーバーは、プロジェクトを信頼するまで起動しない（[README](../README.md#プロジェクトの信頼)）。信頼したあとでサーバーの設定が変わると、また確認を出す。
 - `plugins.disabled`に`mcp`と書くと、`mcpServers`のサーバーを1つもつながない。
 
@@ -246,7 +247,7 @@ description: Write release notes from the commits since the last tag.
 
 ### free-search
 
-キー不要でローカルで動くWeb検索のMCPサーバー（複数の検索エンジン、ページの取得、文書の読み取り）。有効にすると、`uvx free-search-mcp`を`free-search`という名前のstdioのMCPサーバーとしてつなぐ。ツールは`mcp__free-search__<tool>`になり、ほかのMCPのツールと同じ権限確認を通る。[uv](https://docs.astral.sh/uv/)が入っていないと接続できない。`/mcp`とステータス行には、`mcpServers`のサーバーと並んで出る（`mcpServers`に同じ名前があれば、そちらを使う）。`mcp`プラグインを無効にしても、free-searchだけで動く。設定はない。
+キー不要でローカルで動くWeb検索のMCPサーバー（複数の検索エンジン、ページの取得、文書の読み取り）。有効にすると、`uvx free-search-mcp`を`free-search`という名前のstdioのMCPサーバーとしてつなぐ。ツールは`mcp__free-search__<tool>`になり、ほかのMCPのツールと同じ権限確認を通る。[uv](https://docs.astral.sh/uv/)が入っていないと接続できない。プロジェクトの外の専用のフォルダで起動するので、`uvx`はプロジェクトの`uv.toml`や`pyproject.toml`を読まない。`/mcp`とステータス行には、`mcpServers`のサーバーと並んで出る（`mcpServers`に同じ名前があれば、そちらを使う）。`mcp`プラグインを無効にしても、free-searchだけで動く。設定はない。
 
 ```json
 { "plugins": { "enabled": ["free-search"] } }

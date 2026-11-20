@@ -210,6 +210,27 @@ fn get_key(providers: &Providers) -> GetKey {
     })
 }
 
+/// A server the project's own config names runs in the project (the user trusted it); one that only
+/// the global config names starts in a folder of its own under the sasacode home. The two
+/// files are merged by now, so a server both name counts as the project's.
+fn project_servers_start_in_project(config: &mut Config, project: &Config) {
+    let Some(Value::Object(merged)) = config.get_mut("mcpServers") else {
+        return;
+    };
+    let names = project
+        .get("mcpServers")
+        .and_then(Value::as_object)
+        .into_iter()
+        .flat_map(|o| o.keys());
+    for name in names {
+        if let Some(Value::Object(server)) = merged.get_mut(name)
+            && !server.contains_key("cwd")
+        {
+            server.insert("cwd".into(), sasacode_mcp::PROJECT_CWD.into());
+        }
+    }
+}
+
 pub async fn setup(mut opts: SetupOptions) -> anyhow::Result<Arc<Harness>> {
     // Decided before setup (asked on the terminal, --trust-project, or remembered).
     let trusted = opts.trust_project;
@@ -218,7 +239,10 @@ pub async fn setup(mut opts: SetupOptions) -> anyhow::Result<Arc<Harness>> {
         None => (None, Vec::new()),
     };
     let loaded = load_config(Path::new(&opts.cwd), trusted, files)?;
-    let config = loaded.config;
+    let mut config = loaded.config;
+    if trusted {
+        project_servers_start_in_project(&mut config, &loaded.elevated);
+    }
     let settings = Settings::of(&config);
     let mut warnings = loaded.warnings;
     warnings.extend(extra);

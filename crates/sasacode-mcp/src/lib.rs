@@ -9,7 +9,7 @@ pub mod stdio;
 mod streamable_http;
 
 use std::collections::HashSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -22,7 +22,7 @@ use sasacode_ai::{ImageContent, UserContent};
 use sasacode_plugin_api::hooks::SessionEndEvent;
 use sasacode_plugin_api::{
     Command, CommandContext, InjectWhen, Lang, NotifyLevel, PluginApi, SelectOption, SessionEndReason, ToolDef,
-    ToolKind, ToolResult, error_result, hook, save_output,
+    ToolKind, ToolResult, create_private_dir, error_result, hook, sasacode_home, save_output,
 };
 
 pub use protocol::{Client, McpError};
@@ -68,6 +68,9 @@ pub struct McpServerConfig {
     /// "plain" registers tools under their own names instead of mcp__<server>__<tool>.
     pub tool_names: ToolNames,
 }
+
+/// In a stdio server's `cwd`: the project folder sasacode runs in.
+pub const PROJECT_CWD: &str = "${SASACODE_PROJECT}";
 
 /// Servers by name, in config order.
 pub type McpServers = IndexMap<String, McpServerConfig>;
@@ -273,6 +276,31 @@ fn expand(v: &str) -> String {
     }
     out.push_str(rest);
     out
+}
+
+/// Where a stdio server starts. A `cwd` is taken as written (`${SASACODE_PROJECT}` is the project;
+/// a relative one is the process's to resolve, as before). With none the server starts in a folder
+/// of its own under `home`, never in the project: `npx` and `uvx` run what the current folder's
+/// `node_modules` or `pyproject.toml` name before what the config names.
+fn server_cwd(home: &Path, project: &Path, name: &str, cwd: Option<&str>) -> std::io::Result<PathBuf> {
+    if let Some(cwd) = cwd {
+        return Ok(PathBuf::from(cwd.replace(PROJECT_CWD, &project.to_string_lossy())));
+    }
+    // One folder per name: every byte but [A-Za-z0-9_-] is written %XX, so no name is `.`, `..`
+    // or another server's.
+    let mut dir = String::new();
+    for b in name.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'_' | b'-' => dir.push(b as char),
+            _ => dir.push_str(&format!("%{b:02X}")),
+        }
+    }
+    let dir = home
+        .join("tmp")
+        .join("mcp")
+        .join(if dir.is_empty() { "%" } else { &dir });
+    create_private_dir(&dir)?;
+    Ok(dir)
 }
 
 fn expand_all(o: &IndexMap<String, String>) -> Vec<(String, String)> {
@@ -655,7 +683,8 @@ async fn connect(sh: Arc<Shared>, name: String) {
             } => {
                 let mut child_env = stdio::default_environment();
                 child_env.extend(expand_all(env));
-                let cwd = cwd.as_ref().map(PathBuf::from).unwrap_or_else(|| api.cwd());
+                let cwd = server_cwd(&sasacode_home(), &api.cwd(), &name, cwd.as_deref())
+                    .map_err(|e| anyhow::anyhow!("cannot prepare the working directory of {name}: {e}"))?;
                 let params = StdioParams {
                     command: command.clone(),
                     args: args.clone(),
@@ -1199,5 +1228,42 @@ mod tests {
         assert_eq!(last_utf16("ab😀", 2), "😀");
         assert_eq!(last_utf16("ab😀", 3), "b😀");
         assert_eq!(first_utf16("a😀b", 2), "a");
+    }
+}
+
+#[cfg(test)]
+mod cwd_tests {
+    use super::*;
+
+    #[test]
+    fn a_server_without_a_cwd_starts_in_a_folder_of_its_own_outside_the_project() {
+        let (home, project) = (tempfile::tempdir().unwrap(), Path::new("/p"));
+        let dir = server_cwd(home.path(), project, "git hub/é", None).unwrap();
+        assert_eq!(dir, home.path().join("tmp/mcp/git%20hub%2F%C3%A9"));
+        assert!(dir.is_dir());
+        let (dot, dotdot, empty) = (
+            server_cwd(home.path(), project, ".", None).unwrap(),
+            server_cwd(home.path(), project, "..", None).unwrap(),
+            server_cwd(home.path(), project, "", None).unwrap(),
+        );
+        assert_eq!(dot, home.path().join("tmp/mcp/%2E"));
+        assert_eq!(dotdot, home.path().join("tmp/mcp/%2E%2E"));
+        assert_eq!(empty, home.path().join("tmp/mcp/%"));
+        assert_eq!(
+            server_cwd(home.path(), project, "a_b-C9", None).unwrap(),
+            home.path().join("tmp/mcp/a_b-C9")
+        );
+    }
+
+    #[test]
+    fn a_cwd_is_kept_and_only_the_project_name_is_replaced() {
+        let (home, project) = (Path::new("/nonexistent-home"), Path::new("/p/q"));
+        let cwd = |c: &str| server_cwd(home, project, "s", Some(c)).unwrap();
+        assert_eq!(cwd(PROJECT_CWD), PathBuf::from("/p/q"));
+        assert_eq!(cwd("${SASACODE_PROJECT}/sub"), PathBuf::from("/p/q/sub"));
+        assert_eq!(cwd("/abs/dir"), PathBuf::from("/abs/dir"));
+        // Relative as before (the process resolves it); another variable is not expanded.
+        assert_eq!(cwd("rel/dir"), PathBuf::from("rel/dir"));
+        assert_eq!(cwd("${HOME}/x"), PathBuf::from("${HOME}/x"));
     }
 }
