@@ -80,6 +80,7 @@ function checkProvenance(path, file) {
   const verified = gh(["attestation", "verify", path, "--repo", repo]);
   if (verified.status !== 0) {
     process.stderr.write(`${verified.stdout ?? ""}${verified.stderr ?? ""}`);
+    rmSync(dirname(path), { recursive: true, force: true }); // die() exits without reaching install()'s finally
     die(`build provenance check failed for ${file}; nothing was installed`);
   }
   process.stderr.write("sasacode (npm): build provenance verified\n");
