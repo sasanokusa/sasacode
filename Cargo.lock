@@ -5218,6 +5218,7 @@ dependencies = [
  "http",
  "image",
  "indexmap",
+ "libc",
  "lol_html",
  "percent-encoding",
  "rand 0.9.5",

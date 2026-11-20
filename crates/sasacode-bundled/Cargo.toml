@@ -48,6 +48,10 @@ bytes.workspace = true
 # jev-guard: what a glob argument names (Bun.Glob scanSync)
 globset.workspace = true
 
+# regular_file: open what a hook reads without waiting on a FIFO
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
+
 [dev-dependencies]
 sasacode-testing.workspace = true
 tempfile.workspace = true

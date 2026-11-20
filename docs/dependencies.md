@@ -33,7 +33,7 @@
 | `which` | mcp（Windows）、bundled、cli | 実行ファイルを探す（browsr、gui、RustXNG、WindowsのMCPサーバー、`gui install`のcargo） | — |
 | `nix` | plugin-api、tools、mcp、cli（Unix） | プロセスグループへのシグナル、`setsid`、ファイルの操作を、`unsafe`を自分で書かずに行う（例外は`setsid`の1か所。ADR-012） | `libc`を直接使う：`unsafe`が要る |
 | `win32job` | tools（Windows） | bashで止めたコマンドが始めたプロセスを、Windowsのジョブオブジェクトでまとめて終わらせる。`taskkill /T /F`のあとも、コマンドが始めたプロセスが残って出力を握り続けることがあった（CIで30秒） | `windows`を直接使う：`unsafe`が要る。`process-wrap`：`wait()`がジョブの全プロセスの終わりを待つので、`&`で残したプロセスまで待ってしまう |
-| `libc` | tools、tui（tuiはUnix） | エラー番号（`ENOENT`など）からTS版と同じ文面を作る。TUIでは端末の応答を待って読む | — |
+| `libc` | tools、tui、bundled（tuiとbundledはUnix） | エラー番号（`ENOENT`など）からTS版と同じ文面を作る。TUIでは端末の応答を待って読む。bundledでは、権限の判定より前にフックが読むファイルを、FIFOで待たされないように`O_NONBLOCK`で開く | `nix`：bundledには入っておらず、定数1つのために機能を足すことになる |
 | `lol_html` | bundled | `web_fetch`で、ページから本文とリンクを取り出す（ストリーミングで読むHTMLの書き換え） | — |
 | `flate2` | bundled | `image-slim`：PNGの透明度を判定するため、IDATを展開する | — |
 | `image` | bundled | `image-slim`：縮小とJPEG / PNGへの書き出し（TS版の`Bun.Image`の代わり）。形式はPNG / JPEG / GIF / WebPだけを入れる | — |
