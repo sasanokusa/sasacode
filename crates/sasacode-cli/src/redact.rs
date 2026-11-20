@@ -8,6 +8,19 @@ use serde_json::Value;
 use sasacode_ai::ProviderConfig;
 use sasacode_plugin_api::hide_secrets;
 
+/// Variables an MCP value may refer to that are not secrets: hiding them would blank the working
+/// directory and paths in the records that resume reads back.
+const PLAIN_VARIABLES: [&str; 8] = [
+    "HOME",
+    "PWD",
+    "PATH",
+    "USER",
+    "LOGNAME",
+    "SHELL",
+    "TMPDIR",
+    "USERPROFILE",
+];
+
 /// What a built-in client reads when the provider names no variable of its own.
 const DEFAULT_KEY_VARIABLES: [&str; 3] = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "OPENAI_API_KEY"];
 
@@ -45,7 +58,8 @@ fn hide_mcp_values(servers: &Value, var: impl Fn(&str) -> Option<String>) {
     }
 }
 
-/// `text` with each `${NAME}` replaced by its value, and those values on their own.
+/// `text` with each `${NAME}` replaced by its value, and those values on their own (but not
+/// [`PLAIN_VARIABLES`]).
 fn expand(text: &str, var: &impl Fn(&str) -> Option<String>) -> (String, Vec<String>) {
     let (mut out, mut referred, mut rest) = (String::new(), Vec::new(), text);
     while let Some(at) = rest.find("${") {
@@ -56,9 +70,12 @@ fn expand(text: &str, var: &impl Fn(&str) -> Option<String>) -> (String, Vec<Str
             .take_while(|(i, c)| c.is_ascii_alphabetic() || *c == '_' || (*i > 0 && c.is_ascii_digit()))
             .count();
         if name_len > 0 && after[name_len..].starts_with('}') {
-            let value = var(&after[..name_len]).unwrap_or_default();
+            let name = &after[..name_len];
+            let value = var(name).unwrap_or_default();
             out.push_str(&value);
-            referred.push(value);
+            if !PLAIN_VARIABLES.contains(&name) {
+                referred.push(value);
+            }
             rest = &after[name_len + 1..];
         } else {
             out.push_str("${");
@@ -87,6 +104,13 @@ mod tests {
             "Bearer tok-redact-t-0123456789 | tok-redact-t-0123456789 | literal-value-redact-t | tiny | abc",
         );
         assert_eq!(shown, "[REDACTED] | [REDACTED] | [REDACTED] | tiny | abc");
+        // A path the value refers to stays readable on its own (the whole value is still hidden).
+        let home = json!({ "t": { "env": { "P": "${HOME}/redact-t-tools" } } });
+        hide_mcp_values(&home, |_| Some("/home/redact-t-user".to_string()));
+        assert_eq!(
+            redact_secrets("/home/redact-t-user | /home/redact-t-user/redact-t-tools"),
+            "/home/redact-t-user | [REDACTED]"
+        );
     }
 
     #[test]
