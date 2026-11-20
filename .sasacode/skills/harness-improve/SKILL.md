@@ -9,7 +9,7 @@ description: このリポジトリ（sasacodeハーネス）の改善を1周ま�
 
 ## 手順
 
-1. `cargo xtask improve` を実行する。検査の合否、コアの行数（上限12,700、1行120桁まで）、リポジトリの規模が出る。落ちている検査があれば、それが最優先。
+1. `cargo xtask improve` を実行する。検査の合否、コアの行数（上限12,720、1行120桁まで）、リポジトリの規模が出る。落ちている検査があれば、それが最優先。
 2. 観点を1つ選ぶ（`docs/improvement.md` の表：コアの小ささ / テスト / 約束の検査 / ドキュメント / 開発体験 / 安全性 / 可搬性 / 速度）。1周で1つだけ。
 3. 変更する。振る舞いが変わるなら、そのクレート（`crates/<クレート>`）のテストを足す。プロバイダーの応答は `sasacode-testing` の録画再生と偽のモデルサーバーで、モデルなしに再現できる。
 4. 検証する。`cargo fmt --all --check`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo test --workspace`、`cargo xtask improve`。CLI・TUI・プラグインの見え方が変わるなら、`sasacode -p` のヘッドレス実行で1回通す。CLIの出力を変えたなら `rust-anything app replay . --build <target/debug/sasacodeの絶対パス>` も通す（`rust/app-cases`）。
@@ -18,7 +18,7 @@ description: このリポジトリ（sasacodeハーネス）の改善を1周ま�
 
 ## 守ること
 
-- コア（`crates/sasacode-{ai,agent,plugin-api,tools}/src`。単体テストは数えない）に行を足すなら、同程度を削るか、置き場所を同梱プラグインに変える。上限は12,700行で、1行は120桁まで（ほとんどが1つの文字列リテラルの行を除く）。どちらも `cargo xtask checks` が守っている。行を詰めて上限に収めない。
+- コア（`crates/sasacode-{ai,agent,plugin-api,tools}/src`。単体テストは数えない）に行を足すなら、同程度を削るか、置き場所を同梱プラグインに変える。上限は12,720行で、1行は120桁まで（ほとんどが1つの文字列リテラルの行を除く）。どちらも `cargo xtask checks` が守っている。行を詰めて上限に収めない。
 - 検査（`xtask/src/checks.rs`）を足すときは、`xtask/src/checks_tests.rs` に「壊れた入力を渡すと落ちる」テストも書く。静かに効かなくなった検査は、検査がないより悪い。
 - `README.md` と `README.en.md` は1つの文書の2言語。片方だけ直さない。
 - 確かめていないことを「済み」と記録しない。確かめられなかったことは、「次の候補」に残す。

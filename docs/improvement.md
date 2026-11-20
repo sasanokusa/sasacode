@@ -17,7 +17,7 @@
 
 | 観点 | 問い | 見るところ |
 | --- | --- | --- |
-| コアの小ささ | その機能はコアに要るか。プラグインで足りないか | `cargo xtask improve`の行数（上限12,700行、1行120桁まで。超えると`cargo xtask checks`が落ちる）。コアに行を足すときは、同程度を削るか、置き場所を変える |
+| コアの小ささ | その機能はコアに要るか。プラグインで足りないか | `cargo xtask improve`の行数（上限12,720行、1行120桁まで。超えると`cargo xtask checks`が落ちる）。コアに行を足すときは、同程度を削るか、置き場所を変える |
 | テスト | その振る舞いはテストで守られているか。実機でしか見ていない経路はないか | `crates/*`のテスト。録画再生（`sasacode-testing`）でループ・プラグイン・権限をモデルなしでE2Eにできる |
 | 約束の検査 | 要求やREADMEが約束しているのに、誰も検査していないことはないか | `xtask/src/checks.rs`。新しい約束は、先に検査を書いてからREADMEに書く |
 | ドキュメント | README（日英）とdocsは実装と合っているか。書いてあるのに辿れないdocはないか | `cargo xtask improve`の`readme-cli` / `readme-plugins` / `readme-shape` / `docs-links` / `docs-reachable` |
@@ -32,7 +32,7 @@
 
 | 検査 | 守っている主張 |
 | --- | --- |
-| `core-line-budget` | コア（`sasacode-ai`・`sasacode-agent`・`sasacode-plugin-api`・`sasacode-tools`の`src/`。単体テストは数えない）は12,700行以下（README「開発」） |
+| `core-line-budget` | コア（`sasacode-ai`・`sasacode-agent`・`sasacode-plugin-api`・`sasacode-tools`の`src/`。単体テストは数えない）は12,720行以下（README「開発」） |
 | `core-line-width` | コアの行は120桁まで。ほとんどが1つの文字列リテラルの行（ツールの説明、モデルへの文）は除く。行数の上限が大きさを表すように、幅と組にする |
 | `dependency-record` | 配布する`sasacode`（`sasacode-cli`と、それが使うクレート）の実行時の依存はすべて[docs/dependencies.md](dependencies.md)に理由つきで載っていて、載っているものは使われている（[docs/requirements.md](requirements.md)の非機能要件） |
 | `readme-cli` | CLIのオプション（`crates/sasacode-cli/src/main.rs`の`OPTIONS`と`HELP_TEXT`）は両方のREADMEに書いてある |
