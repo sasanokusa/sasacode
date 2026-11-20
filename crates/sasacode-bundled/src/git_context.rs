@@ -183,8 +183,13 @@ pub async fn collect_context(args: &JsonObject, ctx: &ToolContext) -> anyhow::Re
     Ok(ToolResult::text(text).with_details(details))
 }
 
+/// Said instead of the context in a project that is not trusted: git runs what a repository's
+/// config names, so it is not run there.
+pub const UNTRUSTED: &str = "git_context is not available until this project is trusted (sasacode trust).";
+
 pub fn plugin(api: PluginApi) -> BoxFuture<'static, anyhow::Result<()>> {
     Box::pin(async move {
+        let cwd = api.cwd();
         api.register_tool(
             ToolDef::new(
                 "git_context",
@@ -198,7 +203,15 @@ pub fn plugin(api: PluginApi) -> BoxFuture<'static, anyhow::Result<()>> {
                     }, "additionalProperties": false,
                 }),
                 ToolKind::Read,
-                |args, ctx| async move { collect_context(&args, &ctx).await },
+                move |args, ctx| {
+                    let trusted = crate::project_trust::is_trusted(&cwd);
+                    async move {
+                        if !trusted {
+                            anyhow::bail!(UNTRUSTED);
+                        }
+                        collect_context(&args, &ctx).await
+                    }
+                },
             )
             .concurrent(true)
             .paths(|_args, cwd| vec![cwd.to_string_lossy().into_owned()])
