@@ -83,43 +83,94 @@ fn used_before(home: &Path, more: &[PathBuf]) -> Folders {
     projects(home).iter().chain(more).map(|p| (key(p), true)).collect()
 }
 
-/// The file that says one process is reading and then writing the list. A process that died
-/// holding it leaves it behind: one this old is taken over.
-struct Lock(PathBuf);
+/// The file that says one process is reading and then writing the list. It holds the mark of the
+/// process that took it. A process that died holding it leaves it behind: one this old is taken
+/// over, by moving it to a name of its own first, so only one process takes it over.
+struct Lock {
+    path: PathBuf,
+    mark: String,
+}
 
 impl Lock {
     const STALE: std::time::Duration = std::time::Duration::from_secs(15);
     const GIVE_UP: std::time::Duration = std::time::Duration::from_secs(20);
+    const NAME: &'static str = ".git-folders.lock";
 
     fn take(home: &Path) -> std::io::Result<Lock> {
+        Self::take_within(home, Self::STALE, Self::GIVE_UP)
+    }
+
+    fn take_within(home: &Path, stale: std::time::Duration, give_up: std::time::Duration) -> std::io::Result<Lock> {
+        static TAKES: AtomicU64 = AtomicU64::new(0);
         std::fs::create_dir_all(home)?;
-        let path = home.join(".git-folders.lock");
+        let path = home.join(Self::NAME);
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_nanos());
+        let n = TAKES.fetch_add(1, Ordering::Relaxed);
+        let mark = format!("{}.{nanos}.{n}", std::process::id());
         let started = std::time::Instant::now();
         loop {
-            match std::fs::OpenOptions::new().write(true).create_new(true).open(&path) {
-                Ok(_) => return Ok(Lock(path)),
-                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-                    let age = std::fs::metadata(&path)
-                        .and_then(|m| m.modified())
-                        .ok()
-                        .and_then(|t| t.elapsed().ok());
-                    if age.is_some_and(|a| a > Self::STALE) {
+            if started.elapsed() > give_up {
+                return Err(std::io::ErrorKind::TimedOut.into());
+            }
+            let mut options = std::fs::OpenOptions::new();
+            options.write(true).create_new(true);
+            match options.open(&path) {
+                Ok(mut file) => {
+                    if let Err(e) = file.write_all(mark.as_bytes()) {
+                        drop(file);
                         let _ = std::fs::remove_file(&path);
-                    } else if started.elapsed() > Self::GIVE_UP {
-                        return Err(std::io::ErrorKind::TimedOut.into());
-                    } else {
-                        std::thread::sleep(std::time::Duration::from_millis(5));
+                        return Err(e);
+                    }
+                    return Ok(Lock { path, mark });
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                    if is_stale(&path, stale) {
+                        take_over(&path, &mark, stale);
                     }
                 }
                 Err(e) => return Err(e),
             }
+            // A lock that is held, or cannot be moved, is waited for, never spun on.
+            std::thread::sleep(std::time::Duration::from_millis(5));
         }
     }
 }
 
+/// Whether `path` is a lock file left for longer than `stale`.
+fn is_stale(path: &Path, stale: std::time::Duration) -> bool {
+    std::fs::symlink_metadata(path)
+        .ok()
+        .filter(std::fs::Metadata::is_file)
+        .and_then(|m| m.modified().ok())
+        .and_then(|t| t.elapsed().ok())
+        .is_some_and(|age| age > stale)
+}
+
+/// Clears an old lock: it is moved to a name nobody else uses, which only one process wins, and
+/// then deleted. If what was moved is not old (another process took the lock over first and
+/// made a new one), it is put back.
+fn take_over(path: &Path, mark: &str, stale: std::time::Duration) {
+    let Some(dir) = path.parent() else { return };
+    let moved = dir.join(format!("{}.{mark}.old", Lock::NAME));
+    if std::fs::rename(path, &moved).is_err() {
+        return;
+    }
+    if is_stale(&moved, stale) {
+        let _ = std::fs::remove_file(&moved);
+    } else if std::fs::hard_link(&moved, path).is_ok() {
+        let _ = std::fs::remove_file(&moved);
+    }
+}
+
 impl Drop for Lock {
+    /// Only a lock that still carries this process's mark is deleted: one that was taken over
+    /// after this process stalled belongs to someone else.
     fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.0);
+        if std::fs::read_to_string(&self.path).is_ok_and(|held| held == self.mark) {
+            let _ = std::fs::remove_file(&self.path);
+        }
     }
 }
 
@@ -179,4 +230,65 @@ pub fn projects(home: &Path) -> Vec<PathBuf> {
         .map(|(_, cwd)| cwd)
         .filter(|cwd| seen.insert(std::fs::canonicalize(cwd).unwrap_or_else(|_| cwd.clone())))
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    fn home(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("sasacode-lock-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn age(path: &Path, by: Duration) {
+        let file = std::fs::File::options().write(true).open(path).unwrap();
+        file.set_modified(std::time::SystemTime::now() - by).unwrap();
+    }
+
+    #[test]
+    fn a_lock_that_cannot_be_removed_is_given_up_on_without_spinning() {
+        let home = home("unremovable");
+        // A directory under the lock's name can be neither deleted as a file nor taken over.
+        std::fs::create_dir(home.join(Lock::NAME)).unwrap();
+        let started = std::time::Instant::now();
+        let got = Lock::take_within(&home, Duration::ZERO, Duration::from_millis(200));
+        assert_eq!(got.err().map(|e| e.kind()), Some(std::io::ErrorKind::TimedOut));
+        assert!(started.elapsed() < Duration::from_secs(5));
+        assert!(home.join(Lock::NAME).is_dir());
+        std::fs::remove_dir_all(&home).unwrap();
+    }
+
+    #[test]
+    fn an_old_lock_is_taken_over_and_a_fresh_one_waited_for() {
+        let home = home("stale");
+        let first = Lock::take(&home).unwrap();
+        let fresh = Lock::take_within(&home, Duration::from_secs(60), Duration::from_millis(100));
+        assert!(fresh.is_err());
+        age(&home.join(Lock::NAME), Duration::from_secs(30));
+        let second = Lock::take_within(&home, Duration::from_secs(15), Duration::from_secs(5)).unwrap();
+        assert_ne!(first.mark, second.mark);
+        assert_eq!(std::fs::read_to_string(&second.path).unwrap(), second.mark);
+        // Nothing is left beside the lock.
+        let extra = std::fs::read_dir(&home).unwrap().count();
+        drop(first);
+        assert_eq!(std::fs::read_to_string(home.join(Lock::NAME)).unwrap(), second.mark);
+        drop(second);
+        assert!(!home.join(Lock::NAME).exists());
+        assert_eq!(extra, 1);
+        std::fs::remove_dir_all(&home).unwrap();
+    }
+
+    #[test]
+    fn dropping_a_lock_leaves_another_process_lock_alone() {
+        let home = home("foreign");
+        let mine = Lock::take(&home).unwrap();
+        std::fs::write(&mine.path, "someone-else").unwrap();
+        drop(mine);
+        assert_eq!(std::fs::read_to_string(home.join(Lock::NAME)).unwrap(), "someone-else");
+        std::fs::remove_dir_all(&home).unwrap();
+    }
 }
