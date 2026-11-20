@@ -469,14 +469,25 @@ impl Checker {
     /// the model's text would run the model's code. Anything but bun's own "Macros are disabled"
     /// (cannot resolve, no such option, no answer in time) counts as "no", and is remembered.
     async fn bun_refuses_macros(&self, bun: &Path) -> bool {
-        let known = macro_probes().lock().unwrap_or_else(|e| e.into_inner()).get(bun).copied();
+        let known = macro_probes()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(bun)
+            .copied();
         if let Some(known) = known {
             return known;
         }
         let Some(cwd) = self.child_cwd() else {
             return false;
         };
-        let out = run_external(bun, &["-e", BUN_SCRIPT, "ts"], MACRO_PROBE, cwd, self.timeout_ms.max(5000)).await;
+        let out = run_external(
+            bun,
+            &["-e", BUN_SCRIPT, "ts"],
+            MACRO_PROBE,
+            cwd,
+            self.timeout_ms.max(5000),
+        )
+        .await;
         let refuses = out.is_some_and(|e| e.contains(MACROS_OFF));
         macro_probes()
             .lock()
@@ -905,7 +916,10 @@ mod tests {
             assert!(!marker.exists(), "the macro ran");
             // A real error next to a macro import is still reported.
             let broken = format!("{text}export function f(x: number {{\n  return x;\n}}\n");
-            let issue = c.check_bun(&bun, "ts", &broken).await.expect("a broken file is reported");
+            let issue = c
+                .check_bun(&bun, "ts", &broken)
+                .await
+                .expect("a broken file is reported");
             assert_eq!(issue.line, 3, "{issue:?}");
             assert!(!issue.message.contains(MACROS_OFF), "{issue:?}");
             assert!(!marker.exists(), "the macro ran");

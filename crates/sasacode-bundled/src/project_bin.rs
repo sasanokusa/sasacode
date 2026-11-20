@@ -91,6 +91,9 @@ mod tests {
         std::fs::write(root.join("tool"), "").unwrap();
         let hits = || vec![PathBuf::from("tool"), root.join("tool"), good.clone()].into_iter();
         assert_eq!(p.first_outside(hits()), Some(good.clone()));
-        assert_eq!(p.first_outside(vec![PathBuf::from("tool"), root.join("tool")].into_iter()), None);
+        assert_eq!(
+            p.first_outside(vec![PathBuf::from("tool"), root.join("tool")].into_iter()),
+            None
+        );
     }
 }

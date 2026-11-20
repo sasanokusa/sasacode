@@ -41,7 +41,7 @@ use sasacode_ai::json::{js_number, stringify_pretty};
 use sasacode_host::t;
 use sasacode_plugin_api::{
     Command, CommandContext, InjectWhen, NotifyLevel, PermissionRules, PluginApi, SelectOption, ToolDef, ToolKind,
-    ToolResult, apply_child_env, detach_session, error_result, hook, sasacode_home,
+    ToolResult, apply_child_env, create_private_dir, detach_session, error_result, hook, sasacode_home,
 };
 use sasacode_tools::{KillSignal, bash_path, kill_tree};
 
@@ -1209,7 +1209,7 @@ pub fn plugin(api: PluginApi) -> BoxFuture<'static, anyhow::Result<()>> {
             foreign_grace_ms: num(settings.get("foreignGraceMs"), DEFAULT_FOREIGN_GRACE_MS, 0.0),
             auto_notify: settings.get("autoNotify") != Some(&Value::Bool(false)),
         };
-        if let Err(e) = std::fs::create_dir_all(&s.root) {
+        if let Err(e) = create_private_dir(&s.root) {
             api.log(&format!("background-sessions: cannot create {}: {e}", s.root.display()));
         }
         let bg = Arc::new(Bg {

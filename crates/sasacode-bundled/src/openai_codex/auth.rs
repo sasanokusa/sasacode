@@ -89,7 +89,7 @@ fn clear_cache() {
 /// Save credentials (owner-only), replacing the file in one step.
 pub fn write_codex_auth(tokens: &CodexTokens, path: &Path) -> anyhow::Result<()> {
     if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
+        sasacode_plugin_api::create_private_dir(dir)?;
     }
     // Temp file + rename: a crash mid-write must not leave a broken credential behind.
     let tmp = PathBuf::from(format!("{}.tmp", path.display()));
