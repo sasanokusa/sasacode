@@ -194,18 +194,15 @@ fn is_link(p: &Path) -> bool {
     let Ok(meta) = std::fs::symlink_metadata(p) else {
         return false;
     };
-    if meta.file_type().is_symlink() {
-        return true;
-    }
     #[cfg(windows)]
-    {
+    let reparse = {
         use std::os::windows::fs::MetadataExt;
         const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
-        if meta.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
-            return true;
-        }
-    }
-    false
+        meta.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+    };
+    #[cfg(not(windows))]
+    let reparse = false;
+    meta.file_type().is_symlink() || reparse
 }
 
 /// `<cwd>/.sasacode/skills` as a folder of its own: it exists, neither it nor `.sasacode` is a link (or
