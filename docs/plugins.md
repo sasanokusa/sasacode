@@ -264,6 +264,14 @@ description: Write release notes from the commits since the last tag.
 
 小型ローカルモデル向けに、`subagent`・`todo`・`goal`・`web-fetch`・`web-search`・`browsr`・`background-sessions`・`progress-notes` と Skills（`dropSkills: false` で維持）を自動で外し、システムプロンプトへ簡潔な行動規則を足し、`read`（`readMaxChars`、既定 16000）・`bash`（`bashMaxChars`、既定 8000）の単発出力の上限を切り詰める。
 
+### ローカルモデル向けの既定プラグイン（thinking-budget / action-nudge / context-slim）
+
+`thinking-budget`・`action-nudge`・`context-slim`の3つは既定で有効だが、クラウドモデルでは挙動を変えないよう**ローカルモデルだけで動作する**。ローカルモデルとみなすのは、`model.server`が設定されている（`ollama` / `llamacpp` / `lmstudio`）、または`model.baseUrl`がこのマシンやローカルネットワークを指す（プライベートIP、`localhost`などドットのない名前、`.localhost` / `.local` / `.lan` / `.internal`で終わる名前）場合。ただし、ローカルOllama経由で呼び出すOllamaクラウドモデル（モデルIDの末尾が`-cloud`、または`:cloud`・`-cloud:`を含むもの）はクラウド扱いとして対象外になる。
+
+- **thinking-budget**：ローカルモデルの思考ブロックが上限（`localMaxChars`、既定`12000`。モデルや用途に合わせて設定で引き上げられる）を超えると生成を止め、ツール呼び出しや最終回答へ進むよう促す。`maxChars`や`cloudMaxChars`（既定`0`）を明示したときはクラウドモデルにも効く（`maxStopsPerRun`、既定`2`）。
+- **action-nudge**：ローカルモデルがツールを呼ばずにターンを終えたとき、応答の最終文・最終行だけを見て実行意図の宣言（「確認します」「Let me check...」など）であればすぐツールを呼ぶよう促す（`maxNudges`既定`2`、`maxChars`既定`1200`）。疑問文、完了報告、長文解説、「必要であれば」「必要なら」「ご希望なら」「よろしければ」「if you want」「if you'd like」「once you confirm」「let me know」などの条件付き提案には反応しない。
+- **context-slim**：ローカルモデルで推定トークン数がコンテキスト長の閾値（`triggerRatio`、既定`0.55`）を超えたとき、直近の履歴（`keepRecent`、既定`6`）を残したまま古い大きな結果だけを`maskStep`（既定`4`）刻みで短い注記に畳み、ステップ境界のあいだはKVキャッシュを保つ（`minChars`、既定`1200`）。対象は`read`（`SKILL.md`の読み取りは除外）・`bash`・`find_files`・`search_text`（および`grep` / `glob` / `ls`）の結果だけで、`task`によるサブエージェント報告やその他のツール結果は畳まない。
+
 ```json
 {
   "plugins": {

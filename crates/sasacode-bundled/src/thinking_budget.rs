@@ -28,7 +28,13 @@ fn lock(m: &Mutex<HashMap<String, AgentState>>) -> std::sync::MutexGuard<'_, Has
     m.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-fn is_local_model(m: &ModelInfo) -> bool {
+/// Whether `m` is served locally (`server` set or a local/private `baseUrl`), excluding Ollama
+/// cloud-proxied models whose id ends with `-cloud` or contains `:cloud` / `-cloud:`.
+pub(crate) fn is_local_model(m: &ModelInfo) -> bool {
+    let id = m.id.trim().to_ascii_lowercase();
+    if id.ends_with("-cloud") || id.contains(":cloud") || id.contains("-cloud:") {
+        return false;
+    }
     m.server.is_some() || local_server(m.base_url.as_deref())
 }
 
@@ -119,4 +125,74 @@ pub fn plugin(api: PluginApi) -> BoxFuture<'static, anyhow::Result<()>> {
 
         Ok(())
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sasacode_ai::LocalServer;
+    use serde_json::json;
+
+    fn model(id: &str, server: Option<LocalServer>, base_url: Option<&str>) -> ModelInfo {
+        let mut m: ModelInfo = serde_json::from_value(json!({
+            "id": id,
+            "provider": "t",
+            "api": "openai-chat",
+            "contextWindow": 32_000,
+            "maxOutput": 1000
+        }))
+        .unwrap();
+        m.server = server;
+        m.base_url = base_url.map(str::to_string);
+        m
+    }
+
+    #[test]
+    fn is_local_model_checks_server_and_local_url_and_excludes_ollama_cloud_models() {
+        assert!(is_local_model(&model("qwen3:8b", Some(LocalServer::Ollama), None)));
+        assert!(is_local_model(&model("gemma4", Some(LocalServer::Llamacpp), None)));
+        assert!(is_local_model(&model("llama-3", Some(LocalServer::Lmstudio), None)));
+        assert!(is_local_model(&model(
+            "qwen3:8b",
+            None,
+            Some("http://localhost:11434/v1")
+        )));
+        assert!(is_local_model(&model(
+            "qwen3:8b",
+            None,
+            Some("http://192.168.1.20:8080/v1")
+        )));
+        assert!(is_local_model(&model(
+            "my-cloud-helper:8b",
+            Some(LocalServer::Ollama),
+            None
+        )));
+
+        assert!(!is_local_model(&model(
+            "gpt-oss:120b-cloud",
+            Some(LocalServer::Ollama),
+            Some("http://localhost:11434/v1")
+        )));
+        assert!(!is_local_model(&model(
+            "kimi-k2:cloud",
+            Some(LocalServer::Ollama),
+            None
+        )));
+        assert!(!is_local_model(&model(
+            "deepseek-v3-cloud:latest",
+            Some(LocalServer::Ollama),
+            None
+        )));
+        assert!(!is_local_model(&model(
+            "GPT-OSS:120B-CLOUD",
+            None,
+            Some("http://localhost:11434/v1")
+        )));
+        assert!(!is_local_model(&model("claude-opus-5", None, None)));
+        assert!(!is_local_model(&model(
+            "gpt-5.5",
+            None,
+            Some("https://api.openai.com/v1")
+        )));
+    }
 }

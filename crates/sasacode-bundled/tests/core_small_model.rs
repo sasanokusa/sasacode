@@ -53,6 +53,20 @@ fn opts(cwd: &str, pairs: &[(&str, Value)]) -> SetupOpts {
     }
 }
 
+fn set_local_model(s: &Setup) {
+    let mut m = s.agent.model();
+    m.server = Some(LocalServer::Ollama);
+    s.agent.set_model(m).unwrap();
+}
+
+fn set_model_with(s: &Setup, id: &str, server: Option<LocalServer>, base_url: Option<&str>) {
+    let mut m = s.agent.model();
+    m.id = id.into();
+    m.server = server;
+    m.base_url = base_url.map(str::to_string);
+    s.agent.set_model(m).unwrap();
+}
+
 #[tokio::test]
 async fn search_tools_find_files_and_search_text_respect_gitignore_and_caps() {
     let dir = temp_dir("sasacode-search-tools-");
@@ -400,6 +414,7 @@ async fn action_nudge_nudges_intent_without_calls_but_ignores_questions_completi
         opts(&path_str(dir.path()), &[]),
     )
     .await;
+    set_local_model(&s);
     s.agent.prompt_text("check a.txt").await.unwrap();
     let reqs = s.requests();
     assert_eq!(reqs.len(), 3, "expected nudge + tool turn + completion");
@@ -415,6 +430,7 @@ async fn action_nudge_nudges_intent_without_calls_but_ignores_questions_completi
         opts(&path_str(dir.path()), &[]),
     )
     .await;
+    set_local_model(&s2);
     s2.agent.prompt_text("help").await.unwrap();
     assert_eq!(s2.requests().len(), 2);
 
@@ -429,8 +445,60 @@ async fn action_nudge_nudges_intent_without_calls_but_ignores_questions_completi
         opts(&path_str(dir.path()), &[]),
     )
     .await;
+    set_local_model(&s3);
     s3.agent.prompt_text("go").await.unwrap();
     assert_eq!(s3.requests().len(), 3);
+}
+
+#[tokio::test]
+async fn action_nudge_ignores_cloud_models_false_positive_summaries_and_conditionals() {
+    let dir = temp_dir("sasacode-action-nudge-fp-");
+
+    // 1. Cloud models (including Ollama -cloud models) are never nudged.
+    for (id, server, base_url, msg) in [
+        ("m", None, None, "まずはファイルの内容を確認します。"),
+        (
+            "gpt-oss:120b-cloud",
+            Some(LocalServer::Ollama),
+            Some("http://localhost:11434/v1"),
+            "Let me check the logs first.",
+        ),
+    ] {
+        let s = setup(
+            vec![reply(vec![say(msg)])],
+            &["action-nudge"],
+            opts(&path_str(dir.path()), &[]),
+        )
+        .await;
+        set_model_with(&s, id, server, base_url);
+        s.agent.prompt_text("go").await.unwrap();
+        assert_eq!(s.requests().len(), 1, "cloud model {id} should not be nudged");
+    }
+
+    // 2. Confirmed false positives and conditional offers on local models are not nudged.
+    let no_nudge_replies = [
+        "1. まず設定ファイルを確認します。…コードは変更していません。",
+        "必要であれば修正します。",
+        "First, I'll check the config loader.\nThen I'll update the tests.\nNo files were changed.",
+        "必要なら修正します。",
+        "ご希望なら確認します。",
+        "よろしければ編集します。",
+        "If you want, I'll check the logs.",
+        "If you'd like, I'll update the tests.",
+        "Once you confirm, I'll edit the file.",
+        "Let me know if I should check the config.",
+    ];
+    for text in no_nudge_replies {
+        let s = setup(
+            vec![reply(vec![say(text)])],
+            &["action-nudge"],
+            opts(&path_str(dir.path()), &[]),
+        )
+        .await;
+        set_local_model(&s);
+        s.agent.prompt_text("go").await.unwrap();
+        assert_eq!(s.requests().len(), 1, "unexpected nudge for: {text}");
+    }
 }
 
 #[tokio::test]
@@ -585,6 +653,7 @@ async fn context_slim_masks_old_tool_outputs_in_step_batches_preserving_prefix()
         a5,
         t5,
     ]);
+    set_local_model(&s);
     s.agent.prompt_text("next").await.unwrap();
     let reqs = s.requests();
     let sent = &reqs[0].messages;
@@ -620,9 +689,109 @@ async fn context_slim_masks_old_tool_outputs_in_step_batches_preserving_prefix()
 }
 
 #[tokio::test]
+async fn context_slim_ignores_cloud_models_and_never_masks_subagent_or_skill_reads() {
+    let dir = temp_dir("sasacode-context-slim-scope-");
+    let big = "line of file content\n".repeat(45); // ~945 chars
+    let slim_opts = || SetupOpts {
+        cwd: Some(path_str(dir.path())),
+        context_window: Some(2400),
+        settings: settings_map(&[(
+            "context-slim",
+            json!({"triggerRatio": 0.50, "keepRecent": 2, "maskStep": 4, "minChars": 200}),
+        )]),
+        ..SetupOpts::default()
+    };
+
+    // 1. Cloud models (including Ollama -cloud models) leave requests completely untouched.
+    for (id, server, base_url) in [
+        ("m", None, None),
+        (
+            "gpt-oss:120b-cloud",
+            Some(LocalServer::Ollama),
+            Some("http://localhost:11434/v1"),
+        ),
+    ] {
+        let s = setup(vec![reply(vec![say("done")])], &["context-slim"], slim_opts()).await;
+        set_model_with(&s, id, server, base_url);
+        let history = vec![
+            Message::user(vec![UserContent::text("go")]),
+            Message::Assistant(reply(vec![call("c1", "read", json!({"path": "src/a.rs"}))])),
+            tool_msg("c1", "read", &big, false),
+            Message::Assistant(reply(vec![call("c2", "bash", json!({"command": "cargo test"}))])),
+            tool_msg("c2", "bash", &big, false),
+            Message::Assistant(reply(vec![call("c3", "read", json!({"path": "src/b.rs"}))])),
+            tool_msg("c3", "read", &big, false),
+            Message::Assistant(reply(vec![call("c4", "read", json!({"path": "src/c.rs"}))])),
+            tool_msg("c4", "read", &big, false),
+        ];
+        s.agent.reset(history);
+        s.agent.prompt_text("next").await.unwrap();
+        let sent = &s.requests()[0].messages;
+        assert_eq!(sent[2].text(), big, "cloud model {id} must not mask read");
+        assert_eq!(sent[4].text(), big, "cloud model {id} must not mask bash");
+        assert!(!json_of(sent).contains("[context-slim:"));
+    }
+
+    // 2. Local model past threshold: task (subagent), read of SKILL.md, and non-search/exec tools
+    //    are never masked; read / find_files / search_text are masked.
+    let s = setup(vec![reply(vec![say("done")])], &["context-slim"], slim_opts()).await;
+    set_local_model(&s);
+    s.agent.reset(vec![
+        Message::user(vec![UserContent::text("go")]),
+        Message::Assistant(reply(vec![call(
+            "t1",
+            "task",
+            json!({"description": "sub", "prompt": "check"}),
+        )])),
+        tool_msg("t1", "task", &big, false),
+        Message::Assistant(reply(vec![call(
+            "t2",
+            "read",
+            json!({"path": ".sasacode/skills/deploy/SKILL.md"}),
+        )])),
+        tool_msg("t2", "read", &big, false),
+        Message::Assistant(reply(vec![call(
+            "t3",
+            "web_fetch",
+            json!({"url": "https://example.com"}),
+        )])),
+        tool_msg("t3", "web_fetch", &big, false),
+        Message::Assistant(reply(vec![call("t4", "read", json!({"path": "src/lib.rs"}))])),
+        tool_msg("t4", "read", &big, false),
+        Message::Assistant(reply(vec![call("t5", "find_files", json!({"pattern": "*.rs"}))])),
+        tool_msg("t5", "find_files", &big, false),
+        Message::Assistant(reply(vec![call("t6", "search_text", json!({"query": "main"}))])),
+        tool_msg("t6", "search_text", &big, false),
+        Message::Assistant(reply(vec![call("t7", "read", json!({"path": "src/recent.rs"}))])),
+        tool_msg("t7", "read", &big, false),
+    ]);
+    s.agent.prompt_text("next").await.unwrap();
+    let sent = &s.requests()[0].messages;
+    assert_eq!(sent[2].text(), big, "subagent report must never be masked");
+    assert_eq!(sent[4].text(), big, "SKILL.md read must never be masked");
+    assert_eq!(sent[6].text(), big, "non-allowlisted tool must never be masked");
+    assert!(
+        sent[8].text().contains("[context-slim: omitted") && sent[8].text().contains("read(src/lib.rs)"),
+        "{}",
+        sent[8].text()
+    );
+    assert!(
+        sent[10].text().contains("[context-slim: omitted") && sent[10].text().contains("find_files"),
+        "{}",
+        sent[10].text()
+    );
+    assert!(
+        sent[12].text().contains("[context-slim: omitted") && sent[12].text().contains("search_text"),
+        "{}",
+        sent[12].text()
+    );
+    assert_eq!(sent[14].text(), big, "recent read stays unmasked");
+}
+
+#[tokio::test]
 async fn thinking_budget_stops_local_model_runaway_thinking_but_not_cloud_default() {
     let dir = temp_dir("sasacode-thinking-budget-");
-    let run_with = |local: bool| {
+    let run_with = |id: &'static str, local: bool| {
         let cwd = path_str(dir.path());
         async move {
             let api = api_name();
@@ -635,7 +804,7 @@ async fn thinking_budget_stops_local_model_runaway_thinking_but_not_cloud_defaul
             ));
             register_api(&api, provider.clone());
             let mut m: ModelInfo = serde_json::from_value(json!({
-                "id": "m", "provider": "t", "api": api, "contextWindow": 32_000, "maxOutput": 1000
+                "id": id, "provider": "t", "api": api, "contextWindow": 32_000, "maxOutput": 1000
             }))
             .unwrap();
             if local {
@@ -656,14 +825,18 @@ async fn thinking_budget_stops_local_model_runaway_thinking_but_not_cloud_defaul
         }
     };
 
-    let (local_msgs, local_reqs) = run_with(true).await;
+    let (local_msgs, local_reqs) = run_with("m", true).await;
     assert_eq!(local_reqs.len(), 2);
     assert!(json_of(&local_reqs[1].messages).contains("[thinking-budget]"));
     assert_eq!(local_msgs.last().unwrap().text(), "concise answer");
 
-    let (cloud_msgs, cloud_reqs) = run_with(false).await;
+    let (cloud_msgs, cloud_reqs) = run_with("m", false).await;
     assert_eq!(cloud_reqs.len(), 1);
     assert_eq!(cloud_msgs.len(), 2);
+
+    let (ollama_cloud_msgs, ollama_cloud_reqs) = run_with("gpt-oss:120b-cloud", true).await;
+    assert_eq!(ollama_cloud_reqs.len(), 1);
+    assert_eq!(ollama_cloud_msgs.len(), 2);
 }
 
 #[tokio::test]

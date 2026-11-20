@@ -1,7 +1,8 @@
-//! context-slim: KV-cache-friendly observation masking without LLM calls.
-//! Replaces old, oversized `read` / `bash` / tool outputs with compact placeholders in step batches
-//! (`maskStep`) once estimated tokens cross `triggerRatio` of the context window, keeping the prefix
-//! byte-identical between batch boundaries so local servers (Ollama / llama.cpp) keep their prompt cache.
+//! context-slim: KV-cache-friendly observation masking for local models without LLM calls.
+//! Replaces old, oversized `read` (except `SKILL.md`) / `bash` / `find_files` / `search_text`
+//! outputs with compact placeholders in step batches (`maskStep`) once estimated tokens cross
+//! `triggerRatio` of the context window, keeping the prefix byte-identical between batch
+//! boundaries so local servers (Ollama / llama.cpp) keep their prompt cache.
 //!
 //! settings: { triggerRatio?: number (0.55), keepRecent?: number (6), maskStep?: number (4), minChars?: number (1200) }
 
@@ -16,6 +17,7 @@ use sasacode_plugin_api::{BeforeRequestResult, PluginApi, hook};
 
 use crate::compaction::estimate;
 use crate::repair::js::{num_setting, utf16_prefix, utf16_suffix};
+use crate::thinking_budget::is_local_model;
 
 #[derive(Default, Clone, PartialEq, Eq)]
 struct FirstSig {
@@ -79,10 +81,36 @@ fn arg_hint(messages: &[Message], idx: usize, t: &ToolResultMessage) -> String {
     String::new()
 }
 
+fn is_skill_read(messages: &[Message], idx: usize, t: &ToolResultMessage) -> bool {
+    if t.tool_name != "read" {
+        return false;
+    }
+    let Some(call) = find_call(&messages[..idx], &t.tool_call_id, &t.tool_name) else {
+        return false;
+    };
+    call.input.get("path").and_then(Value::as_str).is_some_and(|p| {
+        p.trim()
+            .rsplit(['/', '\\'])
+            .next()
+            .is_some_and(|name| name.eq_ignore_ascii_case("SKILL.md"))
+    })
+}
+
+fn is_maskable_tool(messages: &[Message], idx: usize, t: &ToolResultMessage) -> bool {
+    let allowed = matches!(
+        t.tool_name.as_str(),
+        "read" | "bash" | "find_files" | "search_text" | "grep" | "glob" | "ls"
+    );
+    allowed && !is_skill_read(messages, idx, t)
+}
+
 fn mask_tool_message(messages: &[Message], idx: usize, min_chars: usize) -> Option<Message> {
     let Message::Tool(t) = &messages[idx] else {
         return None;
     };
+    if !is_maskable_tool(messages, idx, t) {
+        return None;
+    }
     let text = tool_text(t);
     let char_len = text.chars().count();
     if char_len < min_chars || text.starts_with("[context-slim:") {
@@ -135,6 +163,9 @@ pub fn plugin(api: PluginApi) -> BoxFuture<'static, anyhow::Result<()>> {
         api.on::<hook::BeforeRequest, _, _>(move |ev, ctx| {
             let caches = c.clone();
             async move {
+                if !is_local_model(&ev.model) {
+                    return Ok(None);
+                }
                 let agent_key = ctx.agent.unwrap_or_default();
                 let sig = first_sig(&ev.messages);
                 let limit = ev.messages.len().saturating_sub(keep_recent);

@@ -1,4 +1,4 @@
-//! action-nudge: rescues small models that declare an intent to run a tool ("Let me check...",
+//! action-nudge: rescues small local models that declare an intent to run a tool ("Let me check...",
 //! "確認します。") and stop the turn without emitting any tool call.
 //!
 //! settings: { maxNudges?: number (default 2), maxChars?: number (default 1200) }
@@ -12,6 +12,7 @@ use sasacode_ai::StopReason;
 use sasacode_plugin_api::{PluginApi, TurnEndResult, hook};
 
 use crate::repair::js::num_setting;
+use crate::thinking_budget::is_local_model;
 
 fn re(cell: &'static OnceLock<Regex>, pattern: &str) -> &'static Regex {
     cell.get_or_init(|| Regex::new(pattern).expect("valid regex"))
@@ -52,13 +53,40 @@ fn looks_like_raw_tool_json(text: &str) -> bool {
 }
 
 fn last_sentence(text: &str) -> &str {
-    let trimmed = text.trim();
-    trimmed
+    let line = text
+        .trim()
         .lines()
         .rev()
         .map(str::trim)
         .find(|l| !l.is_empty())
-        .unwrap_or(trimmed)
+        .unwrap_or("");
+    let body = line.trim_end_matches(|c: char| {
+        c.is_whitespace() || matches!(c, '.' | '。' | '!' | '！' | '?' | '？' | '…' | ':' | '：')
+    });
+    let mut split_at = 0usize;
+    let mut iter = body.char_indices().peekable();
+    while let Some((idx, ch)) = iter.next() {
+        let next_idx = idx + ch.len_utf8();
+        let ja_break = matches!(ch, '。' | '！' | '？');
+        let en_break = matches!(ch, '.' | '!' | '?')
+            && iter.peek().is_some_and(|(_, next_ch)| next_ch.is_whitespace())
+            && !(ch == '.' && (body[..next_idx].ends_with("e.g.") || body[..next_idx].ends_with("i.e.")));
+        if ja_break || en_break {
+            split_at = next_idx;
+        }
+    }
+    line[split_at..].trim_start()
+}
+
+fn looks_like_conditional(text: &str) -> bool {
+    static COND_JA: OnceLock<Regex> = OnceLock::new();
+    static COND_EN: OnceLock<Regex> = OnceLock::new();
+    re(&COND_JA, r"(?:必要であれば|必要なら|ご希望なら|よろしければ)").is_match(text)
+        || re(
+            &COND_EN,
+            r"(?i)\b(?:if you want|if you(?:'d| would) like|once you confirm|let me know)\b",
+        )
+        .is_match(text)
 }
 
 pub(crate) fn looks_like_intent(text: &str, had_tool_calls: bool, last_tool_errored: bool) -> bool {
@@ -66,14 +94,13 @@ pub(crate) fn looks_like_intent(text: &str, had_tool_calls: bool, last_tool_erro
     static JA_ANY: OnceLock<Regex> = OnceLock::new();
     static EN_INTENT: OnceLock<Regex> = OnceLock::new();
 
-    let target = if had_tool_calls && !last_tool_errored {
-        if text.chars().count() > 400 {
-            return false;
-        }
-        last_sentence(text)
-    } else {
-        text.trim()
-    };
+    if had_tool_calls && !last_tool_errored && text.chars().count() > 400 {
+        return false;
+    }
+    let target = last_sentence(text);
+    if looks_like_conditional(target) {
+        return false;
+    }
 
     let ja_end = re(
         &JA_END,
@@ -81,11 +108,11 @@ pub(crate) fn looks_like_intent(text: &str, had_tool_calls: bool, last_tool_erro
     );
     let ja_any = re(
         &JA_ANY,
-        r"(?:まず|最初に|これから|次に)[^\n。]{0,40}(?:確認|調べ|調査|実行|読み|開|見てみ|修正|探し)(?:し|てみ)ます",
+        r"(?:まず|最初に|これから|次に)[^\n。]{0,40}(?:確認|調べ|調査|実行|読み|開|見てみ|修正|探し)(?:し|てみ)ます[。.!！…:\s]*$",
     );
     let en_intent = re(
         &EN_INTENT,
-        r"(?im)(?:^|[.!?]\s+|\n)\s*(?:(?:ok(?:ay)?|sure|alright)[,.]?\s*)?(?:first,?\s*|next,?\s*)?(?:let me|let's|i(?:'ll| will| am going to|'m going to))\s+(?:now\s+|first\s+|start by\s+)?(?:check|read|inspect|run|execute|look(?:\s+at)?|search|find|open|examine|investigate|view|list|grep|edit|fix|modify|update|write|test|verify|check(?:ing)?)\b[^?\n]{0,120}[.…:\s]*$",
+        r"(?i)(?:^|[.!?]\s+)\s*(?:(?:ok(?:ay)?|sure|alright)[,.]?\s*)?(?:first,?\s*|next,?\s*)?(?:let me|let's|i(?:'ll| will| am going to|'m going to))\s+(?:now\s+|first\s+|start by\s+)?(?:check|read|inspect|run|execute|look(?:\s+at)?|search|find|open|examine|investigate|view|list|grep|edit|fix|modify|update|write|test|verify|check(?:ing)?)\b[^?\n]{0,120}[.…:\s]*$",
     );
 
     ja_end.is_match(target) || (!had_tool_calls && ja_any.is_match(target)) || en_intent.is_match(target)
@@ -97,6 +124,7 @@ struct RunState {
     had_tool_calls: bool,
     last_tool_errored: bool,
     stopped_timestamps: Vec<i64>,
+    is_local: Option<bool>,
 }
 
 fn lock(m: &Mutex<RunState>) -> std::sync::MutexGuard<'_, RunState> {
@@ -114,6 +142,14 @@ pub fn plugin(api: PluginApi) -> BoxFuture<'static, anyhow::Result<()>> {
         api.on::<hook::UserPrompt, _, _>(move |_e, ctx| {
             if ctx.agent.is_none() {
                 *lock(&st) = RunState::default();
+            }
+            async { Ok(None) }
+        });
+
+        let st = state.clone();
+        api.on::<hook::BeforeRequest, _, _>(move |ev, ctx| {
+            if ctx.agent.is_none() {
+                lock(&st).is_local = Some(is_local_model(&ev.model));
             }
             async { Ok(None) }
         });
@@ -140,13 +176,24 @@ pub fn plugin(api: PluginApi) -> BoxFuture<'static, anyhow::Result<()>> {
             async { Ok(None) }
         });
 
+        let model_api = api.clone();
         api.on::<hook::TurnEnd, _, _>(move |ev, ctx| {
             let st = state.clone();
+            let model_api = model_api.clone();
             async move {
                 if ctx.agent.is_some()
                     || ev.message.tool_calls().next().is_some()
                     || ev.message.stop_reason != StopReason::Stop
                 {
+                    return Ok(None);
+                }
+                let cached_local = lock(&st).is_local;
+                let local = cached_local.unwrap_or_else(|| {
+                    let l = is_local_model(&model_api.agent().model());
+                    lock(&st).is_local = Some(l);
+                    l
+                });
+                if !local {
                     return Ok(None);
                 }
                 let text = ev.message.text();
@@ -176,4 +223,57 @@ pub fn plugin(api: PluginApi) -> BoxFuture<'static, anyhow::Result<()>> {
 
         Ok(())
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rejects_multi_sentence_summaries_and_conditional_offers() {
+        assert!(!looks_like_intent(
+            "1. まず設定ファイルを確認します。…コードは変更していません。",
+            false,
+            false
+        ));
+        assert!(!looks_like_intent("必要であれば修正します。", false, false));
+        assert!(!looks_like_intent("必要なら確認します。", false, false));
+        assert!(!looks_like_intent("ご希望なら編集します。", false, false));
+        assert!(!looks_like_intent("よろしければ実行します。", false, false));
+        assert!(!looks_like_intent(
+            "First, I'll check the config loader.\nThen I'll update the tests.\nNo files were changed.",
+            false,
+            false
+        ));
+        assert!(!looks_like_intent(
+            "First, I'll check the config loader. Then I'll update the tests. No files were changed.",
+            false,
+            false
+        ));
+        assert!(!looks_like_intent("If you want, I'll check the logs.", false, false));
+        assert!(!looks_like_intent(
+            "If you'd like, I'll update the tests.",
+            false,
+            false
+        ));
+        assert!(!looks_like_intent(
+            "Once you confirm, I'll edit the file.",
+            false,
+            false
+        ));
+        assert!(!looks_like_intent(
+            "I checked the status. Let me know and I'll fix it.",
+            false,
+            false
+        ));
+
+        assert!(looks_like_intent("まずはファイルの内容を確認します。", false, false));
+        assert!(looks_like_intent("Let me check a.txt.", false, false));
+        assert!(looks_like_intent("Let me check e.g. config.rs.", false, false));
+        assert!(looks_like_intent(
+            "I read the error.\nLet me inspect src/main.rs.",
+            true,
+            false
+        ));
+    }
 }
