@@ -33,6 +33,7 @@ mod nav;
 mod outline;
 mod overlay;
 mod picture;
+mod plain;
 mod plan;
 mod plugins;
 mod restore;

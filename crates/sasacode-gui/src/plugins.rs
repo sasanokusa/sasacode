@@ -73,6 +73,12 @@ impl App {
                 }
                 Task::none()
             }
+            Msg::ApprovalWhole(on) => {
+                self.approval_whole = on
+                    .then(|| self.chat.transcript.pending_approval().map(|a| a.id.clone()))
+                    .flatten();
+                Task::none()
+            }
             Msg::ArgsOpen => {
                 let Some(approval) = self.chat.transcript.pending_approval() else {
                     return Ok(Task::none());
