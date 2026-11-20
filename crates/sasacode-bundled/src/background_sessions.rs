@@ -197,6 +197,23 @@ fn read_raw_meta(dir: &Path) -> Option<Value> {
     serde_json::from_str(&std::fs::read_to_string(meta_path(dir)).ok()?).ok()
 }
 
+fn write_meta(job: &mut Job) -> std::io::Result<()> {
+    // Another sasacode in this directory may have reported it meanwhile: written back without it, the next start
+    // reported the job again (#121).
+    if job.meta.notified.is_none() && read_meta(&job.dir).and_then(|m| m.notified) == Some(true) {
+        job.meta.notified = Some(true);
+    }
+    std::fs::write(meta_path(&job.dir), stringify_pretty(&job.meta.to_value()))?;
+    // That check is not enough on its own: the reporter's write can land between our read and our write (or be
+    // read half-written), and ours then drops the flag. A reporter creates `claimed` before it writes, so once
+    // ours is down, `claimed` shows whether we may have written over one: then write it back with the flag.
+    if job.meta.notified.is_none() && job.dir.join("claimed").is_dir() {
+        job.meta.notified = Some(true);
+        std::fs::write(meta_path(&job.dir), stringify_pretty(&job.meta.to_value()))?;
+    }
+    Ok(())
+}
+
 fn read_meta(dir: &Path) -> Option<Meta> {
     read_raw_meta(dir)
         .filter(Value::is_object)
@@ -464,12 +481,7 @@ impl Bg {
     }
 
     fn save(&self, job: &mut Job) {
-        // Another sasacode in this directory may have reported it meanwhile: written back without it, the next start
-        // reported the job again (#121).
-        if job.meta.notified.is_none() && read_meta(&job.dir).and_then(|m| m.notified) == Some(true) {
-            job.meta.notified = Some(true);
-        }
-        if let Err(e) = std::fs::write(meta_path(&job.dir), stringify_pretty(&job.meta.to_value())) {
+        if let Err(e) = write_meta(job) {
             self.api.log(&format!(
                 "background-sessions: cannot write meta for {}: {e}",
                 job.meta.id
@@ -1433,5 +1445,36 @@ mod tests {
             stringify_pretty(&meta.to_value()),
             "{\n  \"id\": \"bg-1\",\n  \"command\": \"\",\n  \"cwd\": \"\",\n  \"runCwd\": \"\",\n  \"pid\": 12,\n  \"startedAt\": 5,\n  \"status\": \"done\",\n  \"exitCode\": null\n}"
         );
+    }
+
+    /// Two sessions finish the same job at once: one claims and reports it, the other only records the end.
+    /// However the writes interleave, `notified` stays on disk, or the next start reports the job again.
+    #[test]
+    fn a_job_reported_while_another_session_records_its_end_stays_reported() {
+        let root = tempfile::tempdir().unwrap_or_else(|e| panic!("{e}"));
+        let meta = Meta::from_value(&json!({ "id": "bg-1", "pid": 12, "startedAt": 5, "status": "done" }));
+        let lost = (0..300)
+            .filter(|i| {
+                let dir = root.path().join(i.to_string());
+                std::fs::create_dir(&dir).unwrap_or_else(|e| panic!("{e}"));
+                let barrier = std::sync::Barrier::new(2);
+                std::thread::scope(|s| {
+                    s.spawn(|| {
+                        let mut job = to_job(meta.clone(), &dir);
+                        barrier.wait();
+                        let _ = write_meta(&mut job);
+                    });
+                    s.spawn(|| {
+                        let mut job = to_job(meta.clone(), &dir);
+                        barrier.wait();
+                        std::fs::create_dir(dir.join("claimed")).unwrap_or_else(|e| panic!("{e}"));
+                        job.meta.notified = Some(true);
+                        let _ = write_meta(&mut job);
+                    });
+                });
+                read_meta(&dir).and_then(|m| m.notified) != Some(true)
+            })
+            .count();
+        assert_eq!(lost, 0, "notified was lost in {lost} of 300 runs");
     }
 }
