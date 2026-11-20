@@ -194,7 +194,7 @@ async fn install_checks_the_download_and_takes_the_binarys_place() {
     assert_eq!(
         said,
         format!(
-            "downloading {}/download/v9.9.9/sasacode-test.tar.gz …\nupdated {VERSION} → 9.9.9: {} (restart sasacode to use it)\n",
+            "downloading {}/download/v9.9.9/sasacode-test.tar.gz …\nbuild provenance was not checked (not the official releases). By hand: gh attestation verify sasacode-test.tar.gz --repo sasanokusa/sasacode\nupdated {VERSION} → 9.9.9: {} (restart sasacode to use it)\n",
             server.url(),
             target.display()
         )
@@ -229,4 +229,107 @@ async fn install_refuses_a_download_that_does_not_match_its_checksum() {
     .unwrap_err();
     assert_eq!(e.to_string(), "sasacode-test.tar.gz is not listed in SHA256SUMS");
     assert_eq!(std::fs::read_to_string(&target).unwrap(), "old");
+}
+
+/// A `gh` that logs its arguments to `log` and answers `gh auth status` with `auth` and
+/// `gh attestation verify …` with `verify` (exit codes), saying `said` on stderr when that fails.
+#[cfg(unix)]
+fn fake_gh(dir: &Path, auth: i32, verify: i32, said: &str) -> (PathBuf, PathBuf) {
+    use std::os::unix::fs::PermissionsExt;
+    let log = dir.join("gh.log");
+    let gh = dir.join("gh");
+    let script = format!(
+        "#!/bin/sh\necho \"$@\" >> '{}'\ncase \"$1 $2\" in\n  \"auth status\") exit {auth} ;;\n  \"attestation verify\") echo '{said}' >&2; exit {verify} ;;\nesac\nexit 2\n",
+        log.display()
+    );
+    std::fs::write(&gh, script).unwrap();
+    std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
+    (gh, log)
+}
+
+#[tokio::test]
+async fn without_gh_the_provenance_is_not_checked_and_the_way_to_check_it_is_said() {
+    english();
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("sasacode-test.tar.gz");
+    let r = verify_provenance(None, &file).await;
+    assert_eq!(r, Provenance::Skipped("gh is not installed".into()));
+    let mut out = Vec::new();
+    let official = format!("{OFFICIAL_RELEASES}/download/v9.9.9");
+    check_provenance(&official, "sasacode-test.tar.gz", &file, None, &mut out)
+        .await
+        .unwrap();
+    assert_eq!(
+        String::from_utf8(out).unwrap(),
+        "build provenance was not checked (gh is not installed). By hand: gh attestation verify sasacode-test.tar.gz --repo sasanokusa/sasacode\n"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_gh_that_is_not_signed_in_does_not_check_either() {
+    english();
+    let dir = tempfile::tempdir().unwrap();
+    let (gh, log) = fake_gh(dir.path(), 1, 0, "");
+    let file = dir.path().join("sasacode-test.tar.gz");
+    assert_eq!(
+        verify_provenance(Some(&gh), &file).await,
+        Provenance::Skipped("gh is not signed in".into())
+    );
+    // Only the sign-in was asked about: nothing was verified.
+    assert_eq!(std::fs::read_to_string(log).unwrap(), "auth status\n");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_signed_in_gh_verifies_the_file_against_the_repository() {
+    english();
+    let dir = tempfile::tempdir().unwrap();
+    let (gh, log) = fake_gh(dir.path(), 0, 0, "");
+    let file = dir.path().join("sasacode-test.tar.gz");
+    assert_eq!(verify_provenance(Some(&gh), &file).await, Provenance::Verified);
+    assert_eq!(
+        std::fs::read_to_string(log).unwrap(),
+        format!(
+            "auth status\nattestation verify {} --repo sasanokusa/sasacode\n",
+            file.display()
+        )
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_file_that_fails_the_provenance_check_stops_the_update() {
+    english();
+    let dir = tempfile::tempdir().unwrap();
+    let (gh, _log) = fake_gh(dir.path(), 0, 1, "no attestations found");
+    let file = dir.path().join("sasacode-test.tar.gz");
+    assert_eq!(
+        verify_provenance(Some(&gh), &file).await,
+        Provenance::Failed("no attestations found".into())
+    );
+    let mut out = Vec::new();
+    let official = format!("{OFFICIAL_RELEASES}/download/v9.9.9");
+    let e = check_provenance(&official, "sasacode-test.tar.gz", &file, Some(&gh), &mut out)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(
+        e.starts_with("build provenance check failed for sasacode-test.tar.gz; nothing was installed"),
+        "{e}"
+    );
+    assert!(e.contains("no attestations found"), "{e}");
+    // Not the official releases (a mirror, a test server): not asked at all.
+    let log = dir.path().join("gh.log");
+    std::fs::remove_file(&log).unwrap();
+    check_provenance(
+        "http://127.0.0.1:1/download/v9.9.9",
+        "sasacode-test.tar.gz",
+        &file,
+        Some(&gh),
+        &mut Vec::new(),
+    )
+    .await
+    .unwrap();
+    assert!(!log.exists());
 }

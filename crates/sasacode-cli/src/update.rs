@@ -2,6 +2,7 @@
 //! (`packages/cli/src/update.ts`). The installer script (scripts/install.sh) is the reference for the
 //! target names and the checksum; release asset names and URLs must stay exactly these.
 
+use std::ffi::OsStr;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -23,9 +24,13 @@ const USER_AGENT: &str = concat!("sasacode/", env!("CARGO_PKG_VERSION"));
 /// The newest release is asked for this often; a check is cheap and the answer rarely changes.
 const CHECK_EVERY_MS: i64 = 24 * 60 * 60_000;
 
+/// The repository whose releases are the official ones, and where they are.
+const RELEASES_REPO: &str = "sasanokusa/sasacode";
+const OFFICIAL_RELEASES: &str = "https://github.com/sasanokusa/sasacode/releases";
+
 /// Where releases are downloaded from (`SASACODE_DOWNLOAD_BASE` for tests and mirrors).
 pub fn download_base() -> String {
-    std::env::var("SASACODE_DOWNLOAD_BASE").unwrap_or_else(|_| "https://github.com/sasanokusa/sasacode/releases".into())
+    std::env::var("SASACODE_DOWNLOAD_BASE").unwrap_or_else(|_| OFFICIAL_RELEASES.into())
 }
 
 pub fn current_version() -> &'static str {
@@ -427,6 +432,99 @@ pub async fn update_command_with(
     Ok(0)
 }
 
+/// What a check of a downloaded file's signed build provenance (`gh attestation verify`) came to.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Provenance {
+    Verified,
+    /// Could not be checked here: why, in a few words.
+    Skipped(String),
+    /// gh checked it and the file did not pass (gh's own words).
+    Failed(String),
+}
+
+/// `gh <args>` without a shell, in the environment children get (no sasacode secrets): whether it
+/// succeeded and what it said, None when it cannot be started or does not finish in `limit`.
+async fn run_gh(gh: &Path, args: &[&OsStr], limit: Duration) -> Option<(bool, String)> {
+    let mut cmd = tokio::process::Command::new(gh);
+    cmd.args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+    sasacode_plugin_api::apply_child_env(&mut cmd, &[]);
+    #[cfg(windows)]
+    cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    let out = tokio::time::timeout(limit, cmd.output()).await.ok()?.ok()?;
+    let said = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    Some((out.status.success(), said.trim().to_string()))
+}
+
+/// Check `file` against the build provenance GitHub signed for it, with `gh` when there is one and it
+/// is signed in (`gh attestation verify` needs that); otherwise [`Provenance::Skipped`].
+pub async fn verify_provenance(gh: Option<&Path>, file: &Path) -> Provenance {
+    let Some(gh) = gh else {
+        return Provenance::Skipped(t!("gh is not installed"));
+    };
+    let signed_in = run_gh(gh, &["auth".as_ref(), "status".as_ref()], Duration::from_secs(30)).await;
+    if !signed_in.is_some_and(|(ok, _)| ok) {
+        return Provenance::Skipped(t!("gh is not signed in"));
+    }
+    let args: [&OsStr; 5] = [
+        "attestation".as_ref(),
+        "verify".as_ref(),
+        file.as_os_str(),
+        "--repo".as_ref(),
+        RELEASES_REPO.as_ref(),
+    ];
+    match run_gh(gh, &args, Duration::from_secs(120)).await {
+        Some((true, _)) => Provenance::Verified,
+        Some((false, said)) => Provenance::Failed(said),
+        None => Provenance::Failed(t!("gh did not finish")),
+    }
+}
+
+/// The provenance check of the official releases' `archive`, saved at `file`: a failed check stops
+/// the update, one that cannot be made says so and how to make it by hand.
+async fn check_provenance(
+    url: &str,
+    archive: &str,
+    file: &Path,
+    gh: Option<&Path>,
+    out: &mut (dyn Write + Send),
+) -> anyhow::Result<()> {
+    let by_hand = |why: String| {
+        t!(
+            "build provenance was not checked ({why}). By hand: gh attestation verify {file} --repo {repo}",
+            why = why,
+            file = archive,
+            repo = RELEASES_REPO
+        )
+    };
+    if !url.starts_with(&format!("{OFFICIAL_RELEASES}/download/")) {
+        let _ = writeln!(out, "{}", by_hand(t!("not the official releases")));
+        return Ok(());
+    }
+    match verify_provenance(gh, file).await {
+        Provenance::Verified => {
+            let _ = writeln!(out, "{}", t!("build provenance verified"));
+            Ok(())
+        }
+        Provenance::Skipped(why) => {
+            let _ = writeln!(out, "{}", by_hand(why));
+            Ok(())
+        }
+        Provenance::Failed(said) => anyhow::bail!(t!(
+            "build provenance check failed for {file}; nothing was installed:\n{said}",
+            file = archive,
+            said = said
+        )),
+    }
+}
+
 /// Download the release files at `url`, check them, and put the binary in place of `target`.
 /// Returns the version the new binary says it is.
 async fn install(
@@ -457,6 +555,14 @@ async fn install(
         anyhow::bail!(t!("checksum mismatch for {file}", file = archive));
     }
     std::fs::write(dir.0.join(archive), &body)?;
+    check_provenance(
+        url,
+        archive,
+        &dir.0.join(archive),
+        which::which("gh").ok().as_deref(),
+        out,
+    )
+    .await?;
     if !unpack(archive, &dir.0) {
         anyhow::bail!(t!("could not unpack {file}", file = archive));
     }
