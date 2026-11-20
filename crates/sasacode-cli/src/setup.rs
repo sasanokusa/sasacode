@@ -273,21 +273,18 @@ fn get_key(providers: &Providers) -> GetKey {
     })
 }
 
-/// A server whose launch (`command`, or `url`) the project's own config writes runs in the project
-/// (the user trusted it); one that only the global config launches starts in a folder of its own
-/// under the sasacode home, whatever else the project sets on it (`disabled`, `timeout`, ...). The
-/// two files are merged by now, so this reads the project's entries.
+/// A server whose own `command` the project's config writes runs in the project (the user trusted
+/// it); one that only the global config launches starts in a folder of its own under the sasacode
+/// home, whatever else the project sets on it (`disabled`, `timeout`, a `url`, ...). A `url` needs
+/// no working folder, and laid over a global command server it does not change what starts (the
+/// command wins). The two files are merged by now, so this reads the project's entries.
 fn project_servers_start_in_project(config: &mut Config, project: &Config) {
     let Some(Value::Object(merged)) = config.get_mut("mcpServers") else {
         return;
     };
-    // A non-empty command or url: an entry that only adjusts a global server (args, env, cwd, or an
-    // empty url) starts nothing of its own.
-    let launched = |s: &Value| {
-        ["command", "url"]
-            .iter()
-            .any(|k| s.get(k).and_then(Value::as_str).is_some_and(|v| !v.is_empty()))
-    };
+    // A non-empty command: an entry that only adjusts a global server (args, env, cwd, a url, or an
+    // empty command) starts nothing of its own.
+    let launched = |s: &Value| s.get("command").and_then(Value::as_str).is_some_and(|v| !v.is_empty());
     let names = project
         .get("mcpServers")
         .and_then(Value::as_object)

@@ -418,6 +418,10 @@ words! {
     trust_env: "環境変数（名前だけ）：", "Environment variables (names only): ";
     trust_headers: "ヘッダー（名前だけ）：", "Headers (names only): ";
     trust_args: "引数：", "Arguments: ";
+    trust_disabled: "disabled：", "disabled: ";
+    trust_always_load: "alwaysLoad：", "alwaysLoad: ";
+    trust_timeout: "timeout：", "timeout: ";
+    trust_tool_names: "toolNames：", "toolNames: ";
     trust_overlays: "同じ名前のグローバルのサーバーに重ねて使う", "Applied on top of the global server of the same name";
     trust_model: "モデル：", "Model: ";
     trust_judge: "判定モデル：", "Judge model: ";

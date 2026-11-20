@@ -18,8 +18,25 @@ use crate::setup::PluginChoice;
 pub struct ProjectGit {
     /// Something in it needs trust, and the user trusted it for good (remembered, or answered now).
     pub trusted: bool,
-    /// Something in it needs trust, and it is used for this run only (`--trust-project`).
+    /// `--trust-project` was given: git may run for this run only, whether or not anything in the
+    /// config needs trust, and the folder is not kept.
     pub once: bool,
+}
+
+impl ProjectGit {
+    pub fn said(needs_trust: bool, for_good: bool, trust_project_flag: bool) -> ProjectGit {
+        ProjectGit {
+            trusted: needs_trust && for_good,
+            once: trust_project_flag,
+        }
+    }
+}
+
+/// The list of folders git may run in, written when there is none yet, from the conversations
+/// kept so far. It is done first in every run, whatever plugins load, so that a conversation kept
+/// from now on does not make its folder known.
+pub fn start_the_list(home: &Path) {
+    let _ = git_folders::load(home, &[]);
 }
 
 /// Whether a plugin that runs git loads with the config this run uses.
@@ -113,6 +130,42 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn trust_project_allows_git_for_the_run_in_a_folder_with_nothing_that_needs_trust() {
+        // Nothing needs trust, `--trust-project` given: allowed for this run, not kept.
+        let said = ProjectGit::said(false, false, true);
+        assert!(said.once && !said.trusted);
+        let (_d, home, cwd) = folders();
+        assert!(allowed_in(&home, &cwd, true, said, never()).await);
+        assert!(!git_folders::is_known(&home, &cwd));
+        // Without the flag, a saved trust of a project with nothing to trust is not enough.
+        let said = ProjectGit::said(false, true, false);
+        assert!(!said.once && !said.trusted);
+        assert!(ProjectGit::said(true, true, false).trusted);
+    }
+
+    /// A conversation kept for `folder`, as the CLI keeps one.
+    fn conversation(home: &Path, folder: &Path) {
+        let dir = sasacode_protocol::session_dir(home, folder);
+        std::fs::create_dir_all(&dir).unwrap();
+        let head = serde_json::json!({ "type": "session", "cwd": folder.to_string_lossy() });
+        std::fs::write(dir.join("a.jsonl"), format!("{head}\n")).unwrap();
+    }
+
+    #[test]
+    fn the_list_is_started_once_from_the_conversations_kept_then() {
+        let (d, home, cwd) = folders();
+        let later = d.path().join("later");
+        std::fs::create_dir_all(&later).unwrap();
+        conversation(&home, &cwd);
+        start_the_list(&home);
+        assert!(git_folders::is_known(&home, &cwd));
+        // A conversation kept afterwards, or a second start, makes nothing known.
+        conversation(&home, &later);
+        start_the_list(&home);
+        assert!(!git_folders::is_known(&home, &later));
+    }
+
+    #[tokio::test]
     async fn trusting_the_project_allows_it_and_keeps_it_but_once_does_not_keep_it() {
         let (_d, home, cwd) = folders();
         let once = ProjectGit {
@@ -142,7 +195,7 @@ mod tests {
         };
         // No plugin that runs git: nothing asked, nothing kept.
         assert!(!allowed_in(&home, &cwd, false, ProjectGit::default(), ask(true)).await);
-        assert!(!asked.load(Ordering::SeqCst) && git_folders::read(&home).is_none());
+        assert!(!asked.load(Ordering::SeqCst) && git_folders::read(&home).unwrap().is_none());
         // "No" is not kept: asked again next time.
         assert!(!allowed_in(&home, &cwd, true, ProjectGit::default(), ask(false)).await);
         assert!(asked.swap(false, Ordering::SeqCst) && !git_folders::is_known(&home, &cwd));

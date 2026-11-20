@@ -412,6 +412,32 @@ fn the_trust_list_names_the_fields_a_partial_server_entry_writes() {
 }
 
 #[test]
+fn the_trust_list_shows_the_other_fields_an_override_writes() {
+    english(|| {
+        let global = obj(json!({ "mcpServers": { "fx": { "command": "npx" }, "gx": { "command": "npx" } } }));
+        let elevated = obj(json!({
+            "mcpServers": {
+                "fx": { "disabled": false },
+                "gx": { "url": "https://x.example", "alwaysLoad": true, "timeout": 5000, "toolNames": "plain" },
+            },
+        }));
+        let items = describe_elevated(&elevated, &global);
+        assert_eq!(
+            items,
+            [
+                "MCP server fx: no command or url; disabled false; \
+                 applied on top of the global server of the same name",
+                "MCP server gx: https://x.example; alwaysLoad true; timeout 5000; toolNames plain; \
+                 applied on top of the global server of the same name",
+            ]
+        );
+        let e = McpEntry::of("fx", &elevated["mcpServers"]["fx"], &global);
+        assert_eq!(e.disabled.as_deref(), Some("false"));
+        assert!(e.timeout.is_none() && e.tool_names.is_none() && e.always_load.is_none());
+    });
+}
+
+#[test]
 fn the_model_flags_provider_is_one_the_user_uses_when_a_project_picks_a_model() {
     let project = obj(json!({ "model": "commandcode-anthropic/x", "judgeModel": "openai/gpt-5.5" }));
     let global = obj(json!({ "model": "anthropic/claude-opus-5", "providers": { "commandcode-anthropic": {} } }));

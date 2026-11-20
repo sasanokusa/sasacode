@@ -9,7 +9,7 @@ use sasacode_cli::args::{OptionSpec, boolean, parse_args, string, strings};
 use sasacode_cli::config::{read_config_files, sasacode_home};
 use sasacode_cli::control::control_mode;
 use sasacode_cli::env::{blank_keys, ensure_env_file, parse_env_file};
-use sasacode_cli::git_folder::{ProjectGit, allowed_in, ask_git, runs_git};
+use sasacode_cli::git_folder::{ProjectGit, allowed_in, ask_git, runs_git, start_the_list};
 use sasacode_cli::headless::{HeadlessOptions, OutputFormat, run_headless};
 use sasacode_cli::setup::{SetupOptions, read_prompt_file, setup};
 use sasacode_cli::stdin::read_piped_stdin;
@@ -217,6 +217,8 @@ async fn run(args: Vec<String>, cwd: String) -> anyhow::Result<i32> {
         .string("append-system-prompt-file")
         .map(read_prompt_file)
         .transpose()?;
+    // The folders git may run in are listed the first time, before this run keeps a conversation.
+    start_the_list(&sasacode_home());
     // One trust decision covers the parts of .sasacode/config.json that could run code or send
     // data elsewhere. Asked here, before anything from the project is used.
     let project = assess_project_with(Path::new(&cwd), values.string("model"))?;
@@ -231,11 +233,7 @@ async fn run(args: Vec<String>, cwd: String) -> anyhow::Result<i32> {
         }
     }
     // The shipped plugins that run git do so only in a folder allowed for it: asked once here.
-    let needs_trust = !project.items.is_empty();
-    let said = ProjectGit {
-        trusted: needs_trust && for_good,
-        once: needs_trust && trusted,
-    };
+    let said = ProjectGit::said(!project.items.is_empty(), for_good, values.flag("trust-project"));
     let wanted = runs_git(Path::new(&cwd), trusted, &project.files);
     let ask = interactive.then(|| ask_git(&cwd));
     let git = allowed_in(&sasacode_home(), Path::new(&cwd), wanted, said, ask).await;

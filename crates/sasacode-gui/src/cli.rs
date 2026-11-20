@@ -107,6 +107,13 @@ pub struct TrustServer {
     pub cwd: Option<String>,
     pub env: Vec<String>,
     pub headers: Vec<String>,
+    /// The other fields the entry writes, as written.
+    pub disabled: Option<String>,
+    #[serde(rename = "alwaysLoad")]
+    pub always_load: Option<String>,
+    pub timeout: Option<String>,
+    #[serde(rename = "toolNames")]
+    pub tool_names: Option<String>,
     /// The entry is laid over the global server of the same name.
     #[serde(rename = "overlaysGlobal")]
     pub overlays_global: bool,
@@ -184,6 +191,16 @@ impl Trust {
             }
             if !s.headers.is_empty() {
                 out.push(format!("  {}{}", w.trust_headers, names(&s.headers)));
+            }
+            for (head, v) in [
+                (w.trust_disabled, &s.disabled),
+                (w.trust_always_load, &s.always_load),
+                (w.trust_timeout, &s.timeout),
+                (w.trust_tool_names, &s.tool_names),
+            ] {
+                if let Some(v) = v {
+                    out.push(format!("  {head}{}", plain_line(v)));
+                }
             }
             if s.overlays_global {
                 out.push(format!("  {}", w.trust_overlays));
@@ -508,7 +525,9 @@ mod tests {
                   "cwd":"/srv","env":["DB_TOKEN"],"headers":[]},
                   {"name":"api","command":null,"args":[],"url":"https://example.invalid/mcp","cwd":null,"env":[],"headers":["Authorization"]},
                   {"name":"fx","command":null,"args":["--other","a b"],"url":null,"cwd":"/w","env":["TOKEN"],"headers":[],
-                   "overlaysGlobal":true}],
+                   "overlaysGlobal":true},
+                  {"name":"gx","command":null,"args":[],"url":"https://x.invalid","cwd":null,"env":[],"headers":[],
+                   "disabled":"false","alwaysLoad":"true","timeout":"5000","toolNames":"plain\u001b[2K"}],
                 "model":"far/away-model-with-a-long-name","judgeModel":null,"models":["far/a","far/b"],
                 "modelOverrides":{"far/a":{"contextWindow":1000}},
                 "pluginSettings":{"syntax-check":{"externalCheck":"/opt/check --all","note":"x\u001b[2Ky"}}}"#,
@@ -530,6 +549,12 @@ mod tests {
                 "  作業フォルダ：/w",
                 "  環境変数（名前だけ）：TOKEN",
                 "  同じ名前のグローバルのサーバーに重ねて使う",
+                "MCPサーバー「gx」",
+                "  接続先：https://x.invalid",
+                "  disabled：false",
+                "  alwaysLoad：true",
+                "  timeout：5000",
+                "  toolNames：plain␛[2K",
                 "モデル：far/away-model-with-a-long-name",
                 "モデルの一覧：far/a, far/b",
                 "modelOverrides：",

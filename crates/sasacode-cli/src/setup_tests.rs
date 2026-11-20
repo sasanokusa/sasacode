@@ -88,21 +88,28 @@ fn a_model_the_flag_names_is_one_a_subagent_can_use() {
 }
 
 #[test]
-fn only_a_project_server_with_its_own_command_or_url_starts_in_the_project() {
+fn only_a_project_server_with_its_own_command_starts_in_the_project() {
     let global = config(json!({ "mcpServers": {
         "a": { "command": "g" }, "b": { "command": "g" }, "c": { "command": "g" }, "d": { "command": "g" },
+        "e": { "url": "https://global.example" }, "f": { "command": "g" },
     } }));
     let project = config(json!({ "mcpServers": {
         "a": { "args": ["x"], "env": { "K": "v" } },
         "b": { "url": "" },
         "c": { "command": "p" },
+        // Laid over a global command server, a url starts nothing and needs no folder.
         "d": { "url": "https://mcp.example" },
+        "e": { "url": "https://project.example" },
+        "f": { "disabled": false },
+        "g": { "url": "https://new.example" },
+        "h": { "command": "p" },
     } }));
     let mut merged = crate::config::merge_config(&global, &project);
     project_servers_start_in_project(&mut merged, &project);
     let servers = &merged["mcpServers"];
-    assert!(servers["a"].get("cwd").is_none());
-    assert!(servers["b"].get("cwd").is_none());
+    for name in ["a", "b", "d", "e", "f", "g"] {
+        assert!(servers[name].get("cwd").is_none(), "{name}: {}", servers[name]);
+    }
     assert_eq!(servers["c"]["cwd"], sasacode_mcp::PROJECT_CWD);
-    assert_eq!(servers["d"]["cwd"], sasacode_mcp::PROJECT_CWD);
+    assert_eq!(servers["h"]["cwd"], sasacode_mcp::PROJECT_CWD);
 }

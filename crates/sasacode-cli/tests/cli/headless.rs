@@ -388,9 +388,36 @@ fn a_run_off_the_terminal_does_not_ask_about_git_and_runs_it_only_in_a_folder_ke
         r.stderr
     );
     let home = &bin.sb.home;
-    let kept = sasacode_protocol::git_folders::read(home).expect("written the first time");
+    let kept = sasacode_protocol::git_folders::read(home)
+        .unwrap()
+        .expect("written the first time");
     assert!(
         !kept.contains_key(&sasacode_protocol::git_folders::key(&bin.cwd())),
         "{kept:?}"
+    );
+}
+
+/// The list of folders git may run in is started by the first run, with no plugin that runs git
+/// loaded: the folder of a conversation kept from then on is not on it.
+#[test]
+fn the_first_run_starts_the_git_folders_whatever_plugins_load() {
+    let server = FakeServer::start(vec![Reply::text("ok"), Reply::text("ok")]).expect("the fake server");
+    let bin = Bin::new(&fake_config(server.url(), json!({})));
+    let home = &bin.sb.home;
+    assert!(sasacode_protocol::git_folders::read(home).unwrap().is_none());
+    for _ in 0..2 {
+        let r = bin.jsonl("hi", &[]);
+        assert_eq!(r.code, 0, "{}", r.stderr);
+    }
+    let kept = sasacode_protocol::git_folders::read(home)
+        .unwrap()
+        .expect("written by the first run");
+    assert!(
+        !kept.contains_key(&sasacode_protocol::git_folders::key(&bin.cwd())),
+        "{kept:?}"
+    );
+    assert!(
+        sasacode_protocol::git_folders::projects(home).len() == 1,
+        "the conversations were kept"
     );
 }

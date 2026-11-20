@@ -380,6 +380,11 @@ pub struct McpEntry {
     pub cwd: Option<String>,
     pub env: Vec<String>,
     pub headers: Vec<String>,
+    /// The other fields `McpServerConfig::from_json` reads, as written (`None`: not written).
+    pub disabled: Option<String>,
+    pub always_load: Option<String>,
+    pub timeout: Option<String>,
+    pub tool_names: Option<String>,
     /// The global config has a server of this name: the entry is laid over it.
     pub overlays_global: bool,
 }
@@ -408,6 +413,10 @@ impl McpEntry {
             cwd: entry.get("cwd").map(text),
             env: keys("env"),
             headers: keys("headers"),
+            disabled: entry.get("disabled").map(text),
+            always_load: entry.get("alwaysLoad").map(text),
+            timeout: entry.get("timeout").map(text),
+            tool_names: entry.get("toolNames").map(text),
             overlays_global: global
                 .get("mcpServers")
                 .and_then(Value::as_object)
@@ -477,6 +486,16 @@ fn describe_mcp_entry(name: &str, e: &McpEntry) -> String {
     }
     if !e.headers.is_empty() {
         add(t!("headers {names}", names = names(&e.headers)));
+    }
+    for (key, v) in [
+        ("disabled", &e.disabled),
+        ("alwaysLoad", &e.always_load),
+        ("timeout", &e.timeout),
+        ("toolNames", &e.tool_names),
+    ] {
+        if let Some(v) = v {
+            add(format!("{key} {}", shown(&quoted(v))));
+        }
     }
     if e.overlays_global {
         add(t!("applied on top of the global server of the same name"));

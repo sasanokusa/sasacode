@@ -743,3 +743,32 @@ fn trust_shows_the_fields_of_a_partial_server_entry_and_the_global_server_it_lan
     );
     assert!(!text.contains("secret-value"));
 }
+
+#[test]
+fn trust_shows_a_url_and_the_other_fields_laid_over_a_global_command_server() {
+    english();
+    let d = dirs();
+    d.global(json!({ "mcpServers": { "fx": { "command": "npx" } } }));
+    d.project(json!({
+        "mcpServers": {
+            "fx": { "url": "https://x.example", "disabled": false, "timeout": 5000, "toolNames": "plain" },
+        },
+    }));
+    let (_, status) = d.trust_json(&["--json"]);
+    assert_eq!(
+        status["mcpServerDetails"],
+        json!([
+            { "name": "fx", "command": null, "args": [], "url": "https://x.example", "cwd": null,
+              "env": [], "headers": [], "disabled": "false", "timeout": "5000", "toolNames": "plain",
+              "overlaysGlobal": true },
+        ])
+    );
+    let (_, text) = d.trust(&[]);
+    assert!(
+        text.contains(
+            "  - MCP server fx: https://x.example; disabled false; timeout 5000; toolNames plain; \
+             applied on top of the global server of the same name\n"
+        ),
+        "{text}"
+    );
+}

@@ -151,6 +151,15 @@ pub struct TrustMcpServer {
     pub env: Vec<String>,
     /// The names of the headers it sends.
     pub headers: Vec<String>,
+    /// `disabled`, `alwaysLoad`, `timeout` and `toolNames` as written; left out when not written.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub disabled: Option<String>,
+    #[serde(rename = "alwaysLoad", skip_serializing_if = "Option::is_none")]
+    pub always_load: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timeout: Option<String>,
+    #[serde(rename = "toolNames", skip_serializing_if = "Option::is_none")]
+    pub tool_names: Option<String>,
     /// The global config has a server of this name; these fields are laid over it.
     #[serde(rename = "overlaysGlobal")]
     pub overlays_global: bool,
@@ -520,6 +529,10 @@ fn trust_status(home: &Path, cwd: &Path, project: &ProjectTrust) -> anyhow::Resu
                 cwd: e.cwd,
                 env: e.env,
                 headers: e.headers,
+                disabled: e.disabled,
+                always_load: e.always_load,
+                timeout: e.timeout,
+                tool_names: e.tool_names,
                 overlays_global: e.overlays_global,
             }
         })
