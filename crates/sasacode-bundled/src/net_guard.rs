@@ -217,22 +217,53 @@ fn pinned_client(url: &url::Url, ips: &[IpAddr]) -> Result<reqwest::Client, Stri
         .map_err(|e| e.to_string())
 }
 
-/// How a URL that is not judged is reached: whether its origin can be reached again without a judgment
-/// (an IP literal, or a name connected to one answer), and the client that does it, when it is pinned.
-/// A name that does not resolve here (a proxy resolves it) cannot be pinned.
-async fn pin_unjudged(url: &url::Url, route: &Route) -> (bool, Option<reqwest::Client>) {
+/// How a URL that is not judged is reached.
+struct Unjudged {
+    /// Whether its origin can be reached again without a judgment: an IP literal, or a name connected
+    /// to one of the answers.
+    again: bool,
+    /// The client that does it, when the name is pinned.
+    client: Option<reqwest::Client>,
+    /// The addresses the name resolved to (empty when it was not resolved here).
+    resolved: Vec<IpAddr>,
+}
+
+/// How a URL that is not judged is reached. A name that does not resolve here (a proxy resolves it)
+/// cannot be pinned.
+async fn pin_unjudged(url: &url::Url, route: &Route) -> Unjudged {
+    let not_pinned = |again| Unjudged {
+        again,
+        client: None,
+        resolved: Vec::new(),
+    };
     let domain = match url.host() {
         Some(url::Host::Domain(d)) => d,
-        Some(_) => return (true, None),
-        None => return (false, None),
+        Some(_) => return not_pinned(true),
+        None => return not_pinned(false),
     };
     match (route.lookup)(domain.to_string()).await {
         Ok(ips) if !ips.is_empty() => match pinned_client(url, &ips) {
-            Ok(client) => (true, Some(client)),
-            Err(_) => (false, None),
+            Ok(client) => Unjudged {
+                again: true,
+                client: Some(client),
+                resolved: ips,
+            },
+            Err(_) => not_pinned(false),
         },
-        _ => (false, None),
+        _ => not_pinned(false),
     }
+}
+
+/// The client that connects `url`'s name to the address a response came from, when that address is one
+/// the name resolved to here. Behind a proxy the address is the proxy's, not one of those: then there
+/// is no such client and a redirect to the same origin is judged.
+fn client_for_reached(url: &url::Url, resolved: &[IpAddr], reached: Option<SocketAddr>) -> Option<reqwest::Client> {
+    let reached = reached?.ip().to_canonical();
+    resolved
+        .iter()
+        .any(|ip| ip.to_canonical() == reached)
+        .then(|| pinned_client(url, &[reached]).ok())
+        .flatten()
 }
 
 /// GET `first` and follow redirects (at most `max_redirects`), judging hops as `check` says and
@@ -243,8 +274,9 @@ async fn pin_unjudged(url: &url::Url, route: &Route) -> (bool, Option<reqwest::C
 /// judge it: it is the place the first URL already reached, and nothing new can be seen there. It is
 /// connected to the address the first URL was reached at (the name is not resolved again, where an
 /// answer that changed could lead somewhere the first URL never went, and one of several addresses is
-/// not tried in place of the one that answered); when the name could not be resolved here or the
-/// address reached is not known (behind a proxy, say), such a redirect is judged like any other.
+/// not tried in place of the one that answered); when the name could not be resolved here, or the
+/// address reached is not one it resolved to (a proxy made the connection, and reqwest reports the
+/// proxy's address), such a redirect is judged like any other.
 ///
 /// Behind an HTTP proxy (reqwest reads the environment's) the proxy resolves the name and makes the
 /// connection, so the pinning here does not apply; the check of the resolved address still runs.
@@ -265,6 +297,7 @@ pub(crate) async fn get_following(
     // the addresses it resolved to.
     let mut first_client: Option<reqwest::Client> = None;
     let mut first_again = false;
+    let mut first_resolved: Vec<IpAddr> = Vec::new();
     loop {
         if hops > 0 && matches!(limit, Limit::PerHop(_)) {
             started = Instant::now();
@@ -293,8 +326,9 @@ pub(crate) async fn get_following(
                 _ = tokio::time::sleep_until(deadline) => return Err(GetError::failed("The operation timed out.")),
                 r = pin_unjudged(&next, route) => r,
             };
-            first_again = pinned.0;
-            first_client = pinned.1;
+            first_again = pinned.again;
+            first_client = pinned.client;
+            first_resolved = pinned.resolved;
             first_client.clone().unwrap_or_else(|| no_redirects().clone())
         } else if check == Check::Redirects && !judged {
             first_client.clone().unwrap_or_else(|| no_redirects().clone())
@@ -327,9 +361,9 @@ pub(crate) async fn get_following(
             .map_err(GetError::failed)?;
         if check == Check::Redirects && hops == 0 && first_client.is_some() {
             // The name may have answered with several addresses: a redirect to the same origin goes
-            // to the one that was reached, not to whichever of them answers next. When it is not
-            // known (a proxy made the connection), that redirect is judged like any other.
-            let reached = res.remote_addr().and_then(|a| pinned_client(&next, &[a.ip()]).ok());
+            // to the one that was reached, not to whichever of them answers next. When that is not
+            // one of the answers (a proxy made the connection), that redirect is judged like any other.
+            let reached = client_for_reached(&next, &first_resolved, res.remote_addr());
             first_again = reached.is_some();
             first_client = reached;
         }
@@ -835,6 +869,22 @@ mod tests {
         assert_eq!(answer.text, format!("200 ok:{}/next", site.port));
         assert_eq!(ANSWERS.load(Ordering::SeqCst), 1);
         assert_eq!(site.hits(), 2);
+    }
+
+    #[test]
+    fn the_address_a_response_came_from_is_kept_only_when_the_name_resolved_to_it() {
+        let url = parse("http://name.test:8080/");
+        let resolved = [IpAddr::V4(Ipv4Addr::LOCALHOST), IpAddr::V6(Ipv6Addr::LOCALHOST)];
+        let at = |ip: IpAddr| Some(SocketAddr::new(ip, 3128));
+        // One of the answers: the redirect is connected to it, unjudged.
+        assert!(client_for_reached(&url, &resolved, at(IpAddr::V4(Ipv4Addr::LOCALHOST))).is_some());
+        assert!(client_for_reached(&url, &resolved, at(IpAddr::V6(Ipv6Addr::LOCALHOST))).is_some());
+        // The same address written as an IPv4-mapped IPv6 one is the same address.
+        assert!(client_for_reached(&url, &resolved, at(Ipv4Addr::LOCALHOST.to_ipv6_mapped().into())).is_some());
+        // Not one of them (a proxy's address), or not known, or nothing resolved: judged instead.
+        assert!(client_for_reached(&url, &resolved, at(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 2)))).is_none());
+        assert!(client_for_reached(&url, &resolved, None).is_none());
+        assert!(client_for_reached(&url, &[], at(IpAddr::V4(Ipv4Addr::LOCALHOST))).is_none());
     }
 
     #[tokio::test]
