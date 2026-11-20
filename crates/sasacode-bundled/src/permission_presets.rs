@@ -74,8 +74,8 @@ pub const PRESETS: &[(&str, Preset)] = &[
         Preset {
             description: "読み取りだけのシェルコマンドを確認なしで許可（ls, cat, rg, git status/diff/log など）。書き出しやコマンドの実行をするオプション（rg --pre、git diff --output、tree -o など）、それを作りうるシェル展開、.git以下の編集は確認に回す。catなどは作業ディレクトリの外のファイルも読める",
             allow: &[
-                // A word followed by `*` would also match a longer word (git diff* → git difftool,
-                // which runs a program), so each is the bare command or the command and a space.
+                // A word followed by `*` also matches a longer word, so each rule is the command alone
+                // or the command, a space and its arguments.
                 "bash(ls)",
                 "bash(ls *)",
                 "bash(pwd)",

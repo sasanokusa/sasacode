@@ -859,8 +859,8 @@ mod tests {
         assert!(!marker.exists(), "the project's preload ran");
     }
 
-    /// A macro import runs the function it names while bun transpiles the text: the text comes from
-    /// the model, so macros are off, and neither the macro nor the refusal is reported.
+    /// Macros are off while bun transpiles the checked text: a macro import is not run, and neither
+    /// it nor bun's refusal is reported as a syntax error.
     #[tokio::test]
     async fn bun_runs_no_macro_and_a_macro_import_is_no_syntax_error() {
         let dir = project();
@@ -911,7 +911,9 @@ mod tests {
         // As the plugin runs it: whether or not this bun can refuse them, nothing runs.
         assert_eq!(c.inspect(&root.join("app.ts"), &text).await, None);
         assert!(!marker.exists(), "the macro ran");
-        if c.bun_refuses_macros(&bun).await {
+        if !c.bun_refuses_macros(&bun).await {
+            eprintln!("skipped: this bun does not refuse macros (it is not used for the check)");
+        } else {
             assert_eq!(c.check_bun(&bun, "ts", &text).await, None);
             assert!(!marker.exists(), "the macro ran");
             // A real error next to a macro import is still reported.

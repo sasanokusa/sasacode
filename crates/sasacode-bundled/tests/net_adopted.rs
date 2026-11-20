@@ -192,15 +192,26 @@ async fn background_sessions_a_job_of_another_working_directory_is_not_read_and_
         .await;
     let their_id = detail(&theirs, "id");
     until(750, 20, || !other.injected().is_empty()).await;
+    // Still running when a session of this directory starts: it is not adopted there.
+    let running = other
+        .exec("bg_start", json!({ "command": "sleep 1; echo running-in-there" }))
+        .await;
     let mine = fake(
         background_sessions::plugin,
         &here,
-        bg_settings(&home, 400),
+        bg_settings(&home, 100),
         Entries::default(),
     )
     .await;
     let own = mine.exec("bg_start", json!({ "command": "echo mine" })).await;
     until(750, 20, || !mine.injected().is_empty()).await;
+    until(1500, 20, || other.injected().len() >= 2).await;
+    sleep(300).await;
+    // Neither its end nor its output reaches this session.
+    assert_eq!(mine.injected().len(), 1, "{:?}", mine.injected());
+    assert!(!mine.injected().concat().contains("running-in-there"));
+    let their_running = detail(&running, "id");
+    assert!(mine.exec("bg_output", json!({ "id": their_running })).await.is_error());
 
     // The log of the job here is read; the other directory's job is no job of this one.
     let ok = mine.exec("bg_output", json!({ "id": detail(&own, "id") })).await;
@@ -216,7 +227,7 @@ async fn background_sessions_a_job_of_another_working_directory_is_not_read_and_
     // The listing names this directory's jobs only, unless every directory's are asked for.
     let listed = first_text(&mine.exec("bg_list", json!({})).await);
     assert!(
-        listed.contains("echo mine") && !listed.contains("secret-of-there"),
+        listed.contains("echo mine") && !listed.contains("secret-of-there") && !listed.contains("running-in-there"),
         "{listed}"
     );
 

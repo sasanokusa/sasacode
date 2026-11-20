@@ -247,7 +247,7 @@ fn read_only_shell_allows_the_listed_commands_but_not_longer_words_that_start_wi
             assert_eq!(bash_check(&s, &cwd, c), Decision::Allow, "{c}");
         }
         for c in [
-            "git difftool -y -x 'touch x' HEAD",
+            "git difftool HEAD",
             "git diff-tree HEAD",
             "git log-tree HEAD",
             "git showtool",
