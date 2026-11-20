@@ -43,3 +43,14 @@ jobs:
           SASACODE_E2E_BIN="$bin" cargo test --locked --package sasacode-testing --test cli_e2e
       # The checks once more, printed next to the core's headroom (docs/improvement.md).
       - run: cargo xtask improve
+  audit:
+    # The locked dependencies against the RustSec advisory database. Only an advisory that names a
+    # version in Cargo.lock as affected fails the job: a warning (a crate no longer maintained, a
+    # yanked version) is printed and left at that.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
+        with:
+          tool: cargo-audit
+      - run: cargo audit

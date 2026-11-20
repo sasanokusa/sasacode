@@ -17,3 +17,6 @@ bench/
 # Rust
 /target/
 rust/app-cases/replay-report.md
+
+# what `bun build --compile` leaves behind
+*.bun-build

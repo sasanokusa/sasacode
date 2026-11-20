@@ -31,7 +31,7 @@
 | `unicode-normalization` | agent、bundled | 権限ルールの照合（NFC / NFD）、`web_fetch`と`web_search` | — |
 | `dirs` | tui | ホームディレクトリ | — |
 | `which` | mcp（Windows）、bundled、cli | 実行ファイルを探す（browsr、gui、RustXNG、WindowsのMCPサーバー、`gui install`のcargo） | — |
-| `nix` | plugin-api、tools、mcp、cli（Unix） | プロセスグループへのシグナル、`setsid`、ファイルの操作を、`unsafe`を自分で書かずに行う（例外は`setsid`の1か所。ADR-012） | `libc`を直接使う：`unsafe`が要る |
+| `nix` | plugin-api、tools、mcp、cli（Unix） | プロセスグループへのシグナル、`setsid`、ファイルの操作を、`unsafe`を自分で書かずに行う（`nix`の関数のうち、`pre_exec`のクロージャで`setsid`を呼ぶ1か所だけは、`pre_exec`の呼び出しが`unsafe`。下の「`unsafe`の場所」） | `libc`を直接使う：`unsafe`が要る |
 | `win32job` | tools（Windows） | bashで止めたコマンドが始めたプロセスを、Windowsのジョブオブジェクトでまとめて終わらせる。`taskkill /T /F`のあとも、コマンドが始めたプロセスが残って出力を握り続けることがあった（CIで30秒） | `windows`を直接使う：`unsafe`が要る。`process-wrap`：`wait()`がジョブの全プロセスの終わりを待つので、`&`で残したプロセスまで待ってしまう |
 | `libc` | tools、tui（tuiはUnix） | エラー番号（`ENOENT`など）からTS版と同じ文面を作る。TUIでは端末の応答を待って読む | — |
 | `lol_html` | bundled | `web_fetch`で、ページから本文とリンクを取り出す（ストリーミングで読むHTMLの書き換え） | — |
@@ -43,6 +43,14 @@
 | `pulldown-cmark` | tui | 返答のMarkdownの表示 | — |
 | `unicode-segmentation` | tui | 入力欄を書記素の単位で編集する | — |
 | `unicode-width` | bundled | 表示幅（`/usage`のグラフ）。ratatuiも同じ版の幅を使う | — |
+
+`unsafe`のブロックは、ワークスペース全体で5か所ある（`grep -rn "unsafe" crates --include=*.rs`で数えられる）。
+
+- `crates/sasacode-plugin-api/src/host.rs`：bashの子プロセスを新しいセッションに置くため、`pre_exec`のクロージャで`setsid`を呼ぶ（Unix。ADR-012）。
+- `crates/sasacode-cli/src/main.rs`：起動時、スレッドが1つのうちに、空のキーの環境変数を`remove_var`し、`~/.sasacode/.env`のキーを`set_var`する（2か所。ADR-012）。
+- `crates/sasacode-gui/src/main.rs`：Finderやランチャーから起動したとき、ログインシェルの環境変数を`set_var`する（Unix）。Windowsでは、ウィンドウの位置が画面に収まるかを調べるため、`MonitorFromRect`を呼ぶ。
+
+これ以外の`unsafe`は、ADR（`rust/DECISIONS.md`）に理由を書いてから足す。
 
 MCPのクライアントは、公式のRust SDK（`rmcp`）を使わずに書いた（`crates/sasacode-mcp`）。必要なのは小さなクライアントで、`rmcp`ではプロトコルの版、clientInfo、環境変数、stderr、タイムアウトなどの既定をほとんど上書きすることになるため（`rust/research/mcp.md`）。`rmcp`はテスト用のサーバーとしてだけ使う。
 
