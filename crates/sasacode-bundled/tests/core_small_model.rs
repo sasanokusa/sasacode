@@ -6,6 +6,7 @@ mod support_core;
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use serde_json::{Value, json};
 
@@ -14,13 +15,15 @@ use sasacode_agent::permission::{PermissionCheck, PermissionPolicy};
 use sasacode_agent::plugins::{PluginHost, PluginHostOptions};
 use sasacode_agent::session::SessionFile;
 use sasacode_ai::{
-    AssistantContent, LocalServer, Message, ModelInfo, ThinkingContent, ToolResultMessage, UserContent, register_api,
+    AssistantContent, AssistantMessage, LocalServer, Message, ModelInfo, ThinkingContent, ToolResultMessage,
+    UserContent, register_api, text_of_user,
 };
-use sasacode_bundled::clean_retry::looks_like_check_command;
+use sasacode_bundled::clean_retry::{looks_like_check_command, runs_other_commands};
 use sasacode_bundled::hashline_edit::line_hash;
 use sasacode_bundled::syntax_check::check_rust_syntax;
 use sasacode_plugin_api::{
-    Decision, Lang, PermissionMode, PermissionRules, SessionStartEvent, ToolDef, ToolKind, ToolResult, hook,
+    Decision, Lang, PermissionMode, PermissionRules, SessionStartEvent, ToolDef, ToolKind, ToolResult, TurnEndResult,
+    UserPromptResult, hook,
 };
 use sasacode_testing::{ReplayOptions, ReplayProvider};
 use support_core::*;
@@ -1857,6 +1860,398 @@ async fn clean_retry_lists_unrestorable_files_and_protects_mid_run_user_edits() 
         "{retry_msg2}"
     );
     assert!(retry_msg2.contains(&app_s), "{retry_msg2}");
+}
+
+/// A reply whose only call is a `cargo test` that fails at once: there is no such manifest.
+fn failing_check(id: &str) -> AssistantMessage {
+    let command = format!("cargo test --manifest-path missing-{id}/Cargo.toml");
+    reply(vec![call(id, "bash", json!({"command": command}))])
+}
+
+/// clean-retry alone in `dir`, in permission mode "auto" so that every call really runs.
+async fn clean_retry_setup(dir: &std::path::Path, script: Vec<AssistantMessage>, names: &[&str]) -> Setup {
+    let settings = json!({"triggerFailures": 2, "triggerEditErrors": 2, "maxRetries": 1});
+    let s = setup(script, names, opts(&path_str(dir), &[("clean-retry", settings)])).await;
+    s.agent.set_permissions(policy(PermissionMode::Auto));
+    s
+}
+
+fn saw_clean_retry(s: &Setup) -> bool {
+    s.requests()
+        .iter()
+        .any(|r| json_of(&r.messages).contains("[clean-retry]"))
+}
+
+#[tokio::test]
+async fn clean_retry_is_not_left_stuck_by_a_prompt_another_plugin_handled() {
+    let dir = temp_dir("sasacode-clean-retry-7a-handled-");
+    let target = dir.path().join("app.txt");
+    std::fs::write(&target, "original\n").unwrap();
+
+    let s = clean_retry_setup(
+        dir.path(),
+        vec![
+            reply(vec![say("prior answer")]),
+            reply(vec![call(
+                "1",
+                "write",
+                json!({"path": path_str(&target), "content": "broken\n"}),
+            )]),
+            failing_check("2"),
+            failing_check("3"),
+            reply(vec![say("recovered")]),
+        ],
+        &["clean-retry"],
+    )
+    .await;
+    // Registered after clean-retry: clean-retry's hooks see the prompt before this one consumes it.
+    s.agent
+        .hooks()
+        .on_sync::<hook::UserPrompt, _>("test-commands", |ev, _| {
+            let handled = text_of_user(&ev.content).starts_with("/handled");
+            Ok(handled.then_some(UserPromptResult {
+                content: None,
+                handled: true,
+            }))
+        });
+
+    s.agent.prompt_text("prior question").await.unwrap();
+    // No run starts, so no agent_end follows: nothing of this prompt may stay behind.
+    s.agent.prompt_text("/handled command").await.unwrap();
+    assert_eq!(s.requests().len(), 1);
+    s.agent.prompt_text("fix app").await.unwrap();
+
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), "original\n");
+    let reqs = s.requests();
+    assert_eq!(reqs.len(), 5);
+    // The retry rewinds to the start of the "fix app" run and repeats that prompt.
+    assert_eq!(reqs[4].messages.len(), 3);
+    assert_eq!(reqs[4].messages[0].text(), "prior question");
+    assert_eq!(reqs[4].messages[1].text(), "prior answer");
+    let retry_msg = reqs[4].messages[2].text();
+    assert!(retry_msg.starts_with("fix app\n\n[clean-retry]"), "{retry_msg}");
+    assert!(!retry_msg.contains("/handled"), "{retry_msg}");
+}
+
+#[tokio::test]
+async fn clean_retry_gives_a_prompt_queued_at_the_end_of_a_run_its_own_state() {
+    let dir = temp_dir("sasacode-clean-retry-7a-queued-");
+    let target = dir.path().join("app.txt");
+    std::fs::write(&target, "original\n").unwrap();
+
+    let entered_pause = Arc::new(tokio::sync::Notify::new());
+    let resume_pause = Arc::new(tokio::sync::Notify::new());
+    let prompt_seen = Arc::new(tokio::sync::Notify::new());
+    let stop_armed = Arc::new(AtomicBool::new(false));
+
+    let s = clean_retry_setup(
+        dir.path(),
+        vec![
+            // Run 1 ("first task") is stopped at the end of this turn, before it takes queued input.
+            reply(vec![call("1", "pause_point", json!({}))]),
+            // Run 2 starts from the queued "second task": no user_prompt hook fires for it.
+            reply(vec![call(
+                "2",
+                "write",
+                json!({"path": path_str(&target), "content": "broken\n"}),
+            )]),
+            failing_check("3"),
+            failing_check("4"),
+            reply(vec![say("recovered")]),
+        ],
+        &["clean-retry"],
+    )
+    .await;
+
+    let (entered_cb, resume_cb) = (entered_pause.clone(), resume_pause.clone());
+    s.agent.set_tool(
+        ToolDef::new(
+            "pause_point",
+            "test pause hook",
+            json!({"type": "object", "properties": {}, "additionalProperties": false}),
+            ToolKind::Read,
+            move |_args, _ctx| {
+                let (entered, resume) = (entered_cb.clone(), resume_cb.clone());
+                async move {
+                    entered.notify_one();
+                    resume.notified().await;
+                    Ok(ToolResult::text("resumed"))
+                }
+            },
+        )
+        .into_ref(),
+    );
+    let seen_cb = prompt_seen.clone();
+    s.agent
+        .hooks()
+        .on_sync::<hook::UserPrompt, _>("test-observer", move |ev, _| {
+            if text_of_user(&ev.content) == "second task" {
+                seen_cb.notify_one();
+            }
+            Ok(None)
+        });
+    let armed_cb = stop_armed.clone();
+    s.agent.hooks().on_sync::<hook::TurnEnd, _>("test-stop", move |_, _| {
+        let stop = armed_cb
+            .swap(false, Ordering::SeqCst)
+            .then(|| "stopped by the test".to_string());
+        Ok(Some(TurnEndResult { inject: None, stop }))
+    });
+
+    let agent1 = s.agent.clone();
+    let first = tokio::spawn(async move { agent1.prompt_text("first task").await });
+    entered_pause.notified().await;
+    let agent2 = s.agent.clone();
+    let second = tokio::spawn(async move { agent2.prompt_text("second task").await });
+    prompt_seen.notified().await;
+    stop_armed.store(true, Ordering::SeqCst);
+    resume_pause.notify_one();
+    first.await.unwrap().unwrap();
+    second.await.unwrap().unwrap();
+    // Both prompts resolve when run 1 ends; run 2 was started by the agent itself.
+    s.agent.wait_for_idle().await;
+
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), "original\n");
+    let reqs = s.requests();
+    assert_eq!(reqs.len(), 5);
+    // The retry keeps run 1 (prompt, call, result) and restarts run 2 from its own prompt.
+    assert_eq!(reqs[4].messages.len(), 4);
+    assert_eq!(reqs[4].messages[0].text(), "first task");
+    let retry_msg = reqs[4].messages[3].text();
+    assert!(retry_msg.starts_with("second task\n\n[clean-retry]"), "{retry_msg}");
+}
+
+#[tokio::test]
+async fn clean_retry_does_not_count_subagent_failures_but_restores_subagent_edits() {
+    // (a) A subagent fails checks and edits past both thresholds: the main run is not retried.
+    let dir1 = temp_dir("sasacode-clean-retry-7b-failures-");
+    let main_file = dir1.path().join("main.txt");
+    std::fs::write(&main_file, "main-v0\n").unwrap();
+    let missing = path_str(&dir1.path().join("missing.txt"));
+    let bad_edit = |id: &str| {
+        let input = json!({"path": missing, "old_string": "a", "new_string": "b"});
+        reply(vec![call(id, "edit", input)])
+    };
+
+    let s1 = clean_retry_setup(
+        dir1.path(),
+        vec![
+            // Something to roll back, so that only the failure counts decide.
+            reply(vec![call(
+                "1",
+                "write",
+                json!({"path": path_str(&main_file), "content": "main-v1\n"}),
+            )]),
+            reply(vec![call(
+                "2",
+                "task",
+                json!({"description": "failing work", "prompt": "run the tests"}),
+            )]),
+            failing_check("s1"),
+            failing_check("s2"),
+            bad_edit("s3"),
+            bad_edit("s4"),
+            reply(vec![say("sub gave up")]),
+            reply(vec![say("main done")]),
+        ],
+        &["clean-retry", "subagent"],
+    )
+    .await;
+    s1.agent.prompt_text("delegate the work").await.unwrap();
+
+    assert_eq!(s1.requests().len(), 8);
+    assert!(!saw_clean_retry(&s1));
+    assert_eq!(std::fs::read_to_string(&main_file).unwrap(), "main-v1\n");
+
+    // (b) The main run's own failures roll back what its subagent edited, and the notice says
+    // that the subagent's bash changes stay.
+    let dir2 = temp_dir("sasacode-clean-retry-7b-edits-");
+    let sub_file = dir2.path().join("sub.txt");
+    let bash_file = dir2.path().join("sub_bash.txt");
+    std::fs::write(&sub_file, "sub-v0\n").unwrap();
+
+    let s2 = clean_retry_setup(
+        dir2.path(),
+        vec![
+            reply(vec![call(
+                "1",
+                "task",
+                json!({"description": "edit sub", "prompt": "edit sub.txt"}),
+            )]),
+            reply(vec![call(
+                "s1",
+                "write",
+                json!({"path": path_str(&sub_file), "content": "sub-v1\n"}),
+            )]),
+            reply(vec![call(
+                "s2",
+                "bash",
+                json!({"command": "echo sub-bash > sub_bash.txt"}),
+            )]),
+            reply(vec![say("sub done")]),
+            failing_check("2"),
+            failing_check("3"),
+            reply(vec![say("recovered")]),
+        ],
+        &["clean-retry", "subagent"],
+    )
+    .await;
+    s2.agent.prompt_text("fix with a subagent").await.unwrap();
+
+    assert_eq!(std::fs::read_to_string(&sub_file).unwrap(), "sub-v0\n");
+    assert_eq!(std::fs::read_to_string(&bash_file).unwrap().trim(), "sub-bash");
+    let reqs = s2.requests();
+    assert_eq!(reqs.len(), 7);
+    assert_eq!(reqs[6].messages.len(), 1);
+    let retry_msg = reqs[6].messages[0].text();
+    assert!(
+        retry_msg.starts_with("fix with a subagent\n\n[clean-retry]"),
+        "{retry_msg}"
+    );
+    assert!(
+        retry_msg.contains("Changes made through bash were not rolled back."),
+        "{retry_msg}"
+    );
+}
+
+#[test]
+fn clean_retry_tells_checks_from_commands_that_change_files() {
+    // Checks and nothing else: `cd`, env assignments, wrappers and runners do not count.
+    let pure_checks = [
+        "make",
+        "make test",
+        "make check lint",
+        "make -j4 build",
+        "make all CC=gcc",
+        "make test 2>&1",
+        "ruff check .",
+        "ruff check src/ --select E501",
+        "eslint src/",
+        "cargo +nightly test",
+        "cargo --locked test",
+        "cargo --offline check",
+        "cargo +1.82.0 --locked clippy -- -D warnings",
+        "npx vitest run",
+        "npx -y jest",
+        "pnpm exec eslint .",
+        "uv run pytest -q",
+        "uv run --no-sync mypy .",
+        "poetry run pytest",
+        "pnpm test",
+        "pnpm lint",
+        "yarn check",
+        "yarn typecheck",
+        "pnpm build",
+        "pnpm type-check",
+        "pnpm test:unit",
+        "pnpm test:fixtures",
+        "yarn lint:ci",
+        "npm run type-check",
+        "npm run test:e2e",
+        "python3.12 -m pytest -q",
+        "uv run python3.11 -m pytest",
+        "pytest --fixtures",
+        "cd web && CI=1 pnpm test",
+        "export CI=1; cargo test",
+        "cd crates/foo && RUST_BACKTRACE=1 cargo test",
+    ];
+    for cmd in pure_checks {
+        assert!(looks_like_check_command(cmd), "expected check: {cmd}");
+        assert!(!runs_other_commands(cmd), "expected nothing but checks: {cmd}");
+    }
+
+    // Not checks: other targets and subcommands, formatters, and anything asked to fix files.
+    let not_checks = [
+        "make clean",
+        "make install",
+        "make test clean",
+        "ruff format",
+        "ruff format .",
+        "ruff check --fix .",
+        "ruff check . --fix-only",
+        "eslint --fix src/",
+        "npx eslint . --fix",
+        "cargo clippy --fix",
+        "cargo +nightly fmt",
+        "cargo --locked install foo",
+        "npx prettier --write .",
+        "uv run python script.py",
+        "poetry run black .",
+        "pnpm install",
+        "pnpm dev",
+        "pnpm lint:fix",
+        "yarn",
+        "yarn add foo",
+        "npm build",
+        "python3.12 -m http.server",
+    ];
+    for cmd in not_checks {
+        assert!(!looks_like_check_command(cmd), "expected non-check: {cmd}");
+        assert!(runs_other_commands(cmd), "expected another command: {cmd}");
+    }
+
+    // A check next to something else is both; this includes a filter after a pipe.
+    let mixed = [
+        "sed -i 's/a/b/' f.txt && cargo test",
+        "rm -rf target; make",
+        "cargo test 2>&1 | tail -n 20",
+    ];
+    for cmd in mixed {
+        assert!(looks_like_check_command(cmd), "expected check: {cmd}");
+        assert!(runs_other_commands(cmd), "expected another command: {cmd}");
+    }
+
+    for cmd in ["cd src", "FOO=1", ""] {
+        assert!(
+            !looks_like_check_command(cmd) && !runs_other_commands(cmd),
+            "expected nothing: {cmd}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn clean_retry_notes_bash_changes_when_a_check_is_chained_after_another_command() {
+    // A failing `echo … && cargo test` is a failed check, and the echo still ran.
+    let dir1 = temp_dir("sasacode-clean-retry-8-mixed-");
+    let mixed = |id: &str| {
+        let command = format!("echo changed > note.txt && cargo test --manifest-path missing-{id}/Cargo.toml");
+        reply(vec![call(id, "bash", json!({"command": command}))])
+    };
+    let s1 = clean_retry_setup(
+        dir1.path(),
+        vec![mixed("1"), mixed("2"), reply(vec![say("recovered")])],
+        &["clean-retry"],
+    )
+    .await;
+    s1.agent.prompt_text("fix it").await.unwrap();
+
+    let reqs = s1.requests();
+    assert_eq!(reqs.len(), 3);
+    let retry_msg = reqs[2].messages[0].text();
+    assert!(retry_msg.starts_with("fix it\n\n[clean-retry]"), "{retry_msg}");
+    assert!(
+        retry_msg.contains("Changes made through bash were not rolled back."),
+        "{retry_msg}"
+    );
+    assert!(dir1.path().join("note.txt").exists());
+
+    // `cd` and env assignments around a check change nothing: with no edits there is nothing to
+    // roll back, so the failures alone do not start a retry.
+    let dir2 = temp_dir("sasacode-clean-retry-8-pure-");
+    let pure = |id: &str| {
+        let command = format!("cd . && RUST_BACKTRACE=1 cargo test --manifest-path missing-{id}/Cargo.toml");
+        reply(vec![call(id, "bash", json!({"command": command}))])
+    };
+    let s2 = clean_retry_setup(
+        dir2.path(),
+        vec![pure("1"), pure("2"), reply(vec![say("gave up")])],
+        &["clean-retry"],
+    )
+    .await;
+    s2.agent.prompt_text("fix it").await.unwrap();
+
+    assert_eq!(s2.requests().len(), 3);
+    assert!(!saw_clean_retry(&s2));
 }
 
 #[tokio::test]

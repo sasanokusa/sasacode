@@ -3,6 +3,10 @@
 //! during the current run, trims the failed history back to before the task started, and restarts
 //! with a short failure summary.
 //!
+//! A run is tracked from the main agent's first request to its agent_end. The task is read from
+//! the history at that first request, not from user_prompt: a prompt that another plugin handled
+//! starts no run and leaves nothing behind, and a run started from queued input has its prompt too.
+//!
 //! settings: { maxRetries?: number (1), triggerFailures?: number (3), triggerEditErrors?: number (4), maxFileKB?: number (1024) }
 
 use std::collections::HashMap;
@@ -14,24 +18,30 @@ use indexmap::IndexMap;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
-use sasacode_ai::UserContent;
+use sasacode_ai::{Message, UserContent};
 use sasacode_plugin_api::{PluginApi, ToolCallEvent, ToolKind, ToolResultEvent, TurnEndResult, hook};
 use sasacode_tools::util::resolve_path;
 
 use crate::checkpoints::{Change, restore_changes, snapshot};
 use crate::repair::js::{num_setting, utf16_prefix};
 
+#[derive(Clone, Copy)]
+struct Limits {
+    max_retries: u32,
+    trigger_failures: u32,
+    trigger_edit_errors: u32,
+    max_kb: f64,
+}
+
 type FileDigest = Option<Option<[u8; 32]>>; // None: too large/unreadable; Some(None): missing
 
 fn digest_of(path: &str, max_kb: f64) -> FileDigest {
-    let p = Path::new(path);
-    match std::fs::metadata(p) {
+    match std::fs::metadata(path) {
         Ok(m) if m.is_file() && (m.len() as f64) <= max_kb * 1024.0 => {
-            std::fs::read(p).ok().map(|b| Some(Sha256::digest(&b).into()))
+            std::fs::read(path).ok().map(|b| Some(Sha256::digest(&b).into()))
         }
-        Ok(_) => None,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Some(None),
-        Err(_) => None,
+        _ => None,
     }
 }
 
@@ -40,6 +50,7 @@ type PendingSnapshot = (String, Option<(Change, FileDigest)>);
 
 #[derive(Default)]
 struct RunState {
+    /// A main-agent run is in progress: its first request was seen, its agent_end was not.
     active: bool,
     original_prompt: String,
     base_len: usize,
@@ -53,16 +64,30 @@ struct RunState {
     failures: Vec<String>,
 }
 
+/// The state of a run about to send its first request. Its task is the user messages at the end
+/// of the history: the prompt that started it (several when they queued up while the previous run
+/// was ending), or none when the run continues without new input.
+fn begin_run(history: &[Message]) -> RunState {
+    let mut prompts = Vec::new();
+    for message in history.iter().rev() {
+        let Message::User(user) = message else { break };
+        prompts.insert(0, text_of(&user.content));
+    }
+    RunState {
+        active: true,
+        base_len: history.len() - prompts.len(),
+        original_prompt: prompts.join("\n\n"),
+        ..RunState::default()
+    }
+}
+
 fn lock(m: &Mutex<RunState>) -> std::sync::MutexGuard<'_, RunState> {
     m.lock().unwrap_or_else(|e| e.into_inner())
 }
 
 fn text_of(content: &[UserContent]) -> String {
-    content
-        .iter()
-        .filter_map(UserContent::as_text)
-        .collect::<Vec<_>>()
-        .join("\n")
+    let texts: Vec<&str> = content.iter().filter_map(UserContent::as_text).collect();
+    texts.join("\n")
 }
 
 fn push_failure(list: &mut Vec<String>, note: String) {
@@ -75,103 +100,157 @@ fn push_failure(list: &mut Vec<String>, note: String) {
     }
 }
 
+/// The first reason a file cannot be rolled back is the one reported.
+fn mark_unrestorable(s: &mut RunState, path: String, why: &str) {
+    s.unrestorable.entry(path).or_insert_with(|| why.to_string());
+}
+
+/// A tracked file that no longer is as the last edit left it was changed by someone else: leave it alone.
 fn detect_external_edits(s: &mut RunState, max_kb: f64) {
-    let moved: Vec<_> = s
-        .files
-        .iter()
-        .filter(|(p, (_, _, last))| digest_of(p, max_kb) != *last)
-        .map(|(p, _)| p.clone())
-        .collect();
-    for path in moved {
-        s.files.shift_remove(&path);
-        s.unrestorable
-            .entry(path)
-            .or_insert_with(|| "modified externally since last edit".into());
+    let paths: Vec<String> = s.files.keys().cloned().collect();
+    for path in paths {
+        if digest_of(&path, max_kb) != s.files[&path].2 {
+            s.files.shift_remove(&path);
+            mark_unrestorable(s, path, "modified externally since last edit");
+        }
     }
 }
 
-pub fn looks_like_check_command(command: &str) -> bool {
-    let is_env = |w: &str| {
-        w.split_once('=').is_some_and(|(k, _)| {
-            !k.is_empty()
-                && !k.as_bytes()[0].is_ascii_digit()
-                && k.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
-        })
-    };
-    command
-        .split("&&")
-        .flat_map(|s| s.split("||"))
-        .flat_map(|s| s.split(';'))
-        .flat_map(|s| s.split('|'))
-        .flat_map(|s| s.split('\n'))
-        .any(|seg| {
-            let mut words = seg
-                .split_whitespace()
-                .skip_while(|w| is_env(w) || matches!(*w, "env" | "time" | "sudo"));
-            let Some(first) = words.next() else { return false };
-            let prog = first.rsplit(['/', '\\']).next().unwrap_or(first).to_ascii_lowercase();
-            if prog == "cd" {
-                return false;
-            }
-            let second = words.next().map(str::to_ascii_lowercase);
-            let third = words.next().map(str::to_ascii_lowercase);
-            matches!(
-                (prog.as_str(), second.as_deref(), third.as_deref()),
-                ("cargo", Some("test" | "check" | "build" | "clippy" | "nextest"), _)
-                    | ("npm" | "pnpm" | "yarn" | "bun", Some("test"), _)
-                    | (
-                        "npm" | "pnpm" | "yarn" | "bun",
-                        Some("run"),
-                        Some("test" | "lint" | "check" | "typecheck" | "build"),
-                    )
-                    | (
-                        "pytest" | "make" | "tsc" | "jest" | "vitest" | "ruff" | "mypy" | "eslint",
-                        _,
-                        _
-                    )
-                    | ("python" | "python3", Some("-m"), Some("pytest" | "mypy" | "unittest"))
-                    | ("go", Some("test" | "vet" | "build"), _)
-                    | ("deno", Some("test" | "check"), _)
-            )
-        })
+// ── bash commands: which ones are checks ─────────────────────────────
+
+/// What one part of a bash command (between `&&`, `||`, `;`, `|` or newlines) is. `Ignored`: empty,
+/// `cd`, or only env assignments. `Check`: tests, a build, a linter or a type checker.
+#[derive(Clone, Copy, PartialEq)]
+enum Segment {
+    Ignored,
+    Check,
+    Other,
 }
 
-fn on_tool_call(s: &mut RunState, ev: &ToolCallEvent, agent: String, cwd: &Path, max_kb: f64) {
-    if ev.tool.kind() != ToolKind::Edit {
+fn is_env_assignment(word: &str) -> bool {
+    let name = word.split_once('=').map_or("", |(name, _)| name);
+    let starts_like_a_name = name.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_');
+    starts_like_a_name && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// A package script that tests, lints, type-checks or builds, by its name (`test:unit`, not `lint:fix`).
+fn is_check_script(name: &str) -> bool {
+    let known = matches!(name, "test" | "lint" | "check" | "typecheck" | "type-check" | "build")
+        || name.starts_with("test:")
+        || name.starts_with("lint:");
+    known && !name.ends_with(":fix")
+}
+
+/// `make` with no target, or only with targets that check. The value of a flag (`-C dir`) reads as
+/// a target: such a command is not taken for a check.
+fn make_only_checks(args: &[&str]) -> bool {
+    let is_target = |arg: &&str| !arg.starts_with('-') && !arg.contains('>') && !is_env_assignment(arg);
+    let mut targets = args.iter().copied().filter(is_target);
+    targets.all(|target| matches!(target, "test" | "check" | "lint" | "build" | "all"))
+}
+
+/// Whether `program args` only tests, builds, lints or type-checks. A command asked to fix files is not a check.
+fn is_check(program: &str, args: &[&str]) -> bool {
+    // `--fix`, `--fix=…`, `--fix-only`; not pytest's `--fixtures`.
+    let asks_to_fix = |arg: &&str| *arg == "--fix" || arg.starts_with("--fix=") || arg.starts_with("--fix-");
+    if args.iter().any(asks_to_fix) {
+        return false;
+    }
+    // The subcommand: the first argument that is not a flag or a cargo toolchain (`+nightly`).
+    let mut positional = args.iter().filter(|arg| !arg.starts_with(['-', '+']));
+    let sub = positional.next().copied().unwrap_or("");
+    match program {
+        "cargo" => matches!(sub, "test" | "check" | "build" | "clippy" | "nextest"),
+        "npm" | "bun" | "pnpm" | "yarn" => match args {
+            ["run", script, ..] => is_check_script(script),
+            // pnpm and yarn run a script without `run`.
+            [script, ..] => *script == "test" || (matches!(program, "pnpm" | "yarn") && is_check_script(script)),
+            [] => false,
+        },
+        "make" => make_only_checks(args),
+        "ruff" => sub == "check",
+        "go" => matches!(sub, "test" | "vet" | "build"),
+        "deno" => matches!(sub, "test" | "check"),
+        "pytest" | "tsc" | "jest" | "vitest" | "mypy" | "eslint" => true,
+        // `python`, `python3`, `python3.12`.
+        _ => program.starts_with("python") && matches!(args, ["-m", "pytest" | "mypy" | "unittest", ..]),
+    }
+}
+
+fn classify_segment(segment: &str) -> Segment {
+    let lower = segment.to_ascii_lowercase();
+    let all_words: Vec<&str> = lower.split_whitespace().collect();
+    // Drop what stands before the program: env assignments, wrappers and runners, and their flags.
+    let mut words = all_words.as_slice();
+    loop {
+        words = match words {
+            [first, rest @ ..] if is_env_assignment(first) || first.starts_with('-') => rest,
+            ["env" | "time" | "sudo" | "npx", rest @ ..] => rest,
+            ["pnpm", "exec", rest @ ..] | ["uv" | "poetry", "run", rest @ ..] => rest,
+            _ => break,
+        };
+    }
+    let program = words
+        .first()
+        .map_or("", |path| path.rsplit(['/', '\\']).next().unwrap_or(path));
+    match program {
+        "" | "cd" | "export" => Segment::Ignored,
+        _ if is_check(program, &words[1..]) => Segment::Check,
+        _ => Segment::Other,
+    }
+}
+
+/// The parts of a command, classified. Quotes are not parsed: a separator inside a string splits too.
+fn segments(command: &str) -> Vec<Segment> {
+    let separated = command.replace("&&", ";").replace("||", ";");
+    separated.split([';', '|', '\n']).map(classify_segment).collect()
+}
+
+/// Some part of the command runs tests, a build, a linter or a type checker.
+pub fn looks_like_check_command(command: &str) -> bool {
+    segments(command).contains(&Segment::Check)
+}
+
+/// Some part of the command is not a check (nor `cd` or an env assignment), so it may have changed files.
+pub fn runs_other_commands(command: &str) -> bool {
+    segments(command).contains(&Segment::Other)
+}
+
+// ── tool calls and results ───────────────────────────────────────────
+
+fn call_key(agent: Option<&str>, call_id: &str) -> (String, String) {
+    (agent.unwrap_or_default().to_string(), call_id.to_string())
+}
+
+/// Before an edit runs: snapshot the files it names. A subagent's edits are part of the run too.
+fn on_tool_call(s: &mut RunState, ev: &ToolCallEvent, agent: Option<&str>, cwd: &Path, max_kb: f64) {
+    if !s.active || ev.tool.kind() != ToolKind::Edit {
         return;
     }
     detect_external_edits(s, max_kb);
-    let paths = ev.tool.paths(&ev.args, cwd).unwrap_or_default();
-    let staged = paths
-        .into_iter()
-        .filter_map(|raw| {
-            let abs = resolve_path(&raw, cwd);
-            (!s.unrestorable.contains_key(&abs)).then(|| {
-                let snap = (!s.files.contains_key(&abs)).then(|| (snapshot(&abs, max_kb), digest_of(&abs, max_kb)));
-                (abs, snap)
-            })
-        })
-        .collect();
-    s.pending.insert((agent, ev.call.id.clone()), staged);
+    let mut staged = Vec::new();
+    for raw in ev.tool.paths(&ev.args, cwd).unwrap_or_default() {
+        let abs = resolve_path(&raw, cwd);
+        if s.unrestorable.contains_key(&abs) {
+            continue;
+        }
+        let snap = (!s.files.contains_key(&abs)).then(|| (snapshot(&abs, max_kb), digest_of(&abs, max_kb)));
+        staged.push((abs, snap));
+    }
+    s.pending.insert(call_key(agent, &ev.call.id), staged);
 }
 
-fn on_tool_result(s: &mut RunState, ev: &ToolResultEvent, agent: String, max_kb: f64) {
-    let staged = s.pending.remove(&(agent, ev.call.id.clone()));
-    if !ev.ran {
-        return;
-    }
-    let text = text_of(&ev.result.content);
+/// After an edit ran: keep the snapshots of the files it changed.
+fn track_edited_files(s: &mut RunState, staged: Vec<PendingSnapshot>, ev: &ToolResultEvent, max_kb: f64) {
     let unchanged = ev.result.details.as_ref().and_then(|d| d.get("changed")) == Some(&Value::Bool(false));
-    for (path, snap) in staged.unwrap_or_default() {
+    for (path, snap) in staged {
         if s.unrestorable.contains_key(&path) {
             continue;
         }
         match snap {
             Some((ch, _)) if ch.skipped() => {
                 if !ev.result.is_error() && !unchanged {
-                    s.unrestorable
-                        .entry(path)
-                        .or_insert_with(|| "not snapshotted (too large or unreadable)".into());
+                    mark_unrestorable(s, path, "not snapshotted (too large or unreadable)");
                 }
             }
             Some((ch, init)) => {
@@ -187,180 +266,164 @@ fn on_tool_result(s: &mut RunState, ev: &ToolResultEvent, agent: String, max_kb:
             }
         }
     }
-    let mut record_check = |label: String, fallback: &str| {
-        if ev.result.is_error() {
-            s.test_failures += 1;
-            let tail = text.lines().rfind(|l| !l.trim().is_empty()).unwrap_or(fallback);
-            push_failure(&mut s.failures, format!("{label}: {tail}"));
-        } else {
-            s.test_failures = 0;
-        }
-    };
-    match ev.call.name.as_str() {
+}
+
+fn record_check(s: &mut RunState, label: &str, failed: bool, output: &str) {
+    s.test_failures = if failed { s.test_failures + 1 } else { 0 };
+    if failed {
+        let tail = output.lines().rfind(|l| !l.trim().is_empty()).unwrap_or("failed");
+        push_failure(&mut s.failures, format!("{label}: {tail}"));
+    }
+}
+
+fn on_tool_result(s: &mut RunState, ev: &ToolResultEvent, agent: Option<&str>, max_kb: f64) {
+    let staged = s.pending.remove(&call_key(agent, &ev.call.id));
+    // Not counted: results that arrive after the run ended, and calls that never ran (denied).
+    if !s.active || !ev.ran {
+        return;
+    }
+    track_edited_files(s, staged.unwrap_or_default(), ev, max_kb);
+    let failed = ev.result.is_error();
+    let text = text_of(&ev.result.content);
+    let name = ev.call.name.as_str();
+    let command = ev.call.input.get("command").and_then(Value::as_str).unwrap_or("");
+    let bash_check = name == "bash" && looks_like_check_command(command);
+    // A check chained to something else ran that something even when it failed (`sed -i … && cargo test`).
+    if name == "bash" && runs_other_commands(command) && (bash_check || !failed) {
+        s.saw_non_check_bash = true;
+    }
+    // A subagent's failures are its own: they do not count toward retrying the main run.
+    if agent.is_some() {
+        return;
+    }
+    match name {
         "edit" | "write" | "hash_edit" => {
-            if ev.result.is_error() || text.contains("[syntax-check] Syntax error") {
+            if failed || text.contains("[syntax-check] Syntax error") {
                 s.consecutive_edit_errors += 1;
                 let target = ev.call.input.get("path").and_then(Value::as_str).unwrap_or("file");
                 let head = text.lines().next().unwrap_or("edit failed");
-                push_failure(&mut s.failures, format!("{}({target}): {head}", ev.call.name));
+                push_failure(&mut s.failures, format!("{name}({target}): {head}"));
             } else {
                 s.consecutive_edit_errors = 0;
             }
         }
-        "project_check" => record_check("project_check".into(), "check failed"),
-        "bash" => {
-            let cmd = ev.call.input.get("command").and_then(Value::as_str).unwrap_or("");
-            if looks_like_check_command(cmd) {
-                record_check(format!("bash({})", utf16_prefix(cmd, 40)), "command failed");
-            } else if !ev.result.is_error() {
-                s.saw_non_check_bash = true;
-            }
-        }
+        "project_check" => record_check(s, "project_check", failed, &text),
+        "bash" if bash_check => record_check(s, &format!("bash({})", utf16_prefix(command, 40)), failed, &text),
         _ => {}
     }
 }
 
-fn perform_retry(
-    s: &mut RunState,
-    api: &PluginApi,
-    limits: (u32, u32, u32, f64),
-) -> anyhow::Result<Option<TurnEndResult>> {
-    let (max_retries, trigger_failures, trigger_edit_errors, max_kb) = limits;
-    let triggered = s.test_failures >= trigger_failures || s.consecutive_edit_errors >= trigger_edit_errors;
-    if !triggered || s.retries >= max_retries || s.original_prompt.trim().is_empty() {
+// ── the retry ────────────────────────────────────────────────────────
+
+/// The prompt that restarts the task: the original one, what was not rolled back, and what failed.
+fn retry_prompt(s: &RunState) -> String {
+    let mut summary = if s.unrestorable.is_empty() && !s.saw_non_check_bash {
+        "All file changes were rolled back to a clean state after repeated failures.".to_string()
+    } else {
+        "Snapshotted file changes were rolled back after repeated failures, except as noted below:".to_string()
+    };
+    if !s.unrestorable.is_empty() {
+        summary.push_str("\nFiles not restored:");
+        for (path, why) in &s.unrestorable {
+            summary.push_str(&format!("\n- {path} ({why})"));
+        }
+    }
+    if s.saw_non_check_bash {
+        summary.push_str("\nChanges made through bash were not rolled back.");
+    }
+    let mut bullets: Vec<String> = s.failures.iter().map(|f| format!("- {f}")).collect();
+    if bullets.is_empty() {
+        bullets.push("- Previous attempts failed repeatedly.".into());
+    }
+    format!(
+        "{}\n\n[clean-retry] {summary}\nPrevious attempt errors:\n{}\nStart fresh with a clean minimal approach and verify with tests.",
+        s.original_prompt,
+        bullets.join("\n")
+    )
+}
+
+fn perform_retry(s: &mut RunState, api: &PluginApi, limits: Limits) -> anyhow::Result<Option<TurnEndResult>> {
+    let edits_stuck = s.consecutive_edit_errors >= limits.trigger_edit_errors;
+    let triggered = s.test_failures >= limits.trigger_failures || edits_stuck;
+    if !s.active || !triggered || s.retries >= limits.max_retries || s.original_prompt.trim().is_empty() {
         return Ok(None);
     }
-    detect_external_edits(s, max_kb);
-    if s.files.is_empty()
-        && s.unrestorable.is_empty()
-        && !s.saw_non_check_bash
-        && s.consecutive_edit_errors < trigger_edit_errors
-    {
+    detect_external_edits(s, limits.max_kb);
+    let nothing_changed = s.files.is_empty() && s.unrestorable.is_empty() && !s.saw_non_check_bash;
+    if nothing_changed && !edits_stuck {
         return Ok(None);
     }
     s.retries += 1;
-    s.test_failures = 0;
-    s.consecutive_edit_errors = 0;
     let tracked: Vec<_> = s.files.drain(..).map(|(_, v)| v).collect();
-    let (mut unrestorable, saw_bash, failures) = (
-        std::mem::take(&mut s.unrestorable),
-        std::mem::take(&mut s.saw_non_check_bash),
-        std::mem::take(&mut s.failures),
-    );
-    let changes: Vec<Change> = tracked.iter().map(|(c, _, _)| c.clone()).collect();
-    if !changes.is_empty() {
-        let _ = restore_changes(&changes);
-        for (ch, init, _) in &tracked {
-            if digest_of(&ch.path, max_kb) != *init {
-                unrestorable
-                    .entry(ch.path.clone())
-                    .or_insert_with(|| "rollback failed".into());
-            }
+    let changes: Vec<Change> = tracked.iter().map(|(change, _, _)| change.clone()).collect();
+    let _ = restore_changes(&changes);
+    for (change, init, _) in tracked {
+        if digest_of(&change.path, limits.max_kb) != init {
+            mark_unrestorable(s, change.path, "rollback failed");
         }
     }
-    let msgs = api.session().messages();
-    api.session()
-        .replace_messages(msgs.into_iter().take(s.base_len).collect())?;
+    let mut history = api.session().messages();
+    history.truncate(s.base_len);
+    api.session().replace_messages(history)?;
 
-    let bullets = if failures.is_empty() {
-        "- Previous attempts failed repeatedly.".into()
-    } else {
-        failures.iter().map(|f| format!("- {f}")).collect::<Vec<_>>().join("\n")
-    };
-    let summary = if unrestorable.is_empty() && !saw_bash {
-        "All file changes were rolled back to a clean state after repeated failures.".into()
-    } else {
-        let mut parts =
-            vec!["Snapshotted file changes were rolled back after repeated failures, except as noted below:".into()];
-        if !unrestorable.is_empty() {
-            let list = unrestorable
-                .iter()
-                .map(|(p, w)| format!("- {p} ({w})"))
-                .collect::<Vec<_>>()
-                .join("\n");
-            parts.push(format!("Files not restored:\n{list}"));
-        }
-        if saw_bash {
-            parts.push("Changes made through bash were not rolled back.".into());
-        }
-        parts.join("\n")
-    };
-    let prompt = format!(
-        "{}\n\n[clean-retry] {summary}\nPrevious attempt errors:\n{bullets}\nStart fresh with a clean minimal approach and verify with tests.",
-        s.original_prompt
-    );
-    Ok(Some(TurnEndResult {
-        inject: Some(prompt),
-        stop: None,
-    }))
+    let inject = Some(retry_prompt(s));
+    // The next attempt starts with nothing held against it.
+    s.test_failures = 0;
+    s.consecutive_edit_errors = 0;
+    s.saw_non_check_bash = false;
+    s.unrestorable.clear();
+    s.failures.clear();
+    Ok(Some(TurnEndResult { inject, stop: None }))
 }
 
 pub fn plugin(api: PluginApi) -> BoxFuture<'static, anyhow::Result<()>> {
     Box::pin(async move {
         let settings = api.settings();
-        let limits = (
-            num_setting(&settings, "maxRetries", 1.0).max(0.0) as u32,
-            num_setting(&settings, "triggerFailures", 3.0).max(1.0) as u32,
-            num_setting(&settings, "triggerEditErrors", 4.0).max(1.0) as u32,
-            num_setting(&settings, "maxFileKB", 1024.0).max(1.0),
-        );
+        let limits = Limits {
+            max_retries: num_setting(&settings, "maxRetries", 1.0).max(0.0) as u32,
+            trigger_failures: num_setting(&settings, "triggerFailures", 3.0).max(1.0) as u32,
+            trigger_edit_errors: num_setting(&settings, "triggerEditErrors", 4.0).max(1.0) as u32,
+            max_kb: num_setting(&settings, "maxFileKB", 1024.0).max(1.0),
+        };
         let cwd = api.cwd();
         let state: Arc<Mutex<RunState>> = Arc::default();
 
-        let (st, a) = (state.clone(), api.clone());
-        api.on::<hook::UserPrompt, _, _>(move |ev, ctx| {
-            if ctx.agent.is_none() && !lock(&st).active {
-                let text = text_of(&ev.content);
-                let base_len = a.session().messages().len();
-                let mut s = lock(&st);
-                if !s.active {
-                    *s = RunState {
-                        active: true,
-                        original_prompt: text,
-                        base_len,
-                        ..RunState::default()
-                    };
-                }
-            }
-            async { Ok(None) }
-        });
+        // `ctx.agent` is set for a subagent. Its requests start no run of their own; its tool calls
+        // and results belong to the main run that is in progress.
         let st = state.clone();
-        api.on::<hook::SessionStart, _, _>(move |_, _| {
+        api.on_sync::<hook::SessionStart, _>(move |_, _| {
             *lock(&st) = RunState::default();
-            async { Ok(None) }
+            Ok(None)
         });
-        let st = state.clone();
-        api.on::<hook::BeforeRequest, _, _>(move |_, ctx| {
-            if ctx.agent.is_none() {
-                lock(&st).active = true;
+        let (st, a) = (state.clone(), api.clone());
+        api.on_sync::<hook::BeforeRequest, _>(move |_, ctx| {
+            let mut s = lock(&st);
+            if ctx.agent.is_none() && !s.active {
+                *s = begin_run(&a.session().messages());
             }
-            async { Ok(None) }
+            Ok(None)
         });
         let st = state.clone();
-        api.on::<hook::AgentEnd, _, _>(move |_, ctx| {
+        api.on_sync::<hook::AgentEnd, _>(move |_, ctx| {
             if ctx.agent.is_none() {
                 *lock(&st) = RunState::default();
             }
-            async { Ok(None) }
+            Ok(None)
         });
         let st = state.clone();
-        api.on::<hook::ToolCall, _, _>(move |ev, ctx| {
-            on_tool_call(&mut lock(&st), &ev, ctx.agent.unwrap_or_default(), &cwd, limits.3);
-            async { Ok(None) }
+        api.on_sync::<hook::ToolCall, _>(move |ev, ctx| {
+            on_tool_call(&mut lock(&st), ev, ctx.agent.as_deref(), &cwd, limits.max_kb);
+            Ok(None)
         });
         let st = state.clone();
-        api.on::<hook::ToolResult, _, _>(move |ev, ctx| {
-            on_tool_result(&mut lock(&st), &ev, ctx.agent.unwrap_or_default(), limits.3);
-            async { Ok(None) }
+        api.on_sync::<hook::ToolResult, _>(move |ev, ctx| {
+            on_tool_result(&mut lock(&st), ev, ctx.agent.as_deref(), limits.max_kb);
+            Ok(None)
         });
         let a = api.clone();
-        api.on::<hook::TurnEnd, _, _>(move |_ev, ctx| {
-            let res = if ctx.agent.is_some() {
-                Ok(None)
-            } else {
-                perform_retry(&mut lock(&state), &a, limits)
-            };
-            async move { res }
+        api.on_sync::<hook::TurnEnd, _>(move |_, ctx| match ctx.agent {
+            None => perform_retry(&mut lock(&state), &a, limits),
+            Some(_) => Ok(None),
         });
         Ok(())
     })
