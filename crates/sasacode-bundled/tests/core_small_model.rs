@@ -19,11 +19,11 @@ use sasacode_ai::{
     UserContent, register_api, text_of_user,
 };
 use sasacode_bundled::clean_retry::{looks_like_check_command, runs_other_commands};
-use sasacode_bundled::hashline_edit::line_hash;
+use sasacode_bundled::hashline_edit::{line_hash, strip_hashline_prefixes};
 use sasacode_bundled::syntax_check::check_rust_syntax;
 use sasacode_plugin_api::{
-    Decision, Lang, PermissionMode, PermissionRules, SessionStartEvent, ToolDef, ToolKind, ToolResult, TurnEndResult,
-    UserPromptResult, hook,
+    AssistantMessageEvent, Decision, Lang, PermissionMode, PermissionRules, SessionStartEvent, ToolDef, ToolKind,
+    ToolResult, TurnEndResult, UserPromptResult, hook,
 };
 use sasacode_testing::{ReplayOptions, ReplayProvider};
 use support_core::*;
@@ -2641,7 +2641,7 @@ async fn slim_profile_cuts_hashline_and_japanese_read_output_at_line_boundaries(
 }
 
 #[tokio::test]
-async fn hash_edit_ignores_subagent_hooks_mid_batch_and_keeps_pending_until_batch_ends() {
+async fn hash_edit_ignores_subagent_messages_mid_batch_and_trusts_result_anchors_from_the_next_message() {
     let dir = temp_dir("sasacode-hashline-subagent-batch-");
     let file = dir.path().join("mod.rs");
     let other = dir.path().join("other.txt");
@@ -2653,12 +2653,11 @@ async fn hash_edit_ignores_subagent_hooks_mid_batch_and_keeps_pending_until_batc
     let hz = line_hash("    z();");
     let h_brace = line_hash("}");
 
-    // Same-turn batch: [hash_edit(1), task(...), hash_edit(2)].
-    // hash_edit(1) inserts 2 lines so `fn a()`'s `}` moves to line 5 (inside hash_edit(1)'s
-    // shown_range 1..=6 -> pending_fresh_lines). The subagent runs AssistantMessage + read
-    // (ToolResult) mid-batch; those events must NOT promote main's pending lines or clear main's
-    // active_batch_ids, so hash_edit(2) reusing stale `5:<h_brace>` must still be rejected.
-    // Once the batch completes, main's pending lines promote so turn 3 can use `4:<hz>`.
+    // One message: [hash_edit(1), task(...), hash_edit(2)].
+    // hash_edit(1) inserts 2 lines so `fn a()`'s `}` moves to line 5, which its result prints
+    // (lines 1..=6). The subagent produces messages of its own and reads a file mid-batch; none of
+    // that may make the main agent's message count advance, so hash_edit(2) reusing stale
+    // `5:<h_brace>` must still be rejected. The main agent's next message can use `4:<hz>`.
     let s = setup(
         vec![
             reply(vec![call("1", "read", json!({"path": f}))]),
@@ -2687,7 +2686,7 @@ async fn hash_edit_ignores_subagent_hooks_mid_batch_and_keeps_pending_until_batc
             // Subagent turn 1 + turn 2
             reply(vec![call("s1", "read", json!({"path": o}))]),
             reply(vec![say("sub done")]),
-            // Main turn 3: fresh anchor from hash_edit(1) must now be promoted
+            // Main turn 3: the anchor printed by hash_edit(1) is now usable
             reply(vec![call(
                 "5",
                 "hash_edit",
@@ -2715,7 +2714,49 @@ async fn hash_edit_ignores_subagent_hooks_mid_batch_and_keeps_pending_until_batc
 }
 
 #[tokio::test]
-async fn hash_edit_two_edits_in_one_turn_keep_both_pending_sets_and_prefix_unchanged_keeps_above() {
+async fn hash_edit_by_a_subagent_is_judged_by_what_the_subagent_was_shown_not_the_main_agent() {
+    let dir = temp_dir("sasacode-hashline-subagent-caller-");
+    let file = dir.path().join("notes.txt");
+    std::fs::write(&file, "MAIN_ONLY_LINE\nsecond\n").unwrap();
+    let f = path_str(&file);
+    let wrong = if line_hash("MAIN_ONLY_LINE") == "00" {
+        "01"
+    } else {
+        "00"
+    };
+
+    // The main agent has read the file; the subagent has not. A mismatch in the subagent's call
+    // must be answered as for an unread file: were the call taken for the main agent's, the error
+    // would print the lines around the anchor.
+    let s = setup(
+        vec![
+            reply(vec![call("1", "read", json!({"path": f}))]),
+            reply(vec![call(
+                "2",
+                "task",
+                json!({"description": "edit notes", "prompt": "edit notes.txt"}),
+            )]),
+            reply(vec![call(
+                "s1",
+                "hash_edit",
+                json!({"path": f, "start": format!("1:{wrong}"), "content": "x"}),
+            )]),
+            reply(vec![say("sub done")]),
+            reply(vec![say("done")]),
+        ],
+        &["hashline-edit", "subagent"],
+        opts(&path_str(dir.path()), &[]),
+    )
+    .await;
+    s.agent.prompt_text("delegate an edit").await.unwrap();
+    let reqs = s.requests();
+    let out = last(&reqs[3]).text();
+    assert!(out.contains("Hash mismatch at") && out.contains("first."), "{out}");
+    assert!(!out.contains("MAIN_ONLY_LINE"), "judged as the main agent: {out}");
+}
+
+#[tokio::test]
+async fn hash_edit_two_edits_in_one_message_both_give_anchors_and_an_outside_change_below_keeps_lines_above() {
     let dir = temp_dir("sasacode-hashline-two-edits-");
     let file = dir.path().join("multi.txt");
     let other = dir.path().join("aux.txt");
@@ -2730,9 +2771,8 @@ async fn hash_edit_two_edits_in_one_turn_keep_both_pending_sets_and_prefix_uncha
     let h2_new = line_hash("line-02-edited");
     let h9_new = line_hash("line-09-edited");
 
-    // 1. Batch of 3 calls [hash_edit(line 2), hash_edit(line 9), read(other)] so BOTH edits run
-    //    with batch_pending == true and write into pending_fresh_lines. Next turn must accept fresh
-    //    anchors returned by BOTH edits without re-reading.
+    // 1. One message with 3 calls [hash_edit(line 2), hash_edit(line 9), read(other)]. The next
+    //    message must accept the anchors printed by BOTH edits without re-reading.
     let s = setup(
         vec![
             reply(vec![call("1", "read", json!({"path": f}))]),
@@ -2778,8 +2818,8 @@ async fn hash_edit_two_edits_in_one_turn_keep_both_pending_sets_and_prefix_uncha
     let disk = std::fs::read_to_string(&file).unwrap();
     assert!(disk.contains("line-02-v2\n") && disk.contains("line-09-v2\n"), "{disk}");
 
-    // 2. Also test a 2-edit batch (without trailing read) so the 2nd edit has batch_pending == false
-    //    and still carries prev.pending_fresh_lines from the 1st edit into the next turn.
+    // 2. Also a message with just the 2 edits: the anchors printed by the 1st edit survive the 2nd
+    //    one into the next message.
     std::fs::write(&file, &initial).unwrap();
     let s2 = setup(
         vec![
@@ -2812,12 +2852,13 @@ async fn hash_edit_two_edits_in_one_turn_keep_both_pending_sets_and_prefix_uncha
     assert!(last(&reqs2[3]).text().contains("Edited"), "{}", last(&reqs2[3]).text());
     assert!(std::fs::read_to_string(&file).unwrap().contains("line-02-v3\n"));
 
-    // 3. External change below end_line+1 accepted via prefix_unchanged must retain n < unchanged_before_end
-    //    so a follow-up edit at line 1 (above line 5's shown_range 3..=7) succeeds without re-read,
-    //    while a follow-up edit below end_line (line 10, outside 3..=7) is rejected as stale.
+    // 3. A change by another tool at line 12 leaves lines 1..=11 untouched, so anchors survive
+    //    exactly up to line 10 (lines 1 through their own + 1 untouched): edits at lines 5, 1 and
+    //    10 succeed without a re-read, while line 11, next to the change, is rejected as stale.
     std::fs::write(&file, &initial).unwrap();
     let h5 = line_hash("line-05");
     let h10 = line_hash("line-10");
+    let h11 = line_hash("line-11");
     let s3 = setup(
         vec![
             reply(vec![call("1", "read", json!({"path": f}))]),
@@ -2827,21 +2868,27 @@ async fn hash_edit_two_edits_in_one_turn_keep_both_pending_sets_and_prefix_uncha
                 "edit",
                 json!({"path": f, "old_string": "line-12", "new_string": "line-12-ext"}),
             )]),
-            // Accepted via prefix_unchanged (lines 1..=6 match). shown_range is 3..=7.
+            // Accepted: lines 1..=6 are untouched. The result prints lines 3..=7.
             reply(vec![call(
                 "3",
                 "hash_edit",
                 json!({"path": f, "start": format!("5:{h5}"), "content": "line-05-edited"}),
             )]),
-            // Line 1 (< unchanged_before_end = 5, outside 3..=7) must still be fresh!
+            // Line 1 (above the edit, not in its result) must still be usable.
             reply(vec![call(
                 "4",
                 "hash_edit",
                 json!({"path": f, "start": format!("1:{h1}"), "content": "line-01-edited"}),
             )]),
-            // Line 10 (> end_line = 5, outside 3..=7) must NOT stay fresh after external change!
+            // Line 11 borders the changed line 12: its anchor is forgotten.
             reply(vec![call(
                 "5",
+                "hash_edit",
+                json!({"path": f, "start": format!("11:{h11}"), "content": "line-11-edited"}),
+            )]),
+            // Line 10 has not moved (the edits above kept the line count) and lines 1..=11 are untouched.
+            reply(vec![call(
+                "6",
                 "hash_edit",
                 json!({"path": f, "start": format!("10:{h10}"), "content": "line-10-edited"}),
             )]),
@@ -2860,6 +2907,97 @@ async fn hash_edit_two_edits_in_one_turn_keep_both_pending_sets_and_prefix_uncha
         "{}",
         last(&reqs3[5]).text()
     );
+    assert!(last(&reqs3[6]).text().contains("Edited"), "{}", last(&reqs3[6]).text());
+    let disk = std::fs::read_to_string(&file).unwrap();
+    assert!(disk.contains("line-10-edited\nline-11\nline-12-ext\n"), "{disk}");
+}
+
+#[tokio::test]
+async fn hash_edit_in_the_message_of_another_call_trusts_only_anchors_shown_before_that_message() {
+    let dir = temp_dir("sasacode-hashline-same-message-");
+    let file = dir.path().join("mod.rs");
+    let original = "fn a() {\n    x();\n}\nfn b() {\n    y();\n}\nfn c() {\n}\n";
+    std::fs::write(&file, original).unwrap();
+    let f = path_str(&file);
+    let hx = line_hash("    x();");
+    let hy = line_hash("    y();");
+    let h_brace = line_hash("}");
+
+    // 1. Two replaces on neighbouring lines in one message: line 5 is printed again by the first
+    //    result, which must not take away the anchor the model already held for it. Neither does
+    //    reading the unchanged file again in the message that edits it.
+    let s = setup(
+        vec![
+            reply(vec![call("1", "read", json!({"path": f}))]),
+            reply(vec![
+                call(
+                    "2",
+                    "hash_edit",
+                    json!({"path": f, "start": "4:".to_string() + &line_hash("fn b() {"), "content": "fn b2() {"}),
+                ),
+                call(
+                    "3",
+                    "hash_edit",
+                    json!({"path": f, "start": format!("5:{hy}"), "content": "    y2();"}),
+                ),
+            ]),
+            reply(vec![
+                call("4", "read", json!({"path": f})),
+                call(
+                    "5",
+                    "hash_edit",
+                    json!({"path": f, "start": format!("2:{hx}"), "content": "    x2();"}),
+                ),
+            ]),
+            reply(vec![say("done")]),
+        ],
+        &["hashline-edit"],
+        opts(&path_str(dir.path()), &[]),
+    )
+    .await;
+    s.agent.prompt_text("neighbours").await.unwrap();
+    let reqs = s.requests();
+    assert!(
+        !json_of(&reqs[2].messages).contains("Stale anchor"),
+        "{}",
+        json_of(&reqs[2].messages)
+    );
+    assert!(last(&reqs[3]).text().contains("Edited"), "{}", last(&reqs[3]).text());
+    assert_eq!(
+        std::fs::read_to_string(&file).unwrap(),
+        "fn a() {\n    x2();\n}\nfn b2() {\n    y2();\n}\nfn c() {\n}\n"
+    );
+
+    // 2. Another tool inserted two lines, then one message both re-reads the file and edits by an
+    //    anchor from the first read: `8:}` was `fn c`'s brace and is now `fn b`'s. The read in the
+    //    same message shows line 8 again, but only after the call was written.
+    std::fs::write(&file, original).unwrap();
+    let s2 = setup(
+        vec![
+            reply(vec![call("1", "read", json!({"path": f}))]),
+            reply(vec![call(
+                "2",
+                "edit",
+                json!({"path": f, "old_string": "    x();", "new_string": "    x();\n    if w() {\n    }"}),
+            )]),
+            reply(vec![
+                call("3", "read", json!({"path": f})),
+                call(
+                    "4",
+                    "hash_edit",
+                    json!({"path": f, "start": format!("8:{h_brace}"), "content": "} // c"}),
+                ),
+            ]),
+            reply(vec![say("done")]),
+        ],
+        &["hashline-edit"],
+        opts(&path_str(dir.path()), &[]),
+    )
+    .await;
+    s2.agent.prompt_text("read and edit at once").await.unwrap();
+    let out = json_of(&s2.requests()[3].messages);
+    assert!(out.contains("Stale anchor"), "{out}");
+    assert!(!std::fs::read_to_string(&file).unwrap().contains("} // c"));
 }
 
 #[tokio::test]
@@ -2978,6 +3116,15 @@ async fn hash_edit_clears_state_on_session_start_and_evicts_lru_over_64_files() 
     let r = l.invoke("read", json!({"path": &paths[64]})).await;
     assert!(!r.is_error(), "{}", text_of(&r));
 
+    // The anchors shown by those reads are usable from the next assistant message on.
+    l.agent
+        .hooks()
+        .emit::<hook::AssistantMessage>(AssistantMessageEvent {
+            message: reply(vec![say("now edit")]),
+            stopped: None,
+        })
+        .await;
+
     // Evicted f01 must not count as recorded (must not leak file lines on hash mismatch).
     let r_evicted = l
         .invoke("hash_edit", json!({"path": &paths[1], "start": "1:00", "content": "x"}))
@@ -2998,4 +3145,20 @@ async fn hash_edit_clears_state_on_session_start_and_evicts_lru_over_64_files() 
         )
         .await;
     assert!(text_of(&r_new).contains("SECRET_64=val"), "{}", text_of(&r_new));
+}
+
+#[test]
+fn strip_hashline_prefixes_requires_every_non_empty_line_to_match() {
+    assert_eq!(
+        strip_hashline_prefixes("12:ab|let a = 1;\n13:cd|let b = 2;\n"),
+        Some("let a = 1;\nlet b = 2;\n".into())
+    );
+    assert_eq!(strip_hashline_prefixes("12:ab|single"), Some("single".into()));
+    assert_eq!(
+        strip_hashline_prefixes("12:ab|first\n\n14:cd|third"),
+        Some("first\n\nthird".into())
+    );
+    assert_eq!(strip_hashline_prefixes("12:ab|first\nplain second"), None);
+    assert_eq!(strip_hashline_prefixes("12:ab|first\n15:cd|jumped"), None);
+    assert_eq!(strip_hashline_prefixes(""), None);
 }

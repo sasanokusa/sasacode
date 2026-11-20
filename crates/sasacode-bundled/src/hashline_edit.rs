@@ -1,118 +1,199 @@
 //! hashline-edit (opt-in via `plugins.enabled`): adds short line-number+hash anchors (`42:a3|...`)
 //! to `read` results and provides `hash_edit` so small models can edit lines reliably without
-//! copying exact whitespace indentation. Also strips accidental `N:hh|` prefixes sent to `write`.
+//! copying exact whitespace indentation. Also strips accidental `N:hh|` prefixes sent to `write`,
+//! `edit` and `hash_edit`.
+//!
+//! Two hex digits cannot tell one `}` from the next, so a matching hash is not enough: the model
+//! must also have been shown the line where it is now. For each agent and file a [`Snapshot`]
+//! holds the file as that agent last saw it and, per line, the assistant message during which its
+//! anchor was shown (by `read` or by a `hash_edit` result). An anchor is accepted when both hold:
+//! - Its line was shown during an earlier message than the one making the call. A second call in
+//!   the same message was written before the first one's result existed.
+//! - Nothing above it has moved since. A `hash_edit` that changes the line count forgets every
+//!   line below it. Any other change to the file forgets every line from just above the first
+//!   difference on, so an anchor survives only while lines 1 through its own + 1 are untouched.
+//!
+//! A file the agent has no snapshot of (never read, too large, forgotten) is checked by hash alone.
 
-use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::ops::Range;
+use std::sync::{Arc, LazyLock, Mutex, MutexGuard};
 
 use futures::future::BoxFuture;
 use regex::Regex;
 use serde_json::{Value, json};
 
-use sasacode_ai::{AssistantContent, JsonObject};
+use sasacode_ai::JsonObject;
 use sasacode_plugin_api::{
-    PluginApi, SystemPromptResult, ToolCallRawResult, ToolCallResult, ToolContext, ToolDef, ToolKind, ToolResult,
-    ToolResultResult, UserContent, hook,
+    PluginApi, SystemPromptResult, ToolCallRawResult, ToolContext, ToolDef, ToolKind, ToolResult, ToolResultResult,
+    UserContent, hook,
 };
-use sasacode_tools::util::{line_diff, resolve_path, split_lines};
+use sasacode_tools::util::{fs_error, line_diff, resolve_path, split_lines};
 
 const MAX_DISK_HASH_BYTES: u64 = 2_000_000;
 const EDIT_CONTEXT_LINES: usize = 2;
 const MAX_TRACKED_FILES: usize = 64;
 const MAX_TRACKED_SUBAGENTS: usize = 16;
 
+/// `None`: the main agent. `Some("sub-N")`: a subagent. Each has its own snapshots.
+type AgentId = Option<String>;
+
 #[derive(Default)]
 struct PluginState {
-    /// Per-agent snapshot/batch state (`None` = main agent, `Some("sub-N")` = subagent).
-    agents: HashMap<Option<String>, AgentState>,
-    /// Monotonic counter used to evict least recently used tracked files (and idle subagents).
-    access_seq: u64,
-    /// In-flight `hash_edit` invocations recorded in `ToolCall` so `execute_hash_edit`
-    /// (which only receives `ToolContext`) knows which agent invoked it.
-    pending_tool_calls: Vec<PendingToolCall>,
+    /// Oldest first.
+    agents: Vec<(AgentId, AgentState)>,
+    /// `hash_edit` calls between their `ToolCall` hook and their result. `ToolContext` does not
+    /// say which agent is calling, so the hook notes it here and the tool finds it by its arguments.
+    in_flight: Vec<InFlight>,
 }
 
-#[derive(Default)]
-struct AgentState {
-    /// Per-file snapshot/anchor tracking keyed by canonical path (or resolved path fallback).
-    files: HashMap<String, FileState>,
-    /// Tool call IDs still open in the current assistant response for this agent. While >1 call
-    /// in the same batch remains, newly returned anchors from an earlier `hash_edit` stay pending
-    /// until the batch or turn ends.
-    active_batch_ids: HashSet<String>,
-    last_used: u64,
-}
-
-#[derive(Clone)]
-struct FileState {
-    content_hash: u64,
-    line_hashes: Vec<u64>,
-    fresh_lines: HashSet<usize>,
-    pending_fresh_lines: HashSet<usize>,
-    last_used: u64,
-}
-
-struct PendingToolCall {
-    agent: Option<String>,
+struct InFlight {
+    agent: AgentId,
     call_id: String,
     args: JsonObject,
 }
 
+#[derive(Default)]
+struct AgentState {
+    /// By canonical path, least recently used first.
+    files: Vec<(String, Snapshot)>,
+    /// How many assistant messages this agent has produced so far.
+    message: u64,
+}
+
+/// One file as one agent last saw it.
+struct Snapshot {
+    line_hashes: Vec<u32>,
+    /// Per line, the assistant message during which its anchor was shown. `None`: the model holds
+    /// no anchor for the line as it is now.
+    shown_in: Vec<Option<u64>>,
+}
+
+/// A `hash_edit` that passed every check, ready to be written.
+struct Plan {
+    after: String,
+    /// The old lines (0-based, end exclusive) that give way to `added` new ones.
+    replaced: Range<usize>,
+    added: usize,
+    /// The lines of the new file (1-based, end exclusive) whose anchors the result prints.
+    shown: Range<usize>,
+    summary: String,
+}
+
+fn lock(state: &Mutex<PluginState>) -> MutexGuard<'_, PluginState> {
+    state.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 impl PluginState {
-    fn next_seq(&mut self) -> u64 {
-        self.access_seq += 1;
-        self.access_seq
+    /// The state of `id`, created on first use. Room is made by forgetting the oldest subagent,
+    /// never the main agent.
+    fn agent_mut(&mut self, id: &AgentId) -> &mut AgentState {
+        if let Some(found) = self.agents.iter().position(|(agent, _)| agent == id) {
+            return &mut self.agents[found].1;
+        }
+        let subagents = self.agents.iter().filter(|(agent, _)| agent.is_some()).count();
+        let oldest = self.agents.iter().position(|(agent, _)| agent.is_some());
+        if let Some(oldest) = oldest
+            && id.is_some()
+            && subagents >= MAX_TRACKED_SUBAGENTS
+        {
+            self.agents.remove(oldest);
+        }
+        self.agents.push((id.clone(), AgentState::default()));
+        let new = self.agents.len() - 1;
+        &mut self.agents[new].1
+    }
+}
+
+impl AgentState {
+    /// Takes out the snapshot of `key`, brought up to `text`, the file on disk now.
+    fn take(&mut self, key: &str, text: &str) -> Option<Snapshot> {
+        let found = self.files.iter().position(|(path, _)| path == key)?;
+        let mut snapshot = self.files.remove(found).1;
+        snapshot.follow_disk(text);
+        Some(snapshot)
     }
 
-    fn agent_mut(&mut self, key: &Option<String>, seq: u64) -> &mut AgentState {
-        if !self.agents.contains_key(key) && key.is_some() {
-            let sub_count = self.agents.keys().filter(|k| k.is_some()).count();
-            if sub_count >= MAX_TRACKED_SUBAGENTS {
-                let victim = self
-                    .agents
-                    .iter()
-                    .filter(|(k, a)| k.is_some() && a.active_batch_ids.is_empty())
-                    .min_by_key(|(_, a)| a.last_used)
-                    .or_else(|| {
-                        self.agents
-                            .iter()
-                            .filter(|(k, _)| k.is_some())
-                            .min_by_key(|(_, a)| a.last_used)
-                    })
-                    .map(|(k, _)| k.clone());
-                if let Some(v) = victim {
-                    self.agents.remove(&v);
+    /// Keeps a snapshot that was taken out, or a new one, as the most recently used file.
+    fn store(&mut self, key: String, snapshot: Snapshot) {
+        if self.files.len() >= MAX_TRACKED_FILES {
+            self.files.remove(0);
+        }
+        self.files.push((key, snapshot));
+    }
+}
+
+impl Snapshot {
+    /// `text` with no anchor shown yet.
+    fn of(text: &str) -> Self {
+        let line_hashes: Vec<u32> = split_lines(text).into_iter().map(fnv32).collect();
+        Snapshot {
+            shown_in: vec![None; line_hashes.len()],
+            line_hashes,
+        }
+    }
+
+    /// Brings the snapshot up to `text`, the file on disk now. If something other than `hash_edit`
+    /// changed it, the line just above the first difference and everything below may have changed
+    /// or moved, so those anchors are forgotten.
+    fn follow_disk(&mut self, text: &str) {
+        let disk = Snapshot::of(text);
+        if disk.line_hashes == self.line_hashes {
+            return;
+        }
+        let pairs = self.line_hashes.iter().zip(&disk.line_hashes);
+        let untouched = pairs.take_while(|(old, new)| old == new).count();
+        self.shown_in.truncate(untouched.saturating_sub(1));
+        self.shown_in.resize(disk.line_hashes.len(), None);
+        self.line_hashes = disk.line_hashes;
+    }
+
+    /// The snapshot once `plan` is written, given the one from before it (already following the
+    /// disk). Lines above the edit stay where they were; so do the lines below it when the line
+    /// count is unchanged, otherwise they moved and their anchors are forgotten.
+    fn after_edit(old: Option<Snapshot>, plan: &Plan, now: u64) -> Self {
+        let mut next = Snapshot::of(&plan.after);
+        if let Some(old) = old {
+            let same_count = plan.added == plan.replaced.len();
+            let below = if same_count { plan.replaced.end } else { usize::MAX };
+            for (i, (slot, was)) in next.shown_in.iter_mut().zip(old.shown_in).enumerate() {
+                if i < plan.replaced.start || i >= below {
+                    *slot = was;
                 }
             }
         }
-        let entry = self.agents.entry(key.clone()).or_default();
-        entry.last_used = seq;
-        entry
+        next.show(plan.shown.clone(), now);
+        next
+    }
+
+    /// Notes that the anchors of `lines` (1-based) were shown during message `now`. A line whose
+    /// anchor the model already holds keeps its earlier message: seeing it again takes nothing away.
+    fn show(&mut self, lines: impl IntoIterator<Item = usize>, now: u64) {
+        for line in lines {
+            if let Some(slot) = line.checked_sub(1).and_then(|i| self.shown_in.get_mut(i)) {
+                slot.get_or_insert(now);
+            }
+        }
     }
 }
 
-fn upsert_file(files: &mut HashMap<String, FileState>, key: String, fs: FileState) {
-    if !files.contains_key(&key)
-        && files.len() >= MAX_TRACKED_FILES
-        && let Some(victim) = files.iter().min_by_key(|(_, v)| v.last_used).map(|(k, _)| k.clone())
-    {
-        files.remove(&victim);
-    }
-    files.insert(key, fs);
+fn without_cr(line: &str) -> &str {
+    line.strip_suffix('\r').unwrap_or(line)
 }
 
-fn fnv1a_64(bytes: &[u8]) -> u64 {
-    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-    for &b in bytes {
-        h ^= u64::from(b);
-        h = h.wrapping_mul(0x0100_0000_01b3);
+/// 32-bit FNV-1a of a line without its line ending.
+fn fnv32(line: &str) -> u32 {
+    let mut h: u32 = 0x811c_9dc5;
+    for &b in without_cr(line).as_bytes() {
+        h ^= u32::from(b);
+        h = h.wrapping_mul(0x0100_0193);
     }
     h
 }
 
-fn line_hash_64(line: &str) -> u64 {
-    let clean = line.strip_suffix('\r').unwrap_or(line);
-    fnv1a_64(clean.as_bytes())
+/// Compute a 2-hex-digit hash for a single source line (without trailing `\r` or `\n`).
+pub fn line_hash(line: &str) -> String {
+    let h = fnv32(line);
+    format!("{:02x}", (h ^ (h >> 8) ^ (h >> 16) ^ (h >> 24)) & 0xff)
 }
 
 fn canonical_key(path: &str) -> String {
@@ -121,70 +202,48 @@ fn canonical_key(path: &str) -> String {
         .unwrap_or_else(|_| path.to_string())
 }
 
-/// Compute a 2-hex-digit hash for a single source line (without trailing `\r` or `\n`).
-pub fn line_hash(line: &str) -> String {
-    let clean = line.strip_suffix('\r').unwrap_or(line);
-    let mut h: u32 = 0x811c_9dc5;
-    for &b in clean.as_bytes() {
-        h ^= u32::from(b);
-        h = h.wrapping_mul(0x0100_0193);
-    }
-    let folded = (h ^ (h >> 8) ^ (h >> 16) ^ (h >> 24)) & 0xff;
-    format!("{folded:02x}")
+fn str_arg<'a>(args: &'a JsonObject, key: &str) -> &'a str {
+    args.get(key).and_then(Value::as_str).unwrap_or("")
 }
 
-fn read_line_re() -> &'static Regex {
-    static R: OnceLock<Regex> = OnceLock::new();
-    R.get_or_init(|| Regex::new(r"^ *(\d+)\t(.*)$").expect("valid regex"))
-}
+static READ_LINE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^ *(\d+)\t(.*)$").expect("valid regex"));
+static HASHLINE_PREFIX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^\s*(\d+):([0-9a-fA-F]{2})\|(.*)$").expect("valid regex"));
 
-fn hashline_prefix_re() -> &'static Regex {
-    static R: OnceLock<Regex> = OnceLock::new();
-    R.get_or_init(|| Regex::new(r"^\s*(\d+):([0-9a-fA-F]{2})\|(.*)$").expect("valid regex"))
-}
-
-fn transform_read_text(text: &str, disk_lines: Option<&[&str]>) -> Option<(String, Vec<usize>)> {
-    let re = read_line_re();
-    let mut matched = false;
-    let mut seen_lines = Vec::new();
+/// `read` output with the `<n>\t` of each numbered line turned into `<n>:<hash>|`. The hash is
+/// that of the line on disk, which `read` may show shortened. The numbers are added to `shown`.
+fn annotate_read(text: &str, disk_lines: Option<&[&str]>, shown: &mut Vec<usize>) -> String {
     let mut out: Vec<String> = Vec::new();
-    for line in text.split('\n') {
-        if let Some(cap) = re.captures(line)
+    for row in text.split('\n') {
+        if let Some(cap) = READ_LINE.captures(row)
             && let Ok(n) = cap[1].parse::<usize>()
             && n >= 1
         {
-            matched = true;
-            seen_lines.push(n);
             let body = &cap[2];
-            let raw = disk_lines.and_then(|d| d.get(n - 1).copied()).unwrap_or(body);
-            let h = line_hash(raw);
-            out.push(format!("{n}:{h}|{body}"));
+            let on_disk = disk_lines.and_then(|d| d.get(n - 1).copied()).unwrap_or(body);
+            out.push(format!("{n}:{}|{body}", line_hash(on_disk)));
+            shown.push(n);
         } else {
-            out.push(line.to_string());
+            out.push(row.to_string());
         }
     }
-    matched.then(|| (out.join("\n"), seen_lines))
+    out.join("\n")
 }
 
 /// Strip sequential `N:hh|` prefixes when every non-empty line carries one (copied from
 /// hashline-annotated `read` output) and line numbers advance consistently.
 pub fn strip_hashline_prefixes(content: &str) -> Option<String> {
     let trimmed = content.strip_suffix('\n').unwrap_or(content);
-    let rows: Vec<&str> = trimmed.split('\n').collect();
-    if rows.is_empty() {
-        return None;
-    }
-    let re = hashline_prefix_re();
     let mut expected: Option<usize> = None;
     let mut blank_streak: usize = 0;
-    let mut body: Vec<&str> = Vec::with_capacity(rows.len());
-    for row in rows {
+    let mut body: Vec<&str> = Vec::new();
+    for row in trimmed.split('\n') {
         if row.trim().is_empty() {
             blank_streak += 1;
             body.push(row);
             continue;
         }
-        let cap = re.captures(row)?;
+        let cap = HASHLINE_PREFIX.captures(row)?;
         let n: usize = cap[1].parse().ok()?;
         match expected {
             None => expected = Some(n),
@@ -200,145 +259,162 @@ pub fn strip_hashline_prefixes(content: &str) -> Option<String> {
     Some(body.join("\n") + if content.ends_with('\n') { "\n" } else { "" })
 }
 
+/// `42:a3` (anything from a `|` on is ignored) as the line number and the lowercase hash.
 fn parse_anchor(raw: &str) -> Result<(usize, String), String> {
-    let head = raw.trim().split('|').next().unwrap_or("").trim();
-    let Some((num_part, hash_part)) = head.split_once(':') else {
-        return Err(format!(
-            "Invalid anchor \"{raw}\": expected '<line>:<2-hex-hash>' (e.g. '42:a3')."
-        ));
+    let head = raw.split('|').next().unwrap_or("");
+    let parsed = head.split_once(':').and_then(|(line, hash)| {
+        let line = line.trim().parse::<usize>().ok().filter(|&n| n >= 1)?;
+        let hash = hash.trim().to_ascii_lowercase();
+        let two_hex = hash.len() == 2 && hash.bytes().all(|b| b.is_ascii_hexdigit());
+        two_hex.then_some((line, hash))
+    });
+    parsed.ok_or_else(|| format!("Invalid anchor \"{raw}\": expected '<line>:<2-hex-hash>' (e.g. '42:a3')."))
+}
+
+/// The given lines (0-based, end exclusive, cut at the end of the file) as `read` shows them.
+fn anchored(lines: &[&str], range: Range<usize>) -> String {
+    let rows = lines.iter().enumerate().skip(range.start).take(range.len());
+    let rows = rows.map(|(i, line)| format!("{}:{}|{line}", i + 1, line_hash(line)));
+    rows.collect::<Vec<_>>().join("\n")
+}
+
+/// The text of a file `read` named, unless it is too large to track.
+async fn tracked_text(path: &str) -> Option<String> {
+    let meta = tokio::fs::metadata(path).await.ok()?;
+    if !meta.is_file() || meta.len() > MAX_DISK_HASH_BYTES {
+        return None;
+    }
+    let bytes = tokio::fs::read(path).await.ok()?;
+    Some(String::from_utf8_lossy(&bytes).into_owned())
+}
+
+/// `read` showed lines `shown` (1-based) of `text` to `agent`.
+fn record_read(state: &Mutex<PluginState>, agent: &AgentId, key: String, text: &str, shown: &[usize]) {
+    let mut st = lock(state);
+    let agent = st.agent_mut(agent);
+    let mut snapshot = agent.take(&key, text).unwrap_or_else(|| Snapshot::of(text));
+    snapshot.show(shown.iter().copied(), agent.message);
+    agent.store(key, snapshot);
+}
+
+/// `hash_edit` turned `before` into `plan.after` for `agent`: its snapshot now describes that.
+fn record_edit(state: &Mutex<PluginState>, agent: &AgentId, key: String, before: &str, plan: &Plan) {
+    let mut st = lock(state);
+    let agent = st.agent_mut(agent);
+    let old = agent.take(&key, before);
+    if plan.after.len() as u64 <= MAX_DISK_HASH_BYTES {
+        agent.store(key, Snapshot::after_edit(old, plan, agent.message));
+    }
+}
+
+/// For each line of `text`, the file on disk now: was `agent` shown its anchor, where the line is
+/// now, before writing its current message? `None`: the agent has no snapshot of the file.
+fn lines_shown(state: &Mutex<PluginState>, agent: &AgentId, key: &str, text: &str) -> Option<Vec<bool>> {
+    let mut st = lock(state);
+    let agent = st.agent_mut(agent);
+    let snapshot = agent.take(key, text)?;
+    let earlier = |shown: &Option<u64>| shown.is_some_and(|message| message < agent.message);
+    let shown = snapshot.shown_in.iter().map(earlier).collect();
+    agent.store(key.to_string(), snapshot);
+    Some(shown)
+}
+
+/// Which agent is running the `hash_edit` with these arguments (see [`PluginState::in_flight`]).
+fn take_caller(state: &Mutex<PluginState>, args: &JsonObject) -> AgentId {
+    let mut st = lock(state);
+    let same_args = st.in_flight.iter().position(|c| c.args == *args);
+    // The user or a later hook may have edited the arguments since ours ran: go by the path.
+    let same_path = || st.in_flight.iter().position(|c| c.args.get("path") == args.get("path"));
+    let found = same_args.or_else(same_path)?;
+    st.in_flight.remove(found).agent
+}
+
+/// Checks one `hash_edit` against `before`, the file on disk, and works out what to write.
+/// `shown` is [`lines_shown`] for it. `Err` is the message for the model.
+fn plan_edit(args: &JsonObject, path: &str, before: &str, shown: Option<&[bool]>) -> Result<Plan, String> {
+    if before.is_empty() {
+        return Err(format!("{path} is empty. Use write to populate it."));
+    }
+    let (start, start_hash) = parse_anchor(str_arg(args, "start"))?;
+    let (end, end_hash) = match str_arg(args, "end").trim() {
+        "" => (start, start_hash.clone()),
+        raw => parse_anchor(raw)?,
     };
-    let line: usize = num_part
-        .trim()
-        .parse()
-        .ok()
-        .filter(|&n| n >= 1)
-        .ok_or_else(|| format!("Invalid line number in anchor \"{raw}\" (must be >= 1)."))?;
-    let hash = hash_part.trim().to_ascii_lowercase();
-    if hash.len() != 2 || !hash.bytes().all(|b| b.is_ascii_hexdigit()) {
+    let mode = args.get("mode").and_then(Value::as_str).unwrap_or("replace");
+    let content = str_arg(args, "content");
+    let lines: Vec<&str> = split_lines(before).into_iter().map(without_cr).collect();
+    let total = lines.len();
+
+    // An error must not print lines of a file the agent has not read (`shown` is `None`).
+    if end < start || end > total {
         return Err(format!(
-            "Invalid hash in anchor \"{raw}\": expected 2 hex digits (e.g. '42:a3')."
+            "Lines {start}-{end} are not a range in {path} ({total} lines). Re-read {path} first."
         ));
     }
-    Ok((line, hash))
-}
-
-fn format_lines_range(lines: &[String], from: usize, to: usize) -> String {
-    (from..=to)
-        .map(|i| format!("{}:{}|{}", i + 1, line_hash(&lines[i]), lines[i]))
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
-fn context_window_lines(lines: &[String], center: usize) -> String {
-    if lines.is_empty() {
-        return String::new();
+    if shown.is_some_and(|shown| !shown[start - 1] || !shown[end - 1]) {
+        return Err(format!(
+            "Stale anchor at {path} lines {start}-{end}: the file changed since your last read of these lines, or they moved. Re-read {path} before editing."
+        ));
     }
-    let idx = center.saturating_sub(1).min(lines.len() - 1);
-    let from = idx.saturating_sub(3);
-    let to = (idx + 3).min(lines.len() - 1);
-    format_lines_range(lines, from, to)
-}
-
-fn is_prefix_unchanged(old: &[u64], new: &[u64], end_line: usize) -> bool {
-    let prefix_end = end_line + 1;
-    old.len() >= prefix_end && new.len() >= prefix_end && old[..prefix_end] == new[..prefix_end]
-}
-
-/// Reject edits that target stale or potentially shifted anchors.
-///
-/// Rule:
-/// - If no prior `read`/`hash_edit` snapshot is recorded for this file, allow once line hashes match
-///   (so standalone tool invocations still work while hash-mismatch errors avoid leaking unread files).
-/// - If the disk content hash matches the recorded snapshot, both `start_line` and `end_line` must
-///   belong to `fresh_lines` (lines returned by `read`, lines strictly before an earlier edit,
-///   unshifted lines after a zero-delta replace, or lines from a completed `hash_edit` context snippet).
-/// - If the file changed externally on disk since the last `read`/`hash_edit`, both endpoints must be
-///   in `fresh_lines` AND every line through `end_line + 1` must be unchanged (the external edit
-///   occurred strictly below the target). Otherwise require a re-read.
-fn check_anchor_freshness(
-    recorded: Option<&FileState>,
-    path: &str,
-    current_hash: u64,
-    current_line_hashes: &[u64],
-    start_line: usize,
-    end_line: usize,
-) -> Result<(), String> {
-    let Some(fs) = recorded else {
-        return Ok(());
+    for (line, expected) in [(start, &start_hash), (end, &end_hash)] {
+        let found = line_hash(lines[line - 1]);
+        if found == *expected {
+            continue;
+        }
+        if shown.is_none() {
+            return Err(format!("Hash mismatch at {path} line {line}. Read {path} first."));
+        }
+        let nearby = anchored(&lines, line.saturating_sub(4)..line + 3);
+        return Err(format!(
+            "Hash mismatch at {path} line {line}: expected {expected}, found {found}. Current lines:\n{nearby}"
+        ));
+    }
+    if mode != "replace" && content.is_empty() {
+        return Err(format!("content must not be empty for mode \"{mode}\"."));
+    }
+    let replaced = match mode {
+        "replace" => start - 1..end,
+        "insert_after" => end..end,
+        "insert_before" => start - 1..start - 1,
+        other => return Err(format!("Unknown mode \"{other}\"")),
     };
-    if !fs.fresh_lines.contains(&start_line) || !fs.fresh_lines.contains(&end_line) {
-        return Err(format!(
-            "Stale anchor at {path} lines {start_line}-{end_line}: lines shifted since your last read or edit. Re-read {path} before editing."
-        ));
-    }
-    if current_hash == fs.content_hash {
-        return Ok(());
-    }
-    if is_prefix_unchanged(&fs.line_hashes, current_line_hashes, end_line) {
-        return Ok(());
-    }
-    Err(format!(
-        "File {path} changed since your last read and anchors at lines {start_line}-{end_line} may have shifted. Re-read {path} before editing."
-    ))
-}
 
-fn record_read(
-    state: &Arc<Mutex<PluginState>>,
-    agent_key: &Option<String>,
-    key: String,
-    disk_text: &str,
-    seen_lines: &[usize],
-) {
-    let content_hash = fnv1a_64(disk_text.as_bytes());
-    let line_hashes: Vec<u64> = split_lines(disk_text).into_iter().map(line_hash_64).collect();
-    let mut st = state.lock().unwrap_or_else(|e| e.into_inner());
-    let seq = st.next_seq();
-    let agent = st.agent_mut(agent_key, seq);
-    match agent.files.get_mut(&key) {
-        Some(fs) if fs.content_hash == content_hash => {
-            fs.fresh_lines.extend(seen_lines.iter().copied());
-            fs.last_used = seq;
-        }
-        _ => {
-            upsert_file(
-                &mut agent.files,
-                key,
-                FileState {
-                    content_hash,
-                    line_hashes,
-                    fresh_lines: seen_lines.iter().copied().collect(),
-                    pending_fresh_lines: HashSet::new(),
-                    last_used: seq,
-                },
-            );
-        }
+    let body = content.strip_suffix('\n').unwrap_or(content);
+    let new_lines: Vec<&str> = if content.is_empty() {
+        Vec::new()
+    } else {
+        body.split('\n').map(without_cr).collect()
+    };
+    let mut next: Vec<&str> = lines[..replaced.start].to_vec();
+    next.extend(&new_lines);
+    next.extend(&lines[replaced.end..]);
+    let newline = if before.contains("\r\n") { "\r\n" } else { "\n" };
+    let mut after = next.join(newline);
+    if before.ends_with('\n') && !next.is_empty() {
+        after.push_str(newline);
     }
-}
+    if after == before {
+        return Err("No changes made (replacement matches existing lines).".into());
+    }
 
-fn promote_pending_in(agent: &mut AgentState) {
-    for fs in agent.files.values_mut() {
-        if !fs.pending_fresh_lines.is_empty() {
-            let pending = std::mem::take(&mut fs.pending_fresh_lines);
-            fs.fresh_lines.extend(pending);
-        }
-    }
-}
-
-fn take_pending_agent(state: &Arc<Mutex<PluginState>>, args: &JsonObject) -> Option<String> {
-    let mut st = state.lock().unwrap_or_else(|e| e.into_inner());
-    if let Some(pos) = st.pending_tool_calls.iter().position(|p| p.args == *args) {
-        return st.pending_tool_calls.remove(pos).agent;
-    }
-    let raw_path = args.get("path");
-    if raw_path.is_some()
-        && let Some(pos) = st
-            .pending_tool_calls
-            .iter()
-            .position(|p| p.args.get("path") == raw_path)
-    {
-        return st.pending_tool_calls.remove(pos).agent;
-    }
-    None
+    // The result prints the new lines (after a deletion, the line now in their place) with some
+    // context, so the model can go on editing there without another read.
+    let first = replaced.start.min(next.len().saturating_sub(1));
+    let last = (replaced.start + new_lines.len()).saturating_sub(1).max(first);
+    let from = first.saturating_sub(EDIT_CONTEXT_LINES);
+    let to = (last + EDIT_CONTEXT_LINES + 1).min(next.len());
+    let region = if next.is_empty() {
+        "File is now empty.".to_string()
+    } else {
+        format!("Updated lines {}-{to}:\n{}", from + 1, anchored(&next, from..to))
+    };
+    Ok(Plan {
+        after,
+        replaced,
+        added: new_lines.len(),
+        shown: from + 1..to + 1,
+        summary: format!("Edited {path} (lines {start}-{end}, {mode}). {region}"),
+    })
 }
 
 async fn execute_hash_edit(
@@ -346,9 +422,8 @@ async fn execute_hash_edit(
     ctx: ToolContext,
     state: Arc<Mutex<PluginState>>,
 ) -> anyhow::Result<ToolResult> {
-    let agent_key = take_pending_agent(&state, &args);
-    let raw_path = args.get("path").and_then(Value::as_str).unwrap_or("");
-    let path = resolve_path(raw_path, &ctx.cwd);
+    let caller = take_caller(&state, &args);
+    let path = resolve_path(str_arg(&args, "path"), &ctx.cwd);
     let key = canonical_key(&path);
     let Ok(bytes) = tokio::fs::read(&path).await else {
         return Ok(ToolResult::error(format!(
@@ -360,232 +435,24 @@ async fn execute_hash_edit(
             "{path} is not valid UTF-8; edit it with bash instead."
         )));
     };
-    if before.is_empty() {
-        return Ok(ToolResult::error(format!("{path} is empty. Use write to populate it.")));
-    }
-    let start_raw = args.get("start").and_then(Value::as_str).unwrap_or("");
-    let (start_line, start_hash) = match parse_anchor(start_raw) {
-        Ok(v) => v,
-        Err(msg) => return Ok(ToolResult::error(msg)),
+    let shown = lines_shown(&state, &caller, &key, &before);
+    let plan = match plan_edit(&args, &path, &before, shown.as_deref()) {
+        Ok(plan) => plan,
+        Err(message) => return Ok(ToolResult::error(message)),
     };
-    let (end_line, end_hash) = match args.get("end").and_then(Value::as_str) {
-        Some(end_raw) if !end_raw.trim().is_empty() => match parse_anchor(end_raw) {
-            Ok(v) => v,
-            Err(msg) => return Ok(ToolResult::error(msg)),
-        },
-        _ => (start_line, start_hash.clone()),
-    };
-    let mode = args.get("mode").and_then(Value::as_str).unwrap_or("replace");
-    let content = args.get("content").and_then(Value::as_str).unwrap_or("");
-
-    let has_crlf = before.contains("\r\n");
-    let trailing_nl = before.ends_with('\n');
-    let lines: Vec<String> = split_lines(&before)
-        .into_iter()
-        .map(|l| l.strip_suffix('\r').unwrap_or(l).to_string())
-        .collect();
-    let recorded = {
-        let mut st = state.lock().unwrap_or_else(|e| e.into_inner());
-        let seq = st.next_seq();
-        st.agents.get_mut(&agent_key).and_then(|a| {
-            a.last_used = seq;
-            a.files.get_mut(&key).map(|fs| {
-                fs.last_used = seq;
-                fs.clone()
-            })
-        })
-    };
-    let has_recorded = recorded.is_some();
-
-    if start_line > lines.len() || end_line > lines.len() {
-        let detail = if has_recorded {
-            format!(" Near end:\n{}", context_window_lines(&lines, lines.len()))
-        } else {
-            format!(" Read {path} first.")
-        };
-        return Ok(ToolResult::error(format!(
-            "Line out of range in {path} ({} lines total; got {start_line}..={end_line}).{detail}",
-            lines.len(),
-        )));
-    }
-    if end_line < start_line {
-        return Ok(ToolResult::error(format!(
-            "end line ({end_line}) must be >= start line ({start_line})."
-        )));
-    }
-
-    let current_hash = fnv1a_64(before.as_bytes());
-    let current_line_hashes: Vec<u64> = lines.iter().map(|l| line_hash_64(l)).collect();
-    if let Err(msg) = check_anchor_freshness(
-        recorded.as_ref(),
-        &path,
-        current_hash,
-        &current_line_hashes,
-        start_line,
-        end_line,
-    ) {
-        return Ok(ToolResult::error(msg));
-    }
-
-    let actual_start = line_hash(&lines[start_line - 1]);
-    if actual_start != start_hash {
-        let msg = if has_recorded {
-            format!(
-                "Hash mismatch at {path} line {start_line}: expected {start_hash}, found {actual_start}. Current lines:\n{}",
-                context_window_lines(&lines, start_line)
-            )
-        } else {
-            format!("Hash mismatch at {path} line {start_line}. Read {path} first.")
-        };
-        return Ok(ToolResult::error(msg));
-    }
-    let actual_end = line_hash(&lines[end_line - 1]);
-    if actual_end != end_hash {
-        let msg = if has_recorded {
-            format!(
-                "Hash mismatch at {path} line {end_line}: expected {end_hash}, found {actual_end}. Current lines:\n{}",
-                context_window_lines(&lines, end_line)
-            )
-        } else {
-            format!("Hash mismatch at {path} line {end_line}. Read {path} first.")
-        };
-        return Ok(ToolResult::error(msg));
-    }
-    if mode != "replace" && content.is_empty() {
-        return Ok(ToolResult::error(format!(
-            "content must not be empty for mode \"{mode}\"."
-        )));
-    }
-
-    let stripped = content.strip_suffix('\n').unwrap_or(content);
-    let insert_lines: Vec<String> = if content.is_empty() {
-        Vec::new()
-    } else {
-        stripped
-            .split('\n')
-            .map(|l| l.strip_suffix('\r').unwrap_or(l).to_string())
-            .collect()
-    };
-
-    let mut next_lines = Vec::with_capacity(lines.len() + insert_lines.len());
-    match mode {
-        "replace" => {
-            next_lines.extend_from_slice(&lines[..start_line - 1]);
-            next_lines.extend(insert_lines.iter().cloned());
-            next_lines.extend_from_slice(&lines[end_line..]);
-        }
-        "insert_after" => {
-            next_lines.extend_from_slice(&lines[..end_line]);
-            next_lines.extend(insert_lines.iter().cloned());
-            next_lines.extend_from_slice(&lines[end_line..]);
-        }
-        "insert_before" => {
-            next_lines.extend_from_slice(&lines[..start_line - 1]);
-            next_lines.extend(insert_lines.iter().cloned());
-            next_lines.extend_from_slice(&lines[start_line - 1..]);
-        }
-        other => return Ok(ToolResult::error(format!("Unknown mode \"{other}\""))),
-    }
-
-    let sep = if has_crlf { "\r\n" } else { "\n" };
-    let mut after = next_lines.join(sep);
-    if trailing_nl && !next_lines.is_empty() {
-        after.push_str(sep);
-    }
-    if after == before {
-        return Ok(ToolResult::error(
-            "No changes made (replacement matches existing lines).",
-        ));
-    }
     if ctx.signal.is_cancelled() {
         return Ok(ToolResult::error("Interrupted by the user; the file was not changed."));
     }
-    tokio::fs::write(&path, &after)
+    tokio::fs::write(&path, &plan.after)
         .await
-        .map_err(|e| sasacode_tools::util::fs_error(&e, "open", &path))?;
+        .map_err(|e| fs_error(&e, "open", &path))?;
+    record_edit(&state, &caller, key, &before, &plan);
 
-    let (shown_range, region_msg) = if next_lines.is_empty() {
-        (None, "File is now empty.".to_string())
-    } else {
-        let (first_idx, last_idx) = match mode {
-            "insert_after" => (end_line, end_line + insert_lines.len() - 1),
-            _ => {
-                let first = start_line - 1;
-                if insert_lines.is_empty() {
-                    let clamped = first.min(next_lines.len() - 1);
-                    (clamped, clamped)
-                } else {
-                    (first, first + insert_lines.len() - 1)
-                }
-            }
-        };
-        let from = first_idx.saturating_sub(EDIT_CONTEXT_LINES);
-        let to = (last_idx + EDIT_CONTEXT_LINES).min(next_lines.len() - 1);
-        let snippet = format_lines_range(&next_lines, from, to);
-        (
-            Some((from + 1, to + 1)),
-            format!("Updated lines {}-{}:\n{snippet}", from + 1, to + 1),
-        )
-    };
-
-    if after.len() as u64 <= MAX_DISK_HASH_BYTES {
-        let delta = next_lines.len() as isize - lines.len() as isize;
-        let unchanged_before_end = if mode == "insert_after" {
-            end_line + 1
-        } else {
-            start_line
-        };
-        let new_content_hash = fnv1a_64(after.as_bytes());
-        let new_line_hashes: Vec<u64> = next_lines.iter().map(|l| line_hash_64(l)).collect();
-        let mut st = state.lock().unwrap_or_else(|e| e.into_inner());
-        let seq = st.next_seq();
-        let agent = st.agent_mut(&agent_key, seq);
-        let mut next_fresh = HashSet::new();
-        let mut next_pending = HashSet::new();
-        if let Some(prev) = agent.files.get(&key) {
-            let exact = prev.content_hash == current_hash;
-            let prefix_ok = !exact && is_prefix_unchanged(&prev.line_hashes, &current_line_hashes, end_line);
-            if exact || prefix_ok {
-                let keep = |&n: &usize| n < unchanged_before_end || (exact && delta == 0 && n > end_line);
-                next_fresh.extend(prev.fresh_lines.iter().copied().filter(keep));
-                next_pending.extend(prev.pending_fresh_lines.iter().copied().filter(keep));
-            }
-        }
-        let batch_pending = agent.active_batch_ids.len() > 1;
-        if let Some((shown_from, shown_to)) = shown_range {
-            if batch_pending {
-                next_pending.extend(shown_from..=shown_to);
-            } else {
-                next_fresh.extend(shown_from..=shown_to);
-            }
-        }
-        upsert_file(
-            &mut agent.files,
-            key,
-            FileState {
-                content_hash: new_content_hash,
-                line_hashes: new_line_hashes,
-                fresh_lines: next_fresh,
-                pending_fresh_lines: next_pending,
-                last_used: seq,
-            },
-        );
-    } else {
-        let mut st = state.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(agent) = st.agents.get_mut(&agent_key) {
-            agent.files.remove(&key);
-        }
-    }
-
-    let diff = line_diff(&before, &after);
     let mut details = JsonObject::new();
     details.insert("path".into(), json!(path));
     details.insert("changed".into(), json!(true));
-    details.insert("diff".into(), json!(diff));
-    Ok(ToolResult::text(format!(
-        "Edited {path} (lines {start_line}-{end_line}, {mode}). {region_msg}"
-    ))
-    .with_details(details))
+    details.insert("diff".into(), json!(line_diff(&before, &plan.after)));
+    Ok(ToolResult::text(plan.summary).with_details(details))
 }
 
 pub fn plugin(api: PluginApi) -> BoxFuture<'static, anyhow::Result<()>> {
@@ -601,176 +468,94 @@ pub fn plugin(api: PluginApi) -> BoxFuture<'static, anyhow::Result<()>> {
             Ok(Some(SystemPromptResult { prompt: Some(prompt) }))
         });
 
-        let st_ss = state.clone();
+        let st = state.clone();
         api.on::<hook::SessionStart, _, _>(move |_ev, _ctx| {
-            let st = st_ss.clone();
+            let st = st.clone();
             async move {
-                *st.lock().unwrap_or_else(|e| e.into_inner()) = PluginState::default();
+                *lock(&st) = PluginState::default();
                 Ok(None)
             }
         });
 
-        let st_am = state.clone();
-        api.on::<hook::AssistantMessage, _, _>(move |ev, ctx| {
-            let st = st_am.clone();
+        // Anchors shown from here on were not in front of the model when it wrote this message.
+        let st = state.clone();
+        api.on::<hook::AssistantMessage, _, _>(move |_ev, ctx| {
+            let st = st.clone();
             async move {
-                let mut s = st.lock().unwrap_or_else(|e| e.into_inner());
-                let seq = s.next_seq();
-                let agent = s.agent_mut(&ctx.agent, seq);
-                promote_pending_in(agent);
-                agent.active_batch_ids.clear();
-                for block in &ev.message.content {
-                    if let AssistantContent::ToolCall(tc) = block {
-                        agent.active_batch_ids.insert(tc.id.clone());
-                    }
-                }
-                Ok(None)
-            }
-        });
-
-        let st_te = state.clone();
-        api.on::<hook::TurnEnd, _, _>(move |_ev, ctx| {
-            let st = st_te.clone();
-            async move {
-                let mut s = st.lock().unwrap_or_else(|e| e.into_inner());
-                if let Some(agent) = s.agents.get_mut(&ctx.agent) {
-                    agent.active_batch_ids.clear();
-                    promote_pending_in(agent);
-                }
+                lock(&st).agent_mut(&ctx.agent).message += 1;
                 Ok(None)
             }
         });
 
         api.on::<hook::ToolCallRaw, _, _>(|ev, _ctx| async move {
-            if ev.name != "write" {
-                return Ok(None);
+            let fields: &[&str] = match ev.name.as_str() {
+                "write" | "hash_edit" => &["content"],
+                "edit" => &["old_string", "new_string"],
+                _ => return Ok(None),
+            };
+            let mut input = ev.input;
+            let mut stripped = false;
+            for &field in fields {
+                let text = input.get(field).and_then(Value::as_str);
+                if let Some(plain) = text.and_then(strip_hashline_prefixes) {
+                    input.insert(field.into(), Value::String(plain));
+                    stripped = true;
+                }
             }
-            let Some(Value::String(content)) = ev.input.get("content") else {
-                return Ok(None);
-            };
-            let Some(plain) = strip_hashline_prefixes(content) else {
-                return Ok(None);
-            };
-            let mut input = ev.input.clone();
-            input.insert("content".into(), Value::String(plain));
-            Ok(Some(ToolCallRawResult {
+            Ok(stripped.then(|| ToolCallRawResult {
                 name: None,
                 input: Some(input),
-                note: Some("removed hashline prefixes (N:hh|) from content; write takes the file's plain text".into()),
+                note: Some("removed hashline prefixes (N:hh|): this tool takes the file's plain text".into()),
             }))
         });
 
-        let st_tc = state.clone();
+        let st = state.clone();
         api.on::<hook::ToolCall, _, _>(move |ev, ctx| {
-            let st = st_tc.clone();
+            let st = st.clone();
             async move {
-                let mut args = ev.args.clone();
-                let mut changed = false;
-                let strip_field = |args: &mut JsonObject, key: &str, changed: &mut bool| {
-                    if let Some(Value::String(s)) = args.get(key)
-                        && let Some(plain) = strip_hashline_prefixes(s)
-                    {
-                        args.insert(key.into(), Value::String(plain));
-                        *changed = true;
-                    }
-                };
-                match ev.tool.name() {
-                    "hash_edit" => {
-                        strip_field(&mut args, "content", &mut changed);
-                        let mut s = st.lock().unwrap_or_else(|e| e.into_inner());
-                        s.pending_tool_calls
-                            .retain(|p| !(p.agent == ctx.agent && p.call_id == ev.call.id));
-                        s.pending_tool_calls.push(PendingToolCall {
-                            agent: ctx.agent,
-                            call_id: ev.call.id,
-                            args: args.clone(),
-                        });
-                    }
-                    "edit" => {
-                        strip_field(&mut args, "old_string", &mut changed);
-                        strip_field(&mut args, "new_string", &mut changed);
-                    }
-                    _ => return Ok(None),
+                if ev.tool.name() == "hash_edit" {
+                    lock(&st).in_flight.push(InFlight {
+                        agent: ctx.agent,
+                        call_id: ev.call.id,
+                        args: ev.args,
+                    });
                 }
-                if !changed {
+                Ok(None)
+            }
+        });
+
+        let st = state.clone();
+        api.on::<hook::ToolResult, _, _>(move |ev, ctx| {
+            let (cwd, st) = (cwd.clone(), st.clone());
+            async move {
+                // A `hash_edit` that was refused never ran, so its note is still there.
+                lock(&st)
+                    .in_flight
+                    .retain(|c| c.agent != ctx.agent || c.call_id != ev.call.id);
+                if !ev.ran || ev.result.is_error() || ev.call.name != "read" {
                     return Ok(None);
                 }
-                Ok(Some(ToolCallResult {
-                    args: Some(args),
-                    decision: None,
-                    reason: None,
-                }))
+                let path = resolve_path(str_arg(&ev.call.input, "path"), &cwd);
+                let disk = tracked_text(&path).await;
+                let disk_lines = disk.as_deref().map(split_lines);
+
+                let mut result = ev.result;
+                let mut shown = Vec::new();
+                for item in &mut result.content {
+                    if let UserContent::Text(part) = item {
+                        part.text = annotate_read(&part.text, disk_lines.as_deref(), &mut shown);
+                    }
+                }
+                if shown.is_empty() {
+                    return Ok(None);
+                }
+                if let Some(text) = &disk {
+                    record_read(&st, &ctx.agent, canonical_key(&path), text, &shown);
+                }
+                Ok(Some(ToolResultResult { result: Some(result) }))
             }
         });
 
-        let cwd_res = cwd.clone();
-        let st_res = state.clone();
-        api.on::<hook::ToolResult, _, _>(move |ev, ctx| {
-            let cwd = cwd_res.clone();
-            let st = st_res.clone();
-            async move {
-                let mut out: Option<ToolResultResult> = None;
-                if ev.ran && !ev.result.is_error() && ev.call.name == "read" {
-                    let disk: Option<(String, String)> = match ev.call.input.get("path").and_then(Value::as_str) {
-                        Some(raw) => {
-                            let resolved = resolve_path(raw, &cwd);
-                            let meta = tokio::fs::metadata(&resolved).await.ok();
-                            if meta.is_some_and(|m| m.is_file() && m.len() <= MAX_DISK_HASH_BYTES) {
-                                tokio::fs::read(&resolved)
-                                    .await
-                                    .ok()
-                                    .map(|b| (canonical_key(&resolved), String::from_utf8_lossy(&b).into_owned()))
-                            } else {
-                                None
-                            }
-                        }
-                        None => None,
-                    };
-                    let disk_lines: Option<Vec<&str>> = disk.as_ref().map(|(_, text)| split_lines(text));
-
-                    let mut changed = false;
-                    let mut all_seen = Vec::new();
-                    let mut next_content = Vec::with_capacity(ev.result.content.len());
-                    for item in &ev.result.content {
-                        if let UserContent::Text(tc) = item
-                            && let Some((updated, seen)) = transform_read_text(&tc.text, disk_lines.as_deref())
-                        {
-                            changed = true;
-                            all_seen.extend(seen);
-                            next_content.push(UserContent::text(updated));
-                        } else {
-                            next_content.push(item.clone());
-                        }
-                    }
-                    if let Some((key, disk_text)) = disk
-                        && !all_seen.is_empty()
-                    {
-                        record_read(&st, &ctx.agent, key, &disk_text, &all_seen);
-                    }
-                    if changed {
-                        let mut result = ev.result;
-                        result.content = next_content;
-                        out = Some(ToolResultResult { result: Some(result) });
-                    }
-                }
-
-                {
-                    let mut s = st.lock().unwrap_or_else(|e| e.into_inner());
-                    s.pending_tool_calls
-                        .retain(|p| !(p.agent == ctx.agent && p.call_id == ev.call.id));
-                    if let Some(agent) = s.agents.get_mut(&ctx.agent) {
-                        agent.active_batch_ids.remove(&ev.call.id);
-                        if agent.active_batch_ids.is_empty() {
-                            promote_pending_in(agent);
-                        }
-                    }
-                }
-
-                Ok(out)
-            }
-        });
-
-        let st_tool = state;
         api.register_tool(
             ToolDef::new(
                 "hash_edit",
@@ -788,19 +573,12 @@ pub fn plugin(api: PluginApi) -> BoxFuture<'static, anyhow::Result<()>> {
                     "additionalProperties": false
                 }),
                 ToolKind::Edit,
-                move |args, ctx| {
-                    let st = st_tool.clone();
-                    async move { execute_hash_edit(args, ctx, st).await }
-                },
+                move |args, ctx| execute_hash_edit(args, ctx, state.clone()),
             )
             .always_load(true)
             .permissions_as("edit")
-            .paths(|args, cwd| vec![resolve_path(args.get("path").and_then(Value::as_str).unwrap_or(""), cwd)])
-            .summary(|args| {
-                let path = args.get("path").and_then(Value::as_str).unwrap_or("");
-                let start = args.get("start").and_then(Value::as_str).unwrap_or("");
-                format!("{path}@{start}")
-            })
+            .paths(|args, cwd| vec![resolve_path(str_arg(args, "path"), cwd)])
+            .summary(|args| format!("{}@{}", str_arg(args, "path"), str_arg(args, "start")))
             .into_ref(),
         );
 
@@ -813,68 +591,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn strip_hashline_prefixes_requires_every_non_empty_line_to_match() {
-        assert_eq!(
-            strip_hashline_prefixes("12:ab|let a = 1;\n13:cd|let b = 2;\n"),
-            Some("let a = 1;\nlet b = 2;\n".into())
-        );
-        assert_eq!(strip_hashline_prefixes("12:ab|single"), Some("single".into()));
-        assert_eq!(
-            strip_hashline_prefixes("12:ab|first\n\n14:cd|third"),
-            Some("first\n\nthird".into())
-        );
-        assert_eq!(strip_hashline_prefixes("12:ab|first\nplain second"), None);
-        assert_eq!(strip_hashline_prefixes("12:ab|first\n15:cd|jumped"), None);
-        assert_eq!(strip_hashline_prefixes(""), None);
-    }
-
-    #[test]
-    fn check_anchor_freshness_rejects_equal_length_external_change_and_allows_prefix_unchanged() {
-        let old_lines = ["a", "b", "c", "", "}", "", "tail"];
-        let old_hashes: Vec<u64> = old_lines.iter().map(|l| line_hash_64(l)).collect();
-        let fs = FileState {
-            content_hash: fnv1a_64(old_lines.join("\n").as_bytes()),
-            line_hashes: old_hashes,
-            fresh_lines: (1..=old_lines.len()).collect(),
-            pending_fresh_lines: HashSet::new(),
-            last_used: 1,
-        };
-
-        // Equal line count, identical [4, 5, 6] context ("", "}", ""), but line 2 changed -> rejected.
-        let equal_len_changed = ["a", "MODIFIED", "c", "", "}", "", "tail"];
-        let eq_hashes: Vec<u64> = equal_len_changed.iter().map(|l| line_hash_64(l)).collect();
-        let eq_hash = fnv1a_64(equal_len_changed.join("\n").as_bytes());
-        assert!(check_anchor_freshness(Some(&fs), "f.rs", eq_hash, &eq_hashes, 5, 5).is_err());
-
-        // External edit strictly below end_line + 1 (line 7 changed, lines 1..=6 identical) -> allowed.
-        let suffix_changed = ["a", "b", "c", "", "}", "", "CHANGED_TAIL"];
-        let suf_hashes: Vec<u64> = suffix_changed.iter().map(|l| line_hash_64(l)).collect();
-        let suf_hash = fnv1a_64(suffix_changed.join("\n").as_bytes());
-        assert!(check_anchor_freshness(Some(&fs), "f.rs", suf_hash, &suf_hashes, 5, 5).is_ok());
-    }
-
-    #[test]
-    fn record_read_caps_files_with_lru_and_subagent_map_keeps_main() {
-        let state: Arc<Mutex<PluginState>> = Arc::default();
-        for i in 0..MAX_TRACKED_FILES {
-            record_read(&state, &None, format!("/tmp/f{i}"), "line1\n", &[1]);
+    fn subagents_beyond_the_cap_push_out_the_oldest_subagent_never_the_main_agent() {
+        let mut st = PluginState::default();
+        st.agent_mut(&None).message = 7;
+        for i in 1..=MAX_TRACKED_SUBAGENTS + 5 {
+            st.agent_mut(&Some(format!("sub-{i}")));
         }
-        // Re-read f0 so f1 becomes least recently used.
-        record_read(&state, &None, "/tmp/f0".into(), "line1\n", &[1]);
-        record_read(&state, &None, "/tmp/f_extra".into(), "line1\n", &[1]);
-
-        let mut st = state.lock().unwrap();
-        let main_files = &st.agents.get(&None).unwrap().files;
-        assert_eq!(main_files.len(), MAX_TRACKED_FILES);
-        assert!(main_files.contains_key("/tmp/f0"));
-        assert!(!main_files.contains_key("/tmp/f1"));
-        assert!(main_files.contains_key("/tmp/f_extra"));
-
-        for i in 1..=(MAX_TRACKED_SUBAGENTS + 5) {
-            let seq = st.next_seq();
-            st.agent_mut(&Some(format!("sub-{i}")), seq);
-        }
-        assert!(st.agents.contains_key(&None));
-        assert_eq!(st.agents.keys().filter(|k| k.is_some()).count(), MAX_TRACKED_SUBAGENTS);
+        assert_eq!(st.agents.len(), 1 + MAX_TRACKED_SUBAGENTS);
+        assert_eq!(st.agent_mut(&None).message, 7);
+        assert!(!st.agents.iter().any(|(agent, _)| agent.as_deref() == Some("sub-1")));
     }
 }
