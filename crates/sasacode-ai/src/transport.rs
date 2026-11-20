@@ -465,10 +465,11 @@ impl ApiClient {
     }
 
     /// `new Anthropic({ apiKey?, baseURL, maxRetries, defaultHeaders, fetch })`. Without a key the SDK
-    /// read `ANTHROPIC_API_KEY` (sent as `x-api-key`) and `ANTHROPIC_AUTH_TOKEN` (a bearer token);
-    /// without either, each request asks the [`Credentials`].
+    /// read `ANTHROPIC_API_KEY` (sent as `x-api-key`) and `ANTHROPIC_AUTH_TOKEN` (a bearer token), here
+    /// only when `env` (the `anthropic` provider); without either, each request asks the [`Credentials`].
     pub fn anthropic(
         api_key: Option<&str>,
+        env: bool,
         base_url: &str,
         max_retries: u32,
         model_headers: Option<&BTreeMap<String, String>>,
@@ -483,17 +484,17 @@ impl ApiClient {
         let key = api_key
             .filter(|k| !k.is_empty())
             .map(str::to_string)
-            .or_else(|| read_env("ANTHROPIC_API_KEY"));
+            .or_else(|| read_env("ANTHROPIC_API_KEY").filter(|_| env));
         if let Some(k) = key {
             defaults.push(("x-api-key".to_string(), k));
         }
-        if let Some(t) = read_env("ANTHROPIC_AUTH_TOKEN") {
+        if let Some(t) = read_env("ANTHROPIC_AUTH_TOKEN").filter(|_| env) {
             defaults.push(("authorization".to_string(), format!("Bearer {t}")));
         }
         Self::new(Flavor::Anthropic, base_url, max_retries, defaults, model_headers, fetch)
     }
 
-    /// `new OpenAI({ apiKey, baseURL, maxRetries, defaultHeaders, fetch })`.
+    /// `new OpenAI({ apiKey, baseURL, maxRetries, defaultHeaders, fetch })`; OPENAI_ORG_ID/_PROJECT_ID to OpenAI only.
     pub fn openai(
         api_key: &str,
         base_url: &str,
@@ -505,10 +506,11 @@ impl ApiClient {
             ("accept".to_string(), "application/json".to_string()),
             ("user-agent".to_string(), USER_AGENT.to_string()),
         ];
-        if let Some(org) = read_env("OPENAI_ORG_ID") {
+        let openai = crate::types::has_origin(Some(base_url), "https://api.openai.com");
+        if let Some(org) = read_env("OPENAI_ORG_ID").filter(|_| openai) {
             defaults.push(("openai-organization".to_string(), org));
         }
-        if let Some(project) = read_env("OPENAI_PROJECT_ID") {
+        if let Some(project) = read_env("OPENAI_PROJECT_ID").filter(|_| openai) {
             defaults.push(("openai-project".to_string(), project));
         }
         defaults.push(("authorization".to_string(), format!("Bearer {api_key}")));
@@ -645,6 +647,9 @@ impl ApiClient {
                 self.sleep(wait, signal).await?;
                 remaining -= 1;
                 continue;
+            }
+            if let Some(to) = resp.headers().get("location") {
+                anyhow::bail!("{status}: redirect to {to:?} not followed; set the provider's baseUrl to it instead");
             }
             let text = tokio::select! {
                 biased;

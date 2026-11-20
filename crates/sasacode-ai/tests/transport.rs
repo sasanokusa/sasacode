@@ -407,3 +407,45 @@ impl sasacode_ai::provider::Fetch for Unused {
         Box::pin(async { anyhow::bail!("not used") })
     }
 }
+
+/// Real HTTP: a model API that answers with a redirect. It is not followed (the key would go to the
+/// other host); the error names where it pointed.
+#[tokio::test]
+async fn a_redirect_from_a_model_api_is_not_followed_and_the_error_says_so() {
+    let other = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let target = format!("http://127.0.0.1:{}/v1/messages", other.local_addr().unwrap().port());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let location = target.clone();
+    tokio::spawn(async move {
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let mut buf = [0u8; 8192];
+        let _ = socket.read(&mut buf).await.unwrap();
+        let reply = format!("HTTP/1.1 307 Temporary Redirect\r\nlocation: {location}\r\ncontent-length: 0\r\n\r\n");
+        socket.write_all(reply.as_bytes()).await.unwrap();
+        socket.flush().await.unwrap();
+    });
+    let client = sasacode_ai::transport::ApiClient::anthropic(
+        Some("sk-test"),
+        false,
+        &format!("http://127.0.0.1:{port}"),
+        0,
+        None,
+        None,
+    );
+    let err = client
+        .post("/v1/messages", &json!({}), &[], &CancellationToken::new())
+        .await
+        .unwrap_err();
+    assert!(
+        err.to_string()
+            .contains(&format!("redirect to \"{target}\" not followed")),
+        "{err}"
+    );
+    assert!(
+        tokio::time::timeout(Duration::from_millis(200), other.accept())
+            .await
+            .is_err(),
+        "the other host was reached"
+    );
+}

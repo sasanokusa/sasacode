@@ -91,7 +91,7 @@ fn the_token_goes_as_a_bearer_with_the_oauth_beta_after_the_requests_own() {
         let headers = [("Anthropic-Beta", "model-beta"), ("anthropic-workspace-id", "mine")]
             .map(|(k, v)| (k.to_string(), v.to_string()))
             .into();
-        let client = ApiClient::anthropic(None, "https://api.anthropic.com", 0, Some(&headers), Some(fetch));
+        let client = ApiClient::anthropic(None, true, "https://api.anthropic.com", 0, Some(&headers), Some(fetch));
         let signal = CancellationToken::new();
         // The adapter's binding beta, per request, replaces the model's; the OAuth beta is added after.
         let extra = [("anthropic-beta", "model-beta, thinking-binding-controls-2026-08-01")];
@@ -114,7 +114,7 @@ fn the_token_goes_as_a_bearer_with_the_oauth_beta_after_the_requests_own() {
         // The Models API too; the profile's headers fill what is unset; a beta already there is not repeated.
         let (fetch, sent) = fixed(|| Reply::Status(200, r#"{"data":[]}"#.into()));
         let headers = [("anthropic-beta".to_string(), "oauth-2025-04-20".to_string())].into();
-        let client = ApiClient::anthropic(None, "https://h.example", 0, Some(&headers), Some(fetch));
+        let client = ApiClient::anthropic(None, true, "https://h.example", 0, Some(&headers), Some(fetch));
         client.get("/v1/models?limit=100", &signal).await.unwrap();
         let s = sent.lock().unwrap()[0].clone();
         assert_eq!(s.header("authorization").as_deref(), Some("Bearer tok-1"));
@@ -146,7 +146,7 @@ fn a_401_refreshes_the_token_and_tries_once_more() {
             _ => Reply::Status(401, unauthorized.into()),
         };
         let (fetch, sent) = fake(move |_, n| replies(n));
-        let client = ApiClient::anthropic(None, "https://api.anthropic.com", 5, None, Some(fetch));
+        let client = ApiClient::anthropic(None, true, "https://api.anthropic.com", 5, None, Some(fetch));
         let err = client
             .post("/v1/messages", &json!({}), &[], &CancellationToken::new())
             .await
@@ -162,7 +162,7 @@ fn a_401_refreshes_the_token_and_tries_once_more() {
 
         // Without retries left there is no second try.
         let (fetch, sent) = fixed(move || Reply::Status(401, unauthorized.into()));
-        let client = ApiClient::anthropic(None, "https://api.anthropic.com", 0, None, Some(fetch));
+        let client = ApiClient::anthropic(None, true, "https://api.anthropic.com", 0, None, Some(fetch));
         assert!(
             client
                 .post("/v1/messages", &json!({}), &[], &CancellationToken::new())
@@ -183,7 +183,7 @@ fn no_credentials_or_failing_ones_stop_the_request_before_it_is_sent() {
         let signal = CancellationToken::new();
         let post = || async {
             let (fetch, sent) = fixed(|| Reply::Status(200, "{}".into()));
-            let client = ApiClient::anthropic(None, "https://api.anthropic.com", 2, None, Some(fetch));
+            let client = ApiClient::anthropic(None, true, "https://api.anthropic.com", 2, None, Some(fetch));
             let err = client.post("/v1/messages", &json!({}), &[], &signal).await.unwrap_err();
             (err.to_string(), sent.lock().unwrap().len())
         };
@@ -215,7 +215,7 @@ fn a_key_or_anthropic_auth_token_wins_over_the_credentials() {
         let signal = CancellationToken::new();
         // ANTHROPIC_AUTH_TOKEN: a bearer token, without the OAuth beta.
         let (fetch, sent) = fixed(|| Reply::Status(400, "{}".into()));
-        let client = ApiClient::anthropic(None, "https://api.anthropic.com", 0, None, Some(fetch));
+        let client = ApiClient::anthropic(None, true, "https://api.anthropic.com", 0, None, Some(fetch));
         let _ = client.post("/v1/messages", &json!({}), &[], &signal).await;
         let s = sent.lock().unwrap()[0].clone();
         assert_eq!(s.header("authorization").as_deref(), Some("Bearer tok-env"));
@@ -223,11 +223,79 @@ fn a_key_or_anthropic_auth_token_wins_over_the_credentials() {
         assert_eq!(s.header("x-api-key"), None);
         // A key from sasacode (env var or keychain): sent as x-api-key, next to the token, as the SDK did.
         let (fetch, sent) = fixed(|| Reply::Status(400, "{}".into()));
-        let client = ApiClient::anthropic(Some("sk-key"), "https://api.anthropic.com", 0, None, Some(fetch));
+        let client = ApiClient::anthropic(Some("sk-key"), true, "https://api.anthropic.com", 0, None, Some(fetch));
         let _ = client.post("/v1/messages", &json!({}), &[], &signal).await;
         let s = sent.lock().unwrap()[0].clone();
         assert_eq!(s.header("x-api-key").as_deref(), Some("sk-key"));
         assert_eq!(s.header("authorization").as_deref(), Some("Bearer tok-env"));
         assert!(asked.lock().unwrap().is_empty(), "the credentials were not asked");
+    });
+}
+
+#[test]
+fn the_anthropic_variables_go_to_the_anthropic_provider_only() {
+    if !in_child(
+        "the_anthropic_variables_go_to_the_anthropic_provider_only",
+        &[("ANTHROPIC_API_KEY", "sk-env"), ("ANTHROPIC_AUTH_TOKEN", "tok-env")],
+    ) {
+        return;
+    }
+    runtime().block_on(async {
+        let signal = CancellationToken::new();
+        // Another Anthropic-format provider without its own key: neither variable is sent, and the
+        // credentials (which serve their own host only) are asked instead.
+        let asked = install(|_| Ok(None));
+        let (fetch, sent) = fixed(|| Reply::Status(400, "{}".into()));
+        let client = ApiClient::anthropic(None, false, "https://other.example", 0, None, Some(fetch));
+        let err = client.post("/v1/messages", &json!({}), &[], &signal).await.unwrap_err();
+        assert!(
+            err.to_string().contains("Could not resolve authentication method"),
+            "{err}"
+        );
+        assert!(sent.lock().unwrap().is_empty());
+        assert_eq!(*asked.lock().unwrap(), [("https://other.example".to_string(), false)]);
+        // Its own key goes, the variables still do not.
+        let (fetch, sent) = fixed(|| Reply::Status(400, "{}".into()));
+        let client = ApiClient::anthropic(Some("own"), false, "https://other.example", 0, None, Some(fetch));
+        let _ = client.post("/v1/messages", &json!({}), &[], &signal).await;
+        let s = sent.lock().unwrap()[0].clone();
+        assert_eq!(
+            (s.header("x-api-key").as_deref(), s.header("authorization")),
+            (Some("own"), None)
+        );
+        // The anthropic provider: both.
+        let (fetch, sent) = fixed(|| Reply::Status(400, "{}".into()));
+        let client = ApiClient::anthropic(None, true, "https://api.anthropic.com", 0, None, Some(fetch));
+        let _ = client.post("/v1/messages", &json!({}), &[], &signal).await;
+        let s = sent.lock().unwrap()[0].clone();
+        assert_eq!(s.header("x-api-key").as_deref(), Some("sk-env"));
+        assert_eq!(s.header("authorization").as_deref(), Some("Bearer tok-env"));
+        set_default_credentials(None);
+    });
+}
+
+#[test]
+fn the_openai_organization_and_project_go_to_openais_api_only() {
+    if !in_child(
+        "the_openai_organization_and_project_go_to_openais_api_only",
+        &[("OPENAI_ORG_ID", "org-1"), ("OPENAI_PROJECT_ID", "proj-1")],
+    ) {
+        return;
+    }
+    runtime().block_on(async {
+        let sent_to = |base: &'static str| async move {
+            let (fetch, sent) = fixed(|| Reply::Status(400, "{}".into()));
+            let client = ApiClient::openai("k", base, 0, None, Some(fetch));
+            let _ = client
+                .post("/chat/completions", &json!({}), &[], &CancellationToken::new())
+                .await;
+            let s = sent.lock().unwrap()[0].clone();
+            (s.header("openai-organization"), s.header("openai-project"))
+        };
+        assert_eq!(
+            sent_to("https://api.openai.com/v1").await,
+            (Some("org-1".into()), Some("proj-1".into()))
+        );
+        assert_eq!(sent_to("https://openrouter.ai/api/v1").await, (None, None));
     });
 }

@@ -287,9 +287,10 @@ fn item_id(x: &Value) -> Option<String> {
     x.get("id").and_then(Value::as_str).map(str::to_string)
 }
 
-/// GET <baseUrl>/models (the Models API) for one provider. Fails on network or auth errors.
+/// GET <baseUrl>/models (the Models API) for provider `name`. Fails on network or auth errors.
 /// `lmstudio`: LM Studio's native list, when it was just fetched (not asked for again).
 pub async fn list_models(
+    name: &str,
     p: &ProviderConfig,
     api_key: Option<&str>,
     signal: &CancellationToken,
@@ -299,15 +300,18 @@ pub async fn list_models(
     if p.api == "anthropic" {
         let mut base = sdk_base(p.base_url.as_deref(), "ANTHROPIC_BASE_URL", "https://api.anthropic.com");
         let key = api_key.filter(|k| !k.is_empty());
+        // The Anthropic variables are the anthropic provider's: another provider uses its own apiKeyEnv.
+        let env = name == "anthropic";
         // No host chosen and only the `ant auth login` profile to authenticate: the profile's host.
         let chosen = p
             .base_url
             .as_deref()
             .map_or(read_env("ANTHROPIC_BASE_URL").is_some(), |b| !b.is_empty());
         let keyless = key.is_none()
-            && ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"]
-                .iter()
-                .all(|v| read_env(v).is_none());
+            && (!env
+                || ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"]
+                    .iter()
+                    .all(|v| read_env(v).is_none()));
         if !chosen
             && keyless
             && let Some(profile_base) =
@@ -315,7 +319,7 @@ pub async fn list_models(
         {
             base = profile_base;
         }
-        let client = ApiClient::anthropic(key, &base, 1, p.headers.as_ref(), None);
+        let client = ApiClient::anthropic(key, env, &base, 1, p.headers.as_ref(), None);
         let mut path = "/v1/models?limit=100".to_string();
         loop {
             let res = client.get(&path, signal).await?;
@@ -408,7 +412,7 @@ pub(crate) fn strip_v1(s: &str) -> &str {
 async fn llamacpp_context(p: &ProviderConfig, models: &mut [ListedModel], signal: &CancellationToken) {
     let root = strip_v1(p.base_url.as_deref().unwrap_or(""));
     let req = with_headers(
-        sasacode_ai::http::client().get(format!("{root}/props")),
+        sasacode_ai::http::api_client().get(format!("{root}/props")),
         p.headers.iter().flatten(),
     );
     let Ok(res) = fetch(signal, req).await else { return };
@@ -443,7 +447,7 @@ pub async fn lmstudio_models(
     signal: &CancellationToken,
 ) -> Option<Vec<LmStudioModel>> {
     let req = with_headers(
-        sasacode_ai::http::client().get(format!("{root}/api/v0/models")),
+        sasacode_ai::http::api_client().get(format!("{root}/api/v0/models")),
         headers.iter().map(|(k, v)| (k, v)),
     );
     let res = fetch(signal, req).await.ok()?;
@@ -641,7 +645,7 @@ mod tests {
             base_url: Some(format!("{}/api/v1", server.url())),
             ..Default::default()
         };
-        let models = list_models(&p, Some("or-test"), &CancellationToken::new(), None)
+        let models = list_models("openrouter", &p, Some("or-test"), &CancellationToken::new(), None)
             .await
             .unwrap();
         assert_eq!(
@@ -719,7 +723,7 @@ mod tests {
             base_url: Some(server.url()),
             ..Default::default()
         };
-        let models = list_models(&p, Some("k"), &CancellationToken::new(), None)
+        let models = list_models("p", &p, Some("k"), &CancellationToken::new(), None)
             .await
             .unwrap();
         assert_eq!(models.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), ["a/b", "c"]);
