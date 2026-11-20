@@ -399,6 +399,27 @@ fn a_server_entry_without_a_command_or_url_is_not_one_that_starts_anything() {
 }
 
 #[test]
+fn a_command_that_is_not_a_string_starts_nothing_and_the_url_is_what_is_connected_to() {
+    let entry = |v: Value| McpEntry::of("fx", &v, &Config::new());
+    let e = entry(json!({ "command": null, "url": "https://x.example/mcp" }));
+    assert_eq!(
+        (e.command.as_deref(), e.command_not_text.as_deref()),
+        (None, Some("null"))
+    );
+    assert!(e.launches());
+    assert_eq!(entry(json!({ "command": 7 })).command_not_text.as_deref(), Some("7"));
+    assert!(!entry(json!({ "command": ["npx"] })).launches());
+    assert_eq!(entry(json!({ "command": "npx" })).command_not_text, None);
+    english(|| {
+        let elevated = obj(json!({ "mcpServers": { "fx": { "command": null, "url": "https://x.example/mcp" } } }));
+        assert_eq!(
+            describe_elevated(&elevated, &Config::new()),
+            ["MCP server fx: https://x.example/mcp; command null (not a string, so nothing is started)"]
+        );
+    });
+}
+
+#[test]
 fn the_trust_list_names_the_fields_a_partial_server_entry_writes() {
     english(|| {
         let global = obj(json!({ "mcpServers": { "fx": { "command": "npx" } } }));

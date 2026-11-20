@@ -102,6 +102,9 @@ pub struct Trust {
 pub struct TrustServer {
     pub name: String,
     pub command: Option<String>,
+    /// A `command` that is not a string, as JSON: it starts nothing.
+    #[serde(rename = "commandNotText")]
+    pub command_not_text: Option<String>,
     pub args: Vec<String>,
     pub url: Option<String>,
     pub cwd: Option<String>,
@@ -173,12 +176,22 @@ impl Trust {
         let mut out = Vec::new();
         for s in &self.mcp_server_details {
             out.push(crate::i18n::fill(w.trust_mcp, "name", plain_line(&s.name)));
-            if let Some(command) = &s.command {
+            // Only a command that is a non-empty string starts anything; any other value is shown
+            // as written, as a value that starts nothing.
+            if let Some(command) = s.command.as_ref().filter(|c| !c.is_empty()) {
                 let line: Vec<String> = std::iter::once(command).chain(&s.args).map(|a| shell_word(a)).collect();
                 out.push(format!("  {}{}", w.trust_runs, line.join(" ")));
-            } else if !s.args.is_empty() {
-                let line: Vec<String> = s.args.iter().map(|a| shell_word(a)).collect();
-                out.push(format!("  {}{}", w.trust_args, line.join(" ")));
+            } else {
+                if let Some(command) = &s.command {
+                    out.push(format!("  {}{}", w.trust_command_unused, shell_word(command)));
+                }
+                if let Some(command) = &s.command_not_text {
+                    out.push(format!("  {}{}", w.trust_command_not_text, plain_line(command)));
+                }
+                if !s.args.is_empty() {
+                    let line: Vec<String> = s.args.iter().map(|a| shell_word(a)).collect();
+                    out.push(format!("  {}{}", w.trust_args, line.join(" ")));
+                }
             }
             if let Some(url) = &s.url {
                 out.push(format!("  {}{}", w.trust_url, plain_line(url)));

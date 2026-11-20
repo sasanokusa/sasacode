@@ -413,6 +413,8 @@ words! {
     /// What the folder's config would turn on, line by line under the trust card's items.
     trust_mcp: "MCPサーバー「{name}」", "MCP server “{name}”";
     trust_runs: "起動するもの：", "Starts: ";
+    trust_command_unused: "command（空なので何も起動しない）：", "command (empty, so nothing is started): ";
+    trust_command_not_text: "command（文字列でないので何も起動しない）：", "command (not a string, so nothing is started): ";
     trust_url: "接続先：", "Connects to: ";
     trust_cwd: "作業フォルダ：", "Working folder: ";
     trust_env: "環境変数（名前だけ）：", "Environment variables (names only): ";

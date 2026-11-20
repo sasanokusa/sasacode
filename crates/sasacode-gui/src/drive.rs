@@ -4334,6 +4334,33 @@ fn the_trust_card_shows_what_trust_would_start_without_control_characters() {
 }
 
 #[test]
+fn the_trust_card_shows_only_a_non_empty_string_command_as_what_starts() {
+    let w = crate::words::EN;
+    let mut trust = listed().trust.unwrap();
+    let server = |command: Option<&str>, not_text: Option<&str>| crate::cli::TrustServer {
+        name: "db".into(),
+        command: command.map(Into::into),
+        command_not_text: not_text.map(Into::into),
+        url: Some("https://x.example/mcp".into()),
+        ..Default::default()
+    };
+    trust.mcp_server_details = vec![server(None, Some("null")), server(Some(""), None)];
+    let details = trust.details(&w);
+    assert!(!details.iter().any(|l| l.contains(w.trust_runs)), "{details:?}");
+    assert!(details.contains(&format!("  {}null", w.trust_command_not_text)));
+    assert!(details.contains(&format!("  {}''", w.trust_command_unused)));
+    assert_eq!(
+        details
+            .iter()
+            .filter(|l| l.starts_with("  ") && l.contains("https://x.example/mcp"))
+            .count(),
+        2
+    );
+    trust.mcp_server_details = vec![server(Some("npx"), None)];
+    assert!(trust.details(&w).contains(&format!("  {}npx", w.trust_runs)));
+}
+
+#[test]
 fn a_call_longer_than_the_approval_card_says_so_and_can_be_shown_whole() {
     let (mut app, _written, id) = waiting();
     let w = crate::words::JA;

@@ -483,6 +483,10 @@ pub static TO_JA: &[(&str, &str)] = &[
     ("headers {names}", "ヘッダー {names}"),
     ("no command or url", "commandもurlもない"),
     (
+        "command {value} (not a string, so nothing is started)",
+        "commandが文字列でない {value}（何も起動しない）",
+    ),
+    (
         "applied on top of the global server of the same name",
         "同名のグローバルのサーバーに重ねる",
     ),

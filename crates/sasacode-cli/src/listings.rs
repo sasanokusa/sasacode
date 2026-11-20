@@ -142,8 +142,11 @@ pub struct TrustEndpoint {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct TrustMcpServer {
     pub name: String,
-    /// Its command as written; null when it has none.
+    /// Its command as written when that is a string; null when it has none or it is not one.
     pub command: Option<String>,
+    /// Its command when it is not a string (`null`, a number, a list), as JSON: it starts nothing.
+    #[serde(rename = "commandNotText", skip_serializing_if = "Option::is_none")]
+    pub command_not_text: Option<String>,
     pub args: Vec<String>,
     pub url: Option<String>,
     pub cwd: Option<String>,
@@ -524,6 +527,7 @@ fn trust_status(home: &Path, cwd: &Path, project: &ProjectTrust) -> anyhow::Resu
             TrustMcpServer {
                 name: name.clone(),
                 command: e.command,
+                command_not_text: e.command_not_text,
                 args: e.args,
                 url: e.url,
                 cwd: e.cwd,

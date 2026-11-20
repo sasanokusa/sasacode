@@ -745,6 +745,43 @@ fn trust_shows_the_fields_of_a_partial_server_entry_and_the_global_server_it_lan
 }
 
 #[test]
+fn trust_shows_a_command_that_is_not_a_string_as_a_value_that_starts_nothing() {
+    english();
+    let d = dirs();
+    d.project(json!({
+        "mcpServers": {
+            "gone": { "command": null, "url": "https://x.example/mcp" },
+            "list": { "command": ["npx", "x"] },
+        },
+    }));
+    let (_, status) = d.trust_json(&["--json"]);
+    assert_eq!(
+        status["mcpServerDetails"],
+        json!([
+            { "name": "gone", "command": null, "commandNotText": "null", "args": [],
+              "url": "https://x.example/mcp", "cwd": null, "env": [], "headers": [],
+              "overlaysGlobal": false },
+            { "name": "list", "command": null, "commandNotText": "[\"npx\",\"x\"]", "args": [],
+              "url": null, "cwd": null, "env": [], "headers": [], "overlaysGlobal": false },
+        ])
+    );
+    let (_, text) = d.trust(&[]);
+    assert!(
+        text.contains(
+            "  - MCP server gone: https://x.example/mcp; command null (not a string, so nothing is started)\n"
+        ),
+        "{text}"
+    );
+    assert!(
+        text.contains(
+            "  - MCP server list: no command or url; \
+             command [\"npx\",\"x\"] (not a string, so nothing is started)\n"
+        ),
+        "{text}"
+    );
+}
+
+#[test]
 fn trust_shows_a_url_and_the_other_fields_laid_over_a_global_command_server() {
     english();
     let d = dirs();

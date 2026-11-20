@@ -376,7 +376,10 @@ fn shown_entries(v: &Value) -> String {
 /// the names of `env` and `headers` are kept, never their values.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct McpEntry {
+    /// The `command` when it is a string (possibly empty): only a non-empty one starts anything.
     pub command: Option<String>,
+    /// The `command` when it is not a string (`null`, a number, a list), as JSON: it starts nothing.
+    pub command_not_text: Option<String>,
     pub args: Vec<String>,
     pub url: Option<String>,
     pub cwd: Option<String>,
@@ -405,7 +408,8 @@ impl McpEntry {
                 .unwrap_or_default()
         };
         McpEntry {
-            command: entry.get("command").map(text),
+            command: entry.get("command").and_then(Value::as_str).map(str::to_string),
+            command_not_text: entry.get("command").filter(|c| !c.is_string()).map(Value::to_string),
             args: entry
                 .get("args")
                 .and_then(Value::as_array)
@@ -467,6 +471,12 @@ fn describe_mcp_entry(name: &str, e: &McpEntry) -> String {
     if command.is_none() {
         if let Some(c) = &e.command {
             add(format!("command {}", shown(&quoted(c))));
+        }
+        if let Some(c) = &e.command_not_text {
+            add(t!(
+                "command {value} (not a string, so nothing is started)",
+                value = shown(c)
+            ));
         }
         if !e.args.is_empty() {
             let args: Vec<String> = e.args.iter().map(|a| quoted(a)).collect();
