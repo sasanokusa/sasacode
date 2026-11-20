@@ -128,8 +128,13 @@ impl PermissionPolicy {
         if let Some(a) = rules.ask.iter().find(|r| rule_matches(r, c, false)) {
             return v(Decision::Ask, format!("rule ask: {}", a.source), VerdictSource::Rule);
         }
-        // Where a path really goes cannot be told (a link loop, no permission): let the user decide.
-        if let Some(unclear) = paths_of(c).into_iter().find(|p| try_real_path(p).is_none()) {
+        // Where a path really goes cannot be told (a link loop, no permission), or a tool opening it as given
+        // would reach another place (the OS takes a ".." after a link, the check before): let the user decide.
+        let cwd = std::path::Path::new(&c.cwd);
+        if let Some(unclear) = c.tool.paths(&c.args, cwd).unwrap_or_default().into_iter().find(|p| {
+            let real = try_real_path(&paths::resolve2(&c.cwd, p));
+            real.is_none() || try_real_path(&cwd.join(p).to_string_lossy()).is_some_and(|os| Some(os) != real)
+        }) {
             return v(Decision::Ask, format!("cannot resolve {unclear}"), VerdictSource::Rule);
         }
         if allowed_by_rules(&rules.allow, c) {

@@ -415,3 +415,77 @@ fn backslash_escapes_read_as_bun_glob_did() {
         assert_eq!(glob(pattern).is_match(path), want, "{pattern:?} {path:?}");
     }
 }
+
+/// With a link before a "..", the OS would leave the folder the path names. The built-in tools
+/// normalise the path first, so they open the place the check judged; a tool that opens the path as
+/// given is asked about, whatever the mode or the rules.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_link_before_a_dotdot_cannot_move_a_call_away_from_the_path_judged() {
+    use sasacode_plugin_api::ToolContext;
+    let tmp = tempfile::tempdir().unwrap();
+    let root = std::fs::canonicalize(tmp.path()).unwrap();
+    let proj = root.join("proj");
+    for d in [".git/hooks", "secrets/inner"] {
+        std::fs::create_dir_all(proj.join(d)).unwrap();
+    }
+    std::fs::create_dir_all(root.join("outside/sub")).unwrap();
+    std::fs::write(proj.join(".git/config"), "[core]\n").unwrap();
+    std::fs::write(proj.join("secrets/key"), "kept").unwrap();
+    std::os::unix::fs::symlink("../outside/sub", proj.join("l")).unwrap();
+    std::os::unix::fs::symlink(".git/hooks", proj.join("h")).unwrap();
+    std::os::unix::fs::symlink("secrets/inner", proj.join("s")).unwrap();
+    let cwd = proj.to_string_lossy().to_string();
+    let at = |rel: &str| format!("{cwd}/{rel}");
+    let write: ToolRef = std::sync::Arc::new(sasacode_tools::WriteTool);
+    let read: ToolRef = std::sync::Arc::new(sasacode_tools::ReadTool);
+
+    for (given, judged) in [
+        ("l/../out.txt", "out.txt"),
+        ("h/../config", "config"),
+        ("s/../key", "key"),
+    ] {
+        let c = call(write.clone(), &at(given), &cwd);
+        assert_eq!(paths_of(&c), vec![at(judged)], "{given}");
+        assert_eq!(d(&edits(), &c), Allow, "{given}");
+        let a = args(json!({ "path": at(given), "content": format!("written as {given}") }));
+        let r = write.execute(a, ToolContext::new(&proj)).await.unwrap();
+        assert!(!r.is_error(), "{given}");
+        assert!(
+            std::fs::read_to_string(proj.join(judged))
+                .unwrap()
+                .starts_with("written as")
+        );
+    }
+    // Nothing reached the places the OS would have taken those paths to.
+    assert!(!root.join("outside/out.txt").exists());
+    assert_eq!(std::fs::read_to_string(proj.join(".git/config")).unwrap(), "[core]\n");
+    assert_eq!(std::fs::read_to_string(proj.join("secrets/key")).unwrap(), "kept");
+    // Named directly, they are still outside, under .git, or denied.
+    assert_eq!(
+        d(
+            &edits(),
+            &call(write.clone(), &root.join("outside/x").to_string_lossy(), &cwd)
+        ),
+        Ask
+    );
+    assert_eq!(d(&edits(), &call(write.clone(), &at(".git/config"), &cwd)), Ask);
+    let deny = policy(M::Auto, json!({ "deny": ["read(secrets/**)"] }));
+    assert_eq!(d(&deny, &call(read.clone(), &at("secrets/key"), &cwd)), Deny);
+    assert_eq!(d(&deny, &call(read, &at("secrets/inner/../key"), &cwd)), Deny);
+
+    // A tool that opens the path as given: asked, in auto mode and past an allow rule too.
+    let auto = policy(M::Auto, json!({ "allow": ["write", "read"] }));
+    for given in ["l/../out.txt", "h/../config", "s/../key"] {
+        for tool in [write_tool(), read_tool()] {
+            let v = auto.check(&call(tool, &at(given), &cwd));
+            assert_eq!(v.decision, Ask, "{given}");
+        }
+    }
+    assert_eq!(d(&deny, &call(read_tool(), &at("s/../key"), &cwd)), Ask);
+    // Without a link the two readings agree, and nothing changes.
+    assert_eq!(
+        d(&auto, &call(write_tool(), &at("secrets/inner/../new.txt"), &cwd)),
+        Allow
+    );
+}
