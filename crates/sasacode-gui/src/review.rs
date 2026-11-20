@@ -443,7 +443,8 @@ impl App {
     /// request was merged or closed, when the settings say to archive them. The branch checked out
     /// now is left: its conversation may be going on.
     pub(crate) fn sweep(&mut self) -> Task<Msg> {
-        if !self.prefs.auto_archive {
+        // `gh` runs git in the folder: not before it is trusted.
+        if !self.prefs.auto_archive || !self.git_allowed() {
             return Task::none();
         }
         let here = self.git.branch.clone();

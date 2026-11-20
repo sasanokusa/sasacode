@@ -95,6 +95,26 @@ pub fn terminal(dir: &Path) -> bool {
     }
 }
 
+/// A new script in the system's temporary folder that runs `line`, readable, writable and run by
+/// the user alone; none when it cannot be written.
+fn resume_script(line: &str) -> Option<PathBuf> {
+    use std::io::Write;
+    let mut file = tempfile::Builder::new()
+        .prefix("sasacode-resume-")
+        .suffix(".command")
+        .tempfile()
+        .ok()?;
+    file.write_all(format!("#!/bin/sh\n{line}\n").as_bytes()).ok()?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        file.as_file()
+            .set_permissions(std::fs::Permissions::from_mode(0o700))
+            .ok()?;
+    }
+    file.keep().ok().map(|(_, path)| path)
+}
+
 /// A terminal in `dir` going on with conversation `id` in sasacode's TUI.
 pub fn resume_in_terminal(dir: &Path, program: &Path, id: &str) -> bool {
     // Quoted for the shell: what is between single quotes is taken as it is.
@@ -107,19 +127,14 @@ pub fn resume_in_terminal(dir: &Path, program: &Path, id: &str) -> bool {
     );
     if cfg!(target_os = "macos") {
         // A `.command` file is run by Terminal when opened: no permission to script it is asked.
-        let script = std::env::temp_dir().join(format!("sasacode-resume-{}.command", id.replace('/', "_")));
-        let written = std::fs::write(&script, format!("#!/bin/sh\n{line}\n")).is_ok() && {
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).is_ok()
-            }
-            #[cfg(not(unix))]
-            true
+        // Named so it cannot be guessed, made new, and only the user's: Terminal opens it after
+        // this returns, so it is left there.
+        let Some(script) = resume_script(&line) else {
+            return false;
         };
         let mut c = command("open");
         c.args(["-a", "Terminal"]).arg(&script);
-        written && spawn(c)
+        spawn(c)
     } else if cfg!(windows) {
         let mut c = command("cmd");
         c.args(["/C", "start", "cmd", "/K"])
@@ -504,7 +519,7 @@ pub fn new_window(program: &Path, cwd: &Path, session: Option<&str>, at: Option<
 /// A worktree of `cwd`'s repository on a new branch, from the branch checked out or `base`.
 pub fn make_worktree(cwd: &Path, home: &Path, base: Option<&str>, prefix: &str) -> Result<PathBuf, String> {
     let git = |args: &[&std::ffi::OsStr]| -> Result<String, String> {
-        let out = Command::new("git")
+        let out = crate::git::command()
             .args(args)
             .current_dir(cwd)
             .output()
@@ -936,5 +951,17 @@ mod env_tests {
         if !env.is_empty() {
             assert!(env.iter().any(|(k, v)| k == "PATH" && !v.is_empty()));
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_script_a_terminal_resumes_with_is_new_and_the_users_alone() {
+        use std::os::unix::fs::PermissionsExt;
+        let (a, b) = (resume_script("echo one").unwrap(), resume_script("echo one").unwrap());
+        assert_ne!(a, b, "a name of its own each time");
+        assert_eq!(std::fs::read_to_string(&a).unwrap(), "#!/bin/sh\necho one\n");
+        assert_eq!(std::fs::metadata(&a).unwrap().permissions().mode() & 0o777, 0o700);
+        assert!(a.extension().is_some_and(|e| e == "command"));
+        let _ = (std::fs::remove_file(a), std::fs::remove_file(b));
     }
 }

@@ -284,6 +284,9 @@ words! {
     viewed_n: "{n}/{all}件見た", "{n}/{all} viewed";
     default_sure: "{branch}に直接書き込みます。もう一度押すと続けます", "This goes straight to {branch}. Press again to go on";
     git_init: "ここでgitを始める", "Start git here";
+    /// The git tab in a folder git has not been run in from here: it is, once asked.
+    git_unread: "このフォルダのgitの状態はまだ読んでいません。読むと、リポジトリの設定にあるプログラムが動くことがあります。", "This folder's git status has not been read yet. Reading it can start programs the repository's config names.";
+    git_show: "gitの状態を表示する", "Show the git status";
     pull: "取り込む", "Pull";
     behind: "↓{n}", "↓{n}";
     update_branch: "ベースを取り込む", "Update from base";
@@ -388,6 +391,10 @@ words! {
     args_how: "JSONのまま直します。直した呼び出しも、拒否のルールとプラグインの確認を受け直します", "Edit the JSON. The edited call is checked again against the deny rules and the plugins";
     args_send: "この引数で許可", "Allow with these";
     args_bad: "引数はJSONのオブジェクトで書いてください（{error}）", "The arguments must be a JSON object ({error})";
+    /// "Always" on the approval card: the rule it adds, and what a rule of a tool's name alone allows.
+    appr_rule: "足すルール：", "Rule it adds: ";
+    appr_rule_any: "（このツールは、どんな引数でも許可されます）", "(this tool is allowed with any arguments)";
+    always_tool: "この会話ではこのツールを許可", "Allow this tool in this conversation";
     judged_allow: "判定役が許可", "The judge allowed it";
     judged_ask: "判定役が確認に回した", "The judge asked you";
     allowed_head: "この会話で常に許可したもの", "Always allowed in this conversation";

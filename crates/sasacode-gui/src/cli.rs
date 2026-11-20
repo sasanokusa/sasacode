@@ -260,8 +260,8 @@ impl App {
                     if let Ok(trust) = serde_json::from_str::<Trust>(text.trim()) {
                         self.listing.trust = Some(trust);
                     }
-                    // Its plugins, commands and skills are used from now on.
-                    self.relist_cli()
+                    // Its plugins, commands and skills are used from now on, and git is run here.
+                    Task::batch([self.relist_cli(), self.know_git_here()])
                 }
                 Err(error) => {
                     self.toast = Some(error);
@@ -269,8 +269,9 @@ impl App {
                 }
             },
             Msg::TrustOnce => {
+                let before = self.git_allowed();
                 self.trust_once = true;
-                Task::none()
+                self.git_now_allowed(before)
             }
             other => return self.update_nav(other),
         };

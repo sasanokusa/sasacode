@@ -466,6 +466,8 @@ pub async fn setup(mut opts: SetupOptions) -> anyhow::Result<Arc<Harness>> {
         disabled_tools: settings.disabled_tools(),
         lang: current_lang(),
     });
+    // The shipped plugins that would run programs a project names (git) wait for its trust.
+    sasacode_bundled::project_trust::set(Path::new(&opts.cwd), trusted);
     // Built-in tools go through the same API as everything else (P2); they load first.
     host.load(sasacode_tools::PLUGIN_NAME, |api| sasacode_tools::plugin(api).boxed())
         .await;

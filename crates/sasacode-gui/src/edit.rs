@@ -76,7 +76,7 @@ pub fn parse_hits(out: &str) -> Vec<Hit> {
 /// has a capital.
 pub async fn grep(cwd: PathBuf, query: String) -> Result<Vec<Hit>, String> {
     let run = |outside: bool| {
-        let mut c = tokio::process::Command::new("git");
+        let mut c = crate::git::async_command();
         #[cfg(windows)]
         c.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
         c.args(["grep", "-n", "-I", "-z", "--no-color", "-F"]);

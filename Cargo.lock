@@ -5290,6 +5290,7 @@ dependencies = [
  "sasacode-protocol",
  "serde",
  "serde_json",
+ "tempfile",
  "tokio",
  "windows-sys 0.52.0",
 ]

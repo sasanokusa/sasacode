@@ -150,6 +150,7 @@ async fn loads_through_the_host_as_a_read_tool_with_cwd_permission_scope() {
     let f = fixture(root.path(), true);
     let cwd = path_str(&f.cwd);
     let h = load_plugin("git-context", git_context::plugin, &cwd, json!({})).await;
+    sasacode_bundled::project_trust::set(Path::new(&cwd), true);
     let tool = h.tool("git_context");
     let verdict = h.agent.permissions().check(&PermissionCheck {
         tool: Arc::clone(&tool),
@@ -162,4 +163,26 @@ async fn loads_through_the_host_as_a_read_tool_with_cwd_permission_scope() {
         .await
         .unwrap();
     assert!(body(&r).contains("Git context"));
+}
+
+#[tokio::test]
+async fn in_a_project_not_trusted_it_says_so_and_runs_no_git() {
+    let root = temp_dir("git-context-");
+    let f = fixture(root.path(), true);
+    let cwd = path_str(&f.cwd);
+    let h = load_plugin("git-context", git_context::plugin, &cwd, json!({})).await;
+    let tool = h.tool("git_context");
+    // Nothing of the repository would be read anyway: a monitor its config names would leave a mark.
+    let marker = root.path().join("ran");
+    f.git(&[
+        "config",
+        "core.fsmonitor",
+        &format!("touch '{}'; false", path_str(&marker)),
+    ]);
+    let e = tool
+        .execute(obj(json!({})), ToolContext::new(f.cwd.clone()))
+        .await
+        .unwrap_err();
+    assert_eq!(e.to_string(), git_context::UNTRUSTED);
+    assert!(!marker.exists());
 }

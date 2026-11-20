@@ -36,6 +36,9 @@ pub fn viewed_key(path: &str, diff: &crate::diff::Diff) -> String {
 impl App {
     /// What the scope shows, read again.
     pub(crate) fn load_scope(&mut self) -> Task<Msg> {
+        if !self.git_allowed() {
+            return Task::none();
+        }
         let cwd = self.cwd.clone();
         let whitespace = !self.prefs.more.hide_whitespace;
         let scope = self.git_scope.clone();

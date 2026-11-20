@@ -224,6 +224,16 @@ fn fake_home(root: &Path) -> String {
 }
 
 async fn state(command: &str, cwd: &str, user_request: Option<&str>, home: &str) -> serde_json::Map<String, Value> {
+    state_in(command, cwd, user_request, home, true).await
+}
+
+async fn state_in(
+    command: &str,
+    cwd: &str,
+    user_request: Option<&str>,
+    home: &str,
+    trusted: bool,
+) -> serde_json::Map<String, Value> {
     let args = obj(json!({ "command": command }));
     build_state(&CallFacts {
         tool: &BashTool,
@@ -231,6 +241,7 @@ async fn state(command: &str, cwd: &str, user_request: Option<&str>, home: &str)
         cwd,
         user_request,
         home,
+        trusted,
     })
     .await
 }
@@ -280,6 +291,22 @@ async fn state_targets_resolved_placed_and_described_by_git_the_users_request_in
     let temp = temp_dir("jev-t-");
     let scratch = state(&format!("rm -rf '{}'", path_str(temp.path())), &cwd, None, &home).await;
     assert_eq!(scratch["targets"][0]["location"], "a temporary directory");
+}
+
+#[tokio::test]
+async fn state_in_a_project_not_trusted_leaves_git_unread_and_the_targets_not_restorable() {
+    let root = temp_dir("sasacode-jev-");
+    let home = fake_home(root.path());
+    let dir = repo(root.path());
+    let cwd = path_str(dir.path());
+    let s = state_in("rm -rf build src/a.ts", &cwd, None, &home, false).await;
+    let targets = s["targets"].as_array().unwrap();
+    assert_eq!(targets.len(), 2);
+    for t in targets {
+        assert_eq!(t["location"], "inside the workspace");
+        let git = t["git"].as_str().unwrap();
+        assert!(git.contains("not trusted") && git.contains("do not assume"), "{git}");
+    }
 }
 
 #[tokio::test]

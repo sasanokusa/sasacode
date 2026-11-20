@@ -1,5 +1,6 @@
 //! The pictures a tool's result holds, as base64 (`read` of an image, an MCP tool's): kept as
-//! files in the system's temporary folder to be drawn from, each named by what it holds, so that
+//! files to be drawn from, in a folder of the system's temporary one made for this process alone
+//! (named so it cannot be guessed, opened by no other user), each named by what it holds, so that
 //! one read again is not written twice.
 
 use std::hash::{Hash, Hasher};
@@ -18,13 +19,19 @@ pub fn kept(media_type: &str, data: &str) -> Option<PathBuf> {
     let bytes = decode(data).filter(|b| !b.is_empty())?;
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     bytes.hash(&mut hasher);
-    let dir = std::env::temp_dir().join("sasacode-gui-pictures");
-    let file = dir.join(format!("{:016x}.{ext}", hasher.finish()));
+    let file = folder()?.join(format!("{:016x}.{ext}", hasher.finish()));
     if !file.is_file() {
-        std::fs::create_dir_all(&dir).ok()?;
         std::fs::write(&file, &bytes).ok()?;
     }
     Some(file)
+}
+
+/// This process's folder for pictures, made the first time one is kept; none when it cannot be.
+fn folder() -> Option<&'static std::path::Path> {
+    static DIR: std::sync::OnceLock<Option<tempfile::TempDir>> = std::sync::OnceLock::new();
+    DIR.get_or_init(|| crate::git::private_dir("sasacode-gui-pictures-"))
+        .as_ref()
+        .map(tempfile::TempDir::path)
 }
 
 /// Base64, standard or URL-safe, with or without its padding; whitespace is passed over.
@@ -69,9 +76,17 @@ mod tests {
         let file = kept("image/png", png).unwrap();
         assert_eq!(file.extension().and_then(|e| e.to_str()), Some("png"));
         assert_eq!(std::fs::read(&file).unwrap(), b"\x89PNG\r\n\x1a\n");
-        assert_eq!(kept("image/png", png), Some(file));
+        assert_eq!(kept("image/png", png).as_ref(), Some(&file));
         // Not a kind drawn, or nothing in it: none.
         assert!(kept("application/pdf", png).is_none());
         assert!(kept("image/png", "").is_none());
+        // In a folder of this process's own, which no other user can open.
+        let dir = file.parent().unwrap();
+        assert_ne!(dir, std::env::temp_dir().join("sasacode-gui-pictures"));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(std::fs::metadata(dir).unwrap().permissions().mode() & 0o077, 0);
+        }
     }
 }

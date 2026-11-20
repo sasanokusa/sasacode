@@ -565,7 +565,7 @@ fn real(p: &str) -> String {
 
 /// git's output, or None when it fails or takes over two seconds.
 async fn git(cwd: &str, args: &[&str]) -> Option<String> {
-    let mut cmd = tokio::process::Command::new("git");
+    let mut cmd = crate::git_args::command();
     cmd.arg("-C").arg(cwd).args(args);
     apply_child_env(&mut cmd, &[]);
     cmd.stdin(Stdio::null())
@@ -738,7 +738,13 @@ pub struct CallFacts<'a> {
     pub user_request: Option<&'a str>,
     /// `os.homedir()`.
     pub home: &'a str,
+    /// The project is trusted. Untrusted, git is not run: what it would say of the targets is
+    /// left unknown, and so not taken to be restorable.
+    pub trusted: bool,
 }
+
+/// A target's git state where git is not run.
+const GIT_UNREAD: &str = "unknown: git is not run in a project that is not trusted (do not assume it can be restored)";
 
 /// The state Jev judges: facts the harness gathered, and the user's own words.
 pub async fn build_state(f: &CallFacts<'_>) -> JsonObject {
@@ -753,9 +759,11 @@ pub async fn build_state(f: &CallFacts<'_>) -> JsonObject {
         .tool
         .paths(f.args, Path::new(f.cwd))
         .unwrap_or_else(|| command.as_deref().map(path_args).unwrap_or_default());
-    let top = git(f.cwd, &["rev-parse", "--show-toplevel"])
-        .await
-        .map(|t| js_trim(&t).to_string());
+    let top = match f.trusted {
+        true => git(f.cwd, &["rev-parse", "--show-toplevel"]).await,
+        false => None,
+    }
+    .map(|t| js_trim(&t).to_string());
     // Spelled like the targets (C:/x from git on Windows).
     let root = top.filter(|t| !t.is_empty()).map(|t| real(&paths::resolve(&[&t])));
     let workspace = real(f.cwd);
@@ -779,7 +787,9 @@ pub async fn build_state(f: &CallFacts<'_>) -> JsonObject {
         } else {
             "outside the workspace"
         };
-        let git = if meta.is_some() {
+        let git = if meta.is_some() && !f.trusted {
+            GIT_UNREAD
+        } else if meta.is_some() {
             git_state(&place, root.as_deref()).await
         } else {
             "n/a"
@@ -1260,6 +1270,7 @@ pub fn plugin_with(api: PluginApi, deps: PluginDeps) -> BoxFuture<'static, anyho
                     cwd: &cwd,
                     user_request: user_request.as_deref(),
                     home: &home,
+                    trusted: crate::project_trust::is_trusted(&g.api.cwd()),
                 })
                 .await;
                 let Some(answers) = g.ask(&state).await else {

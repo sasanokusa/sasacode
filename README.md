@@ -41,7 +41,7 @@ irm https://sasanokusa.com/sasacode/install.ps1 | iex
 - `SASACODE_VERSION=v0.20.1` で版を固定でき、`SASACODE_INSTALL_DIR` で置き場所を変えられる（どちらのインストーラーでも）。
 - 更新は`sasacode update`（インストーラーと同じ検証つき。`--check`で確認だけ）。新しい版が出ていると起動時に一度だけ静かに知らせる（`"updateCheck": false`で止める）。ソースから入れた場合は、`git pull`のあと下の`cargo install`をもう一度実行する。
 - Web検索（`web_search`）に使うRustXNGは `sasacode web-search install`（TUIでは `/web-search install`）で入る。sasacodeが決めた版（今はv0.32.0）の公式リリースを、sasacodeが持つチェックサムで確かめて `~/.sasacode/bin` に置き、再起動しなくても使える。入るのはその版だけで、新しい版はsasacodeの更新で入る。
-- デスクトップGUI（開発中）は配布物に入っておらず、`sasacode gui install`でこのマシンでビルドして入れる（[Rust](https://rustup.rs)が要る。ないときは入れ方を案内して止まる）。`~/.sasacode/gui/bin`に入り、`sasacode update`では更新されない。sasacodeを更新したら、もう一度`sasacode gui install`を実行する（[docs/gui.md](docs/gui.md)）。
+- デスクトップGUI（開発中）は配布物に入っておらず、`sasacode gui install`でこのマシンでビルドして入れる（[Rust](https://rustup.rs)が要る。ないときは入れ方を案内して止まる）。`~/.sasacode/gui/bin`に入り、`sasacode update`では更新されない。sasacodeを更新したら、もう一度`sasacode gui install`を実行する（[docs/gui.md](docs/gui.md)）。GUIは、初めてのフォルダではgitを自分からは走らせず、gitタブの「gitの状態を表示する」を押すか、フォルダを信頼すると、以後そのフォルダでgitの状態を読む（リポジトリの設定によっては、gitがプログラムを動かすため）。
 
 ソースから使う場合（[Rust](https://www.rust-lang.org/)1.88以上）は次のとおり。
 
@@ -255,7 +255,7 @@ sasacode -m llama/<モデル名>
 | `auto` | すべて許可する（denyとaskのルールは効く）。TUIのフッターでは赤字で表示する |
 
 - ルールは `ツール名` か `ツール名(パターン)`。bashはコマンド文字列を `*` のワイルドカードで、read / write / editはパスをglobで照合する。`*` そのものは `\*` と書く。パスのルールは書いたツールにだけ効くので、`.env` を守るならread / edit / writeを並べ、サブディレクトリも含めるには `**/` を付ける（`edit(.env)` は作業ディレクトリ直下の `.env` のeditだけを止める）。コマンドのルールはコマンドの文字列に合わせるだけなので、オプションの順を変えたり絶対パスで呼んだりすれば当たらない。間違いを防ぐ柵であって、完全な防御ではない。
-- 確認の「常に許可」で足すルールは、見たものより広くならない。コマンドはそのまま（中の `*` はワイルドカードにしない）、ファイルを触るツールはそのパスだけを許可する。ルールはsasacodeを終了するまで残る（`/clear` をまたぐ）。
+- 確認の「常に許可」で足すルールは、コマンドはそのまま（中の `*` はワイルドカードにしない）、ファイルを触るツールはそのパスだけを許可する。照合の対象やパスのないツール（MCPツールなど）は、ツール名全体を許可する（例：`mcp__github__create_issue` は、どんな引数でも通る）。ルールはsasacodeを終了するまで残る（`/clear` をまたぐ）。GUIでは、その会話のあとの実行にも `--allow` で引き継ぐ。
 - 判定の順番はdeny → softDeny → ask → allow → モード → `permission`フック（同梱プラグイン）。`softDeny`はdenyと同じく拒否するが、`jev-guard`などのプラグインが「ユーザーに確認」まで下げられる（確認なしに実行されることはない）。広すぎて正当な操作も巻き込むパターン向け。allowルールで通るのは、`&&` `;` `|`でつないだコマンドの**すべて**が許可されている場合だけ。`$(…)`、バッククォート、`>`を含むコマンドは、allowルールでは通らない。
 - 同梱の `permission-presets` が、既定で `guard`（sudo、`rm -rf /`、ディスク操作、`| sh` などを常に拒否。ホーム配下の `rm -rf ~…` とforce pushはsoftDeny。`ssh`、`scp`、`sftp`、リモートへの `rsync` は `auto` モードでも常に確認）を有効にしている。
 - `read-only-shell`プリセット（既定では無効）は、`ls`、`cat`、`rg`、`git status`、`git diff`、`git log`、`git show`などの読み取りだけのコマンドを確認なしで許可する。許可するのはコマンドそのものか、コマンドの後に空白と引数が続く形だけで、`git difftool`のような別のサブコマンドは確認に回る。`cat`、`head`、`tail`、`rg`、`grep`などは任意のパスを読めるので、作業ディレクトリの外のファイルも確認なしで読める（パスは判定しない）。作業ディレクトリの外を読ませたくないときは、このプリセットを有効にしないか、`bash(cat *)`などのaskルールを足す（askはallowより先に効く）。`tests`プリセット（既定では無効）も同じ形で、`cargo test`や`pytest`などのコマンドそのものか、その後に空白と引数が続く形だけを許可する。`yarn test:unit`のように名前が続くものは確認に回る。
@@ -335,10 +335,10 @@ sasacode -m llama/<モデル名>
 | 名前 | 内容 |
 | --- | --- |
 | `hashline-edit` | `read` の各行に `<行番号>:<2桁ハッシュ>|` を付け、空白の完全一致なしで編集できる `hash_edit` ツールを足す。`write` に混入した `N:hh|` 接頭辞も外す（[詳しく](docs/plugins.md#hashline-edit)） |
-| `git-context` | `git_context`ツール。レビューに要るGitの状態・変更の統計・パッチを、1回の呼び出しで返す。読み取りだけで、Gitが要る（[詳しく](docs/plugins.md#git-context)） |
+| `git-context` | `git_context`ツール。レビューに要るGitの状態・変更の統計・パッチを、1回の呼び出しで返す。読み取りだけで、Gitが要る。信頼していないプロジェクトではgitを呼ばない（[詳しく](docs/plugins.md#git-context)） |
 | `project-checks` | `project_checks`・`project_check`ツールと`/checks`。テスト・lint・型検査などを名前で実行し、PASS / FAIL、終了コード、時間、ログを返す。bashと同じ権限ルールで判定する。`verifyOnFinish`に名前を書いた検査は、モデルが作業を終えようとしたときにも確認なしで実行し、落ちていれば出力の末尾を返して続けさせる（[詳しく](docs/plugins.md#project-checks)） |
 | `workflows` | `/workflow`。レビュー・失敗の調査・公開前の確認など、繰り返し使う依頼を呼び出す。設定で足す・上書きする・外すことができる（[詳しく](docs/plugins.md#workflows)） |
-| `jev-guard` | 実行前のツール呼び出しをJevに判定させる。有効にする方法は上の「Jevによる実行前判断」にある（[詳しく](docs/plugins.md#jev-guard)） |
+| `jev-guard` | 実行前のツール呼び出しをJevに判定させる。信頼していないプロジェクトでは、対象のGitの状態を読まず、戻せるとは見なさない。有効にする方法は上の「Jevによる実行前判断」にある（[詳しく](docs/plugins.md#jev-guard)） |
 | `free-search` | MCPサーバー`uvx free-search-mcp`を`free-search`という名前でつなぐ（キー不要でローカルで動くWeb検索。複数の検索エンジン、ページの取得、文書の読み取り）。ツールは`mcp__free-search__<tool>`になる。[uv](https://docs.astral.sh/uv/)が要る（[詳しく](docs/plugins.md#free-search)） |
 | `clean-retry` | 編集エラーやテスト失敗が連続したとき、変更したファイルをタスク開始前に巻き戻し、失敗要約だけを残した綺麗な履歴でやり直す（[詳しく](docs/plugins.md#clean-retry)） |
 | `slim-profile` | 小型ローカルモデル向けに補助的なプラグイン群（`subagent`、`todo`、`goal`、Web系、Skills など）を自動で省き、指示の簡潔化と `read` / `bash` 単発出力の上限カットを行う（[詳しく](docs/plugins.md#slim-profile)） |

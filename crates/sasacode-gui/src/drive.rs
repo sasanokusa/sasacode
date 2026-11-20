@@ -1747,6 +1747,7 @@ fn the_git_tab_shows_the_branch_or_a_commit_side_by_side_with_files_marked_viewe
     let mut app = window("ja");
     app.tab = Tab::Git;
     app.insp = true;
+    app.know_git(&app.cwd.clone());
     app.git = crate::git::Status {
         repo: true,
         branch: Some("topic".into()),
@@ -1827,6 +1828,7 @@ fn the_git_tab_shows_what_the_shown_conversations_last_turn_changed() {
     let w = crate::words::JA;
     app.tab = Tab::Git;
     app.insp = true;
+    app.know_git(&app.cwd.clone());
     app.git = crate::git::Status {
         repo: true,
         branch: Some("topic".into()),
@@ -4174,4 +4176,129 @@ fn a_press_on_a_panels_words_keeps_it_open_and_one_beside_it_closes_it() {
     // Beside it, the backdrop: closed.
     act(&mut app, |ui| press(ui, 8.0, 700.0));
     assert_eq!(app.overlay, None);
+}
+
+/// The waiting approval's call made a call of `tool`, whose "always" adds `rules`.
+fn waiting_on(app: &mut App, id: &str, tool: &str, rules: &[&str]) {
+    let mut call = None;
+    for step in app
+        .chat
+        .transcript
+        .exchanges
+        .iter_mut()
+        .flat_map(|e| e.steps.iter_mut())
+    {
+        if let Step::Approval(a) = step
+            && a.id == id
+        {
+            a.tool = tool.into();
+            a.rules = rules.iter().map(|r| r.to_string()).collect();
+            call = Some(a.call_id.clone());
+        }
+    }
+    for step in app
+        .chat
+        .transcript
+        .exchanges
+        .iter_mut()
+        .flat_map(|e| e.steps.iter_mut())
+    {
+        if let Step::Tool(t) = step
+            && Some(&t.id) == call.as_ref()
+        {
+            t.name = tool.into();
+        }
+    }
+}
+
+#[test]
+fn the_approval_card_shows_the_rule_always_adds_and_when_it_is_the_whole_tool() {
+    let (mut app, _written, id) = waiting();
+    let (s, w) = (app.s, crate::words::JA);
+    waiting_on(&mut app, &id, "bash", &["bash(echo one)"]);
+    assert!(says(&app, w.appr_rule) && says(&app, "bash(echo one)") && says(&app, s.always_cmd));
+    assert!(!says(&app, w.appr_rule_any));
+    // A tool with nothing to match: its name alone, which any arguments pass.
+    waiting_on(
+        &mut app,
+        &id,
+        "mcp__github__create_issue",
+        &["mcp__github__create_issue"],
+    );
+    assert!(says(&app, "mcp__github__create_issue") && says(&app, w.appr_rule_any) && says(&app, w.always_tool));
+    assert!(!says(&app, s.always_call));
+    // The label says how long it lasts: the conversation, which later runs are given it in.
+    assert!(s.always_cmd.contains("この会話") && s.always_call.contains("この会話"));
+}
+
+#[test]
+fn git_is_not_run_in_a_folder_until_it_is_known() {
+    let mut app = window("ja");
+    let w = crate::words::JA;
+    app.tab = Tab::Git;
+    // Not known: nothing is run, and the tab says why and offers to.
+    assert!(!app.git_allowed());
+    assert_eq!(app.refresh_git().units(), 0);
+    assert!(says(&app, w.git_unread) && says(&app, w.git_show) && !says(&app, w.git_init));
+    // What the CLI says of trust does not make it known.
+    let task = app.update(Msg::Listed(Box::new(listed_trusted())));
+    assert!(task.units() == 0 && !app.git_allowed());
+    // Asked for by the button: known from now on, and read now.
+    act(&mut app, |ui| {
+        ui.click(w.git_show).expect("the button is there");
+    });
+    assert!(app.git_allowed() && app.git_known(&app.cwd.clone()));
+    assert!(app.refresh_git().units() > 0);
+    assert_eq!(
+        app.update(Msg::GitShow).units(),
+        0,
+        "known already: nothing more is run"
+    );
+}
+
+#[test]
+fn trusting_the_folder_makes_it_known_and_reads_it() {
+    let mut app = window("ja");
+    app.listing = listed();
+    let trust = r#"{"trusted":true,"needed":true,"complete":true,"items":["plugin lint"]}"#;
+    let task = app.update(Msg::Trusted(Ok(trust.into())));
+    assert!(app.git_known(&app.cwd.clone()) && task.units() > 0);
+    // Used in this window only: git is run here, and the folder is not kept as known.
+    let mut once = window("ja");
+    once.listing = listed();
+    let task = once.update(Msg::TrustOnce);
+    assert!(once.git_allowed() && !once.git_known(&once.cwd.clone()) && task.units() > 0);
+}
+
+#[test]
+fn the_folders_used_before_are_known_after_the_update_and_a_worktree_made_here_is_known() {
+    let dir = tempfile::tempdir().unwrap();
+    let (used, other, tree) = (
+        dir.path().join("used"),
+        dir.path().join("other"),
+        dir.path().join("tree"),
+    );
+    for d in [&used, &other, &tree] {
+        std::fs::create_dir_all(d).unwrap();
+    }
+    let mut app = window("ja");
+    app.home = None;
+    app.prefs
+        .more
+        .folders
+        .insert(used.to_string_lossy().into_owned(), Default::default());
+    app.seed_git_folders();
+    assert!(app.git_known(&used) && !app.git_known(&other));
+    // Once only: a folder dropped from what was used before is not brought back.
+    app.prefs.more.git_folders.as_mut().unwrap().clear();
+    app.seed_git_folders();
+    assert!(!app.git_known(&used));
+    let _ = app.update(Msg::WorktreeMade(Ok((tree.clone(), None))));
+    assert!(app.git_known(&tree));
+}
+
+fn listed_trusted() -> crate::cli::Listing {
+    let mut l = listed();
+    l.trust.as_mut().unwrap().trusted = true;
+    l
 }
