@@ -353,6 +353,8 @@ sasacode -m llama/<モデル名>
 }
 ```
 
+グローバルの`~/.sasacode/config.json`に書いたstdioのサーバーは、`cwd`がなければプロジェクトの外にある専用のフォルダ（`~/.sasacode/tmp/mcp/<サーバー名>`）で起動する。`npx`や`uvx`はカレントの`node_modules`や`pyproject.toml`を先に見るので、開いたプロジェクトの中身が動かないようにするためである。プロジェクトのフォルダで動かしたいサーバーには、`"cwd": "${SASACODE_PROJECT}"`と書く。プロジェクトの`.sasacode/config.json`に起動のしかた（`command`か`url`）まで書いたサーバー（信頼したあと）は、これまでどおりプロジェクトのフォルダで起動する。グローバルのサーバーに`disabled`などだけを足した場合は、グローバルのサーバーのままである。同梱の`free-search`も、プロジェクトの外で起動する。
+
 stdioとStreamable HTTPに対応する。ツールは`mcp__<server>__<tool>`という名前になり、通常のツールと同じ権限確認とフックを通る。promptsはスラッシュコマンドになる。サーバーはバックグラウンドで接続するので、起動を待たせない。`${VAR}`は環境変数から展開する。落ちたサーバーは自動で再接続する（間隔を空けて数回まで。`/mcp reconnect [name]`で手動に）。サーバーのツールの一覧が変わったら、外れたツールはモデルに渡さなくなる。プロジェクトの`.sasacode/config.json`に書いたサーバーは、プロジェクトを信頼するまで起動しない（[プロジェクトの信頼](#プロジェクトの信頼)）。サーバーごとの`cwd`、`disabled`、`alwaysLoad`、`timeout`、`toolNames`は[docs/plugins.md](docs/plugins.md)にある。
 
 ### Skills

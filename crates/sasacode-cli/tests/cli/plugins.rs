@@ -283,3 +283,75 @@ async fn slash_a_command_that_fails_is_an_error_and_exit_1() {
     .await;
     assert_eq!(code, 1);
 }
+
+/// A stdio server that writes the folder it starts in to `mark` and exits.
+#[cfg(unix)]
+fn pwd_server(mark: &std::path::Path, cwd: Option<&str>) -> Value {
+    let mut server = json!({
+        "command": "/bin/sh",
+        "args": ["-c", "pwd -P > \"$MARK\""],
+        "env": { "MARK": mark.to_string_lossy() },
+    });
+    if let Some(cwd) = cwd {
+        server["cwd"] = cwd.into();
+    }
+    server
+}
+
+/// The folder the server wrote to `mark` once it started.
+#[cfg(unix)]
+async fn started_in(mark: &std::path::Path) -> std::path::PathBuf {
+    for _ in 0..200 {
+        if let Ok(text) = std::fs::read_to_string(mark)
+            && !text.is_empty()
+        {
+            return std::path::PathBuf::from(text.trim_end());
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    panic!("the server never started: {}", mark.display());
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_stdio_server_starts_in_the_project_only_when_the_project_or_its_cwd_says_so() {
+    use std::os::unix::fs::PermissionsExt;
+    let Some(t) = child() else { return };
+    let marks = t.home.parent().expect("the root").join("marks");
+    let elsewhere = t.home.parent().expect("the root").join("elsewhere");
+    std::fs::create_dir_all(&marks).unwrap();
+    std::fs::create_dir_all(&elsewhere).unwrap();
+    let mark = |n: &str| marks.join(n);
+    // The global servers: no cwd, the project written out, and a folder of the user's own.
+    configure(
+        &t,
+        json!({ "mcpServers": {
+            "g.x": pwd_server(&mark("global"), None),
+            "explicit": pwd_server(&mark("explicit"), Some("${SASACODE_PROJECT}")),
+            "own": pwd_server(&mark("own"), Some(&elsewhere.to_string_lossy())),
+            "tuned": pwd_server(&mark("tuned"), None),
+            "swapped": pwd_server(&mark("swapped-global"), None),
+        } }),
+    );
+    // The project's own server, which the user trusted. It may set other things on a global server
+    // without taking over how it starts, but a command it writes itself is its own.
+    t.project_config(&json!({ "mcpServers": {
+        "mine": pwd_server(&mark("project"), None),
+        "tuned": { "disabled": false, "timeout": 5000 },
+        "swapped": pwd_server(&mark("swapped-project"), None),
+    } }));
+    let _h = loaded(&t, true).await;
+    let proj = t.proj.canonicalize().unwrap();
+    let home = t.home.canonicalize().unwrap();
+    let global = started_in(&mark("global")).await;
+    assert_eq!(global, home.join("tmp").join("mcp").join("g%2Ex"));
+    assert_eq!(std::fs::metadata(&global).unwrap().permissions().mode() & 0o777, 0o700);
+    assert_eq!(started_in(&mark("project")).await, proj);
+    assert_eq!(started_in(&mark("explicit")).await, proj);
+    assert_eq!(started_in(&mark("own")).await, elsewhere.canonicalize().unwrap());
+    assert_eq!(
+        started_in(&mark("tuned")).await,
+        home.join("tmp").join("mcp").join("tuned")
+    );
+    assert_eq!(started_in(&mark("swapped-project")).await, proj);
+}

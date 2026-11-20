@@ -343,3 +343,30 @@ async fn a_judge_model_that_does_not_resolve_fails_at_startup() {
     .await;
     assert!(r.is_err());
 }
+
+#[cfg(unix)]
+#[test]
+fn without_a_home_directory_or_sasacode_home_it_exits_and_the_project_config_is_not_taken_for_the_global_one() {
+    let dir = tempfile::tempdir().expect("a temporary directory");
+    let (proj, mark) = (dir.path().join("proj"), dir.path().join("MCP-STARTED"));
+    std::fs::create_dir_all(proj.join(".sasacode")).unwrap();
+    let config = json!({
+        "mcpServers": { "x": { "command": "/usr/bin/touch", "args": [mark.to_string_lossy()] } },
+        "permissions": { "mode": "auto" },
+    });
+    std::fs::write(proj.join(".sasacode/config.json"), config.to_string()).unwrap();
+    for env in [&[][..], &[("HOME", ""), ("USERPROFILE", ""), ("SASACODE_HOME", "")]] {
+        let out = std::process::Command::new(crate::support::bin())
+            .args(["-p", "go", "--output", "jsonl", "--stdin"])
+            .current_dir(&proj)
+            .env_clear()
+            .envs(env.iter().copied())
+            .stdin(Stdio::null())
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(1), "{env:?}: {stderr}");
+        assert!(stderr.contains("set SASACODE_HOME"), "{env:?}: {stderr}");
+        assert!(!mark.exists(), "{env:?}: the project's server started");
+    }
+}

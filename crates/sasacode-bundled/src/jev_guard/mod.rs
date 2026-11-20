@@ -915,7 +915,9 @@ impl Guard {
         self.deps
             .home
             .clone()
-            .unwrap_or_else(|| sasacode_plugin_api::home_dir().to_string_lossy().into_owned())
+            .or_else(|| sasacode_plugin_api::home_dir().map(|h| h.to_string_lossy().into_owned()))
+            // No home directory: `~` stays as written.
+            .unwrap_or_else(|| "~".into())
     }
 
     /// Named, or the first of Command Code / TypeSafe with a key (Command Code when neither has one,

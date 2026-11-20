@@ -10,11 +10,8 @@ use sasacode_plugin_api::JsonObject;
 /// `resolvePath`: `~` and `~/...` expand to the home directory; the path is resolved against `cwd`
 /// and normalised, an absolute one too, so a tool opens the path the permission check judged.
 pub fn resolve_path(p: &str, cwd: &Path) -> String {
-    let p = if p == "~" || p.starts_with("~/") {
-        format!("{}{}", sasacode_plugin_api::home_dir().display(), &p[1..])
-    } else {
-        p.to_string()
-    };
+    let home = sasacode_plugin_api::home_dir().filter(|_| p == "~" || p.starts_with("~/"));
+    let p = home.map_or(p.to_string(), |h| format!("{}{}", h.display(), &p[1..])); // no home: `~` as written
     if cfg!(windows) {
         return sasacode_plugin_api::win32_path::win32_resolve_here(&[&cwd.to_string_lossy(), &p]);
     }
@@ -234,7 +231,7 @@ mod tests {
         assert_eq!(resolve_path("/a/../b", cwd), native("/b"));
         assert_eq!(resolve_path("/p/l/../x", cwd), native("/p/x"));
         assert_eq!(resolve_path("/p/./q//r/", cwd), native("/p/q/r"));
-        let home = sasacode_plugin_api::home_dir().display().to_string();
+        let home = sasacode_plugin_api::home_dir().unwrap().display().to_string();
         assert_eq!(resolve_path("~/x/../y", cwd), resolve_path(&format!("{home}/y"), cwd));
         assert_eq!(resolve_path("~", cwd), resolve_path(&home, cwd));
         assert_eq!(resolve_path("~x", cwd), native("/w/p/~x"));

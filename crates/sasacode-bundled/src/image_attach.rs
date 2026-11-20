@@ -154,7 +154,8 @@ fn resolve(cwd: &Path, p: &Path) -> PathBuf {
 
 /// Where an image path points, from `cwd`: `file://` URLs and `~` worked out.
 pub fn resolve_path(p: &str, cwd: &Path) -> PathBuf {
-    resolve_path_in(p, cwd, &home_dir())
+    // With no home directory `~` stays a folder of that name in `cwd`.
+    resolve_path_in(p, cwd, &home_dir().unwrap_or_else(|| PathBuf::from("~")))
 }
 
 /// [`resolve_path`] with another home folder.

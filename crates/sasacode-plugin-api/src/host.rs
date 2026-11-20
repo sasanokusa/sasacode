@@ -5,21 +5,23 @@ use std::collections::{BTreeMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 
-/// Where sasacode keeps its files: $SASACODE_HOME, or ~/.sasacode.
+/// Where sasacode keeps its files: $SASACODE_HOME, or ~/.sasacode. It exits when neither is known.
 pub fn sasacode_home() -> PathBuf {
-    if let Some(h) = std::env::var_os("SASACODE_HOME") {
-        return PathBuf::from(h);
-    }
-    home_dir().join(".sasacode")
+    env_path("SASACODE_HOME")
+        .or_else(|| home_dir().map(|h| h.join(".sasacode")))
+        .unwrap_or_else(|| {
+            eprintln!("sasacode: HOME is not set: set SASACODE_HOME to the folder for its files");
+            std::process::exit(1)
+        })
 }
 
-/// The user's home directory ($HOME, else %USERPROFILE%, like Node's os.homedir()).
-pub fn home_dir() -> PathBuf {
-    std::env::var_os("HOME")
-        .filter(|h| !h.is_empty())
-        .or_else(|| std::env::var_os("USERPROFILE"))
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."))
+/// $HOME, else %USERPROFILE% (like Node's os.homedir()); an empty value counts as unset.
+pub fn home_dir() -> Option<PathBuf> {
+    env_path("HOME").or_else(|| env_path("USERPROFILE"))
+}
+
+fn env_path(name: &str) -> Option<PathBuf> {
+    std::env::var_os(name).filter(|v| !v.is_empty()).map(PathBuf::from)
 }
 
 fn hidden() -> &'static Mutex<HashSet<String>> {
