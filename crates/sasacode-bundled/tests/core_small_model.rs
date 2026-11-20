@@ -9,16 +9,17 @@ use std::sync::Arc;
 
 use serde_json::{Value, json};
 
-use sasacode_agent::agent::{Agent, AgentOptions};
+use sasacode_agent::agent::{Agent, AgentOptions, ApprovalAnswer, ApprovalDecision};
 use sasacode_agent::permission::{PermissionCheck, PermissionPolicy};
 use sasacode_agent::plugins::{PluginHost, PluginHostOptions};
 use sasacode_agent::session::SessionFile;
 use sasacode_ai::{
     AssistantContent, LocalServer, Message, ModelInfo, ThinkingContent, ToolResultMessage, UserContent, register_api,
 };
+use sasacode_bundled::clean_retry::looks_like_check_command;
 use sasacode_bundled::hashline_edit::line_hash;
 use sasacode_bundled::syntax_check::check_rust_syntax;
-use sasacode_plugin_api::{Decision, Lang, PermissionMode, PermissionRules};
+use sasacode_plugin_api::{Decision, Lang, PermissionMode, PermissionRules, ToolDef, ToolKind, ToolResult, hook};
 use sasacode_testing::{ReplayOptions, ReplayProvider};
 use support_core::*;
 
@@ -928,12 +929,12 @@ async fn clean_retry_rolls_back_files_and_resets_history_after_repeated_failures
             reply(vec![call(
                 "3",
                 "bash",
-                json!({"command": "echo test fail 1 >&2; exit 1"}),
+                json!({"command": "cargo test --manifest-path missing-1/Cargo.toml"}),
             )]),
             reply(vec![call(
                 "4",
                 "bash",
-                json!({"command": "echo test fail 2 >&2; exit 1"}),
+                json!({"command": "cargo test --manifest-path missing-2/Cargo.toml"}),
             )]),
             // Clean retry triggers at TurnEnd after 2nd test failure!
             reply(vec![call("5", "read", json!({"path": target_s}))]),
@@ -965,6 +966,393 @@ async fn clean_retry_rolls_back_files_and_resets_history_after_repeated_failures
         "{retry_msg}"
     );
     assert_eq!(last(&reqs[5]).text().trim(), "1\toriginal");
+}
+
+#[tokio::test]
+async fn clean_retry_ignores_denied_tool_calls_and_grep_nonzero_exits() {
+    for cmd in "cargo test\ncargo check\ncargo build\ncargo clippy -- -D warnings\ncargo nextest run\n\
+RUST_BACKTRACE=1 cargo test\ncd crates/foo && cargo test 2>&1 | tail -n 20\nenv CI=1 pytest -q\n\
+python -m pytest\npython3 -m mypy src/\npython -m unittest\nnpm test\nnpm run test\n\
+pnpm run lint\nyarn run typecheck\nbun test\nbun run build\ngo test ./...\ngo vet ./...\n\
+go build ./...\ndeno test\ndeno check main.ts\nmake\ntsc --noEmit\njest\nvitest\nruff check .\neslint src/"
+        .lines()
+    {
+        assert!(looks_like_check_command(cmd), "expected check: {cmd}");
+    }
+    for cmd in "grep foo tests/\ngrep -rn \"cargo test\" src/\nrg test crates/\n\
+echo test fail 1 >&2; exit 1\ncd tests && ls -la\ncargo run -- test\nnpm install jest"
+        .lines()
+    {
+        assert!(!looks_like_check_command(cmd), "expected non-check: {cmd}");
+    }
+
+    let dir = temp_dir("sasacode-clean-retry-5-");
+    let target = dir.path().join("app.txt");
+    let tests_dir = dir.path().join("tests");
+    std::fs::create_dir_all(&tests_dir).unwrap();
+    std::fs::write(&target, "v0\n").unwrap();
+    std::fs::write(tests_dir.join("sample.txt"), "hello\n").unwrap();
+    let target_s = path_str(&target);
+
+    // (a) 4 user denials on edit/write must NOT count as failures or trigger rollback
+    let calls_seen = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let calls_seen_cb = calls_seen.clone();
+    let s1 = setup(
+        vec![
+            reply(vec![call("1", "write", json!({"path": target_s, "content": "v1\n"}))]),
+            reply(vec![call(
+                "2",
+                "edit",
+                json!({"path": target_s, "old_string": "v1", "new_string": "d1"}),
+            )]),
+            reply(vec![call(
+                "3",
+                "edit",
+                json!({"path": target_s, "old_string": "v1", "new_string": "d2"}),
+            )]),
+            reply(vec![call(
+                "4",
+                "edit",
+                json!({"path": target_s, "old_string": "v1", "new_string": "d3"}),
+            )]),
+            reply(vec![call(
+                "5",
+                "edit",
+                json!({"path": target_s, "old_string": "v1", "new_string": "d4"}),
+            )]),
+            reply(vec![say("stopped after denials")]),
+        ],
+        &["clean-retry"],
+        opts(
+            &path_str(dir.path()),
+            &[("clean-retry", json!({"triggerEditErrors": 4, "maxRetries": 1}))],
+        ),
+    )
+    .await;
+    s1.agent.set_permissions(policy(PermissionMode::Ask));
+    s1.agent.set_approve(Some(Arc::new(move |_| {
+        let n = calls_seen_cb.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Box::pin(async move {
+            Ok(ApprovalAnswer::new(if n == 0 {
+                ApprovalDecision::Allow
+            } else {
+                ApprovalDecision::Deny
+            }))
+        })
+    })));
+    s1.agent.prompt_text("update app").await.unwrap();
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), "v1\n");
+    assert_eq!(s1.requests().len(), 6);
+    assert!(
+        !s1.requests()
+            .iter()
+            .any(|r| json_of(&r.messages).contains("[clean-retry]"))
+    );
+
+    // (b) `grep foo tests/` exiting nonzero 3 times must NOT trigger a retry
+    std::fs::write(&target, "v0\n").unwrap();
+    let s2 = setup(
+        vec![
+            reply(vec![call("1", "write", json!({"path": target_s, "content": "v1\n"}))]),
+            reply(vec![call(
+                "2",
+                "bash",
+                json!({"command": "grep definitely_missing_token tests/"}),
+            )]),
+            reply(vec![call(
+                "3",
+                "bash",
+                json!({"command": "grep another_missing_token tests/"}),
+            )]),
+            reply(vec![call(
+                "4",
+                "bash",
+                json!({"command": "grep third_missing_token tests/"}),
+            )]),
+            reply(vec![say("finished search")]),
+        ],
+        &["clean-retry"],
+        opts(
+            &path_str(dir.path()),
+            &[("clean-retry", json!({"triggerFailures": 2, "maxRetries": 1}))],
+        ),
+    )
+    .await;
+    s2.agent.set_permissions(policy(PermissionMode::Auto));
+    s2.agent.prompt_text("search tests").await.unwrap();
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), "v1\n");
+    assert_eq!(s2.requests().len(), 5);
+    assert!(
+        !s2.requests()
+            .iter()
+            .any(|r| json_of(&r.messages).contains("[clean-retry]"))
+    );
+}
+
+#[tokio::test]
+async fn clean_retry_preserves_snapshots_and_base_len_across_mid_run_user_prompt() {
+    let dir = temp_dir("sasacode-clean-retry-6a-");
+    let target = dir.path().join("app.txt");
+    std::fs::write(&target, "original\n").unwrap();
+    let target_s = path_str(&target);
+
+    let entered_pause = Arc::new(tokio::sync::Notify::new());
+    let resume_pause = Arc::new(tokio::sync::Notify::new());
+    let prompt_seen = Arc::new(tokio::sync::Notify::new());
+
+    let s = setup(
+        vec![
+            // Prior completed turn so base_len is non-zero (2 messages).
+            reply(vec![say("prior answer")]),
+            // Run 2: edit app.txt, fail check 1, pause for mid-run UserPrompt, fail check 2 -> triggers retry!
+            reply(vec![call(
+                "1",
+                "write",
+                json!({"path": target_s, "content": "broken\n"}),
+            )]),
+            reply(vec![call(
+                "2",
+                "bash",
+                json!({"command": "cargo test --manifest-path missing-1/Cargo.toml"}),
+            )]),
+            reply(vec![call("3", "pause_point", json!({}))]),
+            reply(vec![call(
+                "4",
+                "bash",
+                json!({"command": "cargo test --manifest-path missing-2/Cargo.toml"}),
+            )]),
+            reply(vec![say("recovered")]),
+        ],
+        &["clean-retry"],
+        opts(
+            &path_str(dir.path()),
+            &[("clean-retry", json!({"triggerFailures": 2, "maxRetries": 1}))],
+        ),
+    )
+    .await;
+    s.agent.set_permissions(policy(PermissionMode::Auto));
+
+    let entered_cb = entered_pause.clone();
+    let resume_cb = resume_pause.clone();
+    s.agent.set_tool(
+        ToolDef::new(
+            "pause_point",
+            "test pause hook",
+            json!({"type": "object", "properties": {}, "additionalProperties": false}),
+            ToolKind::Read,
+            move |_args, _ctx| {
+                let entered = entered_cb.clone();
+                let resume = resume_cb.clone();
+                async move {
+                    entered.notify_one();
+                    resume.notified().await;
+                    Ok(ToolResult::text("resumed"))
+                }
+            },
+        )
+        .into_ref(),
+    );
+    let seen_cb = prompt_seen.clone();
+    s.agent
+        .hooks()
+        .on::<hook::UserPrompt, _, _>("test-observer", move |ev, _| {
+            let seen = seen_cb.clone();
+            let text: String = ev
+                .content
+                .iter()
+                .filter_map(UserContent::as_text)
+                .collect::<Vec<_>>()
+                .join("");
+            async move {
+                if text.contains("mid-run follow-up") {
+                    seen.notify_one();
+                }
+                Ok(None)
+            }
+        });
+
+    // Prior conversation before the failing run.
+    s.agent.prompt_text("prior question").await.unwrap();
+
+    let agent1 = s.agent.clone();
+    let h1 = tokio::spawn(async move { agent1.prompt_text("fix app").await });
+
+    entered_pause.notified().await;
+    let agent2 = s.agent.clone();
+    let h2 = tokio::spawn(async move { agent2.prompt_text("mid-run follow-up").await });
+    prompt_seen.notified().await;
+    resume_pause.notify_one();
+
+    h1.await.unwrap().unwrap();
+    h2.await.unwrap().unwrap();
+
+    // Snapshot from before the mid-run UserPrompt MUST still restore app.txt.
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), "original\n");
+
+    let reqs = s.requests();
+    assert_eq!(reqs.len(), 6);
+    // Request 5 (after clean-retry trigger) keeps the 2 prior messages + clean-retry prompt (base_len = 2, NOT mid-run).
+    assert_eq!(reqs[5].messages.len(), 3);
+    assert_eq!(reqs[5].messages[0].text(), "prior question");
+    assert_eq!(reqs[5].messages[1].text(), "prior answer");
+    let retry_msg = reqs[5].messages[2].text();
+    assert!(
+        retry_msg.contains("fix app") && retry_msg.contains("[clean-retry]"),
+        "{retry_msg}"
+    );
+    assert!(!retry_msg.contains("mid-run follow-up"), "{retry_msg}");
+}
+
+#[tokio::test]
+async fn clean_retry_lists_unrestorable_files_and_protects_mid_run_user_edits() {
+    // Part 1: large file (> maxFileKB) + file changed via bash + snapshotted file + created file
+    let dir1 = temp_dir("sasacode-clean-retry-6b-unrestorable-");
+    let small = dir1.path().join("small.txt");
+    let big = dir1.path().join("big.txt");
+    let bash_file = dir1.path().join("bash_mod.txt");
+    let created = dir1.path().join("created.txt");
+    std::fs::write(&small, "small-v0\n").unwrap();
+    std::fs::write(&big, "x".repeat(2048)).unwrap();
+    std::fs::write(&bash_file, "bash-v0\n").unwrap();
+    let small_s = path_str(&small);
+    let big_s = path_str(&big);
+    let created_s = path_str(&created);
+
+    let s1 = setup(
+        vec![
+            reply(vec![call(
+                "1",
+                "write",
+                json!({"path": small_s, "content": "small-bad\n"}),
+            )]),
+            reply(vec![call(
+                "2",
+                "write",
+                json!({"path": created_s, "content": "temp\n"}),
+            )]),
+            reply(vec![call("3", "write", json!({"path": big_s, "content": "big-bad\n"}))]),
+            reply(vec![call(
+                "4",
+                "bash",
+                json!({"command": "echo bash-bad > bash_mod.txt"}),
+            )]),
+            reply(vec![call(
+                "5",
+                "bash",
+                json!({"command": "cargo test --manifest-path missing-1/Cargo.toml"}),
+            )]),
+            reply(vec![call(
+                "6",
+                "bash",
+                json!({"command": "cargo test --manifest-path missing-2/Cargo.toml"}),
+            )]),
+            reply(vec![say("recovered")]),
+        ],
+        &["clean-retry"],
+        opts(
+            &path_str(dir1.path()),
+            &[(
+                "clean-retry",
+                json!({"triggerFailures": 2, "maxRetries": 1, "maxFileKB": 1}),
+            )],
+        ),
+    )
+    .await;
+    s1.agent.set_permissions(policy(PermissionMode::Auto));
+    s1.agent.prompt_text("fix project").await.unwrap();
+
+    // Snapshotted changes rolled back; unrestorable changes remain and are listed honestly.
+    assert_eq!(std::fs::read_to_string(&small).unwrap(), "small-v0\n");
+    assert!(!created.exists());
+    assert_eq!(std::fs::read_to_string(&big).unwrap(), "big-bad\n");
+    assert_eq!(std::fs::read_to_string(&bash_file).unwrap(), "bash-bad\n");
+
+    let reqs1 = s1.requests();
+    assert_eq!(reqs1.len(), 7);
+    let retry_msg1 = reqs1[6].messages[0].text();
+    assert!(
+        !retry_msg1.contains("All file changes were rolled back"),
+        "{retry_msg1}"
+    );
+    assert!(retry_msg1.contains(&big_s), "{retry_msg1}");
+    assert!(
+        retry_msg1.contains("Changes made through bash were not rolled back."),
+        "{retry_msg1}"
+    );
+
+    // Part 2: manual user edit mid-run must NOT be overwritten, and pre-prompt uncommitted changes stay preserved when untouched mid-run
+    let dir2 = temp_dir("sasacode-clean-retry-6b-user-edit-");
+    let app = dir2.path().join("app.txt");
+    let uncommitted = dir2.path().join("uncommitted.txt");
+    std::fs::write(&app, "pre-prompt\n").unwrap();
+    std::fs::write(&uncommitted, "user-uncommitted-v0\n").unwrap();
+    let app_s = path_str(&app);
+    let uncommitted_s = path_str(&uncommitted);
+
+    let s2 = setup(
+        vec![
+            reply(vec![call(
+                "1",
+                "write",
+                json!({"path": uncommitted_s, "content": "agent-v1\n"}),
+            )]),
+            reply(vec![call(
+                "2",
+                "write",
+                json!({"path": app_s, "content": "agent-edit\n"}),
+            )]),
+            reply(vec![call("3", "simulate_user_edit", json!({}))]),
+            reply(vec![call(
+                "4",
+                "bash",
+                json!({"command": "cargo test --manifest-path missing-1/Cargo.toml"}),
+            )]),
+            reply(vec![call(
+                "5",
+                "bash",
+                json!({"command": "cargo test --manifest-path missing-2/Cargo.toml"}),
+            )]),
+            reply(vec![say("done")]),
+        ],
+        &["clean-retry"],
+        opts(
+            &path_str(dir2.path()),
+            &[("clean-retry", json!({"triggerFailures": 2, "maxRetries": 1}))],
+        ),
+    )
+    .await;
+    s2.agent.set_permissions(policy(PermissionMode::Auto));
+    let app_for_tool = app.clone();
+    s2.agent.set_tool(
+        ToolDef::new(
+            "simulate_user_edit",
+            "simulates a user editing app.txt mid-run",
+            json!({"type": "object", "properties": {}, "additionalProperties": false}),
+            ToolKind::Read,
+            move |_args, _ctx| {
+                let p = app_for_tool.clone();
+                async move {
+                    std::fs::write(&p, "user-manual-mid-run\n").unwrap();
+                    Ok(ToolResult::text("user edited"))
+                }
+            },
+        )
+        .into_ref(),
+    );
+    s2.agent.prompt_text("fix both").await.unwrap();
+
+    // Uncommitted pre-prompt file restored; manually mid-run edited file preserved!
+    assert_eq!(std::fs::read_to_string(&uncommitted).unwrap(), "user-uncommitted-v0\n");
+    assert_eq!(std::fs::read_to_string(&app).unwrap(), "user-manual-mid-run\n");
+
+    let reqs2 = s2.requests();
+    assert_eq!(reqs2.len(), 6);
+    let retry_msg2 = reqs2[5].messages[0].text();
+    assert!(
+        !retry_msg2.contains("All file changes were rolled back"),
+        "{retry_msg2}"
+    );
+    assert!(retry_msg2.contains(&app_s), "{retry_msg2}");
 }
 
 #[tokio::test]
