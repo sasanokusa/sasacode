@@ -557,6 +557,7 @@ sasacode -m pgx/&lt;モデル名&gt;</code></pre>
         <tr><td><code>image-slim</code></td><td><code>keepImages</code><br><code>dropStep</code><br><code>maxPixels</code></td><td><code>4</code><br><code>8</code><br><code>1048576</code></td><td>履歴の画像を小さく送る。大きい画像は約105万画素まで縮め、透明度のないPNGはJPEGにする（ツールが返した画像はセッションにも縮めて残す）。古い画像は送らず、新しい4〜11枚だけを送る（8枚ずつ省くので、その間はキャッシュが効く）。最後のメッセージの画像は必ず送る</td></tr>
         <tr><td><code>checkpoints</code></td><td><code>maxFileKB</code></td><td><code>1024</code></td><td>write / editが変える直前の内容をセッションに控え、<code>/undo</code> で1回の呼び出しの分ずつ戻す（<code>/undo list</code>、<code>/undo &lt;path&gt;</code>）。bashの変更と、大きいファイル・テキストでないファイルは対象外</td></tr>
         <tr><td><code>goal</code></td><td>—</td><td></td><td><code>/goal &lt;目的&gt;</code>、<code>done</code> / <code>pause</code> / <code>resume</code> / <code>clear</code>。「これをゴールにして」と頼めばモデルが <code>set_goal</code> で設定する</td></tr>
+        <tr><td><code>ask-user</code></td><td>—</td><td></td><td><code>ask_user</code> ツール。モデルが推測で進めずに、選択肢つきの質問（1回に1〜4問）であなたに判断を仰ぐ。ヘッドレスでは尋ねず、モデルに自分で決めて前提を書くよう返す。0.15 までは別に入れるプラグインだった</td></tr>
       </table></div>
 
       <h3 id="p-bg">バックグラウンド実行（<code>background-sessions</code>）</h3>
@@ -680,11 +681,10 @@ description: Write release notes from the commits since the last tag.
       <p>組み込みのSkillを使えば、MCPサーバーやSkillをモデルに書かせることもできる（<code>/skill:tool-authoring 天気を返すツールを作って</code>）。</p>
 
       <h3 id="enable">既定で無効の同梱プラグイン</h3>
-      <p>次の6つも同梱しているが、既定では読み込まない（0.15 までは別に入れるプラグインだった）。<code>plugins.enabled</code> に名前を書くと読み込む。<code>plugins.disabled</code> にも書いてあれば、そちらが優先する。名前も設定も当時のままなので、それまでの <code>plugins.settings</code> がそのまま使える。</p>
+      <p>次の5つも同梱しているが、既定では読み込まない（0.15 までは別に入れるプラグインだった）。<code>plugins.enabled</code> に名前を書くと読み込む。<code>plugins.disabled</code> にも書いてあれば、そちらが優先する。名前も設定も当時のままなので、それまでの <code>plugins.settings</code> がそのまま使える。</p>
       <pre><code>{ "plugins": { "enabled": ["git-context", "project-checks"] } }</code></pre>
       <div class="tbl"><table>
         <tr><th>プラグイン</th><th>内容</th></tr>
-        <tr><td><code>ask-user</code></td><td><code>ask_user</code> ツール。モデルが推測で進めずに、選択肢つきの質問（1回に1〜4問）であなたに判断を仰ぐ。ヘッドレスでは尋ねず、モデルに自分で決めて前提を書くよう返す</td></tr>
         <tr><td><code>git-context</code></td><td><code>git_context</code> ツール。レビューに要るGitの状態・変更の統計・パッチを、1回の呼び出しで返す。読み取りだけで、Gitが要る</td></tr>
         <tr><td><code>project-checks</code></td><td><code>project_checks</code>・<code>project_check</code> ツールと <code>/checks</code>。テスト・lint・型検査などを名前で実行し、PASS / FAIL、終了コード、時間、ログを返す。bashと同じ権限ルールで判定する</td></tr>
         <tr><td><code>workflows</code></td><td><code>/workflow</code>。レビュー・失敗の調査・公開前の確認など、繰り返し使う依頼を呼び出す。設定で足す・上書きする・外すことができる</td></tr>
@@ -810,7 +810,7 @@ sasacode -p "…" --permission auto --trust-project   <span class="c"># CI な�
       </div></details>
 
       <details class="qa"><summary>0.15 で入れたプラグインが読み込まれない・<code>sasacode plugin</code> がエラーになる</summary><div>
-        <p>0.20 からは外部のプラグインを読み込まず、<code>sasacode plugin</code> もなくなった。<code>ask-user</code>、<code>git-context</code>、<code>project-checks</code>、<code>workflows</code>、<code>jev-guard</code>、<code>free-search</code> は同梱になったので、<code>plugins.enabled</code> に名前を書けば、それまでの設定のまま使える（<a href="#enable">既定で無効の同梱プラグイン</a>）。それ以外のツールはMCPサーバーに、手順はSkillにする（<a href="#plugins">拡張のしかた</a>）。</p>
+        <p>0.20 からは外部のプラグインを読み込まず、<code>sasacode plugin</code> もなくなった。<code>ask-user</code>、<code>git-context</code>、<code>project-checks</code>、<code>workflows</code>、<code>jev-guard</code>、<code>free-search</code> は同梱になった。<code>ask-user</code> は既定で読み込み、ほかは <code>plugins.enabled</code> に名前を書けば、それまでの設定のまま使える（<a href="#enable">既定で無効の同梱プラグイン</a>）。それ以外のツールはMCPサーバーに、手順はSkillにする（<a href="#plugins">拡張のしかた</a>）。</p>
       </div></details>
 
       <details class="qa"><summary>プロジェクトの設定やMCPサーバーが効かない</summary><div>

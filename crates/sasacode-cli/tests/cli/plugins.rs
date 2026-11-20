@@ -70,18 +70,20 @@ async fn plugins_disabled_and_tools_disabled_switch_things_off_p3() {
 async fn a_plugin_that_is_off_by_default_loads_only_when_plugins_enabled_names_it() {
     let Some(t) = child() else { return };
     assert!(
-        !sasacode_bundled::find("ask-user")
-            .expect("ask-user ships")
+        !sasacode_bundled::find("git-context")
+            .expect("git-context ships")
             .on_by_default
     );
     configure(&t, json!({}));
     let h = loaded(&t, false).await;
-    assert!(!has(&plugins(&h), "ask-user"));
-    assert!(!has(&tools(&h), "ask_user"));
-    configure(&t, json!({ "plugins": { "enabled": ["ask-user"] } }));
+    assert!(!has(&plugins(&h), "git-context"));
+    assert!(!has(&tools(&h), "git_context"));
+    // ask-user was a separate package too, but loads without being named.
+    assert!(has(&tools(&h), "ask_user"), "{:?}", tools(&h));
+    configure(&t, json!({ "plugins": { "enabled": ["git-context"] } }));
     let h = loaded(&t, false).await;
-    assert!(has(&plugins(&h), "ask-user"), "{:?}", plugins(&h));
-    assert!(has(&tools(&h), "ask_user"));
+    assert!(has(&plugins(&h), "git-context"), "{:?}", plugins(&h));
+    assert!(has(&tools(&h), "git_context"));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -89,11 +91,11 @@ async fn plugins_disabled_wins_over_plugins_enabled() {
     let Some(t) = child() else { return };
     configure(
         &t,
-        json!({ "plugins": { "enabled": ["ask-user"], "disabled": ["ask-user"] } }),
+        json!({ "plugins": { "enabled": ["git-context"], "disabled": ["git-context"] } }),
     );
     let h = loaded(&t, false).await;
-    assert!(!has(&plugins(&h), "ask-user"));
-    assert!(!has(&tools(&h), "ask_user"));
+    assert!(!has(&plugins(&h), "git-context"));
+    assert!(!has(&tools(&h), "git_context"));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -172,9 +174,9 @@ async fn free_search_joins_the_mcp_plugins_servers_under_one_mcp_command() {
 async fn plugins_enabled_in_an_untrusted_project_config_is_ignored() {
     let Some(t) = child() else { return };
     configure(&t, json!({}));
-    t.project_config(&json!({ "plugins": { "enabled": ["ask-user"] } }));
+    t.project_config(&json!({ "plugins": { "enabled": ["git-context"] } }));
     let h = loaded(&t, false).await;
-    assert!(!has(&plugins(&h), "ask-user"));
+    assert!(!has(&plugins(&h), "git-context"));
     assert!(
         h.warnings()
             .iter()
@@ -183,14 +185,14 @@ async fn plugins_enabled_in_an_untrusted_project_config_is_ignored() {
         h.warnings()
     );
     // Trusted, it applies.
-    assert!(has(&plugins(&*loaded(&t, true).await), "ask-user"));
+    assert!(has(&plugins(&*loaded(&t, true).await), "git-context"));
 }
 
 /// What the GUI asks the binary without starting a run (its cli.rs): `plugin list --json` is all
 /// that is left of `sasacode plugin`, the bundled plugins on or off as a run here loads them.
 #[test]
 fn the_gui_asks_the_binary_for_the_plugins_commands_skills_and_trust_other_plugin_use_is_an_error() {
-    let bin = crate::support::Bin::new(&json!({ "plugins": { "enabled": ["ask-user"], "disabled": ["goal"] } }));
+    let bin = crate::support::Bin::new(&json!({ "plugins": { "enabled": ["git-context"], "disabled": ["goal"] } }));
     let listed = bin.run(["plugin", "list", "--json"]);
     assert_eq!(listed.code, 0, "{}", listed.stderr);
     let plugins: Vec<Value> = serde_json::from_str(listed.stdout.trim()).expect("one JSON array");
@@ -202,7 +204,7 @@ fn the_gui_asks_the_binary_for_the_plugins_commands_skills_and_trust_other_plugi
         assert_eq!(p["source"], "bundled");
         p["enabled"].as_bool().expect("enabled")
     };
-    assert!(on("ask-user") && on("checkpoints"));
+    assert!(on("git-context") && on("ask-user") && on("checkpoints"));
     assert!(!on("goal") && !on("workflows"));
     let commands = bin.run(["list", "commands", "--json"]);
     let commands: Vec<Value> = serde_json::from_str(commands.stdout.trim()).expect("the commands");

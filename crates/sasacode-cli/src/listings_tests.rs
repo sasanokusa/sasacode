@@ -448,7 +448,7 @@ fn plugins_are_the_bundled_ones_enabled_as_a_run_loads_them() {
     assert!(!enabled(&plugins, "openai-codex"));
     // Off by default, on once plugins.enabled names it.
     assert!(enabled(&plugins, "git-context"));
-    assert!(!enabled(&plugins, "ask-user"));
+    assert!(!enabled(&plugins, "workflows"));
     // On by itself while MCP is off.
     assert!(enabled(&plugins, "free-search"));
     // The setting from when it was a separate plugin.

@@ -2,8 +2,8 @@
 //!
 //! Each one registers through `sasacode-plugin-api` exactly like a third-party plugin did, and
 //! each can be turned off with `plugins.disabled`. The ones that were separate packages before the
-//! rewrite (the official plugins, jev-guard, free-search) are off until `plugins.enabled` names them
-//! (ADR-011).
+//! rewrite (the official plugins, jev-guard, free-search) are off until `plugins.enabled` names them,
+//! except ask-user, which is on (ADR-011).
 
 use sasacode_plugin_api::PluginFn;
 
@@ -45,7 +45,7 @@ pub mod web_fetch;
 pub mod web_search;
 pub mod write_guard;
 
-// Off by default (`plugins.enabled` turns them on).
+// Off by default (`plugins.enabled` turns them on), except ask-user.
 pub mod ask_user;
 pub mod clean_retry;
 pub mod free_search;
@@ -61,8 +61,8 @@ pub mod workflows;
 pub struct Bundled {
     pub name: &'static str,
     pub plugin: PluginFn,
-    /// False for the plugins that were separate packages: they load only when `plugins.enabled`
-    /// names them (and `plugins.disabled` does not).
+    /// False for the plugins that load only when `plugins.enabled` names them (and
+    /// `plugins.disabled` does not).
     pub on_by_default: bool,
 }
 
@@ -123,8 +123,9 @@ pub const PLUGINS: &[Bundled] = &[
     on("image-slim", image_slim::plugin),
     // After image-slim: masks oversized old tool outputs once images are accounted for.
     on("context-slim", context_slim::plugin),
-    // After the built-in ones, in the order a user would have installed them.
-    off("ask-user", ask_user::plugin),
+    // After the built-in ones, in the order a user would have installed them. Of these, only
+    // ask-user loads without `plugins.enabled`.
+    on("ask-user", ask_user::plugin),
     off("git-context", git_context::plugin),
     off("project-checks", project_checks::plugin),
     off("workflows", workflows::plugin),
@@ -177,5 +178,15 @@ mod tests {
         assert!(!wanted(p, &["git-context".into()], &["git-context".into()]));
         assert!(wanted(find("todo").unwrap(), &[], &[]));
         assert!(!wanted(find("todo").unwrap(), &[], &["todo".into()]));
+    }
+
+    #[test]
+    fn ask_user_is_the_one_formerly_separate_plugin_that_is_on() {
+        let p = find("ask-user").unwrap();
+        assert!(wanted(p, &[], &[]));
+        assert!(!wanted(p, &[], &["ask-user".into()]));
+        for name in ["git-context", "project-checks", "workflows", "jev-guard", "free-search"] {
+            assert!(!find(name).unwrap().on_by_default, "{name}");
+        }
     }
 }
