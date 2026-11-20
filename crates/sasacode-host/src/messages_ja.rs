@@ -476,6 +476,11 @@ pub static TO_JA: &[(&str, &str)] = &[
     ("in {dir}", "作業フォルダ {dir}"),
     ("environment {names}", "環境変数 {names}"),
     ("headers {names}", "ヘッダー {names}"),
+    ("no command or url", "commandもurlもない"),
+    (
+        "applied on top of the global server of the same name",
+        "同名のグローバルのサーバーに重ねる",
+    ),
     ("disables plugins {names}", "プラグインの無効化 {names}"),
     ("enables plugins {names}", "プラグインの有効化 {names}"),
     (

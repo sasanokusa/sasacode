@@ -205,9 +205,11 @@ pub fn user_default_model(global: &Config) -> String {
 }
 
 /// The providers the user's own config sends conversations to: those of its model (or the default
-/// one), models and judgeModel. A provider the config only sets up (`providers`) is not one of them.
-fn user_providers(global: &Config, default_model: impl FnOnce() -> String) -> Vec<String> {
+/// one), models and judgeModel, and of the model `-m` gave. A provider the config only sets up
+/// (`providers`) is not one of them.
+fn user_providers(global: &Config, cli_model: Option<&str>, default_model: impl FnOnce() -> String) -> Vec<String> {
     let mut specs = strings(global.get("models"));
+    specs.extend(cli_model.map(str::to_string));
     specs.extend(global.get("judgeModel").and_then(Value::as_str).map(str::to_string));
     specs.push(match global.get("model").and_then(Value::as_str) {
         Some(m) => m.to_string(),
@@ -221,8 +223,8 @@ fn user_providers(global: &Config, default_model: impl FnOnce() -> String) -> Ve
 /// would receive your code), send the conversation to a provider the user's own config does not use,
 /// change model metadata (baseUrl could reroute keys), configure or disable plugins, start MCP
 /// servers, add allow rules, loosen the permission mode, or raise the turn and retry limits.
-pub fn split_project_config(project: &Config, global: &Config) -> (Config, Config) {
-    split_project_config_with(project, global, || user_default_model(global))
+pub fn split_project_config(project: &Config, global: &Config, cli_model: Option<&str>) -> (Config, Config) {
+    split_project_config_with(project, global, cli_model, || user_default_model(global))
 }
 
 /// [`split_project_config`] with the model a run would default to given (tests: it depends on the
@@ -230,6 +232,7 @@ pub fn split_project_config(project: &Config, global: &Config) -> (Config, Confi
 pub fn split_project_config_with(
     project: &Config,
     global: &Config,
+    cli_model: Option<&str>,
     default_model: impl FnOnce() -> String,
 ) -> (Config, Config) {
     let mut safe = Config::new();
@@ -246,7 +249,7 @@ pub fn split_project_config_with(
         }
         let users = users.get_or_insert_with(|| {
             let default_model = default_model.take();
-            user_providers(global, || default_model.map(|f| f()).unwrap_or_default())
+            user_providers(global, cli_model, || default_model.map(|f| f()).unwrap_or_default())
         });
         users.iter().any(|u| u == name)
     };
@@ -366,39 +369,124 @@ fn shown_entries(v: &Value) -> String {
     }
 }
 
-/// What an MCP server entry starts: its command and arguments (an argument with spaces or quotes
-/// quoted), or its URL.
-pub fn mcp_server_run(server: &sasacode_mcp::McpServerConfig) -> String {
-    match &server.transport {
-        sasacode_mcp::McpTransportConfig::Stdio { command, args, .. } => std::iter::once(command)
-            .chain(args)
-            .map(|a| {
-                if a.is_empty() || a.contains(|c: char| c.is_whitespace() || c == '"' || c == '\'') {
-                    format!("{a:?}")
-                } else {
-                    a.clone()
-                }
-            })
-            .collect::<Vec<_>>()
-            .join(" "),
-        sasacode_mcp::McpTransportConfig::Http { url, .. } => url.clone(),
+/// What a project's `mcpServers.<name>` entry writes, field by field as the file has it: a field it
+/// leaves out is `None`/empty here, however `McpServerConfig::from_json` would read the entry. Only
+/// the names of `env` and `headers` are kept, never their values.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct McpEntry {
+    pub command: Option<String>,
+    pub args: Vec<String>,
+    pub url: Option<String>,
+    pub cwd: Option<String>,
+    pub env: Vec<String>,
+    pub headers: Vec<String>,
+    /// The global config has a server of this name: the entry is laid over it.
+    pub overlays_global: bool,
+}
+
+impl McpEntry {
+    pub fn of(name: &str, entry: &Value, global: &Config) -> McpEntry {
+        let text = |v: &Value| match v {
+            Value::String(s) => s.clone(),
+            other => other.to_string(),
+        };
+        let keys = |key: &str| -> Vec<String> {
+            entry
+                .get(key)
+                .and_then(Value::as_object)
+                .map(|o| o.keys().cloned().collect())
+                .unwrap_or_default()
+        };
+        McpEntry {
+            command: entry.get("command").map(text),
+            args: entry
+                .get("args")
+                .and_then(Value::as_array)
+                .map(|a| a.iter().map(text).collect())
+                .unwrap_or_default(),
+            url: entry.get("url").map(text),
+            cwd: entry.get("cwd").map(text),
+            env: keys("env"),
+            headers: keys("headers"),
+            overlays_global: global
+                .get("mcpServers")
+                .and_then(Value::as_object)
+                .is_some_and(|g| g.contains_key(name)),
+        }
+    }
+
+    /// Whether the entry on its own starts a server or connects to one: a non-empty `command`, or
+    /// failing that a non-empty `url`.
+    pub fn launches(&self) -> bool {
+        let set = |v: &Option<String>| v.as_deref().is_some_and(|v| !v.is_empty());
+        set(&self.command) || set(&self.url)
     }
 }
 
-/// The names (never the values) of an MCP server's environment variables and headers, and its
-/// working directory.
-pub fn mcp_server_extras(server: &sasacode_mcp::McpServerConfig) -> (Vec<String>, Vec<String>, Option<String>) {
-    match &server.transport {
-        sasacode_mcp::McpTransportConfig::Stdio { env, cwd, .. } => {
-            (env.keys().cloned().collect(), Vec::new(), cwd.clone())
-        }
-        sasacode_mcp::McpTransportConfig::Http { headers, .. } => (Vec::new(), headers.keys().cloned().collect(), None),
+/// A word of a command line as a trust line shows it: quoted when it is empty or holds a space or a
+/// quote.
+fn quoted(a: &str) -> String {
+    if a.is_empty() || a.contains(|c: char| c.is_whitespace() || c == '"' || c == '\'') {
+        format!("{a:?}")
+    } else {
+        a.to_string()
     }
+}
+
+/// The trust line for one `mcpServers` entry of the project: what it starts or connects to, or that
+/// it starts nothing itself, then every other field it writes (values of `env` and `headers` never)
+/// and whether it lands on a global server of the same name.
+fn describe_mcp_entry(name: &str, e: &McpEntry) -> String {
+    fn set(v: &Option<String>) -> Option<&str> {
+        v.as_deref().filter(|v| !v.is_empty())
+    }
+    let command = set(&e.command);
+    let url = set(&e.url);
+    let run = match (command, url) {
+        (Some(c), _) => std::iter::once(c)
+            .chain(e.args.iter().map(String::as_str))
+            .map(quoted)
+            .collect::<Vec<_>>()
+            .join(" "),
+        (None, Some(u)) => u.to_string(),
+        (None, None) => t!("no command or url"),
+    };
+    let mut line = t!("MCP server {name}: {run}", name = shown(name), run = shown(&run));
+    let mut add = |part: String| line.push_str(&format!("; {part}"));
+    if command.is_none() {
+        if let Some(c) = &e.command {
+            add(format!("command {}", shown(&quoted(c))));
+        }
+        if !e.args.is_empty() {
+            let args: Vec<String> = e.args.iter().map(|a| quoted(a)).collect();
+            add(format!("args {}", shown(&args.join(" "))));
+        }
+    }
+    // Shown whenever it is not the thing the line says it connects to.
+    if let Some(u) = &e.url
+        && (command.is_some() || url.is_none())
+    {
+        add(format!("url {}", shown(&quoted(u))));
+    }
+    if let Some(cwd) = &e.cwd {
+        add(t!("in {dir}", dir = shown(cwd)));
+    }
+    let names = |v: &[String]| v.iter().map(|s| shown(s)).collect::<Vec<_>>().join(", ");
+    if !e.env.is_empty() {
+        add(t!("environment {names}", names = names(&e.env)));
+    }
+    if !e.headers.is_empty() {
+        add(t!("headers {names}", names = names(&e.headers)));
+    }
+    if e.overlays_global {
+        add(t!("applied on top of the global server of the same name"));
+    }
+    line
 }
 
 /// One line per thing the trust prompt covers. Every value from the project is shown on one line
 /// without control characters, so an entry cannot pass for another or hide what it runs.
-pub fn describe_elevated(e: &Config) -> Vec<String> {
+pub fn describe_elevated(e: &Config, global: &Config) -> Vec<String> {
     let mut out = Vec::new();
     let names = |v: &[String]| v.iter().map(|s| shown(s)).collect::<Vec<_>>().join(", ");
     if let Some(providers) = e.get("providers").and_then(Value::as_object) {
@@ -430,23 +518,7 @@ pub fn describe_elevated(e: &Config) -> Vec<String> {
         ));
     }
     for (n, v) in e.get("mcpServers").and_then(Value::as_object).into_iter().flatten() {
-        let server = sasacode_mcp::McpServerConfig::from_json(v);
-        let mut line = t!(
-            "MCP server {name}: {run}",
-            name = shown(n),
-            run = shown(&mcp_server_run(&server))
-        );
-        let (env, headers, cwd) = mcp_server_extras(&server);
-        if let Some(cwd) = cwd {
-            line.push_str(&format!("; {}", t!("in {dir}", dir = shown(&cwd))));
-        }
-        if !env.is_empty() {
-            line.push_str(&format!("; {}", t!("environment {names}", names = names(&env))));
-        }
-        if !headers.is_empty() {
-            line.push_str(&format!("; {}", t!("headers {names}", names = names(&headers))));
-        }
-        out.push(line);
+        out.push(describe_mcp_entry(n, &McpEntry::of(n, v, global)));
     }
     let plugins = e.get("plugins");
     let disabled = strings(plugins.and_then(|p| p.get("disabled")));
@@ -508,6 +580,8 @@ pub struct ConfigFiles {
     pub global: Config,
     pub project: Config,
     pub warnings: Vec<String>,
+    /// The model `-m` gave: its provider is one the user chose, as the global config's are.
+    pub cli_model: Option<String>,
 }
 
 pub fn global_config_path() -> PathBuf {
@@ -541,6 +615,7 @@ pub fn read_config_files_from(global_path: &Path, cwd: &Path) -> anyhow::Result<
         global,
         project,
         warnings,
+        cli_model: None,
     })
 }
 
@@ -554,10 +629,11 @@ pub fn load_config(cwd: &Path, trusted: bool, files: Option<ConfigFiles>) -> any
         global,
         project,
         warnings,
+        cli_model,
     } = files;
     let mut warnings = warnings;
-    let (safe, elevated) = split_project_config(&project, &global);
-    let items = describe_elevated(&elevated);
+    let (safe, elevated) = split_project_config(&project, &global, cli_model.as_deref());
+    let items = describe_elevated(&elevated, &global);
     // Allowed without trust (the user already uses the provider), but the user should know the
     // project, not they, picked the model: said whether the project is trusted or not.
     let picked = |key: &str| {

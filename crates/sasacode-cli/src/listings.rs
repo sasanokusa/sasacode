@@ -18,7 +18,7 @@ use sasacode_skills::{discover_skills_in, materialize_builtin_skills, project_sk
 
 use crate::args::{boolean, parse_args};
 use crate::catalog::ModelChoice;
-use crate::config::{Settings, load_config, mcp_server_extras, read_config_files_from, sasacode_home};
+use crate::config::{McpEntry, Settings, load_config, read_config_files_from, sasacode_home};
 use crate::setup::{PluginChoice, SetupOptions, setup, skill_dirs, skills_options};
 use crate::trust::{ProjectTrust, assess_files, is_trusted_in, save_trust_in};
 
@@ -136,12 +136,13 @@ pub struct TrustEndpoint {
     pub url: Option<String>,
 }
 
-/// An MCP server the project's config adds: what it starts, and the names (not the values) of what
-/// it is given.
+/// An MCP server entry the project's config writes, with the fields it writes (the names, not the
+/// values, of what it is given). `command` and `url` are null when the entry leaves them out, and
+/// an entry with neither non-empty starts or connects to nothing of its own.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct TrustMcpServer {
     pub name: String,
-    /// Its command; null for a server reached by URL.
+    /// Its command as written; null when it has none.
     pub command: Option<String>,
     pub args: Vec<String>,
     pub url: Option<String>,
@@ -150,6 +151,9 @@ pub struct TrustMcpServer {
     pub env: Vec<String>,
     /// The names of the headers it sends.
     pub headers: Vec<String>,
+    /// The global config has a server of this name; these fields are laid over it.
+    #[serde(rename = "overlaysGlobal")]
+    pub overlays_global: bool,
 }
 
 /// `sasacode trust --json`: whether the folder is trusted and what trusting it turns on.
@@ -501,20 +505,16 @@ fn trust_status(home: &Path, cwd: &Path, project: &ProjectTrust) -> anyhow::Resu
     let mcp_server_details = object(elevated.get("mcpServers"))
         .iter()
         .map(|(name, v)| {
-            let server = sasacode_mcp::McpServerConfig::from_json(v);
-            let (env, headers, cwd) = mcp_server_extras(&server);
-            let (command, args, url) = match server.transport {
-                sasacode_mcp::McpTransportConfig::Stdio { command, args, .. } => (Some(command), args, None),
-                sasacode_mcp::McpTransportConfig::Http { url, .. } => (None, Vec::new(), Some(url)),
-            };
+            let e = McpEntry::of(name, v, &project.files.global);
             TrustMcpServer {
                 name: name.clone(),
-                command,
-                args,
-                url,
-                cwd,
-                env,
-                headers,
+                command: e.command,
+                args: e.args,
+                url: e.url,
+                cwd: e.cwd,
+                env: e.env,
+                headers: e.headers,
+                overlays_global: e.overlays_global,
             }
         })
         .collect();

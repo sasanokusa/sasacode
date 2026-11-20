@@ -210,7 +210,7 @@ fn judge_model_is_a_model_choice() {
         assert_eq!(f.load(false).elevated["judgeModel"], "openrouter/some-lab/model");
         // Named for the trust prompt, so the project is not trusted without asking (#40).
         assert_eq!(
-            describe_elevated(&f.load(false).elevated),
+            describe_elevated(&f.load(false).elevated, &Config::new()),
             ["judge model openrouter/some-lab/model"]
         );
         f.write(json!({ "judgeModel": 42 }), json!({}));
@@ -229,7 +229,7 @@ fn plugins_enabled_accumulates_and_needs_trust_in_a_project() {
         let untrusted = f.load(false);
         assert_eq!(untrusted.config["plugins"]["enabled"], json!(["git-context"]));
         assert_eq!(
-            describe_elevated(&untrusted.elevated),
+            describe_elevated(&untrusted.elevated, &Config::new()),
             ["enables plugins project-checks"]
         );
         let trusted = f.load(true);
@@ -317,10 +317,11 @@ fn a_model_from_a_provider_the_user_does_not_use_needs_trust_one_they_use_is_ann
 #[test]
 fn without_a_model_in_the_global_config_the_default_ones_provider_is_the_users() {
     let project = obj(json!({ "model": "commandcode-anthropic/x", "judgeModel": "openai/gpt-5.5" }));
-    let (safe, elevated) = split_project_config_with(&project, &Config::new(), || "anthropic/claude-opus-5".into());
+    let (safe, elevated) =
+        split_project_config_with(&project, &Config::new(), None, || "anthropic/claude-opus-5".into());
     assert!(safe.is_empty());
     assert_eq!(sorted_keys(&elevated), ["judgeModel", "model"]);
-    let (safe, elevated) = split_project_config_with(&project, &Config::new(), || "openai/gpt-5.5".into());
+    let (safe, elevated) = split_project_config_with(&project, &Config::new(), None, || "openai/gpt-5.5".into());
     assert_eq!(sorted_keys(&safe), ["judgeModel"]);
     assert_eq!(sorted_keys(&elevated), ["model"]);
 }
@@ -343,7 +344,7 @@ fn the_trust_list_shows_what_each_entry_runs_and_sets_on_one_line_without_contro
             "plugins": { "settings": { "todo": { "note": "a\nb", "long": long, "after": 1 } } },
             "permissions": { "allow": [format!("bash({long} rm *)")] },
         }));
-        let items = describe_elevated(&elevated);
+        let items = describe_elevated(&elevated, &Config::new());
         // Commands, URLs and rules are shown whole.
         assert_eq!(
             items[0],
@@ -374,4 +375,50 @@ fn an_unknown_key_is_named_without_its_control_characters() {
         sanitize_config(&json!({ "\u{1b}]0;T\u{7}\rok\nx": 1 }), "p", &mut warnings);
         assert_eq!(warnings, ["p: unknown key \"␛]0;Tok\\nx\" ignored"]);
     });
+}
+
+#[test]
+fn a_server_entry_without_a_command_or_url_is_not_one_that_starts_anything() {
+    let entry = |v: Value| McpEntry::of("fx", &v, &Config::new());
+    assert!(entry(json!({ "command": "x" })).launches());
+    assert!(entry(json!({ "url": "https://mcp.example" })).launches());
+    assert!(!entry(json!({ "url": "" })).launches());
+    assert!(!entry(json!({ "command": "", "url": "" })).launches());
+    assert!(!entry(json!({ "args": ["a"], "env": { "K": "v" }, "cwd": "/w" })).launches());
+}
+
+#[test]
+fn the_trust_list_names_the_fields_a_partial_server_entry_writes() {
+    english(|| {
+        let global = obj(json!({ "mcpServers": { "fx": { "command": "npx" } } }));
+        let elevated = obj(json!({
+            "mcpServers": {
+                "fx": { "args": ["a b"], "env": { "K": "secret-value" }, "cwd": "/w" },
+                "e": { "url": "" },
+                "both": { "command": "run", "url": "https://x.example", "headers": { "H": "secret-value" } },
+            },
+        }));
+        let items = describe_elevated(&elevated, &global);
+        assert_eq!(
+            items,
+            [
+                "MCP server fx: no command or url; args \"a b\"; in /w; environment K; \
+                 applied on top of the global server of the same name",
+                "MCP server e: no command or url; url \"\"",
+                "MCP server both: run; url https://x.example; headers H",
+            ]
+        );
+    });
+}
+
+#[test]
+fn the_model_flags_provider_is_one_the_user_uses_when_a_project_picks_a_model() {
+    let project = obj(json!({ "model": "commandcode-anthropic/x", "judgeModel": "openai/gpt-5.5" }));
+    let global = obj(json!({ "model": "anthropic/claude-opus-5", "providers": { "commandcode-anthropic": {} } }));
+    let default = || "anthropic/claude-opus-5".to_string();
+    let (_, elevated) = split_project_config_with(&project, &global, None, default);
+    assert_eq!(sorted_keys(&elevated), ["judgeModel", "model"]);
+    let (safe, elevated) = split_project_config_with(&project, &global, Some("commandcode-anthropic/y"), default);
+    assert_eq!(sorted_keys(&safe), ["model"]);
+    assert_eq!(sorted_keys(&elevated), ["judgeModel"]);
 }

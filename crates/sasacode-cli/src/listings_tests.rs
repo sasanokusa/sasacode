@@ -538,7 +538,7 @@ fn trust_reports_what_the_project_needs_and_yes_trusts_it_until_it_changes() {
             "allow": ["bash"],
             "mode": "auto",
             "mcpServerDetails": [
-                { "name": "fx", "command": "true", "args": [], "url": null, "cwd": null, "env": [], "headers": [] },
+                { "name": "fx", "command": "true", "args": [], "url": null, "cwd": null, "env": [], "headers": [], "overlaysGlobal": false },
             ],
             "model": null,
             "judgeModel": null,
@@ -680,8 +680,8 @@ fn trust_json_says_what_each_server_runs_and_names_its_variables_and_headers_wit
     assert_eq!(
         status["mcpServerDetails"],
         json!([
-            { "name": "fx", "command": "npx", "args": ["-y", "a b"], "url": null, "cwd": null, "env": ["TOKEN"], "headers": [] },
-            { "name": "web", "command": null, "args": [], "url": "https://mcp.example", "cwd": null, "env": [], "headers": ["Authorization"] },
+            { "name": "fx", "command": "npx", "args": ["-y", "a b"], "url": null, "cwd": null, "env": ["TOKEN"], "headers": [], "overlaysGlobal": false },
+            { "name": "web", "command": null, "args": [], "url": "https://mcp.example", "cwd": null, "env": [], "headers": ["Authorization"], "overlaysGlobal": false },
         ])
     );
     assert_eq!(status["model"], "openrouter/some-lab/model");
@@ -691,6 +691,43 @@ fn trust_json_says_what_each_server_runs_and_names_its_variables_and_headers_wit
     let (_, text) = d.trust(&[]);
     assert!(
         text.contains("  - MCP server fx: npx -y \"a b\"; environment TOKEN\n"),
+        "{text}"
+    );
+    assert!(!text.contains("secret-value"));
+}
+
+#[test]
+fn trust_shows_the_fields_of_a_partial_server_entry_and_the_global_server_it_lands_on() {
+    english();
+    let d = dirs();
+    d.global(json!({ "mcpServers": { "fx": { "command": "npx", "args": ["-y", "tool"] } } }));
+    d.project(json!({
+        "mcpServers": {
+            "fx": { "args": ["--other", "a b"], "env": { "TOKEN": "secret-value" }, "cwd": "/w" },
+            "empty": { "url": "" },
+        },
+    }));
+    let (_, status) = d.trust_json(&["--json"]);
+    assert_eq!(
+        status["mcpServerDetails"],
+        json!([
+            { "name": "fx", "command": null, "args": ["--other", "a b"], "url": null, "cwd": "/w",
+              "env": ["TOKEN"], "headers": [], "overlaysGlobal": true },
+            { "name": "empty", "command": null, "args": [], "url": "", "cwd": null,
+              "env": [], "headers": [], "overlaysGlobal": false },
+        ])
+    );
+    assert!(!status.to_string().contains("secret-value"));
+    let (_, text) = d.trust(&[]);
+    assert!(
+        text.contains(
+            "  - MCP server fx: no command or url; args --other \"a b\"; in /w; environment TOKEN; \
+             applied on top of the global server of the same name\n"
+        ),
+        "{text}"
+    );
+    assert!(
+        text.contains("  - MCP server empty: no command or url; url \"\"\n"),
         "{text}"
     );
     assert!(!text.contains("secret-value"));

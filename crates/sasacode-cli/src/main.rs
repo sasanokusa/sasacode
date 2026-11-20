@@ -12,7 +12,7 @@ use sasacode_cli::env::{blank_keys, ensure_env_file, parse_env_file};
 use sasacode_cli::headless::{HeadlessOptions, OutputFormat, run_headless};
 use sasacode_cli::setup::{SetupOptions, read_prompt_file, setup};
 use sasacode_cli::stdin::read_piped_stdin;
-use sasacode_cli::trust::{ask_trust, assess_project, is_trusted, save_trust};
+use sasacode_cli::trust::{ask_trust, assess_project_with, is_trusted, save_trust};
 use sasacode_cli::{subcommands, tui};
 use sasacode_host::{builtin_providers, resolve_lang, set_lang, t};
 use sasacode_plugin_api::{PermissionMode, PermissionRules, hide_from_children};
@@ -218,7 +218,7 @@ async fn run(args: Vec<String>, cwd: String) -> anyhow::Result<i32> {
         .transpose()?;
     // One trust decision covers the parts of .sasacode/config.json that could run code or send
     // data elsewhere. Asked here, before anything from the project is used.
-    let project = assess_project(Path::new(&cwd))?;
+    let project = assess_project_with(Path::new(&cwd), values.string("model"))?;
     let mut trusted = values.flag("trust-project") || is_trusted(&cwd, &project);
     let interactive = print.is_none() && std::io::stdin().is_terminal() && std::io::stderr().is_terminal();
     if !trusted && interactive {

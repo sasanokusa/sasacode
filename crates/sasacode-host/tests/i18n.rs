@@ -171,9 +171,10 @@ fn the_tables_hold_every_ts_entry() {
     // judge model the project picks. Then the release's build provenance check (`sasacode update`):
     // seven English texts, and one for a release built from something that is not a commit. RustXNG
     // pinned to one release: one Japanese text, in the English table, and the Japanese for the usage
-    // of `web-search install` and for a release base that is not https.
+    // of `web-search install` and for a release base that is not https. Then the trust list for an
+    // MCP entry that starts nothing itself or lies on a global server: two English texts.
     assert_eq!(TO_EN.len(), 273 + 1 + 1);
-    assert_eq!(TO_JA.len(), 158 + 3 - 1 + 4 + 9 + 10 - 3 + 6 + 1 + 7 + 1 + 2);
+    assert_eq!(TO_JA.len(), 158 + 3 - 1 + 4 + 9 + 10 - 3 + 6 + 1 + 7 + 1 + 2 + 2);
 }
 
 #[test]

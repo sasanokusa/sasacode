@@ -36,7 +36,14 @@ fn read_trust(home: &Path) -> IndexMap<String, String> {
 }
 
 pub fn assess_project(cwd: &Path) -> anyhow::Result<ProjectTrust> {
-    Ok(assess_files(cwd, read_config_files(cwd)?))
+    assess_project_with(cwd, None)
+}
+
+/// [`assess_project`] for a run given the model `-m` named.
+pub fn assess_project_with(cwd: &Path, cli_model: Option<&str>) -> anyhow::Result<ProjectTrust> {
+    let mut files = read_config_files(cwd)?;
+    files.cli_model = cli_model.map(str::to_string);
+    Ok(assess_files(cwd, files))
 }
 
 /// [`assess_project`] with the config files already read.
@@ -45,7 +52,7 @@ pub fn assess_files(cwd: &Path, files: ConfigFiles) -> ProjectTrust {
         Ok(l) => l.elevated,
         Err(_) => Default::default(),
     };
-    let items = describe_elevated(&elevated);
+    let items = describe_elevated(&elevated, &files.global);
     let manifests: Vec<Value> = Vec::new();
     let digest = Sha256::digest(sasacode_ai::json::stringify(
         &json!({ "elevated": elevated, "manifests": manifests }),

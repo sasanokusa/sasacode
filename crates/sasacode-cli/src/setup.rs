@@ -21,7 +21,7 @@ use sasacode_plugin_api::hook;
 use sasacode_plugin_api::{Lang, SessionEndEvent, SessionEndReason, SessionStartEvent, UiBridge};
 
 use crate::catalog::{GetKey, ModelCatalog, ModelChoice, Providers, untold};
-use crate::config::{Config, ConfigFiles, DEFAULT_MAX_TURNS, Settings, load_config, sasacode_home};
+use crate::config::{Config, ConfigFiles, DEFAULT_MAX_TURNS, Settings, load_config, read_config_files, sasacode_home};
 use crate::json::{read_json, write_json};
 use crate::keys::resolve_api_key;
 
@@ -202,37 +202,64 @@ fn merge_provider(base: Option<&ProviderConfig>, over: &Value) -> ProviderConfig
     serde_json::from_value(v).unwrap_or_default()
 }
 
-/// Whether the user has a key or a login for provider `name`: its apiKeyEnv set, a key the keychain
-/// already gave this process, the ChatGPT login (openai-codex) or an `ant auth login` profile (anthropic).
-fn has_credentials(name: &str, cfg: Option<&ProviderConfig>) -> bool {
-    let env = cfg
-        .and_then(|c| c.api_key_env.as_deref())
-        .and_then(|v| std::env::var(v).ok())
-        .is_some_and(|v| !v.trim().is_empty());
-    env || crate::keys::cached_key(name)
-        || (name == "openai-codex" && sasacode_bundled::openai_codex::read_codex_auth().is_some())
-        || (name == "anthropic"
-            && crate::anthropic_profile::load(&crate::anthropic_profile::Env::process()).is_ok_and(|p| p.is_some()))
-}
-
-/// [`Resolve`] for a model the model itself names (a subagent's `model`): only on a provider the run
-/// already uses (`picked`: its model, models, judgeModel and the models plugin settings name) or one
-/// the user has a key or login for, so the conversation never goes to a provider the user did not
-/// choose. Checked before any request; the error says which providers can be used.
+/// [`Resolve`] for a model the model itself names (a subagent's `model`): only on a provider the
+/// user chose (`picked`, see [`chosen_providers`]), so the conversation never goes to a provider the
+/// user did not choose, however many keys they have set for other tools. Checked before any request;
+/// the error says which providers can be used.
 pub(crate) fn limited_resolve(resolve: Resolve, providers: Providers, picked: Vec<String>) -> Resolve {
     Arc::new(move |spec: &str| {
-        let list = providers.read().unwrap_or_else(|e| e.into_inner()).clone();
-        let usable = |name: &str| picked.iter().any(|p| p == name) || has_credentials(name, list.get(name));
         let name = crate::config::provider_of(spec);
-        if !usable(name) {
-            let names: Vec<&str> = list.keys().map(String::as_str).filter(|n| usable(n)).collect();
+        if !picked.iter().any(|p| p == name) {
+            let list = providers.read().unwrap_or_else(|e| e.into_inner());
+            let names: Vec<&str> = list
+                .keys()
+                .map(String::as_str)
+                .filter(|n| picked.iter().any(|p| p == n))
+                .collect();
             anyhow::bail!(
-                "\"{spec}\": {name} is not a provider this session uses or has a key for; use a model from one of: {}",
+                "\"{spec}\": {name} is not one of the providers you chose for this session (your config, -m, or the default model); use a model from one of: {}",
                 names.join(", ")
             );
         }
         resolve(spec)
     })
+}
+
+/// The providers the user chose: those their own (global) config names in `model`, `judgeModel`,
+/// `models`, `modelOverrides` and the models of plugin settings, the one `-m` named, and the default
+/// model's when neither `-m` nor the config names a model. What only the project's config names
+/// does not count, trusted or not, and nor does a key that is merely set.
+pub(crate) fn chosen_providers(global: &Config, cli_model: Option<&str>) -> Vec<String> {
+    let user = Settings::of(global);
+    let mut specs: Vec<String> = cli_model.map(str::to_string).into_iter().collect();
+    specs.extend(user.model.clone());
+    specs.extend(user.judge_model.clone());
+    specs.extend(user.models.clone().unwrap_or_default());
+    specs.extend(
+        user.model_overrides
+            .iter()
+            .flatten()
+            .map(|(k, _)| k.clone())
+            .filter(|k| k.contains('/')),
+    );
+    for plugin in user.plugins.iter() {
+        let models = plugin
+            .settings
+            .values()
+            .filter_map(|s| s.get("model")?.as_str().map(str::to_string));
+        specs.extend(models);
+    }
+    if cli_model.is_none() && user.model.is_none() {
+        specs.push(crate::config::user_default_model(global));
+    }
+    let mut names: Vec<String> = Vec::new();
+    for spec in &specs {
+        let name = crate::config::provider_of(spec);
+        if !names.iter().any(|n| n == name) {
+            names.push(name.to_string());
+        }
+    }
+    names
 }
 
 fn get_key(providers: &Providers) -> GetKey {
@@ -251,7 +278,13 @@ fn project_servers_start_in_project(config: &mut Config, project: &Config) {
     let Some(Value::Object(merged)) = config.get_mut("mcpServers") else {
         return;
     };
-    let launched = |s: &Value| s.get("command").is_some() || s.get("url").is_some();
+    // A non-empty command or url: an entry that only adjusts a global server (args, env, cwd, or an
+    // empty url) starts nothing of its own.
+    let launched = |s: &Value| {
+        ["command", "url"]
+            .iter()
+            .any(|k| s.get(k).and_then(Value::as_str).is_some_and(|v| !v.is_empty()))
+    };
     let names = project
         .get("mcpServers")
         .and_then(Value::as_object)
@@ -273,7 +306,12 @@ pub async fn setup(mut opts: SetupOptions) -> anyhow::Result<Arc<Harness>> {
         Some((f, w)) => (Some(f), w),
         None => (None, Vec::new()),
     };
-    let loaded = load_config(Path::new(&opts.cwd), trusted, files)?;
+    let mut files = match files {
+        Some(f) => f,
+        None => read_config_files(Path::new(&opts.cwd))?,
+    };
+    files.cli_model = opts.model.clone();
+    let loaded = load_config(Path::new(&opts.cwd), trusted, Some(files))?;
     let mut config = loaded.config;
     if trusted {
         project_servers_start_in_project(&mut config, &loaded.elevated);
@@ -396,19 +434,7 @@ pub async fn setup(mut opts: SetupOptions) -> anyhow::Result<Arc<Harness>> {
     agent_opts.permissions = Some(Arc::new(PermissionPolicy::new(mode, &permissions.rules)?));
     let key = get_key(&providers);
     agent_opts.get_api_key = Some(key.clone());
-    let picked: Vec<String> = [Some(model_spec.clone()), settings.judge_model.clone()]
-        .into_iter()
-        .flatten()
-        .chain(settings.models.clone().unwrap_or_default())
-        .chain(settings.plugins.iter().flat_map(|p| {
-            let models = p
-                .settings
-                .values()
-                .filter_map(|s| s.get("model")?.as_str().map(str::to_string));
-            models.collect::<Vec<_>>()
-        }))
-        .map(|s| crate::config::provider_of(&s).to_string())
-        .collect();
+    let picked = chosen_providers(&loaded.global, opts.model.as_deref());
     agent_opts.resolve_model = Some({
         let resolve = limited_resolve(resolve.clone(), providers.clone(), picked);
         Arc::new(move |s: &str| resolve(s))
