@@ -805,9 +805,12 @@ fn approval_card<'a>(app: &'a App, approval: &'a Approval) -> El<'a> {
         _ => code_block(serde_json::to_string_pretty(&approval.args).unwrap_or_default()).into(),
     };
 
+    // A rule of the tool's name alone allows any call of it (an MCP tool's, one with no path).
+    let whole_tool = approval.rules.iter().any(|r| !r.contains('('));
     let always = match kind {
         Kind::Bash => s.always_cmd,
         Kind::Edit | Kind::Write => s.always_file,
+        _ if whole_tool => s.w().always_tool,
         _ => s.always_call,
     };
     // Each on a line of its own when the card is narrow, never cut.
@@ -819,6 +822,23 @@ fn approval_card<'a>(app: &'a App, approval: &'a Approval) -> El<'a> {
     .spacing(8)
     .align_y(Alignment::Center)
     .wrap();
+    // What "always" keeps for the conversation's later runs, as it is given to them (`--allow`).
+    let rule: Option<El<'a>> = (!approval.rules.is_empty()).then(|| {
+        let mut line = row![
+            text(s.w().appr_rule).size(12).color(t.fg_3),
+            text(approval.rules.join(", "))
+                .size(12)
+                .font(mono())
+                .color(t.fg_2)
+                .wrapping(text::Wrapping::WordOrGlyph),
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center);
+        if whole_tool {
+            line = line.push(text(s.w().appr_rule_any).size(12).color(t.warn));
+        }
+        line.wrap().into()
+    });
     let label = |said: &'a str| text(said).size(13).wrapping(text::Wrapping::None);
     let mut buttons = row![
         button(label(s.allow))
@@ -846,27 +866,28 @@ fn approval_card<'a>(app: &'a App, approval: &'a Approval) -> El<'a> {
     }
     let buttons = buttons.wrap();
 
-    container(
-        column![
-            head,
-            // Scrolls inside the card, so the answers stay in reach under a long call.
-            container(
-                scrollable(body)
-                    .direction(scrollable::Direction::Vertical(
-                        scrollable::Scrollbar::new().width(6).scroller_width(6).margin(1)
-                    ))
-                    .style(t.scroll())
-            )
-            .max_height(260),
-            reason,
-            buttons
-        ]
-        .spacing(10),
-    )
-    .width(Length::Fill)
-    .padding(14)
-    .style(t.floating(t.raised, t.warn_line))
-    .into()
+    let mut card = column![
+        head,
+        // Scrolls inside the card, so the answers stay in reach under a long call.
+        container(
+            scrollable(body)
+                .direction(scrollable::Direction::Vertical(
+                    scrollable::Scrollbar::new().width(6).scroller_width(6).margin(1)
+                ))
+                .style(t.scroll())
+        )
+        .max_height(260),
+        reason,
+    ]
+    .spacing(10);
+    if let Some(rule) = rule {
+        card = card.push(rule);
+    }
+    container(card.push(buttons))
+        .width(Length::Fill)
+        .padding(14)
+        .style(t.floating(t.raised, t.warn_line))
+        .into()
 }
 
 fn composer(app: &App) -> El<'_> {

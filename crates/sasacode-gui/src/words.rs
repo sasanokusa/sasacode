@@ -390,6 +390,10 @@ words! {
     args_how: "JSONのまま直します。直した呼び出しも、拒否のルールとプラグインの確認を受け直します", "Edit the JSON. The edited call is checked again against the deny rules and the plugins";
     args_send: "この引数で許可", "Allow with these";
     args_bad: "引数はJSONのオブジェクトで書いてください（{error}）", "The arguments must be a JSON object ({error})";
+    /// "Always" on the approval card: the rule it adds, and what a rule of a tool's name alone allows.
+    appr_rule: "足すルール：", "Rule it adds: ";
+    appr_rule_any: "（このツールは、どんな引数でも許可されます）", "(this tool is allowed with any arguments)";
+    always_tool: "この会話ではこのツールを許可", "Allow this tool in this conversation";
     judged_allow: "判定役が許可", "The judge allowed it";
     judged_ask: "判定役が確認に回した", "The judge asked you";
     allowed_head: "この会話で常に許可したもの", "Always allowed in this conversation";

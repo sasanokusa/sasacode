@@ -4178,6 +4178,59 @@ fn a_press_on_a_panels_words_keeps_it_open_and_one_beside_it_closes_it() {
     assert_eq!(app.overlay, None);
 }
 
+/// The waiting approval's call made a call of `tool`, whose "always" adds `rules`.
+fn waiting_on(app: &mut App, id: &str, tool: &str, rules: &[&str]) {
+    let mut call = None;
+    for step in app
+        .chat
+        .transcript
+        .exchanges
+        .iter_mut()
+        .flat_map(|e| e.steps.iter_mut())
+    {
+        if let Step::Approval(a) = step
+            && a.id == id
+        {
+            a.tool = tool.into();
+            a.rules = rules.iter().map(|r| r.to_string()).collect();
+            call = Some(a.call_id.clone());
+        }
+    }
+    for step in app
+        .chat
+        .transcript
+        .exchanges
+        .iter_mut()
+        .flat_map(|e| e.steps.iter_mut())
+    {
+        if let Step::Tool(t) = step
+            && Some(&t.id) == call.as_ref()
+        {
+            t.name = tool.into();
+        }
+    }
+}
+
+#[test]
+fn the_approval_card_shows_the_rule_always_adds_and_when_it_is_the_whole_tool() {
+    let (mut app, _written, id) = waiting();
+    let (s, w) = (app.s, crate::words::JA);
+    waiting_on(&mut app, &id, "bash", &["bash(echo one)"]);
+    assert!(says(&app, w.appr_rule) && says(&app, "bash(echo one)") && says(&app, s.always_cmd));
+    assert!(!says(&app, w.appr_rule_any));
+    // A tool with nothing to match: its name alone, which any arguments pass.
+    waiting_on(
+        &mut app,
+        &id,
+        "mcp__github__create_issue",
+        &["mcp__github__create_issue"],
+    );
+    assert!(says(&app, "mcp__github__create_issue") && says(&app, w.appr_rule_any) && says(&app, w.always_tool));
+    assert!(!says(&app, s.always_call));
+    // The label says how long it lasts: the conversation, which later runs are given it in.
+    assert!(s.always_cmd.contains("この会話") && s.always_call.contains("この会話"));
+}
+
 #[test]
 fn git_is_not_run_in_a_folder_until_the_cli_says_it_is_trusted() {
     let mut app = window("ja");
