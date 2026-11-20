@@ -489,3 +489,30 @@ async fn a_link_before_a_dotdot_cannot_move_a_call_away_from_the_path_judged() {
         Allow
     );
 }
+
+/// Where the file system folds case, a deny or ask rule also takes letters that fold to another
+/// (`ſ` to `s`, `ς` to `σ`) as that one; an allow rule matches no more than in lower case.
+#[test]
+fn deny_and_ask_rules_fold_letters_that_fold_to_another_allow_rules_do_not() {
+    let tmp = tempfile::Builder::new().prefix("sasacode-perm-").tempdir().unwrap();
+    let dir = tmp.path().to_string_lossy().to_string();
+    std::fs::create_dir(tmp.path().join("secrets")).unwrap();
+    let folds = tmp.path().join("SECRETS").exists();
+    let rules = json!({ "deny": ["read(secrets/**)"], "ask": ["edit(σ/**)"], "allow": ["read(docs/**)"] });
+    let p = policy(M::Auto, rules);
+    let check = |tool: ToolRef, path: &str| d(&p, &call(tool, path, &dir));
+    let either = |yes: bool, no: Decision| if yes { Deny } else { no };
+    assert_eq!(check(read_tool(), "secrets/key"), Deny);
+    assert_eq!(check(read_tool(), "ſecrets/key"), either(folds, Allow));
+    assert_eq!(check(read_tool(), "ſECRETS/key"), either(folds, Allow));
+    assert_eq!(check(edit_tool(), "ς/x"), if folds { Ask } else { Allow });
+    assert_eq!(check(edit_tool(), "Σ/x"), if folds { Ask } else { Allow });
+    // An allow rule is no wider than before: `ſ` is not `s` to it.
+    let ask = policy(M::Ask, json!({ "allow": ["read(docs/**)", "read(ſrc/**)"] }));
+    let check = |path: &str| d(&ask, &call(read_tool(), path, &dir));
+    assert_eq!(check("docs/a.md"), Allow);
+    assert_eq!(check("DOCS/a.md"), if folds { Allow } else { Ask });
+    assert_eq!(check("docſ/a.md"), Ask);
+    assert_eq!(check("ſrc/a.rs"), Allow);
+    assert_eq!(check("src/a.rs"), Ask);
+}

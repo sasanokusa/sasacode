@@ -128,8 +128,7 @@ impl PermissionPolicy {
         if let Some(a) = rules.ask.iter().find(|r| rule_matches(r, c, false)) {
             return v(Decision::Ask, format!("rule ask: {}", a.source), VerdictSource::Rule);
         }
-        // Where a path really goes cannot be told (a link loop, no permission), or a tool opening it as given
-        // would reach another place (the OS takes a ".." after a link, the check before): let the user decide.
+        // Where a path goes cannot be told (a link loop), or differs opened as given (a ".." after a link): ask.
         let cwd = std::path::Path::new(&c.cwd);
         if let Some(unclear) = c.tool.paths(&c.args, cwd).unwrap_or_default().into_iter().find(|p| {
             let real = try_real_path(&paths::resolve2(&c.cwd, p));
@@ -402,9 +401,9 @@ fn rule_matches(rule: &ParsedRule, c: &PermissionCheck, for_allow: bool) -> bool
     // absolute pattern is the user's own path: its fixed part is resolved (/var → /private/var).
     let pattern = path_pattern(pattern, &c.cwd);
     // .ENV is .env where the file system folds case (macOS by default): compared as it would be, a
-    // deny rule could be spelled past (#98).
+    // deny rule could be spelled past (#98). Deny and ask rules fold wider than allow rules (glob_path).
     let real_cwd = try_real_path(&c.cwd).unwrap_or_else(|| c.cwd.clone());
-    let fold = folds_case(&real_cwd);
+    let fold = folds_case(&real_cwd).then_some(!for_allow);
     let mut sources: Vec<String> = if paths::is_absolute(&pattern) {
         [pattern.clone(), real_pattern(&pattern)]
             .iter()
@@ -452,7 +451,7 @@ fn path_pattern(pattern: &str, cwd: &str) -> String {
 }
 
 /// A relative pattern under `dir`, which is a literal path: a `[`, `{` or `+(` in it is not a wildcard.
-fn anchored(dir: &str, pattern: &str, fold: bool) -> String {
+fn anchored(dir: &str, pattern: &str, fold: Option<bool>) -> String {
     // Normalized as resolve(dir, pattern) would, a ".." anywhere included (#50).
     let mut dir = dir.to_string();
     let mut rest: Vec<&str> = Vec::new();
@@ -480,12 +479,23 @@ fn anchored(dir: &str, pattern: &str, fold: bool) -> String {
     }
 }
 
-/// A path or glob as compared, as the file system sees names: on Windows with `/`; in one case
-/// where it folds case; NFC (macOS takes NFD as the same).
-fn glob_path(p: &str, fold: bool) -> String {
-    let s = slashes(p);
-    let s = if fold { s.to_lowercase() } else { s };
+/// A path or glob as compared, as the file system sees names: on Windows with `/`; NFC (macOS takes NFD as the
+/// same); where it folds case (`Some`) lower case, and when wide `ſ` as `s` and the like (fold_char).
+fn glob_path(p: &str, fold: Option<bool>) -> String {
+    let (s, wide) = (slashes(p), fold == Some(true));
+    let s = if fold.is_some() { s.to_lowercase() } else { s };
+    let s: String = s.chars().map(|c| fold_char(c, wide)).collect();
     s.nfc().collect()
+}
+
+/// A letter as its upper case's lower case, where both are one letter: `ſ` is `s`, `ς` is `σ`.
+fn fold_char(c: char, wide: bool) -> char {
+    let low: Vec<char> = c.to_uppercase().flat_map(char::to_lowercase).collect();
+    if wide && low.len() == 1 && c.to_uppercase().len() == 1 {
+        low[0]
+    } else {
+        c
+    }
 }
 
 /// Does the file system at `dir` take a name in another case for the same file (Windows; macOS's
