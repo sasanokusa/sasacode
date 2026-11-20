@@ -71,11 +71,16 @@ impl Output {
         });
         Output { tx }
     }
+    /// What goes out hides the values sasacode keeps out of its records (keys, tokens, headers).
     pub fn stdout(&self, s: impl Into<String>) {
-        let _ = self.tx.send(Out::Stdout(s.into()));
+        let _ = self
+            .tx
+            .send(Out::Stdout(sasacode_plugin_api::redact_secrets(&s.into()).into_owned()));
     }
     pub fn stderr(&self, s: impl Into<String>) {
-        let _ = self.tx.send(Out::Stderr(s.into()));
+        let _ = self
+            .tx
+            .send(Out::Stderr(sasacode_plugin_api::redact_secrets(&s.into()).into_owned()));
     }
     pub async fn flushed(&self) {
         let (tx, rx) = tokio::sync::oneshot::channel();

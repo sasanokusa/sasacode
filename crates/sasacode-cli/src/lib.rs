@@ -15,6 +15,7 @@ pub mod json;
 pub mod keys;
 pub mod list_models;
 pub mod listings;
+pub mod redact;
 pub mod setup;
 pub mod stdin;
 pub mod subcommands;

@@ -230,6 +230,7 @@ pub async fn setup(mut opts: SetupOptions) -> anyhow::Result<Arc<Harness>> {
             providers.insert(name.clone(), merged);
         }
     }
+    crate::redact::hide_configured(&providers, &config);
     let providers: Providers = Arc::new(RwLock::new(providers));
     // Custom endpoints configured with only a URL: detect OpenAI- or Anthropic-style (cached).
     {

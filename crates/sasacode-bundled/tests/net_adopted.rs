@@ -172,6 +172,56 @@ async fn background_sessions_a_job_two_sessions_watched_is_reported_once_and_bg_
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn background_sessions_hide_the_values_sasacode_hides_in_the_notice_in_bg_output_and_in_a_finished_log() {
+    let _l = lang(Lang::Ja).await;
+    sasacode_plugin_api::hide_secrets(["bg-job-secret-0123456789"]);
+    let root = temp_dir("sasacode-adopted-");
+    let home = root.path().join("home");
+    let b = fake(
+        background_sessions::plugin,
+        root.path(),
+        bg_settings(&home, 50),
+        Entries::default(),
+    )
+    .await;
+    // Still running: the log on disk is the job's own, what the model reads is not.
+    let running = b
+        .exec(
+            "bg_start",
+            json!({ "command": "echo token=bg-job-$(echo secret)-0123456789; sleep 30" }),
+        )
+        .await;
+    let log = detail(&running, "logPath");
+    until(750, 20, || {
+        std::fs::read_to_string(&log).is_ok_and(|t| t.contains("token="))
+    })
+    .await;
+    let out = first_text(&b.exec("bg_output", json!({ "id": detail(&running, "id") })).await);
+    assert!(
+        out.contains("token=[REDACTED]") && !out.contains("bg-job-secret"),
+        "{out}"
+    );
+    // Finished: the notice quotes the tail, and the log itself is rewritten.
+    let done = b
+        .exec(
+            "bg_start",
+            json!({ "command": "echo done-bg-job-$(echo secret)-0123456789; exit 0" }),
+        )
+        .await;
+    until(750, 20, || !b.injected().is_empty()).await;
+    let notice = b.injected().first().cloned().unwrap_or_default();
+    assert!(
+        notice.contains("done-[REDACTED]") && !notice.contains("bg-job-secret"),
+        "{notice}"
+    );
+    let finished = std::fs::read_to_string(detail(&done, "logPath")).unwrap_or_default();
+    assert_eq!(finished, "done-[REDACTED]\n");
+    b.run_command("bg", &format!("kill {}", detail(&running, "id")))
+        .await
+        .unwrap_or_else(|e| panic!("{e:#}"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn auto_reconnect_after_an_error_while_the_endpoint_is_down_it_waits_and_resumes_the_work_once_it_answers() {
     let _l = lang(Lang::Ja).await;
     let root = temp_dir("sasacode-adopted-");

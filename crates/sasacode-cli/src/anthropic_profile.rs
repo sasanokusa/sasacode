@@ -243,6 +243,12 @@ impl Profile {
             .get("access_token")
             .filter(|t| js_truthy(t))
             .ok_or_else(|| anyhow!("Credentials file at {} must include 'access_token'", path.display()))?;
+        sasacode_plugin_api::hide_secrets(
+            ["access_token", "refresh_token"]
+                .iter()
+                .filter_map(|k| creds.get(k))
+                .map(text_of),
+        );
         let expires_at = creds.get("expires_at").filter(|v| !v.is_null());
         if !force && expires_at.is_none_or(|at| now_secs() < number(at) - REFRESH_MARGIN_SECS) {
             return Ok(text_of(access));
@@ -287,6 +293,7 @@ impl Profile {
             .filter(|t| js_truthy(t))
             .unwrap_or(refresh_token);
         out.insert("refresh_token".into(), rotated.clone());
+        sasacode_plugin_api::hide_secrets([text_of(&access), text_of(rotated)]);
         write_atomic(path, &Value::Object(out))?;
         Ok(text_of(&access))
     }

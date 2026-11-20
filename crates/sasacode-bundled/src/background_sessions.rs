@@ -41,7 +41,7 @@ use sasacode_ai::json::{js_number, stringify_pretty};
 use sasacode_host::t;
 use sasacode_plugin_api::{
     Command, CommandContext, InjectWhen, NotifyLevel, PermissionRules, PluginApi, SelectOption, ToolDef, ToolKind,
-    ToolResult, apply_child_env, detach_session, error_result, hook, sasacode_home,
+    ToolResult, apply_child_env, detach_session, error_result, hook, redact_secrets, sasacode_home,
 };
 use sasacode_tools::{KillSignal, bash_path, kill_tree};
 
@@ -281,7 +281,21 @@ fn tail_of(path: &Path, lines: usize) -> String {
     if ls.last() == Some(&"") {
         ls.pop();
     }
-    ls[ls.len().saturating_sub(lines)..].join("\n")
+    redact_secrets(&ls[ls.len().saturating_sub(lines)..].join("\n")).into_owned()
+}
+
+/// A finished job's log with the values sasacode hides replaced. The job writes its log by itself,
+/// so nothing can filter it as it is written; what the model is shown is filtered as it is read.
+fn redact_log(path: &Path) {
+    if std::fs::metadata(path).is_ok_and(|m| m.len() <= MAX_LOG_BYTES)
+        && let Ok(bytes) = std::fs::read(path)
+    {
+        let text = String::from_utf8_lossy(&bytes);
+        let redacted = redact_secrets(&text);
+        if redacted != text {
+            let _ = std::fs::write(path, redacted.as_bytes());
+        }
+    }
 }
 
 /// Whether a process exists (`process.kill(pid, 0)`, EPERM counting as alive).
@@ -547,6 +561,7 @@ impl Bg {
         if job.meta.spawn_error.as_deref().is_some_and(|e| !e.is_empty()) {
             job.meta.exit_code = Some(None);
         }
+        redact_log(&job.log_path);
         self.save(job); // the result is on disk even if nobody gets to notify
         self.notify_once(job)
     }
@@ -1005,7 +1020,7 @@ impl Bg {
             }
         }
         let text = std::fs::read(&path)
-            .map(|b| String::from_utf8_lossy(&b).into_owned())
+            .map(|b| redact_secrets(&String::from_utf8_lossy(&b)).into_owned())
             .unwrap_or_default();
         let mut all: Vec<&str> = text.split('\n').collect();
         if all.last() == Some(&"") {
