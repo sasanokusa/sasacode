@@ -19,7 +19,7 @@ use unicode_normalization::UnicodeNormalization;
 
 use sasacode_plugin_api::{PluginApi, ToolDef, ToolKind, ToolResult, error_result};
 
-use crate::net_guard::{Check, SYSTEM, get_following};
+use crate::net_guard::{Check, Limit, SYSTEM, get_following};
 use crate::net_util::{collapse_space, js_trim, utf16_len, utf16_slice};
 
 const DEFAULT_MAX: usize = 50_000;
@@ -632,7 +632,7 @@ async fn exists(url: &str, signal: &CancellationToken) -> bool {
         &SYSTEM,
         &headers,
         signal,
-        Duration::from_secs(5),
+        Limit::Total(Duration::from_secs(5)),
     )
     .await
     {
@@ -673,23 +673,14 @@ async fn fetch_page(
         None => "start from a page you have fetched and follow its links".to_string(),
     };
     let deadline = Duration::from_secs(30);
+    let limit = Limit::Total(deadline);
     let headers = [
         ("user-agent", USER_AGENT),
         ("accept", "text/html,text/plain,application/json,*/*"),
     ];
     // The URL the user was asked about is fetched as it is (a dev server on this machine is fine); each
     // redirect is a new place, judged and connected to the address that was judged.
-    let followed = match get_following(
-        url,
-        Check::Redirects,
-        MAX_REDIRECTS,
-        &SYSTEM,
-        &headers,
-        &signal,
-        deadline,
-    )
-    .await
-    {
+    let followed = match get_following(url, Check::Redirects, MAX_REDIRECTS, &SYSTEM, &headers, &signal, limit).await {
         Ok(followed) => followed,
         Err(e) => {
             let hint = if signal.is_cancelled() || e.refused {

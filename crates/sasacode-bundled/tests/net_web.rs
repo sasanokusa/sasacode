@@ -382,6 +382,7 @@ async fn web_fetch_reads_the_url_it_was_given_on_this_machine_but_stops_at_a_red
         async move {
             match uri.path() {
                 "/start" => (StatusCode::FOUND, [(header::LOCATION, target)]).into_response(),
+                "/login-first" => (StatusCode::FOUND, [(header::LOCATION, "/plain".to_string())]).into_response(),
                 _ => ([(header::CONTENT_TYPE, "text/plain")], "the page you asked for").into_response(),
             }
         }
@@ -394,6 +395,16 @@ async fn web_fetch_reads_the_url_it_was_given_on_this_machine_but_stops_at_a_red
             .await,
     );
     assert!(plain.contains("the page you asked for"), "{plain}");
+    // A redirect within the same origin (a dev server sending you to its login page) is followed.
+    let same = first_text(
+        &st.exec("web_fetch", json!({ "url": format!("{}/login-first", outer.origin()) }))
+            .await,
+    );
+    assert!(
+        same.contains(&format!("(redirected from {}/login-first)", outer.origin()))
+            && same.contains("the page you asked for"),
+        "{same}"
+    );
     // Its redirect to another internal address is not followed, and the error says so.
     let refused = st
         .exec("web_fetch", json!({ "url": format!("{}/start", outer.origin()) }))

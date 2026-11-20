@@ -20,7 +20,7 @@ use sasacode_plugin_api::{
 };
 
 pub use crate::net_guard::private_address;
-use crate::net_guard::{Check, SYSTEM, get_following};
+use crate::net_guard::{Check, Limit, SYSTEM, get_following};
 use crate::net_util::{js_num_str, js_trim, js_words, setting_number, setting_str, utf16_len, utf16_prefix};
 use crate::rustxng_install::{InstallOptions, RUSTXNG_RELEASES, install_rustxng, managed_rustxng};
 use crate::web_fetch::{USER_AGENT, content_type, html_to_text, read_capped, readable, send_within};
@@ -151,10 +151,18 @@ async fn page_text(url: &str, signal: &CancellationToken, any_host: bool) -> Res
     let first = url::Url::parse(url).map_err(|_| "Invalid URL".to_string())?;
     let check = if any_host { Check::Never } else { Check::All };
     let headers = [("user-agent", USER_AGENT), ("accept", "text/html,text/plain;q=0.9")];
-    // The 15 seconds run from the first request's start over the body too.
-    let followed = get_following(first, check, 5, &SYSTEM, &headers, signal, Duration::from_secs(15))
-        .await
-        .map_err(|e| e.message)?;
+    // The 15 seconds run from the last request's start over the body too.
+    let followed = get_following(
+        first,
+        check,
+        5,
+        &SYSTEM,
+        &headers,
+        signal,
+        Limit::PerHop(Duration::from_secs(15)),
+    )
+    .await
+    .map_err(|e| e.message)?;
     let (res, next, started) = (followed.res, followed.url, followed.started);
     let type_ = content_type(&res);
     if !res.status().is_success() {

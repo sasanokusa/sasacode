@@ -131,6 +131,23 @@ pub(crate) enum Check {
     Never,
 }
 
+/// How long a GET may take.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Limit {
+    /// All hops together, from the first request's start.
+    Total(Duration),
+    /// Each hop from its own start; the caller's body read runs on the last hop's clock.
+    PerHop(Duration),
+}
+
+impl Limit {
+    fn length(self) -> Duration {
+        match self {
+            Limit::Total(d) | Limit::PerHop(d) => d,
+        }
+    }
+}
+
 /// Why a GET did not complete.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct GetError {
@@ -154,7 +171,8 @@ pub(crate) struct Followed {
     pub url: url::Url,
     /// The URL asked for first, when the answer came after redirects.
     pub redirected_from: Option<url::Url>,
-    /// When the first request started: the caller's body read runs on the same clock.
+    /// When the request that answered started (the first one, under [`Limit::Total`]): the caller's
+    /// body read runs on the same clock.
     pub started: Instant,
 }
 
@@ -201,7 +219,13 @@ fn pinned_client(url: &url::Url, ips: &[IpAddr]) -> Result<reqwest::Client, Stri
 
 /// GET `first` and follow redirects (at most `max_redirects`), judging hops as `check` says and
 /// connecting each judged hop to the address that was judged. All of it, the name resolution
-/// included, runs under `signal` and one `timeout` from the first request's start.
+/// included, runs under `signal` and `limit`.
+///
+/// Where a redirect stays on the first URL's origin (scheme, host and port), `Check::Redirects` does not
+/// judge it: it is the place the first URL already reached, and nothing new can be seen there.
+///
+/// Behind an HTTP proxy (reqwest reads the environment's) the proxy resolves the name and makes the
+/// connection, so the pinning here does not apply; the check of the resolved address still runs.
 pub(crate) async fn get_following(
     first: url::Url,
     check: Check,
@@ -209,13 +233,17 @@ pub(crate) async fn get_following(
     route: &Route,
     headers: &[(&str, &str)],
     signal: &CancellationToken,
-    timeout: Duration,
+    limit: Limit,
 ) -> Result<Followed, GetError> {
-    let started = Instant::now();
-    let deadline = started + timeout;
+    let mut started = Instant::now();
+    let mut deadline = started + limit.length();
     let mut next = first.clone();
     let mut hops = 0;
     loop {
+        if hops > 0 && matches!(limit, Limit::PerHop(_)) {
+            started = Instant::now();
+            deadline = started + limit.length();
+        }
         let refused = |why: String| GetError {
             message: if hops == 0 {
                 why
@@ -229,7 +257,7 @@ pub(crate) async fn get_following(
         }
         let judged = match check {
             Check::All => true,
-            Check::Redirects => hops > 0,
+            Check::Redirects => hops > 0 && next.origin() != first.origin(),
             Check::Never => false,
         };
         let client = if judged {
@@ -570,7 +598,16 @@ mod tests {
 
     async fn get(first: &str, check: Check, max: usize, route: &Route) -> Result<Answer, GetError> {
         let signal = CancellationToken::new();
-        let followed = get_following(parse(first), check, max, route, &[], &signal, Duration::from_secs(10)).await?;
+        let followed = get_following(
+            parse(first),
+            check,
+            max,
+            route,
+            &[],
+            &signal,
+            Limit::Total(Duration::from_secs(10)),
+        )
+        .await?;
         let (url, from) = (
             followed.url.to_string(),
             followed.redirected_from.map(|u| u.to_string()),
@@ -685,6 +722,41 @@ mod tests {
             .await
             .expect("fetched");
         assert_eq!(answer.text, format!("200 ok:{}/in", target.port));
+    }
+
+    #[tokio::test]
+    async fn a_redirect_that_stays_on_the_first_origin_is_not_judged_but_any_other_origin_is() {
+        let other = listen(vec![]).await;
+        let site = listen(vec![
+            ("/", "/login".into()),
+            ("/other-port", format!("http://127.0.0.1:{}/x", other.port)),
+            ("/other-host", format!("http://localhost:{}/x", other.port)),
+        ])
+        .await;
+        let base = format!("http://127.0.0.1:{}", site.port);
+        let answer = get(&format!("{base}/"), Check::Redirects, 10, &SYSTEM)
+            .await
+            .expect("fetched");
+        assert_eq!(answer.text, format!("200 ok:{}/login", site.port));
+        assert_eq!(answer.from, Some(format!("{base}/")));
+        // Another port, or another name for this machine, is another origin: judged, refused.
+        for path in ["/other-port", "/other-host"] {
+            let err = get(&format!("{base}{path}"), Check::Redirects, 10, &SYSTEM)
+                .await
+                .err()
+                .unwrap_or_else(|| panic!("{path} was fetched"));
+            assert!(
+                err.refused && err.message.ends_with("refused: not a public address"),
+                "{path}: {err:?}"
+            );
+        }
+        assert_eq!(other.hits(), 0);
+        // Judged from the first URL on, nothing is the same origin as an approved one.
+        let err = get(&format!("{base}/"), Check::All, 10, &SYSTEM)
+            .await
+            .err()
+            .expect("refused");
+        assert_eq!(err.message, "not a public address");
     }
 
     #[tokio::test]
