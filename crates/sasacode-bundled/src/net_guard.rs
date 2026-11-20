@@ -255,10 +255,12 @@ async fn pin_unjudged(url: &url::Url, route: &Route) -> Unjudged {
 }
 
 /// The client that connects `url`'s name to the address a response came from, when that address is one
-/// the name resolved to here. Behind a proxy the address is the proxy's, not one of those: then there
-/// is no such client and a redirect to the same origin is judged.
+/// the name resolved to here, on the URL's own port. Behind a proxy the address is the proxy's (its
+/// port, or its address, is not the URL's): then there is no such client and a redirect to the same
+/// origin is judged.
 fn client_for_reached(url: &url::Url, resolved: &[IpAddr], reached: Option<SocketAddr>) -> Option<reqwest::Client> {
-    let reached = reached?.ip().to_canonical();
+    let reached = reached.filter(|r| url.port_or_known_default() == Some(r.port()))?;
+    let reached = reached.ip().to_canonical();
     resolved
         .iter()
         .any(|ip| ip.to_canonical() == reached)
@@ -875,7 +877,7 @@ mod tests {
     fn the_address_a_response_came_from_is_kept_only_when_the_name_resolved_to_it() {
         let url = parse("http://name.test:8080/");
         let resolved = [IpAddr::V4(Ipv4Addr::LOCALHOST), IpAddr::V6(Ipv6Addr::LOCALHOST)];
-        let at = |ip: IpAddr| Some(SocketAddr::new(ip, 3128));
+        let at = |ip: IpAddr| Some(SocketAddr::new(ip, 8080));
         // One of the answers: the redirect is connected to it, unjudged.
         assert!(client_for_reached(&url, &resolved, at(IpAddr::V4(Ipv4Addr::LOCALHOST))).is_some());
         assert!(client_for_reached(&url, &resolved, at(IpAddr::V6(Ipv6Addr::LOCALHOST))).is_some());
@@ -885,6 +887,14 @@ mod tests {
         assert!(client_for_reached(&url, &resolved, at(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 2)))).is_none());
         assert!(client_for_reached(&url, &resolved, None).is_none());
         assert!(client_for_reached(&url, &[], at(IpAddr::V4(Ipv4Addr::LOCALHOST))).is_none());
+        // One of the answers, but on another port (a proxy on the same machine): judged instead.
+        let proxy = Some(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 3128));
+        assert!(client_for_reached(&url, &resolved, proxy).is_none());
+        // The scheme's own port when the URL names none.
+        let plain = parse("http://name.test/");
+        let on = |port| Some(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port));
+        assert!(client_for_reached(&plain, &resolved, on(80)).is_some());
+        assert!(client_for_reached(&plain, &resolved, on(3128)).is_none());
     }
 
     #[tokio::test]
