@@ -271,6 +271,21 @@ fn sidecar_dir() -> std::path::PathBuf {
     }
 }
 
+/// A configured `command` that is a path, as the absolute path to start it by: the sidecar runs in
+/// another directory, where a relative path would not be found. A relative path is looked up from
+/// `from` (the directory the process is in) and is not taken when it leads into the project.
+fn configured_path(configured: &str, from: Option<&Path>, project: &ProjectRoot) -> Option<String> {
+    let path = Path::new(configured);
+    if path.is_absolute() {
+        return path.exists().then(|| configured.to_string());
+    }
+    let found = from?.join(path);
+    if !found.exists() {
+        return None;
+    }
+    project.as_found(found).map(|p| p.display().to_string())
+}
+
 /// The plugin's settings and what it found, shared by its tool, command and hook.
 struct WebSearch {
     api: PluginApi,
@@ -303,7 +318,7 @@ impl WebSearch {
         if let Some(configured) = &self.configured {
             // A path is the user's own say; a bare name is looked up as below.
             if configured.contains(['/', '\\']) {
-                return Path::new(configured).exists().then(|| configured.clone());
+                return configured_path(configured, std::env::current_dir().ok().as_deref(), &project);
             }
             return project.find(configured).map(|p| p.display().to_string());
         }
@@ -676,4 +691,33 @@ pub fn plugin(api: PluginApi) -> BoxFuture<'static, anyhow::Result<()>> {
 /// [`format_results`] of a plain JSON answer, for callers holding the server's JSON.
 pub fn format_json(query: &str, data: &Value) -> String {
     format_results(query, &SearxResponse::from_value(data))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_configured_relative_path_is_started_by_its_absolute_path_unless_it_leads_into_the_project() {
+        let dir = tempfile::tempdir().expect("dir");
+        let (here, project) = (dir.path().join("here"), dir.path().join("project"));
+        for d in [here.join("bin"), project.join("bin")] {
+            std::fs::create_dir_all(d).expect("dir");
+        }
+        for f in [here.join("bin/tool"), project.join("bin/tool")] {
+            std::fs::write(f, "").expect("file");
+        }
+        let root = ProjectRoot::new(&project);
+        let found = configured_path("bin/tool", Some(&here), &root).expect("found");
+        assert!(Path::new(&found).is_absolute(), "{found}");
+        assert!(Path::new(&found).ends_with("here/bin/tool"), "{found}");
+        // Nothing there, nothing to start.
+        assert_eq!(configured_path("bin/missing", Some(&here), &root), None);
+        assert_eq!(configured_path("bin/tool", None, &root), None);
+        // Looked up from inside the project, it is not taken.
+        assert_eq!(configured_path("bin/tool", Some(&project), &root), None);
+        // An absolute path is the user's own say, as it was written.
+        let absolute = here.join("bin/tool").display().to_string();
+        assert_eq!(configured_path(&absolute, Some(&project), &root), Some(absolute));
+    }
 }

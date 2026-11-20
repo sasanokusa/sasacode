@@ -1209,6 +1209,22 @@ fn start_dir(args: &sasacode_ai::JsonObject, cwd: &Path) -> Option<PathBuf> {
     Some(PathBuf::from(sasacode_tools::util::resolve_path(named, cwd)))
 }
 
+/// What the permission rules see of a `bg_start`: the command, and the directory when it is not the
+/// session's own. "Always allow" makes its rule from this, so a command allowed here is not allowed
+/// in another directory.
+fn start_target(args: &sasacode_ai::JsonObject, session_cwd: &Path) -> String {
+    let command = args.get("command").and_then(Value::as_str).unwrap_or("").to_string();
+    match start_dir(args, session_cwd) {
+        Some(dir) if !same_dir(&dir, session_cwd) => format!("{command} (in {})", dir.display()),
+        _ => command,
+    }
+}
+
+/// Whether two paths are the same directory, as the file system sees them where it can.
+fn same_dir(a: &Path, b: &Path) -> bool {
+    a == b || matches!((std::fs::canonicalize(a), std::fs::canonicalize(b)), (Ok(x), Ok(y)) if x == y)
+}
+
 /// What an approval shows of a `bg_start`: the command, and the directory when it is not the session's.
 fn start_summary(args: &sasacode_ai::JsonObject) -> String {
     let command = args.get("command").and_then(Value::as_str).unwrap_or("");
@@ -1317,6 +1333,7 @@ pub fn plugin(api: PluginApi) -> BoxFuture<'static, anyhow::Result<()>> {
 
         // ── tools ──────────────────────────────────────────────────────────
         let starter = bg.clone();
+        let target_cwd = bg.clone();
         api.register_tool(
             ToolDef::new(
                 "bg_start",
@@ -1341,7 +1358,9 @@ pub fn plugin(api: PluginApi) -> BoxFuture<'static, anyhow::Result<()>> {
                 },
             )
             .concurrent(true)
-            .match_target(|a| a.get("command").and_then(Value::as_str).unwrap_or("").to_string())
+            // The command, and the directory when it is not the session's: a rule made for the
+            // command here does not cover it elsewhere.
+            .match_target(move |a| start_target(a, Path::new(&target_cwd.cwd())))
             // The directory it runs in, resolved as the tool resolves it, is a path of the call.
             .paths(|a, cwd| start_dir(a, cwd).map(|d| d.display().to_string()).into_iter().collect())
             // Judged by the rules written for bash (guard preset, the user's bash(sudo *) deny rules,
