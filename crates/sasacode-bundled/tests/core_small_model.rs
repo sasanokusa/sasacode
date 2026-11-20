@@ -1,0 +1,3388 @@
+//! Integration tests for the 9 small-model harness features:
+//! search-tools, error-hints, action-nudge, syntax-check, context-slim,
+//! thinking-budget, hashline-edit, clean-retry, and slim-profile.
+
+mod support_core;
+
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+use serde_json::{Value, json};
+
+use sasacode_agent::agent::{Agent, AgentOptions, ApprovalAnswer, ApprovalDecision};
+use sasacode_agent::permission::{PermissionCheck, PermissionPolicy};
+use sasacode_agent::plugins::{PluginHost, PluginHostOptions};
+use sasacode_agent::session::SessionFile;
+use sasacode_ai::{
+    AssistantContent, AssistantMessage, LocalServer, Message, ModelInfo, ThinkingContent, ToolResultMessage,
+    UserContent, register_api, text_of_user,
+};
+use sasacode_bundled::clean_retry::{looks_like_check_command, runs_other_commands};
+use sasacode_bundled::hashline_edit::{line_hash, strip_hashline_prefixes};
+use sasacode_bundled::syntax_check::check_rust_syntax;
+use sasacode_plugin_api::{
+    AssistantMessageEvent, Decision, Lang, PermissionMode, PermissionRules, SessionStartEvent, ToolDef, ToolKind,
+    ToolResult, TurnEndResult, UserPromptResult, hook,
+};
+use sasacode_testing::{ReplayOptions, ReplayProvider};
+use support_core::*;
+
+fn think(t: &str) -> AssistantContent {
+    AssistantContent::Thinking(ThinkingContent {
+        thinking: t.into(),
+        signature: None,
+        redacted: None,
+        reasoning_field: None,
+    })
+}
+
+fn tool_msg(id: &str, name: &str, text: &str, is_error: bool) -> Message {
+    Message::Tool(ToolResultMessage {
+        tool_call_id: id.into(),
+        tool_name: name.into(),
+        content: vec![UserContent::text(text)],
+        is_error,
+        timestamp: 100,
+    })
+}
+
+fn settings_map(pairs: &[(&str, Value)]) -> HashMap<String, Value> {
+    pairs.iter().map(|(k, v)| (k.to_string(), v.clone())).collect()
+}
+
+fn opts(cwd: &str, pairs: &[(&str, Value)]) -> SetupOpts {
+    SetupOpts {
+        cwd: Some(cwd.into()),
+        settings: settings_map(pairs),
+        ..SetupOpts::default()
+    }
+}
+
+fn set_local_model(s: &Setup) {
+    let mut m = s.agent.model();
+    m.server = Some(LocalServer::Ollama);
+    s.agent.set_model(m).unwrap();
+}
+
+fn set_model_with(s: &Setup, id: &str, server: Option<LocalServer>, base_url: Option<&str>) {
+    let mut m = s.agent.model();
+    m.id = id.into();
+    m.server = server;
+    m.base_url = base_url.map(str::to_string);
+    s.agent.set_model(m).unwrap();
+}
+
+#[tokio::test]
+async fn search_tools_find_files_and_search_text_respect_gitignore_and_caps() {
+    let dir = temp_dir("sasacode-search-tools-");
+    let root = dir.path();
+    std::fs::create_dir_all(root.join(".git")).unwrap();
+    std::fs::create_dir_all(root.join("node_modules/pkg")).unwrap();
+    std::fs::create_dir_all(root.join("src/nested")).unwrap();
+    std::fs::create_dir_all(root.join("ignored_dir")).unwrap();
+    std::fs::write(root.join(".gitignore"), "ignored_dir/\n*.log\n").unwrap();
+    std::fs::write(root.join(".git/HEAD"), "ref: refs/heads/main\n").unwrap();
+    std::fs::write(root.join("node_modules/pkg/index.js"), "needle_here\n").unwrap();
+    std::fs::write(root.join("ignored_dir/secret.ts"), "needle_here\n").unwrap();
+    std::fs::write(root.join("debug.log"), "needle_here\n").unwrap();
+    std::fs::write(root.join("src/main.rs"), "fn main() {\n    let needle_here = 1;\n}\n").unwrap();
+    std::fs::write(
+        root.join("src/nested/util.ts"),
+        "export const needle_here = 2;\nexport const OTHER = 3;\n",
+    )
+    .unwrap();
+    std::fs::write(root.join("src/bin.dat"), b"\x00\x01\x02needle_here").unwrap();
+
+    let l = load_plugin("search-tools", bundled("search-tools"), &path_str(root), json!({})).await;
+
+    // find_files skips .git, node_modules, .gitignore entries and matches globs
+    let r = l.invoke("find_files", json!({})).await;
+    let t = text_of(&r);
+    let lines: Vec<&str> = t.lines().collect();
+    assert!(
+        lines.contains(&"src/main.rs") && lines.contains(&"src/nested/util.ts"),
+        "{t}"
+    );
+    assert!(
+        !lines.iter().any(|p| p.contains("node_modules")
+            || p.contains("ignored_dir")
+            || p.contains("debug.log")
+            || p.starts_with(".git/")),
+        "{t}"
+    );
+
+    let r = l.invoke("find_files", json!({"pattern": "*.ts"})).await;
+    assert_eq!(text_of(&r), "src/nested/util.ts");
+
+    let r = l.invoke("find_files", json!({"max_results": 1})).await;
+    assert!(text_of(&r).contains("[Showing 1 of "), "{}", text_of(&r));
+
+    // search_text literal, glob filter, binary skip, regex + ignore_case
+    let r = l.invoke("search_text", json!({"query": "needle_here"})).await;
+    let t = text_of(&r);
+    assert!(t.contains("src/main.rs:2: let needle_here = 1;"), "{t}");
+    assert!(t.contains("src/nested/util.ts:1: export const needle_here = 2;"), "{t}");
+    assert!(
+        !t.contains("bin.dat") && !t.contains("node_modules") && !t.contains("ignored_dir"),
+        "{t}"
+    );
+
+    let r = l
+        .invoke(
+            "search_text",
+            json!({"query": "other", "ignore_case": true, "glob": "*.ts"}),
+        )
+        .await;
+    assert!(
+        text_of(&r).contains("src/nested/util.ts:2: export const OTHER = 3;"),
+        "{}",
+        text_of(&r)
+    );
+
+    let r = l
+        .invoke("search_text", json!({"query": "let\\s+needle_\\w+", "regex": true}))
+        .await;
+    assert!(text_of(&r).contains("src/main.rs:2:"), "{}", text_of(&r));
+
+    // bad regex is a clean tool error
+    let r = l.invoke("search_text", json!({"query": "[", "regex": true})).await;
+    assert!(r.is_error());
+}
+
+#[tokio::test]
+async fn search_tools_enforce_read_permissions_and_exclude_secret_files() {
+    let dir = temp_dir("sasacode-search-perms-");
+    let root = dir.path();
+    std::fs::create_dir_all(root.join("src")).unwrap();
+    std::fs::create_dir_all(root.join("sub")).unwrap();
+    std::fs::create_dir_all(root.join("certs")).unwrap();
+    std::fs::create_dir_all(root.join("ssh")).unwrap();
+    std::fs::write(root.join(".env"), "SECRET_TOKEN=root_secret\n").unwrap();
+    std::fs::write(root.join(".env.local"), "SECRET_TOKEN=local_secret\n").unwrap();
+    std::fs::write(root.join(".env.example"), "SECRET_TOKEN=example_placeholder\n").unwrap();
+    std::fs::write(root.join(".env.sample"), "SECRET_TOKEN=sample_placeholder\n").unwrap();
+    std::fs::write(root.join(".envrc"), "SECRET_TOKEN=envrc_secret\n").unwrap();
+    std::fs::write(root.join(".npmrc"), "SECRET_TOKEN=npmrc_secret\n").unwrap();
+    std::fs::write(root.join(".pypirc"), "SECRET_TOKEN=pypirc_secret\n").unwrap();
+    std::fs::write(root.join(".netrc"), "SECRET_TOKEN=netrc_secret\n").unwrap();
+    std::fs::write(root.join(".pgpass"), "SECRET_TOKEN=pgpass_secret\n").unwrap();
+    std::fs::write(root.join("prod.env"), "SECRET_TOKEN=prod_env_secret\n").unwrap();
+    std::fs::write(root.join("sub/.env"), "SECRET_TOKEN=sub_secret\n").unwrap();
+    std::fs::write(root.join("sub/.env.production"), "SECRET_TOKEN=prod_secret\n").unwrap();
+    std::fs::write(root.join("sub/staging.env"), "SECRET_TOKEN=staging_env_secret\n").unwrap();
+    std::fs::write(root.join("certs/server.pem"), "SECRET_TOKEN=pem_secret\n").unwrap();
+    std::fs::write(root.join("certs/private.key"), "SECRET_TOKEN=key_secret\n").unwrap();
+    std::fs::write(root.join("certs/app.jks"), "SECRET_TOKEN=jks_secret\n").unwrap();
+    std::fs::write(root.join("certs/release.keystore"), "SECRET_TOKEN=keystore_secret\n").unwrap();
+    std::fs::write(root.join("ssh/id_rsa"), "SECRET_TOKEN=rsa_secret\n").unwrap();
+    std::fs::write(root.join("ssh/id_rsa.pub"), "SECRET_TOKEN=rsa_pub\n").unwrap();
+    std::fs::write(root.join("ssh/id_ed25519"), "SECRET_TOKEN=ed25519_secret\n").unwrap();
+    std::fs::write(root.join("src/main.rs"), "const SECRET_TOKEN: &str = \"public\";\n").unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(root.join(".env"), root.join("link_to_env")).unwrap();
+
+    let l = load_plugin("search-tools", bundled("search-tools"), &path_str(root), json!({})).await;
+    assert_eq!(l.tool("find_files").permissions_as().as_deref(), Some("read"));
+    assert_eq!(l.tool("search_text").permissions_as().as_deref(), Some("read"));
+
+    // User `read(**/.env)` deny rule blocks single-file search_text and find_files in edits mode.
+    let deny_env = Arc::new(
+        PermissionPolicy::new(
+            PermissionMode::Edits,
+            &PermissionRules {
+                deny: vec!["read(**/.env)".into()],
+                ..Default::default()
+            },
+        )
+        .unwrap(),
+    );
+    l.agent.set_permissions(deny_env);
+
+    for (tool, args) in [
+        ("search_text", json!({"path": ".env", "query": "."})),
+        ("search_text", json!({"path": "sub/.env", "query": "."})),
+        ("find_files", json!({"path": ".env"})),
+    ] {
+        let r = l.invoke(tool, args.clone()).await;
+        assert!(r.is_error(), "{tool}({args}) should be denied: {}", text_of(&r));
+        assert!(text_of(&r).contains("Permission denied"), "{}", text_of(&r));
+    }
+    #[cfg(unix)]
+    {
+        let r = l
+            .invoke("search_text", json!({"path": "link_to_env", "query": "."}))
+            .await;
+        assert!(r.is_error(), "symlink to .env should be denied: {}", text_of(&r));
+    }
+
+    // Directory walks and search output exclude secret-looking files, while keeping .env.example/.env.sample.
+    let r = l.invoke("find_files", json!({})).await;
+    let listed_text = text_of(&r);
+    let listed: Vec<&str> = listed_text.lines().collect();
+    assert!(listed.contains(&".env.example"), "{listed:?}");
+    assert!(listed.contains(&".env.sample"), "{listed:?}");
+    assert!(listed.contains(&"src/main.rs"), "{listed:?}");
+    for forbidden in [
+        ".env",
+        ".env.local",
+        ".envrc",
+        ".npmrc",
+        ".pypirc",
+        ".netrc",
+        ".pgpass",
+        "prod.env",
+        "sub/.env",
+        "sub/.env.production",
+        "sub/staging.env",
+        "certs/server.pem",
+        "certs/private.key",
+        "certs/app.jks",
+        "certs/release.keystore",
+        "ssh/id_rsa",
+        "ssh/id_rsa.pub",
+        "ssh/id_ed25519",
+    ] {
+        assert!(!listed.contains(&forbidden), "{forbidden} leaked in {listed:?}");
+    }
+
+    let r = l.invoke("search_text", json!({"query": "SECRET_TOKEN"})).await;
+    let t = text_of(&r);
+    assert!(t.contains(".env.example:1:"), "{t}");
+    assert!(t.contains(".env.sample:1:"), "{t}");
+    assert!(t.contains("src/main.rs:1:"), "{t}");
+    for leaked in [
+        "root_secret",
+        "local_secret",
+        "envrc_secret",
+        "npmrc_secret",
+        "pypirc_secret",
+        "netrc_secret",
+        "pgpass_secret",
+        "prod_env_secret",
+        "sub_secret",
+        "prod_secret",
+        "staging_env_secret",
+        "pem_secret",
+        "key_secret",
+        "jks_secret",
+        "keystore_secret",
+        "rsa_secret",
+        "rsa_pub",
+        "ed25519_secret",
+    ] {
+        assert!(!t.contains(leaked), "{leaked} leaked in {t}");
+    }
+
+    // In ask mode, search_text prompts (and fails in non-interactive runs).
+    l.agent.set_permissions(policy(PermissionMode::Ask));
+    let r = l
+        .invoke("search_text", json!({"path": "src/main.rs", "query": "SECRET_TOKEN"}))
+        .await;
+    assert!(r.is_error(), "ask mode should require approval: {}", text_of(&r));
+}
+
+#[tokio::test]
+async fn search_tools_supports_gitignore_negation_nested_gitignore_and_skips_symlinks() {
+    // 1. Allow-list style .gitignore (`*` + `!src/` + `!src/**`)
+    let dir1 = temp_dir("sasacode-gi-allowlist-");
+    let r1 = dir1.path();
+    std::fs::create_dir_all(r1.join("src/nested")).unwrap();
+    std::fs::create_dir_all(r1.join("other")).unwrap();
+    std::fs::write(r1.join(".gitignore"), "*\n!src/\n!src/**\n").unwrap();
+    std::fs::write(r1.join("root.txt"), "x\n").unwrap();
+    std::fs::write(r1.join("other/skip.rs"), "x\n").unwrap();
+    std::fs::write(r1.join("src/main.rs"), "fn main() {}\n").unwrap();
+    std::fs::write(r1.join("src/nested/util.ts"), "export const x = 1;\n").unwrap();
+
+    let l1 = load_plugin("search-tools", bundled("search-tools"), &path_str(r1), json!({})).await;
+    let res = text_of(&l1.invoke("find_files", json!({})).await);
+    let lines: Vec<&str> = res.lines().collect();
+    assert_eq!(lines, vec!["src/main.rs", "src/nested/util.ts"]);
+
+    // 2. Allow-list style (`*` + `!*/` + `!*.rs`) keeps .rs files in subdirectories while skipping .txt/.ts
+    std::fs::write(r1.join(".gitignore"), "*\n!*/\n!*.rs\n").unwrap();
+    let res = text_of(&l1.invoke("find_files", json!({})).await);
+    assert_eq!(res, "other/skip.rs\nsrc/main.rs");
+
+    // 3. Nested .gitignore, negation overrides, re-ignore, dir-only trailing slash, and symlinks
+    let dir2 = temp_dir("sasacode-gi-nested-");
+    let r2 = dir2.path();
+    std::fs::create_dir_all(r2.join("sub/deep")).unwrap();
+    std::fs::write(
+        r2.join(".gitignore"),
+        "*.log\n!root_keep.log\n!reignored.log\nreignored.log\ndir_only/\n",
+    )
+    .unwrap();
+    std::fs::write(r2.join("sub/.gitignore"), "!keep.log\n*.tmp\n/local_only.txt\n").unwrap();
+    std::fs::write(r2.join("a.log"), "1\n").unwrap();
+    std::fs::write(r2.join("root_keep.log"), "1\n").unwrap();
+    std::fs::write(r2.join("reignored.log"), "1\n").unwrap();
+    std::fs::write(r2.join("dir_only"), "regular file named dir_only\n").unwrap();
+    std::fs::write(r2.join("root.tmp"), "1\n").unwrap();
+    std::fs::write(r2.join("local_only.txt"), "1\n").unwrap();
+    std::fs::write(r2.join("sub/drop.log"), "1\n").unwrap();
+    std::fs::write(r2.join("sub/keep.log"), "1\n").unwrap();
+    std::fs::write(r2.join("sub/drop.tmp"), "1\n").unwrap();
+    std::fs::write(r2.join("sub/deep/drop2.tmp"), "1\n").unwrap();
+    std::fs::write(r2.join("sub/local_only.txt"), "1\n").unwrap();
+    std::fs::write(r2.join("sub/deep/local_only.txt"), "1\n").unwrap();
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(r2.join("root_keep.log"), r2.join("link.log")).unwrap();
+        std::os::unix::fs::symlink(r2, r2.join("loop_dir")).unwrap();
+    }
+
+    let l2 = load_plugin("search-tools", bundled("search-tools"), &path_str(r2), json!({})).await;
+    let res = text_of(&l2.invoke("find_files", json!({})).await);
+    let lines: Vec<&str> = res.lines().collect();
+    assert_eq!(
+        lines,
+        vec![
+            ".gitignore",
+            "dir_only",
+            "local_only.txt",
+            "root.tmp",
+            "root_keep.log",
+            "sub/.gitignore",
+            "sub/deep/local_only.txt",
+            "sub/keep.log",
+        ]
+    );
+
+    let search_res = text_of(&l2.invoke("search_text", json!({"query": "1"})).await);
+    assert!(search_res.contains("sub/keep.log:1:"), "{search_res}");
+    assert!(
+        !search_res.contains("a.log")
+            && !search_res.contains("drop.log")
+            && !search_res.contains("reignored.log")
+            && !search_res.contains("drop.tmp")
+            && !search_res.contains("link.log"),
+        "{search_res}"
+    );
+
+    // Searching directly inside `sub` still respects root `.gitignore` (`*.log`) and `sub/.gitignore` (`!keep.log`).
+    let sub_res = text_of(&l2.invoke("find_files", json!({"path": "sub"})).await);
+    let sub_lines: Vec<&str> = sub_res.lines().collect();
+    assert_eq!(
+        sub_lines,
+        vec!["sub/.gitignore", "sub/deep/local_only.txt", "sub/keep.log"]
+    );
+}
+
+fn git_ls_unignored(root: &std::path::Path, subpath: Option<&str>) -> Option<Vec<String>> {
+    let init = std::process::Command::new("git")
+        .args(["init", "-q"])
+        .current_dir(root)
+        .status()
+        .ok()?;
+    if !init.success() {
+        return None;
+    }
+    let mut cmd = std::process::Command::new("git");
+    cmd.args([
+        "-c",
+        "core.quotepath=false",
+        "ls-files",
+        "--others",
+        "--exclude-standard",
+    ]);
+    if let Some(sub) = subpath {
+        cmd.args(["--", sub]);
+    }
+    let out = cmd.current_dir(root).output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let mut files: Vec<String> = String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .map(str::to_string)
+        .collect();
+    files.sort();
+    Some(files)
+}
+
+#[tokio::test]
+async fn search_tools_matches_git_ignore_directory_and_negation_semantics() {
+    // 1. `dist/*` + `!dist/important/` (and `/*` + `!sub/`, `generated/` + `!generated/`)
+    let dir1 = temp_dir("sasacode-gi-dir-negate-");
+    let r1 = dir1.path();
+    std::fs::create_dir_all(r1.join("dist/important/nested")).unwrap();
+    std::fs::create_dir_all(r1.join("dist/other")).unwrap();
+    std::fs::write(r1.join(".gitignore"), "dist/*\n!dist/important/\n").unwrap();
+    std::fs::write(r1.join("dist/drop.js"), "needle\n").unwrap();
+    std::fs::write(r1.join("dist/other/skip.js"), "needle\n").unwrap();
+    std::fs::write(r1.join("dist/important/app.js"), "needle\n").unwrap();
+    std::fs::write(r1.join("dist/important/nested/mod.js"), "needle\n").unwrap();
+
+    let l1 = load_plugin("search-tools", bundled("search-tools"), &path_str(r1), json!({})).await;
+    let dist_files: Vec<String> = text_of(&l1.invoke("find_files", json!({"path": "dist"})).await)
+        .lines()
+        .map(str::to_string)
+        .collect();
+    assert_eq!(
+        dist_files,
+        vec!["dist/important/app.js", "dist/important/nested/mod.js"]
+    );
+    if let Some(git_files) = git_ls_unignored(r1, Some("dist")) {
+        assert_eq!(dist_files, git_files);
+    }
+
+    // `/*` + `!sub/` keeps `sub/**` while ignoring root files and other directories.
+    let dir2 = temp_dir("sasacode-gi-root-star-");
+    let r2 = dir2.path();
+    std::fs::create_dir_all(r2.join("sub/deep")).unwrap();
+    std::fs::create_dir_all(r2.join("other")).unwrap();
+    std::fs::write(r2.join(".gitignore"), "/*\n!sub/\n").unwrap();
+    std::fs::write(r2.join("root.txt"), "x\n").unwrap();
+    std::fs::write(r2.join("other/drop.txt"), "x\n").unwrap();
+    std::fs::write(r2.join("sub/keep.txt"), "x\n").unwrap();
+    std::fs::write(r2.join("sub/deep/keep2.txt"), "x\n").unwrap();
+
+    let l2 = load_plugin("search-tools", bundled("search-tools"), &path_str(r2), json!({})).await;
+    let r2_files: Vec<String> = text_of(&l2.invoke("find_files", json!({})).await)
+        .lines()
+        .map(str::to_string)
+        .collect();
+    assert_eq!(r2_files, vec!["sub/deep/keep2.txt", "sub/keep.txt"]);
+    if let Some(git_files) = git_ls_unignored(r2, None) {
+        assert_eq!(r2_files, git_files);
+    }
+
+    // `generated/` + `!generated/` re-includes the directory and its contents.
+    let dir3 = temp_dir("sasacode-gi-generated-");
+    let r3 = dir3.path();
+    std::fs::create_dir_all(r3.join("generated/sub")).unwrap();
+    std::fs::write(r3.join(".gitignore"), "generated/\n!generated/\n").unwrap();
+    std::fs::write(r3.join("generated/a.txt"), "x\n").unwrap();
+    std::fs::write(r3.join("generated/sub/b.txt"), "x\n").unwrap();
+
+    let l3 = load_plugin("search-tools", bundled("search-tools"), &path_str(r3), json!({})).await;
+    let r3_files: Vec<String> = text_of(&l3.invoke("find_files", json!({})).await)
+        .lines()
+        .map(str::to_string)
+        .collect();
+    assert_eq!(r3_files, vec![".gitignore", "generated/a.txt", "generated/sub/b.txt"]);
+    if let Some(git_files) = git_ls_unignored(r3, None) {
+        assert_eq!(r3_files, git_files);
+    }
+
+    // 2. `build/` + `!build/keep.txt`: ignored ancestor dir cannot be re-included via `!build/keep.txt`
+    // even when searching directly inside `build` (or `ignored_dir` / `node_modules` / `target/`).
+    let dir4 = temp_dir("sasacode-gi-ignored-ancestor-");
+    let r4 = dir4.path();
+    std::fs::create_dir_all(r4.join("build/nested")).unwrap();
+    std::fs::create_dir_all(r4.join("ignored_dir/sub")).unwrap();
+    std::fs::create_dir_all(r4.join("node_modules/pkg")).unwrap();
+    std::fs::create_dir_all(r4.join("target/debug")).unwrap();
+    std::fs::create_dir_all(r4.join("src/node_modules")).unwrap();
+    std::fs::write(
+        r4.join(".gitignore"),
+        "build/\n!build/keep.txt\nignored_dir/\n!ignored_dir/keep.txt\nnode_modules\ntarget/\n",
+    )
+    .unwrap();
+    std::fs::write(r4.join("build/keep.txt"), "secret\n").unwrap();
+    std::fs::write(r4.join("build/nested/file.txt"), "secret\n").unwrap();
+    std::fs::write(r4.join("ignored_dir/keep.txt"), "secret\n").unwrap();
+    std::fs::write(r4.join("ignored_dir/sub/file.txt"), "secret\n").unwrap();
+    std::fs::write(r4.join("node_modules/pkg/index.js"), "secret\n").unwrap();
+    std::fs::write(r4.join("src/node_modules/mod.js"), "secret\n").unwrap();
+    std::fs::write(r4.join("target/debug/bin.txt"), "secret\n").unwrap();
+    std::fs::write(r4.join("src/main.rs"), "fn main() {}\n").unwrap();
+
+    if let Some(git_files) = git_ls_unignored(r4, None) {
+        assert_eq!(git_files, vec![".gitignore", "src/main.rs"]);
+    }
+    if let Some(git_build) = git_ls_unignored(r4, Some("build")) {
+        assert!(git_build.is_empty(), "{git_build:?}");
+    }
+    let l4 = load_plugin("search-tools", bundled("search-tools"), &path_str(r4), json!({})).await;
+    assert_eq!(
+        text_of(&l4.invoke("find_files", json!({})).await),
+        ".gitignore\nsrc/main.rs"
+    );
+    for entry in [
+        "build",
+        "build/nested",
+        "ignored_dir",
+        "ignored_dir/sub",
+        "node_modules",
+        "node_modules/pkg",
+        "src/node_modules",
+        "target",
+        "target/debug",
+    ] {
+        assert_eq!(
+            text_of(&l4.invoke("find_files", json!({"path": entry})).await),
+            "No files found.",
+            "entry path `{entry}` should stay excluded"
+        );
+        assert_eq!(
+            text_of(
+                &l4.invoke("search_text", json!({"path": entry, "query": "secret"}))
+                    .await
+            ),
+            "No matches found for \"secret\".",
+            "search_text on `{entry}` should stay excluded"
+        );
+    }
+}
+
+#[tokio::test]
+async fn search_tools_handles_unnormalized_double_slash_non_ascii_paths() {
+    let dir = temp_dir("sasacode-gi-nonascii-");
+    let root = dir.path();
+    let target = root.join("日本語/サブ/c");
+    std::fs::create_dir_all(&target).unwrap();
+    std::fs::create_dir_all(root.join("日本語/無視/c")).unwrap();
+    std::fs::write(root.join(".gitignore"), "*.log\n").unwrap();
+    std::fs::write(root.join("日本語/.gitignore"), "無視/\n").unwrap();
+    std::fs::write(root.join("日本語/サブ/.gitignore"), "!keep.log\n*.tmp\n").unwrap();
+    std::fs::write(root.join("日本語/サブ/c/.gitignore"), "drop.txt\n").unwrap();
+    std::fs::write(target.join("keep.log"), "needle_nonascii\n").unwrap();
+    std::fs::write(target.join("drop.log"), "needle_nonascii\n").unwrap();
+    std::fs::write(target.join("drop.tmp"), "needle_nonascii\n").unwrap();
+    std::fs::write(target.join("drop.txt"), "needle_nonascii\n").unwrap();
+    std::fs::write(target.join("残す.txt"), "needle_nonascii\n").unwrap();
+    std::fs::write(root.join("日本語/無視/c/hidden.txt"), "needle_nonascii\n").unwrap();
+
+    let l = load_plugin("search-tools", bundled("search-tools"), &path_str(root), json!({})).await;
+    let abs_double = format!("{}/日本語//サブ/c", path_str(root));
+    let abs_triple_dot = format!("{}/日本語///サブ/./c/", path_str(root));
+
+    for abs in [&abs_double, &abs_triple_dot] {
+        let found: Vec<String> = text_of(&l.invoke("find_files", json!({"path": abs})).await)
+            .lines()
+            .map(str::to_string)
+            .collect();
+        assert_eq!(
+            found,
+            vec![
+                "日本語/サブ/c/.gitignore",
+                "日本語/サブ/c/keep.log",
+                "日本語/サブ/c/残す.txt",
+            ],
+            "unexpected find_files output for `{abs}`"
+        );
+
+        let searched = text_of(
+            &l.invoke("search_text", json!({"path": abs, "query": "needle_nonascii"}))
+                .await,
+        );
+        assert!(searched.contains("日本語/サブ/c/keep.log:1:"), "{searched}");
+        assert!(searched.contains("日本語/サブ/c/残す.txt:1:"), "{searched}");
+        assert!(
+            !searched.contains("drop.log") && !searched.contains("drop.tmp") && !searched.contains("drop.txt"),
+            "{searched}"
+        );
+        assert_eq!(
+            text_of(
+                &l.invoke("find_files", json!({"path": abs, "pattern": "日本語/サブ/c/*.log"}))
+                    .await
+            ),
+            "日本語/サブ/c/keep.log"
+        );
+    }
+
+    if let Some(git_files) = git_ls_unignored(root, Some("日本語/サブ/c")) {
+        assert_eq!(
+            git_files,
+            vec![
+                "日本語/サブ/c/.gitignore",
+                "日本語/サブ/c/keep.log",
+                "日本語/サブ/c/残す.txt",
+            ]
+        );
+    }
+
+    let ignored_unnorm = format!("{}/日本語//無視/c", path_str(root));
+    assert_eq!(
+        text_of(&l.invoke("find_files", json!({"path": ignored_unnorm})).await),
+        "No files found."
+    );
+}
+
+#[tokio::test]
+async fn error_hints_suggests_paths_skills_tools_and_sut_files() {
+    let dir = temp_dir("sasacode-error-hints-");
+    let root = dir.path();
+    std::fs::create_dir_all(root.join("packages/tools/src")).unwrap();
+    std::fs::create_dir_all(root.join("packages/tools/test")).unwrap();
+    std::fs::create_dir_all(root.join(".sasacode/skills/harness-improve")).unwrap();
+    std::fs::write(
+        root.join("packages/tools/src/edit.ts"),
+        "export function fixCount() { return 1; }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("packages/tools/test/edit.test.ts"),
+        "import { fixCount } from '../src/edit';\nexpect(fixCount()).toBe(2);\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join(".sasacode/skills/harness-improve/SKILL.md"),
+        "---\nname: harness-improve\ndescription: Improve the harness.\n---\nSteps...\n",
+    )
+    .unwrap();
+
+    let s = setup(
+        vec![
+            reply(vec![call("1", "read", json!({"path": "packages/tools/edit.ts"}))]),
+            reply(vec![call("2", "harness-improve", json!({}))]),
+            reply(vec![call("3", "raed", json!({}))]),
+            reply(vec![call(
+                "4",
+                "bash",
+                json!({"command": "echo 'FAIL packages/tools/test/edit.test.ts' >&2; exit 1"}),
+            )]),
+            reply(vec![say("done")]),
+        ],
+        &["error-hints"],
+        opts(&path_str(root), &[]),
+    )
+    .await;
+    s.agent.set_permissions(policy(PermissionMode::Auto));
+    s.agent.prompt_text("go").await.unwrap();
+
+    let reqs = s.requests();
+    let r1 = last(&reqs[1]).text();
+    assert!(r1.contains("Did you mean: packages/tools/src/edit.ts"), "{r1}");
+
+    let r2 = last(&reqs[2]).text();
+    assert!(r2.contains("\"harness-improve\" is an Agent Skill, not a tool"), "{r2}");
+    assert!(r2.contains("SKILL.md"), "{r2}");
+
+    let r3 = last(&reqs[3]).text();
+    assert!(r3.contains("Similar tools:") && r3.contains("read"), "{r3}");
+
+    let r4 = last(&reqs[4]).text();
+    assert!(
+        r4.contains("Likely source file(s) under test: packages/tools/src/edit.ts"),
+        "{r4}"
+    );
+}
+
+#[tokio::test]
+async fn action_nudge_nudges_intent_without_calls_but_ignores_questions_completions_and_long_prose() {
+    let dir = temp_dir("sasacode-action-nudge-");
+    let f = path_str(&dir.path().join("a.txt"));
+    std::fs::write(&f, "hello\n").unwrap();
+
+    // 1. Intent without tool call -> nudged -> calls tool -> completes -> NOT nudged
+    let s = setup(
+        vec![
+            reply(vec![say("まずはファイルの内容を確認します。")]),
+            reply(vec![call("1", "read", json!({"path": f}))]),
+            reply(vec![say("確認して修正しました。テストはすべて通っています。")]),
+        ],
+        &["action-nudge"],
+        opts(&path_str(dir.path()), &[]),
+    )
+    .await;
+    set_local_model(&s);
+    s.agent.prompt_text("check a.txt").await.unwrap();
+    let reqs = s.requests();
+    assert_eq!(reqs.len(), 3, "expected nudge + tool turn + completion");
+    assert!(json_of(last(&reqs[1])).contains("[action-nudge]"));
+
+    // 2. Question, long prose, and maxNudges cap are respected
+    let s2 = setup(
+        vec![
+            reply(vec![say("Let me check the logs first.")]),
+            reply(vec![say("Which file should I inspect?")]),
+        ],
+        &["action-nudge"],
+        opts(&path_str(dir.path()), &[]),
+    )
+    .await;
+    set_local_model(&s2);
+    s2.agent.prompt_text("help").await.unwrap();
+    assert_eq!(s2.requests().len(), 2);
+
+    // 3. Caps at maxNudges = 2 even if model keeps declaring intent
+    let s3 = setup(
+        vec![
+            reply(vec![say("Let me inspect the code.")]),
+            reply(vec![say("I will check the code now.")]),
+            reply(vec![say("I'll examine it right away.")]),
+        ],
+        &["action-nudge"],
+        opts(&path_str(dir.path()), &[]),
+    )
+    .await;
+    set_local_model(&s3);
+    s3.agent.prompt_text("go").await.unwrap();
+    assert_eq!(s3.requests().len(), 3);
+}
+
+#[tokio::test]
+async fn action_nudge_ignores_cloud_models_false_positive_summaries_and_conditionals() {
+    let dir = temp_dir("sasacode-action-nudge-fp-");
+
+    // 1. Cloud models (including Ollama -cloud models) are never nudged.
+    for (id, server, base_url, msg) in [
+        ("m", None, None, "まずはファイルの内容を確認します。"),
+        (
+            "gpt-oss:120b-cloud",
+            Some(LocalServer::Ollama),
+            Some("http://localhost:11434/v1"),
+            "Let me check the logs first.",
+        ),
+    ] {
+        let s = setup(
+            vec![reply(vec![say(msg)])],
+            &["action-nudge"],
+            opts(&path_str(dir.path()), &[]),
+        )
+        .await;
+        set_model_with(&s, id, server, base_url);
+        s.agent.prompt_text("go").await.unwrap();
+        assert_eq!(s.requests().len(), 1, "cloud model {id} should not be nudged");
+    }
+
+    // 2. Confirmed false positives and conditional offers on local models are not nudged.
+    let no_nudge_replies = [
+        "1. まず設定ファイルを確認します。…コードは変更していません。",
+        "必要であれば修正します。",
+        "First, I'll check the config loader.\nThen I'll update the tests.\nNo files were changed.",
+        "必要なら修正します。",
+        "ご希望なら確認します。",
+        "よろしければ編集します。",
+        "If you want, I'll check the logs.",
+        "If you'd like, I'll update the tests.",
+        "Once you confirm, I'll edit the file.",
+        "Let me know if I should check the config.",
+    ];
+    for text in no_nudge_replies {
+        let s = setup(
+            vec![reply(vec![say(text)])],
+            &["action-nudge"],
+            opts(&path_str(dir.path()), &[]),
+        )
+        .await;
+        set_local_model(&s);
+        s.agent.prompt_text("go").await.unwrap();
+        assert_eq!(s.requests().len(), 1, "unexpected nudge for: {text}");
+    }
+}
+
+#[tokio::test]
+async fn syntax_check_flags_broken_json_and_rust_without_false_positives_on_lifetimes() {
+    // Unit checks on the Rust lexer
+    assert_eq!(
+        check_rust_syntax(r##"fn ok<'a>(s: &'static str) -> &'a str { let x = r#"({"#; s }"##),
+        None
+    );
+    assert!(check_rust_syntax("fn broken() {\n  let x = (1 + 2;\n}\n").is_some());
+    assert!(check_rust_syntax("fn broken() { /* nested /* ok */ unclosed }").is_some());
+
+    let dir = temp_dir("sasacode-syntax-check-");
+    let json_path = path_str(&dir.path().join("cfg.json"));
+    let rs_path = path_str(&dir.path().join("lib.rs"));
+    let ts_path = path_str(&dir.path().join("app.ts"));
+    let py_path = path_str(&dir.path().join("mod.py"));
+
+    let mut script = vec![
+        reply(vec![call(
+            "1",
+            "write",
+            json!({"path": json_path, "content": "{\n  \"a\": 1,\n}\n"}),
+        )]),
+        reply(vec![call(
+            "2",
+            "write",
+            json!({"path": rs_path, "content": "pub fn f<'a>(s: &'a str) -> &'a str {\n    let x = (1 + 2;\n    s\n}\n"}),
+        )]),
+        reply(vec![call(
+            "3",
+            "write",
+            json!({"path": rs_path, "content": "pub fn f<'a>(s: &'a str) -> &'a str {\n    let _ = r#\"({[\"#;\n    s\n}\n"}),
+        )]),
+    ];
+    let has_bun = std::process::Command::new("bun")
+        .arg("--version")
+        .output()
+        .is_ok_and(|o| o.status.success());
+    let has_py = std::process::Command::new("python3")
+        .args(["-B", "-c", "import ast"])
+        .output()
+        .is_ok_and(|o| o.status.success());
+    if has_bun {
+        script.push(reply(vec![call(
+            "4",
+            "write",
+            json!({"path": ts_path, "content": "export function broken(x: number {\n  return x + 1;\n}\n"}),
+        )]));
+        script.push(reply(vec![call(
+            "5",
+            "write",
+            json!({"path": ts_path, "content": "export function ok(x: number): number {\n  return x + 1;\n}\n"}),
+        )]));
+    }
+    if has_py {
+        script.push(reply(vec![call(
+            "6",
+            "write",
+            json!({"path": py_path, "content": "def f():\n    return (1 + 2\n"}),
+        )]));
+    }
+    script.push(reply(vec![say("fixed")]));
+
+    let s = setup(script, &["syntax-check"], opts(&path_str(dir.path()), &[])).await;
+    s.agent.prompt_text("write files").await.unwrap();
+    let reqs = s.requests();
+    let r1 = last(&reqs[1]);
+    assert!(
+        json_of(r1).contains("[syntax-check] Syntax error in cfg.json"),
+        "{r1:?}"
+    );
+    let r2 = last(&reqs[2]);
+    assert!(json_of(r2).contains("[syntax-check] Syntax error in lib.rs"), "{r2:?}");
+    let r3 = last(&reqs[3]);
+    assert!(!json_of(r3).contains("[syntax-check]"), "{r3:?}");
+    let mut idx = 4usize;
+    if has_bun {
+        let r_bad_ts = last(&reqs[idx]);
+        assert!(
+            json_of(r_bad_ts).contains("[syntax-check] Syntax error in app.ts"),
+            "{r_bad_ts:?}"
+        );
+        let r_ok_ts = last(&reqs[idx + 1]);
+        assert!(!json_of(r_ok_ts).contains("[syntax-check]"), "{r_ok_ts:?}");
+        idx += 2;
+    }
+    if has_py {
+        let r_bad_py = last(&reqs[idx]);
+        assert!(
+            json_of(r_bad_py).contains("[syntax-check] Syntax error in mod.py"),
+            "{r_bad_py:?}"
+        );
+    }
+}
+
+/// What each call of a syntax-check script should get back: `Some(file)` a note naming the file,
+/// `None` no note at all. Call ids are "1", "2", ... in order.
+async fn syntax_check_run(cwd: &std::path::Path, calls: Vec<(&str, Value, Option<&str>)>) {
+    let mut script: Vec<_> = calls
+        .iter()
+        .enumerate()
+        .map(|(i, (tool, input, _))| reply(vec![call(&(i + 1).to_string(), tool, input.clone())]))
+        .collect();
+    script.push(reply(vec![say("done")]));
+    // A generous timeout: the external checkers start slowly when every test runs at once.
+    let settings = [("syntax-check", json!({"timeoutMs": 10000}))];
+    let s = setup(script, &["syntax-check"], opts(&path_str(cwd), &settings)).await;
+    s.agent.prompt_text("go").await.unwrap();
+    let reqs = s.requests();
+    assert_eq!(reqs.len(), calls.len() + 1);
+    for (i, (tool, input, expected)) in calls.iter().enumerate() {
+        let result = json_of(last(&reqs[i + 1]));
+        let what = format!("call {} ({tool} {}): {result}", i + 1, input["path"]);
+        assert!(!result.contains("\"isError\":true"), "the call failed: {what}");
+        match expected {
+            Some(file) => assert!(
+                result.contains(&format!("[syntax-check] Syntax error in {file}")),
+                "no note: {what}"
+            ),
+            None => assert!(!result.contains("[syntax-check]"), "a note: {what}"),
+        }
+    }
+}
+
+#[tokio::test]
+async fn syntax_check_reports_only_what_the_edit_broke() {
+    let dir = temp_dir("sasacode-syntax-baseline-");
+    let root = dir.path();
+    let at = |name: &str| path_str(&root.join(name));
+    // Broken before the model touched them: a file the checker cannot read is not the model's to fix.
+    std::fs::write(root.join("old.rs"), "pub fn f() {\n    let x = (1 + 2;\n}\n").unwrap();
+    std::fs::write(root.join("old.json"), "{\n  // a comment\n  \"a\": 1\n}\n").unwrap();
+    std::fs::create_dir_all(root.join("sub")).unwrap();
+    std::fs::write(root.join("sub/old.json"), "{\n  // a comment\n  \"a\": 1\n}\n").unwrap();
+
+    let broken = "{\n  \"a\": 1,\n}\n";
+    let jsonc = "{\n  // comments and trailing commas are this format's own\n  \"compilerOptions\": { \"strict\": true, },\n}\n";
+    syntax_check_run(
+        root,
+        vec![
+            // Already failing, still failing: silent, whether edited or rewritten.
+            (
+                "edit",
+                json!({"path": at("old.rs"), "old_string": "let x", "new_string": "let y"}),
+                None,
+            ),
+            (
+                "write",
+                json!({"path": at("old.json"), "content": "{\n  // a comment\n  \"a\": 2\n}\n"}),
+                None,
+            ),
+            // The same by a path relative to the working directory, as models mostly give it.
+            (
+                "edit",
+                json!({"path": "sub/old.json", "old_string": "\"a\": 1", "new_string": "\"a\": 3"}),
+                None,
+            ),
+            (
+                "write",
+                json!({"path": "./sub/fresh.json", "content": broken}),
+                Some("sub/fresh.json"),
+            ),
+            (
+                "edit",
+                json!({"path": "sub/fresh.json", "old_string": "\"a\": 1", "new_string": "\"a\": 4"}),
+                Some("sub/fresh.json"),
+            ),
+            // A new file has no earlier state: the error is the write's.
+            (
+                "write",
+                json!({"path": at("new.json"), "content": broken}),
+                Some("new.json"),
+            ),
+            // A failed fix of a reported error is reported again, not taken for "it was like that".
+            (
+                "write",
+                json!({"path": at("new.json"), "content": "{\n  \"a\": 2,\n}\n"}),
+                Some("new.json"),
+            ),
+            (
+                "write",
+                json!({"path": at("new.json"), "content": "{\n  \"a\": 2\n}\n"}),
+                None,
+            ),
+            (
+                "edit",
+                json!({"path": at("new.json"), "old_string": "\"a\": 2", "new_string": "\"a\": 2,"}),
+                Some("new.json"),
+            ),
+            // Once it parses, the next break is the edit's doing, in the old file as well.
+            (
+                "write",
+                json!({"path": at("old.rs"), "content": "pub fn f() {\n    let y = (1 + 2);\n}\n"}),
+                None,
+            ),
+            (
+                "edit",
+                json!({"path": at("old.rs"), "old_string": "(1 + 2);", "new_string": "(1 + 2;"}),
+                Some("old.rs"),
+            ),
+            // JSON its tools read with comments: never put to the strict parser, new file or not.
+            ("write", json!({"path": at("tsconfig.json"), "content": jsonc}), None),
+            (
+                "write",
+                json!({"path": at("tsconfig.build.json"), "content": jsonc}),
+                None,
+            ),
+            ("write", json!({"path": at("jsconfig.json"), "content": jsonc}), None),
+            (
+                "write",
+                json!({"path": at(".vscode/settings.json"), "content": jsonc}),
+                None,
+            ),
+            // The same text under any other name is an error.
+            (
+                "write",
+                json!({"path": at("data.json"), "content": jsonc}),
+                Some("data.json"),
+            ),
+        ],
+    )
+    .await;
+    assert_eq!(
+        std::fs::read_to_string(root.join("old.rs")).unwrap(),
+        "pub fn f() {\n    let y = (1 + 2;\n}\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(root.join(".vscode/settings.json")).unwrap(),
+        jsonc
+    );
+}
+
+/// The external checkers run without approval: whatever the project holds, none of it may run.
+#[tokio::test]
+async fn syntax_check_runs_nothing_of_the_project() {
+    let dir = temp_dir("sasacode-syntax-hostile-");
+    let root = dir.path();
+    let at = |name: &str| path_str(&root.join(name));
+    let marker = |name: &str| root.join(name);
+    let py_mark = |name: &str| format!("open({:?}, 'w').write('x')\n", path_str(&marker(name)));
+
+    // A module named like the one the checker imports, and a preload for bun.
+    std::fs::write(
+        root.join("ast.py"),
+        format!("{}def parse(*a, **k): pass\n", py_mark("MARK_AST")),
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("evil.js"),
+        format!(
+            "require('fs').writeFileSync({:?}, 'x');\n",
+            path_str(&marker("MARK_PRELOAD"))
+        ),
+    )
+    .unwrap();
+    std::fs::write(root.join("bunfig.toml"), "preload = [\"./evil.js\"]\n").unwrap();
+    std::fs::write(root.join("legacy.py"), "def f(:\n    pass\n").unwrap();
+
+    let has_bun = std::process::Command::new("bun")
+        .arg("--version")
+        .output()
+        .is_ok_and(|o| o.status.success());
+    let has_py = std::process::Command::new("python3")
+        .args(["-I", "-S", "-B", "-c", "import ast"])
+        .output()
+        .is_ok_and(|o| o.status.success());
+
+    // A venv whose site-packages run code at interpreter start: started through the venv, even an
+    // isolated Python runs it (checked here, so the fixture is known to be live).
+    let venv_python = root.join(".venv").join("bin").join("python");
+    let made_venv = has_py
+        && cfg!(unix)
+        && std::process::Command::new("python3")
+            .args(["-m", "venv", "--without-pip"])
+            .arg(root.join(".venv"))
+            .output()
+            .is_ok_and(|o| o.status.success());
+    if made_venv {
+        let lib = root.join(".venv").join("lib");
+        for entry in std::fs::read_dir(&lib).unwrap().flatten() {
+            let site = entry.path().join("site-packages");
+            if site.is_dir() {
+                std::fs::write(site.join("evil.pth"), format!("import os; {}", py_mark("MARK_PTH"))).unwrap();
+            }
+        }
+        let _ = std::process::Command::new(&venv_python)
+            .args(["-I", "-c", "pass"])
+            .output();
+        if marker("MARK_PTH").exists() {
+            std::fs::remove_file(marker("MARK_PTH")).unwrap();
+        } else {
+            eprintln!("this venv does not run its .pth: that part of the test shows nothing");
+        }
+    }
+
+    let mut calls = vec![
+        (
+            "write",
+            json!({"path": at("mod.py"), "content": "x = 1\ndef f():\n    return (1 + 2\n"}),
+            has_py.then_some("mod.py"),
+        ),
+        (
+            "write",
+            json!({"path": at("mod.py"), "content": "def f():\n    return 1\n"}),
+            None,
+        ),
+        // Broken before the edit: silent.
+        (
+            "edit",
+            json!({"path": at("legacy.py"), "old_string": "pass", "new_string": "return 1"}),
+            None,
+        ),
+        // JSX in plain .js is no error, with bun or with node.
+        (
+            "write",
+            json!({"path": at("view.js"), "content": "export const View = () => <div className=\"a\">hi</div>;\n"}),
+            None,
+        ),
+    ];
+    if has_bun {
+        calls.push((
+            "write",
+            json!({"path": at("app.ts"), "content": "export function broken(x: number {\n  return x + 1;\n}\n"}),
+            Some("app.ts"),
+        ));
+        calls.push((
+            "write",
+            json!({"path": at("app.ts"), "content": "const n = <number>(1 as unknown);\nexport const id = <T>(x: T) => x ?? n;\n"}),
+            None,
+        ));
+    }
+    syntax_check_run(root, calls).await;
+
+    for name in ["MARK_AST", "MARK_PRELOAD", "MARK_PTH"] {
+        assert!(!marker(name).exists(), "the project's code ran: {name}");
+    }
+}
+
+#[tokio::test]
+async fn context_slim_masks_old_tool_outputs_in_step_batches_preserving_prefix() {
+    let dir = temp_dir("sasacode-context-slim-");
+    // context_window = 2400, triggerRatio = 0.50 (1200 tokens), keepRecent = 2, maskStep = 2, minChars = 200
+    let big = "line of file content\n".repeat(45); // ~945 chars
+    let big_err = format!("HEAD_MARKER {} TAIL_MARKER", "x".repeat(700));
+    let s = setup(
+        vec![
+            reply(vec![call(
+                "c6",
+                "read",
+                json!({"path": path_str(&dir.path().join("c.txt"))}),
+            )]),
+            reply(vec![call(
+                "c7",
+                "read",
+                json!({"path": path_str(&dir.path().join("big.txt"))}),
+            )]),
+            reply(vec![say("done")]),
+        ],
+        &["context-slim"],
+        SetupOpts {
+            cwd: Some(path_str(dir.path())),
+            context_window: Some(2400),
+            settings: settings_map(&[(
+                "context-slim",
+                json!({"triggerRatio": 0.50, "keepRecent": 2, "maskStep": 2, "minChars": 200}),
+            )]),
+            ..SetupOpts::default()
+        },
+    )
+    .await;
+    std::fs::write(dir.path().join("c.txt"), "tiny").unwrap();
+    std::fs::write(dir.path().join("big.txt"), "more big output line\n".repeat(80)).unwrap();
+    // Initial tokens ~1320 > 1200; masking batch 1 (t1, t2) drops it ~900 <= 1200 so turn 2 stays inside batch boundary
+    let a1 = Message::Assistant(reply(vec![call("c1", "read", json!({"path": "src/a.rs"}))]));
+    let t1 = tool_msg("c1", "read", &big, false);
+    let a2 = Message::Assistant(reply(vec![call("c2", "bash", json!({"command": "cargo test"}))]));
+    let t2 = tool_msg("c2", "bash", &big_err, true);
+    let a3 = Message::Assistant(reply(vec![call("c3", "read", json!({"path": "src/b.rs"}))]));
+    let t3 = tool_msg("c3", "read", &big, false);
+    let a4 = Message::Assistant(reply(vec![call("c4", "read", json!({"path": "src/c.rs"}))]));
+    let t4 = tool_msg("c4", "read", &big, false);
+    let a5 = Message::Assistant(reply(vec![call("c5", "read", json!({"path": "src/d.rs"}))]));
+    let t5 = tool_msg("c5", "read", &big, false);
+    s.agent.reset(vec![
+        Message::user(vec![UserContent::text("go")]),
+        a1,
+        t1,
+        a2,
+        t2,
+        a3,
+        t3,
+        a4,
+        t4,
+        a5,
+        t5,
+    ]);
+    set_local_model(&s);
+    s.agent.prompt_text("next").await.unwrap();
+    let reqs = s.requests();
+    let sent = &reqs[0].messages;
+    // t1 and t2 should be masked (batch 1 of size 2), t5 kept recent (and original messages in agent stay intact!)
+    let t1_sent = sent[2].text();
+    let t2_sent = sent[4].text();
+    assert!(
+        t1_sent.contains("[context-slim: omitted") && t1_sent.contains("read(src/a.rs)"),
+        "{t1_sent}"
+    );
+    assert!(
+        t2_sent.contains("HEAD_MARKER")
+            && t2_sent.contains("[context-slim: omitted")
+            && t2_sent.contains("TAIL_MARKER"),
+        "{t2_sent}"
+    );
+    assert_eq!(sent[10].text(), big);
+    // Underlying stored session history is not mutated
+    assert_eq!(s.agent.messages()[2].text(), big);
+    // Prefix up through t5 stays byte-identical on the next turn when below threshold (KV cache preservation)
+    assert_eq!(reqs[1].messages[..11], reqs[0].messages[..11]);
+    // Once big.txt pushes tokens over threshold again, batch 2 (t3, t4) gets masked
+    assert!(
+        reqs[2].messages[6].text().contains("[context-slim: omitted"),
+        "{}",
+        reqs[2].messages[6].text()
+    );
+    assert!(
+        reqs[2].messages[8].text().contains("[context-slim: omitted"),
+        "{}",
+        reqs[2].messages[8].text()
+    );
+}
+
+#[tokio::test]
+async fn context_slim_ignores_cloud_models_and_never_masks_subagent_or_skill_reads() {
+    let dir = temp_dir("sasacode-context-slim-scope-");
+    let big = "line of file content\n".repeat(45); // ~945 chars
+    let slim_opts = || SetupOpts {
+        cwd: Some(path_str(dir.path())),
+        context_window: Some(2400),
+        settings: settings_map(&[(
+            "context-slim",
+            json!({"triggerRatio": 0.50, "keepRecent": 2, "maskStep": 4, "minChars": 200}),
+        )]),
+        ..SetupOpts::default()
+    };
+
+    // 1. Cloud models (including Ollama -cloud models) leave requests completely untouched.
+    for (id, server, base_url) in [
+        ("m", None, None),
+        (
+            "gpt-oss:120b-cloud",
+            Some(LocalServer::Ollama),
+            Some("http://localhost:11434/v1"),
+        ),
+    ] {
+        let s = setup(vec![reply(vec![say("done")])], &["context-slim"], slim_opts()).await;
+        set_model_with(&s, id, server, base_url);
+        let history = vec![
+            Message::user(vec![UserContent::text("go")]),
+            Message::Assistant(reply(vec![call("c1", "read", json!({"path": "src/a.rs"}))])),
+            tool_msg("c1", "read", &big, false),
+            Message::Assistant(reply(vec![call("c2", "bash", json!({"command": "cargo test"}))])),
+            tool_msg("c2", "bash", &big, false),
+            Message::Assistant(reply(vec![call("c3", "read", json!({"path": "src/b.rs"}))])),
+            tool_msg("c3", "read", &big, false),
+            Message::Assistant(reply(vec![call("c4", "read", json!({"path": "src/c.rs"}))])),
+            tool_msg("c4", "read", &big, false),
+        ];
+        s.agent.reset(history);
+        s.agent.prompt_text("next").await.unwrap();
+        let sent = &s.requests()[0].messages;
+        assert_eq!(sent[2].text(), big, "cloud model {id} must not mask read");
+        assert_eq!(sent[4].text(), big, "cloud model {id} must not mask bash");
+        assert!(!json_of(sent).contains("[context-slim:"));
+    }
+
+    // 2. Local model past threshold: task (subagent), read of SKILL.md, and non-search/exec tools
+    //    are never masked; read / find_files / search_text are masked.
+    let s = setup(vec![reply(vec![say("done")])], &["context-slim"], slim_opts()).await;
+    set_local_model(&s);
+    s.agent.reset(vec![
+        Message::user(vec![UserContent::text("go")]),
+        Message::Assistant(reply(vec![call(
+            "t1",
+            "task",
+            json!({"description": "sub", "prompt": "check"}),
+        )])),
+        tool_msg("t1", "task", &big, false),
+        Message::Assistant(reply(vec![call(
+            "t2",
+            "read",
+            json!({"path": ".sasacode/skills/deploy/SKILL.md"}),
+        )])),
+        tool_msg("t2", "read", &big, false),
+        Message::Assistant(reply(vec![call(
+            "t3",
+            "web_fetch",
+            json!({"url": "https://example.com"}),
+        )])),
+        tool_msg("t3", "web_fetch", &big, false),
+        Message::Assistant(reply(vec![call("t4", "read", json!({"path": "src/lib.rs"}))])),
+        tool_msg("t4", "read", &big, false),
+        Message::Assistant(reply(vec![call("t5", "find_files", json!({"pattern": "*.rs"}))])),
+        tool_msg("t5", "find_files", &big, false),
+        Message::Assistant(reply(vec![call("t6", "search_text", json!({"query": "main"}))])),
+        tool_msg("t6", "search_text", &big, false),
+        Message::Assistant(reply(vec![call("t7", "read", json!({"path": "src/recent.rs"}))])),
+        tool_msg("t7", "read", &big, false),
+    ]);
+    s.agent.prompt_text("next").await.unwrap();
+    let sent = &s.requests()[0].messages;
+    assert_eq!(sent[2].text(), big, "subagent report must never be masked");
+    assert_eq!(sent[4].text(), big, "SKILL.md read must never be masked");
+    assert_eq!(sent[6].text(), big, "non-allowlisted tool must never be masked");
+    assert!(
+        sent[8].text().contains("[context-slim: omitted") && sent[8].text().contains("read(src/lib.rs)"),
+        "{}",
+        sent[8].text()
+    );
+    assert!(
+        sent[10].text().contains("[context-slim: omitted") && sent[10].text().contains("find_files"),
+        "{}",
+        sent[10].text()
+    );
+    assert!(
+        sent[12].text().contains("[context-slim: omitted") && sent[12].text().contains("search_text"),
+        "{}",
+        sent[12].text()
+    );
+    assert_eq!(sent[14].text(), big, "recent read stays unmasked");
+}
+
+#[tokio::test]
+async fn thinking_budget_stops_local_model_runaway_thinking_but_not_cloud_default() {
+    let dir = temp_dir("sasacode-thinking-budget-");
+    let run_with = |id: &'static str, local: bool| {
+        let cwd = path_str(dir.path());
+        async move {
+            let api = api_name();
+            let provider = Arc::new(ReplayProvider::new(
+                vec![
+                    reply_at(vec![think(&"thinking step ".repeat(30))], 11),
+                    reply_at(vec![say("concise answer")], 22),
+                ],
+                ReplayOptions::api(&api),
+            ));
+            register_api(&api, provider.clone());
+            let mut m: ModelInfo = serde_json::from_value(json!({
+                "id": id, "provider": "t", "api": api, "contextWindow": 32_000, "maxOutput": 1000
+            }))
+            .unwrap();
+            if local {
+                m.server = Some(LocalServer::Ollama);
+            }
+            let agent = Agent::new(AgentOptions::new(m, cwd.clone(), "base"));
+            let host = PluginHost::new(PluginHostOptions {
+                agent: agent.clone(),
+                cwd,
+                settings: Some(Arc::new(|_| json!({"localMaxChars": 100}))),
+                register_provider: None,
+                disabled_tools: Vec::new(),
+                lang: Lang::En,
+            });
+            assert!(host.load("thinking-budget", bundled("thinking-budget")).await);
+            agent.prompt_text("go").await.unwrap();
+            (agent.messages(), provider.requests())
+        }
+    };
+
+    let (local_msgs, local_reqs) = run_with("m", true).await;
+    assert_eq!(local_reqs.len(), 2);
+    assert!(json_of(&local_reqs[1].messages).contains("[thinking-budget]"));
+    assert_eq!(local_msgs.last().unwrap().text(), "concise answer");
+
+    let (cloud_msgs, cloud_reqs) = run_with("m", false).await;
+    assert_eq!(cloud_reqs.len(), 1);
+    assert_eq!(cloud_msgs.len(), 2);
+
+    let (ollama_cloud_msgs, ollama_cloud_reqs) = run_with("gpt-oss:120b-cloud", true).await;
+    assert_eq!(ollama_cloud_reqs.len(), 1);
+    assert_eq!(ollama_cloud_msgs.len(), 2);
+}
+
+#[tokio::test]
+async fn hashline_edit_annotates_read_edits_by_anchor_rejects_stale_hash_and_strips_write_prefixes() {
+    let dir = temp_dir("sasacode-hashline-");
+    let file = dir.path().join("code.ts");
+    std::fs::write(&file, "const a = 1;\n  const b = 2;\nconst c = 3;\n").unwrap();
+    let h1 = line_hash("const a = 1;");
+    let h2 = line_hash("  const b = 2;");
+    let h3 = line_hash("const c = 3;");
+    let f = path_str(&file);
+
+    let s = setup(
+        vec![
+            reply(vec![call("1", "read", json!({"path": f}))]),
+            // stale hash rejected cleanly with updated window
+            reply(vec![call(
+                "2",
+                "hash_edit",
+                json!({"path": f, "start": "2:ff", "content": "  const b = 20;"}),
+            )]),
+            // valid replace
+            reply(vec![call(
+                "3",
+                "hash_edit",
+                json!({"path": f, "start": format!("2:{h2}"), "content": "  const b = 20;"}),
+            )]),
+            // insert_after line 3
+            reply(vec![call(
+                "4",
+                "hash_edit",
+                json!({"path": f, "start": format!("3:{h3}"), "mode": "insert_after", "content": "const d = 4;"}),
+            )]),
+            // write with accidental N:hh| prefixes gets stripped before writing
+            reply(vec![call(
+                "5",
+                "write",
+                json!({"path": f, "content": format!("1:{h1}|const a = 1;\n2:{h2}|  const b = 99;\n")}),
+            )]),
+            reply(vec![say("done")]),
+        ],
+        &["hashline-edit", "write-guard"],
+        opts(&path_str(dir.path()), &[]),
+    )
+    .await;
+    s.agent.prompt_text("edit file").await.unwrap();
+    let reqs = s.requests();
+    let read_out = last(&reqs[1]).text();
+    assert!(
+        read_out.contains(&format!("1:{h1}|const a = 1;\n2:{h2}|  const b = 2;")),
+        "{read_out}"
+    );
+
+    let stale_out = last(&reqs[2]).text();
+    assert!(
+        stale_out.contains("Hash mismatch at") && stale_out.contains(&format!("2:{h2}|  const b = 2;")),
+        "{stale_out}"
+    );
+
+    assert!(last(&reqs[3]).text().contains("Edited"), "{}", last(&reqs[3]).text());
+    assert!(last(&reqs[4]).text().contains("Edited"), "{}", last(&reqs[4]).text());
+
+    // Final write should have been stripped of 1:xx| prefixes
+    assert_eq!(
+        std::fs::read_to_string(&file).unwrap(),
+        "const a = 1;\n  const b = 99;\n"
+    );
+}
+
+#[tokio::test]
+async fn clean_retry_rolls_back_files_and_resets_history_after_repeated_failures() {
+    let dir = temp_dir("sasacode-clean-retry-");
+    let target = dir.path().join("app.txt");
+    let extra = dir.path().join("junk.txt");
+    std::fs::write(&target, "original\n").unwrap();
+    let target_s = path_str(&target);
+    let extra_s = path_str(&extra);
+    let sess_dir = temp_dir("sasacode-clean-retry-sess-");
+    let session = SessionFile::create(sess_dir.path(), &path_str(dir.path()), Vec::new()).unwrap();
+
+    let s = setup(
+        vec![
+            reply(vec![call(
+                "1",
+                "write",
+                json!({"path": target_s, "content": "broken\n"}),
+            )]),
+            reply(vec![call("2", "write", json!({"path": extra_s, "content": "temp\n"}))]),
+            reply(vec![call(
+                "3",
+                "bash",
+                json!({"command": "cargo test --manifest-path missing-1/Cargo.toml"}),
+            )]),
+            reply(vec![call(
+                "4",
+                "bash",
+                json!({"command": "cargo test --manifest-path missing-2/Cargo.toml"}),
+            )]),
+            // Clean retry triggers at TurnEnd after 2nd test failure!
+            reply(vec![call("5", "read", json!({"path": target_s}))]),
+            reply(vec![say("recovered")]),
+        ],
+        &["clean-retry"],
+        SetupOpts {
+            cwd: Some(path_str(dir.path())),
+            session: Some(session),
+            settings: settings_map(&[("clean-retry", json!({"triggerFailures": 2, "maxRetries": 1}))]),
+            ..SetupOpts::default()
+        },
+    )
+    .await;
+    s.agent.set_permissions(policy(PermissionMode::Auto));
+    s.agent.prompt_text("fix app").await.unwrap();
+
+    // Target restored, newly created junk deleted
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), "original\n");
+    assert!(!extra.exists());
+
+    // Request 4 (index 4, after clean-retry) starts fresh with clean-retry prompt + original prompt
+    let reqs = s.requests();
+    assert_eq!(reqs.len(), 6);
+    assert_eq!(reqs[4].messages.len(), 1);
+    let retry_msg = reqs[4].messages[0].text();
+    assert!(
+        retry_msg.contains("fix app") && retry_msg.contains("[clean-retry]"),
+        "{retry_msg}"
+    );
+    assert_eq!(last(&reqs[5]).text().trim(), "1\toriginal");
+}
+
+#[tokio::test]
+async fn clean_retry_ignores_denied_tool_calls_and_grep_nonzero_exits() {
+    for cmd in "cargo test\ncargo check\ncargo build\ncargo clippy -- -D warnings\ncargo nextest run\n\
+RUST_BACKTRACE=1 cargo test\ncd crates/foo && cargo test 2>&1 | tail -n 20\nenv CI=1 pytest -q\n\
+python -m pytest\npython3 -m mypy src/\npython -m unittest\nnpm test\nnpm run test\n\
+pnpm run lint\nyarn run typecheck\nbun test\nbun run build\ngo test ./...\ngo vet ./...\n\
+go build ./...\ndeno test\ndeno check main.ts\nmake\ntsc --noEmit\njest\nvitest\nruff check .\neslint src/"
+        .lines()
+    {
+        assert!(looks_like_check_command(cmd), "expected check: {cmd}");
+    }
+    for cmd in "grep foo tests/\ngrep -rn \"cargo test\" src/\nrg test crates/\n\
+echo test fail 1 >&2; exit 1\ncd tests && ls -la\ncargo run -- test\nnpm install jest"
+        .lines()
+    {
+        assert!(!looks_like_check_command(cmd), "expected non-check: {cmd}");
+    }
+
+    let dir = temp_dir("sasacode-clean-retry-5-");
+    let target = dir.path().join("app.txt");
+    let tests_dir = dir.path().join("tests");
+    std::fs::create_dir_all(&tests_dir).unwrap();
+    std::fs::write(&target, "v0\n").unwrap();
+    std::fs::write(tests_dir.join("sample.txt"), "hello\n").unwrap();
+    let target_s = path_str(&target);
+
+    // (a) 4 user denials on edit/write must NOT count as failures or trigger rollback
+    let calls_seen = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let calls_seen_cb = calls_seen.clone();
+    let s1 = setup(
+        vec![
+            reply(vec![call("1", "write", json!({"path": target_s, "content": "v1\n"}))]),
+            reply(vec![call(
+                "2",
+                "edit",
+                json!({"path": target_s, "old_string": "v1", "new_string": "d1"}),
+            )]),
+            reply(vec![call(
+                "3",
+                "edit",
+                json!({"path": target_s, "old_string": "v1", "new_string": "d2"}),
+            )]),
+            reply(vec![call(
+                "4",
+                "edit",
+                json!({"path": target_s, "old_string": "v1", "new_string": "d3"}),
+            )]),
+            reply(vec![call(
+                "5",
+                "edit",
+                json!({"path": target_s, "old_string": "v1", "new_string": "d4"}),
+            )]),
+            reply(vec![say("stopped after denials")]),
+        ],
+        &["clean-retry"],
+        opts(
+            &path_str(dir.path()),
+            &[("clean-retry", json!({"triggerEditErrors": 4, "maxRetries": 1}))],
+        ),
+    )
+    .await;
+    s1.agent.set_permissions(policy(PermissionMode::Ask));
+    s1.agent.set_approve(Some(Arc::new(move |_| {
+        let n = calls_seen_cb.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Box::pin(async move {
+            Ok(ApprovalAnswer::new(if n == 0 {
+                ApprovalDecision::Allow
+            } else {
+                ApprovalDecision::Deny
+            }))
+        })
+    })));
+    s1.agent.prompt_text("update app").await.unwrap();
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), "v1\n");
+    assert_eq!(s1.requests().len(), 6);
+    assert!(
+        !s1.requests()
+            .iter()
+            .any(|r| json_of(&r.messages).contains("[clean-retry]"))
+    );
+
+    // (b) `grep foo tests/` exiting nonzero 3 times must NOT trigger a retry
+    std::fs::write(&target, "v0\n").unwrap();
+    let s2 = setup(
+        vec![
+            reply(vec![call("1", "write", json!({"path": target_s, "content": "v1\n"}))]),
+            reply(vec![call(
+                "2",
+                "bash",
+                json!({"command": "grep definitely_missing_token tests/"}),
+            )]),
+            reply(vec![call(
+                "3",
+                "bash",
+                json!({"command": "grep another_missing_token tests/"}),
+            )]),
+            reply(vec![call(
+                "4",
+                "bash",
+                json!({"command": "grep third_missing_token tests/"}),
+            )]),
+            reply(vec![say("finished search")]),
+        ],
+        &["clean-retry"],
+        opts(
+            &path_str(dir.path()),
+            &[("clean-retry", json!({"triggerFailures": 2, "maxRetries": 1}))],
+        ),
+    )
+    .await;
+    s2.agent.set_permissions(policy(PermissionMode::Auto));
+    s2.agent.prompt_text("search tests").await.unwrap();
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), "v1\n");
+    assert_eq!(s2.requests().len(), 5);
+    assert!(
+        !s2.requests()
+            .iter()
+            .any(|r| json_of(&r.messages).contains("[clean-retry]"))
+    );
+}
+
+#[tokio::test]
+async fn clean_retry_preserves_snapshots_and_base_len_across_mid_run_user_prompt() {
+    let dir = temp_dir("sasacode-clean-retry-6a-");
+    let target = dir.path().join("app.txt");
+    std::fs::write(&target, "original\n").unwrap();
+    let target_s = path_str(&target);
+
+    let entered_pause = Arc::new(tokio::sync::Notify::new());
+    let resume_pause = Arc::new(tokio::sync::Notify::new());
+    let prompt_seen = Arc::new(tokio::sync::Notify::new());
+
+    let s = setup(
+        vec![
+            // Prior completed turn so base_len is non-zero (2 messages).
+            reply(vec![say("prior answer")]),
+            // Run 2: edit app.txt, fail check 1, pause for mid-run UserPrompt, fail check 2 -> triggers retry!
+            reply(vec![call(
+                "1",
+                "write",
+                json!({"path": target_s, "content": "broken\n"}),
+            )]),
+            reply(vec![call(
+                "2",
+                "bash",
+                json!({"command": "cargo test --manifest-path missing-1/Cargo.toml"}),
+            )]),
+            reply(vec![call("3", "pause_point", json!({}))]),
+            reply(vec![call(
+                "4",
+                "bash",
+                json!({"command": "cargo test --manifest-path missing-2/Cargo.toml"}),
+            )]),
+            reply(vec![say("recovered")]),
+        ],
+        &["clean-retry"],
+        opts(
+            &path_str(dir.path()),
+            &[("clean-retry", json!({"triggerFailures": 2, "maxRetries": 1}))],
+        ),
+    )
+    .await;
+    s.agent.set_permissions(policy(PermissionMode::Auto));
+
+    let entered_cb = entered_pause.clone();
+    let resume_cb = resume_pause.clone();
+    s.agent.set_tool(
+        ToolDef::new(
+            "pause_point",
+            "test pause hook",
+            json!({"type": "object", "properties": {}, "additionalProperties": false}),
+            ToolKind::Read,
+            move |_args, _ctx| {
+                let entered = entered_cb.clone();
+                let resume = resume_cb.clone();
+                async move {
+                    entered.notify_one();
+                    resume.notified().await;
+                    Ok(ToolResult::text("resumed"))
+                }
+            },
+        )
+        .into_ref(),
+    );
+    let seen_cb = prompt_seen.clone();
+    s.agent
+        .hooks()
+        .on::<hook::UserPrompt, _, _>("test-observer", move |ev, _| {
+            let seen = seen_cb.clone();
+            let text: String = ev
+                .content
+                .iter()
+                .filter_map(UserContent::as_text)
+                .collect::<Vec<_>>()
+                .join("");
+            async move {
+                if text.contains("mid-run follow-up") {
+                    seen.notify_one();
+                }
+                Ok(None)
+            }
+        });
+
+    // Prior conversation before the failing run.
+    s.agent.prompt_text("prior question").await.unwrap();
+
+    let agent1 = s.agent.clone();
+    let h1 = tokio::spawn(async move { agent1.prompt_text("fix app").await });
+
+    entered_pause.notified().await;
+    let agent2 = s.agent.clone();
+    let h2 = tokio::spawn(async move { agent2.prompt_text("mid-run follow-up").await });
+    prompt_seen.notified().await;
+    resume_pause.notify_one();
+
+    h1.await.unwrap().unwrap();
+    h2.await.unwrap().unwrap();
+
+    // Snapshot from before the mid-run UserPrompt MUST still restore app.txt.
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), "original\n");
+
+    let reqs = s.requests();
+    assert_eq!(reqs.len(), 6);
+    // Request 5 (after clean-retry trigger) keeps the 2 prior messages + clean-retry prompt (base_len = 2, NOT mid-run).
+    assert_eq!(reqs[5].messages.len(), 3);
+    assert_eq!(reqs[5].messages[0].text(), "prior question");
+    assert_eq!(reqs[5].messages[1].text(), "prior answer");
+    let retry_msg = reqs[5].messages[2].text();
+    assert!(
+        retry_msg.contains("fix app") && retry_msg.contains("[clean-retry]"),
+        "{retry_msg}"
+    );
+    assert!(!retry_msg.contains("mid-run follow-up"), "{retry_msg}");
+}
+
+#[tokio::test]
+async fn clean_retry_lists_unrestorable_files_and_protects_mid_run_user_edits() {
+    // Part 1: large file (> maxFileKB) + file changed via bash + snapshotted file + created file
+    let dir1 = temp_dir("sasacode-clean-retry-6b-unrestorable-");
+    let small = dir1.path().join("small.txt");
+    let big = dir1.path().join("big.txt");
+    let bash_file = dir1.path().join("bash_mod.txt");
+    let created = dir1.path().join("created.txt");
+    std::fs::write(&small, "small-v0\n").unwrap();
+    std::fs::write(&big, "x".repeat(2048)).unwrap();
+    std::fs::write(&bash_file, "bash-v0\n").unwrap();
+    let small_s = path_str(&small);
+    let big_s = path_str(&big);
+    let created_s = path_str(&created);
+
+    let s1 = setup(
+        vec![
+            reply(vec![call(
+                "1",
+                "write",
+                json!({"path": small_s, "content": "small-bad\n"}),
+            )]),
+            reply(vec![call(
+                "2",
+                "write",
+                json!({"path": created_s, "content": "temp\n"}),
+            )]),
+            reply(vec![call("3", "write", json!({"path": big_s, "content": "big-bad\n"}))]),
+            reply(vec![call(
+                "4",
+                "bash",
+                json!({"command": "echo bash-bad > bash_mod.txt"}),
+            )]),
+            reply(vec![call(
+                "5",
+                "bash",
+                json!({"command": "cargo test --manifest-path missing-1/Cargo.toml"}),
+            )]),
+            reply(vec![call(
+                "6",
+                "bash",
+                json!({"command": "cargo test --manifest-path missing-2/Cargo.toml"}),
+            )]),
+            reply(vec![say("recovered")]),
+        ],
+        &["clean-retry"],
+        opts(
+            &path_str(dir1.path()),
+            &[(
+                "clean-retry",
+                json!({"triggerFailures": 2, "maxRetries": 1, "maxFileKB": 1}),
+            )],
+        ),
+    )
+    .await;
+    s1.agent.set_permissions(policy(PermissionMode::Auto));
+    s1.agent.prompt_text("fix project").await.unwrap();
+
+    // Snapshotted changes rolled back; unrestorable changes remain and are listed honestly.
+    assert_eq!(std::fs::read_to_string(&small).unwrap(), "small-v0\n");
+    assert!(!created.exists());
+    assert_eq!(std::fs::read_to_string(&big).unwrap(), "big-bad\n");
+    assert_eq!(std::fs::read_to_string(&bash_file).unwrap(), "bash-bad\n");
+
+    let reqs1 = s1.requests();
+    assert_eq!(reqs1.len(), 7);
+    let retry_msg1 = reqs1[6].messages[0].text();
+    assert!(
+        !retry_msg1.contains("All file changes were rolled back"),
+        "{retry_msg1}"
+    );
+    assert!(retry_msg1.contains(&big_s), "{retry_msg1}");
+    assert!(
+        retry_msg1.contains("Changes made through bash were not rolled back."),
+        "{retry_msg1}"
+    );
+
+    // Part 2: manual user edit mid-run must NOT be overwritten, and pre-prompt uncommitted changes stay preserved when untouched mid-run
+    let dir2 = temp_dir("sasacode-clean-retry-6b-user-edit-");
+    let app = dir2.path().join("app.txt");
+    let uncommitted = dir2.path().join("uncommitted.txt");
+    std::fs::write(&app, "pre-prompt\n").unwrap();
+    std::fs::write(&uncommitted, "user-uncommitted-v0\n").unwrap();
+    let app_s = path_str(&app);
+    let uncommitted_s = path_str(&uncommitted);
+
+    let s2 = setup(
+        vec![
+            reply(vec![call(
+                "1",
+                "write",
+                json!({"path": uncommitted_s, "content": "agent-v1\n"}),
+            )]),
+            reply(vec![call(
+                "2",
+                "write",
+                json!({"path": app_s, "content": "agent-edit\n"}),
+            )]),
+            reply(vec![call("3", "simulate_user_edit", json!({}))]),
+            reply(vec![call(
+                "4",
+                "bash",
+                json!({"command": "cargo test --manifest-path missing-1/Cargo.toml"}),
+            )]),
+            reply(vec![call(
+                "5",
+                "bash",
+                json!({"command": "cargo test --manifest-path missing-2/Cargo.toml"}),
+            )]),
+            reply(vec![say("done")]),
+        ],
+        &["clean-retry"],
+        opts(
+            &path_str(dir2.path()),
+            &[("clean-retry", json!({"triggerFailures": 2, "maxRetries": 1}))],
+        ),
+    )
+    .await;
+    s2.agent.set_permissions(policy(PermissionMode::Auto));
+    let app_for_tool = app.clone();
+    s2.agent.set_tool(
+        ToolDef::new(
+            "simulate_user_edit",
+            "simulates a user editing app.txt mid-run",
+            json!({"type": "object", "properties": {}, "additionalProperties": false}),
+            ToolKind::Read,
+            move |_args, _ctx| {
+                let p = app_for_tool.clone();
+                async move {
+                    std::fs::write(&p, "user-manual-mid-run\n").unwrap();
+                    Ok(ToolResult::text("user edited"))
+                }
+            },
+        )
+        .into_ref(),
+    );
+    s2.agent.prompt_text("fix both").await.unwrap();
+
+    // Uncommitted pre-prompt file restored; manually mid-run edited file preserved!
+    assert_eq!(std::fs::read_to_string(&uncommitted).unwrap(), "user-uncommitted-v0\n");
+    assert_eq!(std::fs::read_to_string(&app).unwrap(), "user-manual-mid-run\n");
+
+    let reqs2 = s2.requests();
+    assert_eq!(reqs2.len(), 6);
+    let retry_msg2 = reqs2[5].messages[0].text();
+    assert!(
+        !retry_msg2.contains("All file changes were rolled back"),
+        "{retry_msg2}"
+    );
+    assert!(retry_msg2.contains(&app_s), "{retry_msg2}");
+}
+
+/// A reply whose only call is a `cargo test` that fails at once: there is no such manifest.
+fn failing_check(id: &str) -> AssistantMessage {
+    let command = format!("cargo test --manifest-path missing-{id}/Cargo.toml");
+    reply(vec![call(id, "bash", json!({"command": command}))])
+}
+
+/// clean-retry alone in `dir`, in permission mode "auto" so that every call really runs.
+async fn clean_retry_setup(dir: &std::path::Path, script: Vec<AssistantMessage>, names: &[&str]) -> Setup {
+    let settings = json!({"triggerFailures": 2, "triggerEditErrors": 2, "maxRetries": 1});
+    let s = setup(script, names, opts(&path_str(dir), &[("clean-retry", settings)])).await;
+    s.agent.set_permissions(policy(PermissionMode::Auto));
+    s
+}
+
+fn saw_clean_retry(s: &Setup) -> bool {
+    s.requests()
+        .iter()
+        .any(|r| json_of(&r.messages).contains("[clean-retry]"))
+}
+
+#[tokio::test]
+async fn clean_retry_is_not_left_stuck_by_a_prompt_another_plugin_handled() {
+    let dir = temp_dir("sasacode-clean-retry-7a-handled-");
+    let target = dir.path().join("app.txt");
+    std::fs::write(&target, "original\n").unwrap();
+
+    let s = clean_retry_setup(
+        dir.path(),
+        vec![
+            reply(vec![say("prior answer")]),
+            reply(vec![call(
+                "1",
+                "write",
+                json!({"path": path_str(&target), "content": "broken\n"}),
+            )]),
+            failing_check("2"),
+            failing_check("3"),
+            reply(vec![say("recovered")]),
+        ],
+        &["clean-retry"],
+    )
+    .await;
+    // Registered after clean-retry: clean-retry's hooks see the prompt before this one consumes it.
+    s.agent
+        .hooks()
+        .on_sync::<hook::UserPrompt, _>("test-commands", |ev, _| {
+            let handled = text_of_user(&ev.content).starts_with("/handled");
+            Ok(handled.then_some(UserPromptResult {
+                content: None,
+                handled: true,
+            }))
+        });
+
+    s.agent.prompt_text("prior question").await.unwrap();
+    // No run starts, so no agent_end follows: nothing of this prompt may stay behind.
+    s.agent.prompt_text("/handled command").await.unwrap();
+    assert_eq!(s.requests().len(), 1);
+    s.agent.prompt_text("fix app").await.unwrap();
+
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), "original\n");
+    let reqs = s.requests();
+    assert_eq!(reqs.len(), 5);
+    // The retry rewinds to the start of the "fix app" run and repeats that prompt.
+    assert_eq!(reqs[4].messages.len(), 3);
+    assert_eq!(reqs[4].messages[0].text(), "prior question");
+    assert_eq!(reqs[4].messages[1].text(), "prior answer");
+    let retry_msg = reqs[4].messages[2].text();
+    assert!(retry_msg.starts_with("fix app\n\n[clean-retry]"), "{retry_msg}");
+    assert!(!retry_msg.contains("/handled"), "{retry_msg}");
+}
+
+#[tokio::test]
+async fn clean_retry_gives_a_prompt_queued_at_the_end_of_a_run_its_own_state() {
+    let dir = temp_dir("sasacode-clean-retry-7a-queued-");
+    let target = dir.path().join("app.txt");
+    std::fs::write(&target, "original\n").unwrap();
+
+    let entered_pause = Arc::new(tokio::sync::Notify::new());
+    let resume_pause = Arc::new(tokio::sync::Notify::new());
+    let prompt_seen = Arc::new(tokio::sync::Notify::new());
+    let stop_armed = Arc::new(AtomicBool::new(false));
+
+    let s = clean_retry_setup(
+        dir.path(),
+        vec![
+            // Run 1 ("first task") is stopped at the end of this turn, before it takes queued input.
+            reply(vec![call("1", "pause_point", json!({}))]),
+            // Run 2 starts from the queued "second task": no user_prompt hook fires for it.
+            reply(vec![call(
+                "2",
+                "write",
+                json!({"path": path_str(&target), "content": "broken\n"}),
+            )]),
+            failing_check("3"),
+            failing_check("4"),
+            reply(vec![say("recovered")]),
+        ],
+        &["clean-retry"],
+    )
+    .await;
+
+    let (entered_cb, resume_cb) = (entered_pause.clone(), resume_pause.clone());
+    s.agent.set_tool(
+        ToolDef::new(
+            "pause_point",
+            "test pause hook",
+            json!({"type": "object", "properties": {}, "additionalProperties": false}),
+            ToolKind::Read,
+            move |_args, _ctx| {
+                let (entered, resume) = (entered_cb.clone(), resume_cb.clone());
+                async move {
+                    entered.notify_one();
+                    resume.notified().await;
+                    Ok(ToolResult::text("resumed"))
+                }
+            },
+        )
+        .into_ref(),
+    );
+    let seen_cb = prompt_seen.clone();
+    s.agent
+        .hooks()
+        .on_sync::<hook::UserPrompt, _>("test-observer", move |ev, _| {
+            if text_of_user(&ev.content) == "second task" {
+                seen_cb.notify_one();
+            }
+            Ok(None)
+        });
+    let armed_cb = stop_armed.clone();
+    s.agent.hooks().on_sync::<hook::TurnEnd, _>("test-stop", move |_, _| {
+        let stop = armed_cb
+            .swap(false, Ordering::SeqCst)
+            .then(|| "stopped by the test".to_string());
+        Ok(Some(TurnEndResult { inject: None, stop }))
+    });
+
+    let agent1 = s.agent.clone();
+    let first = tokio::spawn(async move { agent1.prompt_text("first task").await });
+    entered_pause.notified().await;
+    let agent2 = s.agent.clone();
+    let second = tokio::spawn(async move { agent2.prompt_text("second task").await });
+    prompt_seen.notified().await;
+    stop_armed.store(true, Ordering::SeqCst);
+    resume_pause.notify_one();
+    first.await.unwrap().unwrap();
+    second.await.unwrap().unwrap();
+    // Both prompts resolve when run 1 ends; run 2 was started by the agent itself.
+    s.agent.wait_for_idle().await;
+
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), "original\n");
+    let reqs = s.requests();
+    assert_eq!(reqs.len(), 5);
+    // The retry keeps run 1 (prompt, call, result) and restarts run 2 from its own prompt.
+    assert_eq!(reqs[4].messages.len(), 4);
+    assert_eq!(reqs[4].messages[0].text(), "first task");
+    let retry_msg = reqs[4].messages[3].text();
+    assert!(retry_msg.starts_with("second task\n\n[clean-retry]"), "{retry_msg}");
+}
+
+#[tokio::test]
+async fn clean_retry_does_not_count_subagent_failures_but_restores_subagent_edits() {
+    // (a) A subagent fails checks and edits past both thresholds: the main run is not retried.
+    let dir1 = temp_dir("sasacode-clean-retry-7b-failures-");
+    let main_file = dir1.path().join("main.txt");
+    std::fs::write(&main_file, "main-v0\n").unwrap();
+    let missing = path_str(&dir1.path().join("missing.txt"));
+    let bad_edit = |id: &str| {
+        let input = json!({"path": missing, "old_string": "a", "new_string": "b"});
+        reply(vec![call(id, "edit", input)])
+    };
+
+    let s1 = clean_retry_setup(
+        dir1.path(),
+        vec![
+            // Something to roll back, so that only the failure counts decide.
+            reply(vec![call(
+                "1",
+                "write",
+                json!({"path": path_str(&main_file), "content": "main-v1\n"}),
+            )]),
+            reply(vec![call(
+                "2",
+                "task",
+                json!({"description": "failing work", "prompt": "run the tests"}),
+            )]),
+            failing_check("s1"),
+            failing_check("s2"),
+            bad_edit("s3"),
+            bad_edit("s4"),
+            reply(vec![say("sub gave up")]),
+            reply(vec![say("main done")]),
+        ],
+        &["clean-retry", "subagent"],
+    )
+    .await;
+    s1.agent.prompt_text("delegate the work").await.unwrap();
+
+    assert_eq!(s1.requests().len(), 8);
+    assert!(!saw_clean_retry(&s1));
+    assert_eq!(std::fs::read_to_string(&main_file).unwrap(), "main-v1\n");
+
+    // (b) The main run's own failures roll back what its subagent edited, and the notice says
+    // that the subagent's bash changes stay.
+    let dir2 = temp_dir("sasacode-clean-retry-7b-edits-");
+    let sub_file = dir2.path().join("sub.txt");
+    let bash_file = dir2.path().join("sub_bash.txt");
+    std::fs::write(&sub_file, "sub-v0\n").unwrap();
+
+    let s2 = clean_retry_setup(
+        dir2.path(),
+        vec![
+            reply(vec![call(
+                "1",
+                "task",
+                json!({"description": "edit sub", "prompt": "edit sub.txt"}),
+            )]),
+            reply(vec![call(
+                "s1",
+                "write",
+                json!({"path": path_str(&sub_file), "content": "sub-v1\n"}),
+            )]),
+            reply(vec![call(
+                "s2",
+                "bash",
+                json!({"command": "echo sub-bash > sub_bash.txt"}),
+            )]),
+            reply(vec![say("sub done")]),
+            failing_check("2"),
+            failing_check("3"),
+            reply(vec![say("recovered")]),
+        ],
+        &["clean-retry", "subagent"],
+    )
+    .await;
+    s2.agent.prompt_text("fix with a subagent").await.unwrap();
+
+    assert_eq!(std::fs::read_to_string(&sub_file).unwrap(), "sub-v0\n");
+    assert_eq!(std::fs::read_to_string(&bash_file).unwrap().trim(), "sub-bash");
+    let reqs = s2.requests();
+    assert_eq!(reqs.len(), 7);
+    assert_eq!(reqs[6].messages.len(), 1);
+    let retry_msg = reqs[6].messages[0].text();
+    assert!(
+        retry_msg.starts_with("fix with a subagent\n\n[clean-retry]"),
+        "{retry_msg}"
+    );
+    assert!(
+        retry_msg.contains("Changes made through bash were not rolled back."),
+        "{retry_msg}"
+    );
+}
+
+#[test]
+fn clean_retry_tells_checks_from_commands_that_change_files() {
+    // Checks and nothing else: `cd`, env assignments, wrappers and runners do not count.
+    let pure_checks = [
+        "make",
+        "make test",
+        "make check lint",
+        "make -j4 build",
+        "make all CC=gcc",
+        "make test 2>&1",
+        "ruff check .",
+        "ruff check src/ --select E501",
+        "eslint src/",
+        "cargo +nightly test",
+        "cargo --locked test",
+        "cargo --offline check",
+        "cargo +1.82.0 --locked clippy -- -D warnings",
+        "npx vitest run",
+        "npx -y jest",
+        "pnpm exec eslint .",
+        "uv run pytest -q",
+        "uv run --no-sync mypy .",
+        "poetry run pytest",
+        "pnpm test",
+        "pnpm lint",
+        "yarn check",
+        "yarn typecheck",
+        "pnpm build",
+        "pnpm type-check",
+        "pnpm test:unit",
+        "pnpm test:fixtures",
+        "yarn lint:ci",
+        "npm run type-check",
+        "npm run test:e2e",
+        "python3.12 -m pytest -q",
+        "uv run python3.11 -m pytest",
+        "pytest --fixtures",
+        "cd web && CI=1 pnpm test",
+        "export CI=1; cargo test",
+        "cd crates/foo && RUST_BACKTRACE=1 cargo test",
+    ];
+    for cmd in pure_checks {
+        assert!(looks_like_check_command(cmd), "expected check: {cmd}");
+        assert!(!runs_other_commands(cmd), "expected nothing but checks: {cmd}");
+    }
+
+    // Not checks: other targets and subcommands, formatters, and anything asked to fix files.
+    let not_checks = [
+        "make clean",
+        "make install",
+        "make test clean",
+        "ruff format",
+        "ruff format .",
+        "ruff check --fix .",
+        "ruff check . --fix-only",
+        "eslint --fix src/",
+        "npx eslint . --fix",
+        "cargo clippy --fix",
+        "cargo +nightly fmt",
+        "cargo --locked install foo",
+        "npx prettier --write .",
+        "uv run python script.py",
+        "poetry run black .",
+        "pnpm install",
+        "pnpm dev",
+        "pnpm lint:fix",
+        "yarn",
+        "yarn add foo",
+        "npm build",
+        "python3.12 -m http.server",
+    ];
+    for cmd in not_checks {
+        assert!(!looks_like_check_command(cmd), "expected non-check: {cmd}");
+        assert!(runs_other_commands(cmd), "expected another command: {cmd}");
+    }
+
+    // A check next to something else is both; so is one piped into a command that writes (a reader
+    // after a pipe, `| tail -n 20`, is not something else).
+    let mixed = [
+        "sed -i 's/a/b/' f.txt && cargo test",
+        "rm -rf target; make",
+        "cargo test 2>&1 | tee log.txt",
+    ];
+    for cmd in mixed {
+        assert!(looks_like_check_command(cmd), "expected check: {cmd}");
+        assert!(runs_other_commands(cmd), "expected another command: {cmd}");
+    }
+
+    for cmd in ["cd src", "FOO=1", ""] {
+        assert!(
+            !looks_like_check_command(cmd) && !runs_other_commands(cmd),
+            "expected nothing: {cmd}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn clean_retry_notes_bash_changes_when_a_check_is_chained_after_another_command() {
+    // A failing `echo … && cargo test` is a failed check, and the echo still ran.
+    let dir1 = temp_dir("sasacode-clean-retry-8-mixed-");
+    let mixed = |id: &str| {
+        let command = format!("echo changed > note.txt && cargo test --manifest-path missing-{id}/Cargo.toml");
+        reply(vec![call(id, "bash", json!({"command": command}))])
+    };
+    let s1 = clean_retry_setup(
+        dir1.path(),
+        vec![mixed("1"), mixed("2"), reply(vec![say("recovered")])],
+        &["clean-retry"],
+    )
+    .await;
+    s1.agent.prompt_text("fix it").await.unwrap();
+
+    let reqs = s1.requests();
+    assert_eq!(reqs.len(), 3);
+    let retry_msg = reqs[2].messages[0].text();
+    assert!(retry_msg.starts_with("fix it\n\n[clean-retry]"), "{retry_msg}");
+    assert!(
+        retry_msg.contains("Changes made through bash were not rolled back."),
+        "{retry_msg}"
+    );
+    assert!(dir1.path().join("note.txt").exists());
+
+    // `cd` and env assignments around a check change nothing: with no edits there is nothing to
+    // roll back, so the failures alone do not start a retry.
+    let dir2 = temp_dir("sasacode-clean-retry-8-pure-");
+    let pure = |id: &str| {
+        let command = format!("cd . && RUST_BACKTRACE=1 cargo test --manifest-path missing-{id}/Cargo.toml");
+        reply(vec![call(id, "bash", json!({"command": command}))])
+    };
+    let s2 = clean_retry_setup(
+        dir2.path(),
+        vec![pure("1"), pure("2"), reply(vec![say("gave up")])],
+        &["clean-retry"],
+    )
+    .await;
+    s2.agent.prompt_text("fix it").await.unwrap();
+
+    assert_eq!(s2.requests().len(), 3);
+    assert!(!saw_clean_retry(&s2));
+}
+
+#[tokio::test]
+async fn slim_profile_adds_concise_rules_and_caps_oversized_read_and_bash_output() {
+    let dir = temp_dir("sasacode-slim-profile-");
+    let big_file = dir.path().join("big.txt");
+    let big_content = (0..120)
+        .map(|i| format!("line-{i:03} padding text here"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    std::fs::write(&big_file, &big_content).unwrap();
+
+    let s = setup(
+        vec![
+            reply(vec![call("1", "read", json!({"path": path_str(&big_file)}))]),
+            reply(vec![call("2", "bash", json!({"command": "printf '%02500d' 0"}))]),
+            reply(vec![say("ok")]),
+        ],
+        &["slim-profile"],
+        opts(
+            &path_str(dir.path()),
+            &[("slim-profile", json!({"readMaxChars": 800, "bashMaxChars": 700}))],
+        ),
+    )
+    .await;
+    s.agent.set_permissions(policy(PermissionMode::Auto));
+    // Note: in setup(), hooks fire after session_start; trigger prompt_text to observe SystemPrompt & ToolResult
+    s.agent.prompt_text("inspect").await.unwrap();
+    let reqs = s.requests();
+    assert!(reqs[0].system.contains("Small-model rules:"), "{}", reqs[0].system);
+    assert!(
+        last(&reqs[1]).text().contains("[slim-profile: truncated"),
+        "{}",
+        last(&reqs[1]).text()
+    );
+    assert!(
+        last(&reqs[2]).text().contains("[slim-profile: truncated"),
+        "{}",
+        last(&reqs[2]).text()
+    );
+}
+
+#[tokio::test]
+async fn hash_edit_reports_permissions_as_edit_and_enforces_edit_rules_without_leaking_unread_files() {
+    let dir = temp_dir("sasacode-hashline-perm-");
+    let env_file = dir.path().join(".env");
+    let ok_file = dir.path().join("ok.txt");
+    std::fs::write(&env_file, "SECRET_TOKEN=super-secret-value\nOTHER=1\n").unwrap();
+    std::fs::write(&ok_file, "alpha\nbeta\n").unwrap();
+
+    let l = load_plugin(
+        "hashline-edit",
+        bundled("hashline-edit"),
+        &path_str(dir.path()),
+        json!({}),
+    )
+    .await;
+    let tool = l.tool("hash_edit");
+    assert_eq!(tool.permissions_as().as_deref(), Some("edit"));
+    assert_eq!(
+        tool.paths(&obj(json!({"path": ".env"})), dir.path()),
+        Some(vec![path_str(&env_file)])
+    );
+
+    let rules = PermissionRules {
+        deny: vec!["edit(**/.env)".into()],
+        ..Default::default()
+    };
+    let perm = Arc::new(PermissionPolicy::new(PermissionMode::Edits, &rules).unwrap());
+    let env_verdict = perm.check(&PermissionCheck {
+        tool: tool.clone(),
+        args: obj(json!({"path": ".env", "start": "1:00", "content": "x"})),
+        cwd: path_str(dir.path()),
+    });
+    assert_eq!(env_verdict.decision, Decision::Deny);
+    let ok_verdict = perm.check(&PermissionCheck {
+        tool,
+        args: obj(json!({"path": "ok.txt", "start": "1:00", "content": "x"})),
+        cwd: path_str(dir.path()),
+    });
+    assert_eq!(ok_verdict.decision, Decision::Allow);
+
+    // Even if only `read(**/.env)` is denied (so `hash_edit` reaches execution), an unread file is
+    // refused without printing its lines.
+    let s = setup(
+        vec![
+            reply(vec![call(
+                "1",
+                "hash_edit",
+                json!({"path": path_str(&env_file), "start": "1:00", "content": "x"}),
+            )]),
+            reply(vec![say("done")]),
+        ],
+        &["hashline-edit"],
+        opts(&path_str(dir.path()), &[]),
+    )
+    .await;
+    let read_deny_rules = PermissionRules {
+        deny: vec!["read(**/.env)".into()],
+        ..Default::default()
+    };
+    s.agent.set_permissions(Arc::new(
+        PermissionPolicy::new(PermissionMode::Edits, &read_deny_rules).unwrap(),
+    ));
+    s.agent.prompt_text("probe").await.unwrap();
+    let reqs = s.requests();
+    let out = last(&reqs[1]).text();
+    assert!(out.contains("no current anchors"), "{out}");
+    assert!(!out.contains("super-secret-value"), "leaked unread content: {out}");
+}
+
+#[tokio::test]
+async fn hash_edit_returns_fresh_anchors_and_rejects_stale_brace_anchor_after_insert() {
+    let dir = temp_dir("sasacode-hashline-stale-");
+    let file = dir.path().join("mod.rs");
+    let original = [
+        "fn first() {",
+        "    let a = 1;",
+        "    let b = 2;",
+        "}",
+        "fn middle() {",
+        "    let m1 = 1;",
+        "    let m2 = 2;",
+        "    let m3 = 3;",
+        "}",
+        "fn second() {",
+        "}",
+        "fn third() {",
+        "    done();",
+        "}",
+    ]
+    .join("\n")
+        + "\n";
+    std::fs::write(&file, &original).unwrap();
+    let f = path_str(&file);
+    let h2 = line_hash("    let a = 1;");
+    let h_brace = line_hash("}");
+    let h_inserted = line_hash("    let a3 = 4;");
+
+    // 1. Read -> insert 2 lines at line 2 -> reuse stale `11:<h_brace>` (old line 9 `}` shifted
+    //    to line 11!) -> must be rejected, then edit line 4 using fresh anchor from result, then
+    //    re-read and edit line 13 `}` using fresh anchor from read.
+    let s = setup(
+        vec![
+            reply(vec![call("1", "read", json!({"path": f}))]),
+            reply(vec![call(
+                "2",
+                "hash_edit",
+                json!({
+                    "path": f,
+                    "start": format!("2:{h2}"),
+                    "mode": "insert_after",
+                    "content": "    let a2 = 3;\n    let a3 = 4;"
+                }),
+            )]),
+            // Old line 11 (`fn second`'s `}`) is stale after +2 shift; line 11 now holds `fn middle`'s `}`!
+            reply(vec![call(
+                "3",
+                "hash_edit",
+                json!({"path": f, "start": format!("11:{h_brace}"), "content": "} // second"}),
+            )]),
+            // Fresh anchor `4:<h_inserted>` returned by call 2 must work without re-reading.
+            reply(vec![call(
+                "4",
+                "hash_edit",
+                json!({"path": f, "start": format!("4:{h_inserted}"), "content": "    let a3 = 40;"}),
+            )]),
+            // Re-read, then edit line 13 (`fn second`'s shifted `}`).
+            reply(vec![call("5", "read", json!({"path": f}))]),
+            reply(vec![call(
+                "6",
+                "hash_edit",
+                json!({"path": f, "start": format!("13:{h_brace}"), "content": "} // second"}),
+            )]),
+            reply(vec![say("done")]),
+        ],
+        &["hashline-edit"],
+        opts(&path_str(dir.path()), &[]),
+    )
+    .await;
+    s.agent.prompt_text("edit safely").await.unwrap();
+    let reqs = s.requests();
+
+    // Call 2 returns fresh anchors for the edited region.
+    let insert_out = last(&reqs[2]).text();
+    assert!(
+        insert_out.contains(&format!("4:{h_inserted}|    let a3 = 4;")),
+        "{insert_out}"
+    );
+
+    // Call 3 was rejected instead of silently corrupting `fn middle`'s `}` at line 11.
+    let stale_out = last(&reqs[3]).text();
+    assert!(
+        stale_out.contains("Stale anchor") && stale_out.contains("Re-read"),
+        "{stale_out}"
+    );
+
+    // Call 4 (using fresh anchor from call 2) and Call 6 (after re-read) both succeeded.
+    assert!(last(&reqs[4]).text().contains("Edited"), "{}", last(&reqs[4]).text());
+    assert!(last(&reqs[6]).text().contains("Edited"), "{}", last(&reqs[6]).text());
+
+    let disk = std::fs::read_to_string(&file).unwrap();
+    let lines: Vec<&str> = disk.lines().collect();
+    assert_eq!(lines[3], "    let a3 = 40;");
+    assert_eq!(lines[10], "}", "middle()'s closing brace at line 11 must be untouched");
+    assert_eq!(
+        lines[12], "} // second",
+        "second()'s closing brace at line 13 should be edited"
+    );
+
+    // 2. Same-turn batch: insert 2 lines + reuse stale `}` within the same turn must also reject.
+    let file2 = dir.path().join("batch.rs");
+    std::fs::write(&file2, "fn a() {\n    x();\n}\nfn b() {\n}\n").unwrap();
+    let f2 = path_str(&file2);
+    let hx = line_hash("    x();");
+    let s2 = setup(
+        vec![
+            reply(vec![call("1", "read", json!({"path": f2}))]),
+            reply(vec![
+                call(
+                    "2",
+                    "hash_edit",
+                    json!({
+                        "path": f2,
+                        "start": format!("2:{hx}"),
+                        "mode": "insert_after",
+                        "content": "    y();\n    z();"
+                    }),
+                ),
+                call(
+                    "3",
+                    "hash_edit",
+                    json!({"path": f2, "start": format!("5:{h_brace}"), "content": "} // b"}),
+                ),
+            ]),
+            reply(vec![say("done")]),
+        ],
+        &["hashline-edit"],
+        opts(&path_str(dir.path()), &[]),
+    )
+    .await;
+    s2.agent.prompt_text("batch").await.unwrap();
+    let batch_reqs = s2.requests();
+    let second_call_out = json_of(&batch_reqs[2].messages);
+    assert!(second_call_out.contains("Stale anchor"), "{second_call_out}");
+    assert_eq!(
+        std::fs::read_to_string(&file2).unwrap(),
+        "fn a() {\n    x();\n    y();\n    z();\n}\nfn b() {\n}\n"
+    );
+
+    // 3. External edit on disk between `read` and `hash_edit` must reject stale `}` anchor.
+    let file3 = dir.path().join("ext.rs");
+    std::fs::write(&file3, &original).unwrap();
+    let f3 = path_str(&file3);
+    let s3 = setup(
+        vec![
+            reply(vec![call("1", "read", json!({"path": f3}))]),
+            reply(vec![call(
+                "2",
+                "edit",
+                json!({
+                    "path": f3,
+                    "old_string": "    let a = 1;",
+                    "new_string": "    let a = 1;\n    let x1 = 1;\n    let x2 = 2;"
+                }),
+            )]),
+            reply(vec![call(
+                "3",
+                "hash_edit",
+                json!({"path": f3, "start": format!("11:{h_brace}"), "content": "} // ext"}),
+            )]),
+            reply(vec![say("done")]),
+        ],
+        &["hashline-edit"],
+        opts(&path_str(dir.path()), &[]),
+    )
+    .await;
+    s3.agent.prompt_text("external edit").await.unwrap();
+    let ext_reqs = s3.requests();
+    let ext_out = last(&ext_reqs[3]).text();
+    assert!(ext_out.contains("changed since your last read"), "{ext_out}");
+}
+
+#[tokio::test]
+async fn hashline_edit_strips_prefixes_from_hash_edit_content_and_edit_args() {
+    let dir = temp_dir("sasacode-hashline-strip-");
+    let file = dir.path().join("app.ts");
+    std::fs::write(&file, "const a = 1;\nconst b = 2;\nconst c = 3;\n").unwrap();
+    let f = path_str(&file);
+    let h1 = line_hash("const a = 1;");
+    let h2 = line_hash("const b = 2;");
+    let h3 = line_hash("const c = 3;");
+
+    let s = setup(
+        vec![
+            reply(vec![call("1", "read", json!({"path": f}))]),
+            // hash_edit content with N:hh| on every non-empty line gets stripped
+            reply(vec![call(
+                "2",
+                "hash_edit",
+                json!({
+                    "path": f,
+                    "start": format!("1:{h1}"),
+                    "end": format!("2:{h2}"),
+                    "content": format!("1:{h1}|const a = 10;\n2:{h2}|const b = 20;")
+                }),
+            )]),
+            // edit old_string & new_string with N:hh| on every non-empty line get stripped via ToolCall hook
+            reply(vec![call(
+                "3",
+                "edit",
+                json!({
+                    "path": f,
+                    "old_string": format!("2:{h2}|const b = 20;\n3:{h3}|const c = 3;"),
+                    "new_string": format!("2:{h2}|const b = 200;\n3:{h3}|const c = 300;")
+                }),
+            )]),
+            // Mixed prefixed + non-empty unprefixed lines must NOT be stripped
+            reply(vec![call(
+                "4",
+                "edit",
+                json!({
+                    "path": f,
+                    "old_string": format!("1:{h1}|const a = 10;\nconst b = 200;"),
+                    "new_string": "const a = 99;\nconst b = 200;"
+                }),
+            )]),
+            reply(vec![say("done")]),
+        ],
+        &["hashline-edit"],
+        opts(&path_str(dir.path()), &[]),
+    )
+    .await;
+    s.agent.prompt_text("strip prefixes").await.unwrap();
+    let reqs = s.requests();
+    assert!(last(&reqs[2]).text().contains("Edited"), "{}", last(&reqs[2]).text());
+    assert!(last(&reqs[3]).text().contains("Edited"), "{}", last(&reqs[3]).text());
+    assert!(
+        last(&reqs[4]).text().contains("old_string not found"),
+        "{}",
+        last(&reqs[4]).text()
+    );
+    assert_eq!(
+        std::fs::read_to_string(&file).unwrap(),
+        "const a = 10;\nconst b = 200;\nconst c = 300;\n"
+    );
+}
+
+#[tokio::test]
+async fn slim_profile_cuts_hashline_and_japanese_read_output_at_line_boundaries() {
+    let dir = temp_dir("sasacode-slim-hashline-");
+    let jp_file = dir.path().join("jp.txt");
+    let content = (1..=120)
+        .map(|i| format!("日本語の行-{i:03} パディング文字列です"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    std::fs::write(&jp_file, &content).unwrap();
+
+    let s = setup(
+        vec![
+            reply(vec![call("1", "read", json!({"path": path_str(&jp_file)}))]),
+            reply(vec![say("ok")]),
+        ],
+        &plugins_order(["hashline-edit", "slim-profile"]),
+        opts(&path_str(dir.path()), &[("slim-profile", json!({"readMaxChars": 600}))]),
+    )
+    .await;
+    s.agent.set_permissions(policy(PermissionMode::Auto));
+    s.agent.prompt_text("read jp").await.unwrap();
+    let reqs = s.requests();
+    let out = last(&reqs[1]).text();
+    assert!(out.contains("[slim-profile: truncated"), "{out}");
+
+    let parts: Vec<&str> = out.split('\n').collect();
+    let marker = parts
+        .iter()
+        .position(|l| l.contains("[slim-profile: truncated"))
+        .expect("marker");
+    // Tail starts cleanly on a complete line with full `N:hh|` prefix, never mid-prefix (e.g. `3:ab|`).
+    let first_tail = parts[marker + 1];
+    let (prefix, body) = first_tail.split_once('|').expect("hashline pipe in tail");
+    let (num, hash) = prefix.split_once(':').expect("colon in tail");
+    let n: usize = num.parse().expect("line number");
+    assert!(n > 90 && hash.len() == 2, "broken tail prefix: {first_tail}");
+    assert!(body.starts_with("日本語の行-"), "broken tail body: {first_tail}");
+}
+
+#[tokio::test]
+async fn hash_edit_ignores_subagent_messages_mid_batch_and_trusts_result_anchors_from_the_next_message() {
+    let dir = temp_dir("sasacode-hashline-subagent-batch-");
+    let file = dir.path().join("mod.rs");
+    let other = dir.path().join("other.txt");
+    std::fs::write(&file, "fn a() {\n    x();\n}\nfn b() {\n}\n").unwrap();
+    std::fs::write(&other, "hello\n").unwrap();
+    let f = path_str(&file);
+    let o = path_str(&other);
+    let hx = line_hash("    x();");
+    let hz = line_hash("    z();");
+    let h_brace = line_hash("}");
+
+    // One message: [hash_edit(1), task(...), hash_edit(2)].
+    // hash_edit(1) inserts 2 lines so `fn a()`'s `}` moves to line 5, which its result prints
+    // (lines 1..=6). The subagent produces messages of its own and reads a file mid-batch; none of
+    // that may make the main agent's message count advance, so hash_edit(2) reusing stale
+    // `5:<h_brace>` must still be rejected. The main agent's next message can use `4:<hz>`.
+    let s = setup(
+        vec![
+            reply(vec![call("1", "read", json!({"path": f}))]),
+            reply(vec![
+                call(
+                    "2",
+                    "hash_edit",
+                    json!({
+                        "path": f,
+                        "start": format!("2:{hx}"),
+                        "mode": "insert_after",
+                        "content": "    y();\n    z();"
+                    }),
+                ),
+                call(
+                    "3",
+                    "task",
+                    json!({"description": "read other", "prompt": "read other.txt"}),
+                ),
+                call(
+                    "4",
+                    "hash_edit",
+                    json!({"path": f, "start": format!("5:{h_brace}"), "content": "} // b"}),
+                ),
+            ]),
+            // Subagent turn 1 + turn 2
+            reply(vec![call("s1", "read", json!({"path": o}))]),
+            reply(vec![say("sub done")]),
+            // Main turn 3: the anchor printed by hash_edit(1) is now usable
+            reply(vec![call(
+                "5",
+                "hash_edit",
+                json!({"path": f, "start": format!("4:{hz}"), "content": "    z2();"}),
+            )]),
+            reply(vec![say("done")]),
+        ],
+        &["hashline-edit", "subagent"],
+        opts(&path_str(dir.path()), &[]),
+    )
+    .await;
+    s.agent.prompt_text("batch with subagent").await.unwrap();
+
+    let reqs = s.requests();
+    let batch_results = json_of(&reqs[4].messages);
+    assert!(
+        batch_results.contains("Stale anchor") && batch_results.contains("lines 5-5"),
+        "{batch_results}"
+    );
+    assert!(last(&reqs[5]).text().contains("Edited"), "{}", last(&reqs[5]).text());
+    assert_eq!(
+        std::fs::read_to_string(&file).unwrap(),
+        "fn a() {\n    x();\n    y();\n    z2();\n}\nfn b() {\n}\n"
+    );
+}
+
+#[tokio::test]
+async fn hash_edit_by_a_subagent_is_judged_by_what_the_subagent_was_shown_not_the_main_agent() {
+    let dir = temp_dir("sasacode-hashline-subagent-caller-");
+    let file = dir.path().join("notes.txt");
+    std::fs::write(&file, "MAIN_ONLY_LINE\nsecond\n").unwrap();
+    let f = path_str(&file);
+    let wrong = if line_hash("MAIN_ONLY_LINE") == "00" {
+        "01"
+    } else {
+        "00"
+    };
+
+    // The main agent has read the file; the subagent has not. A mismatch in the subagent's call
+    // must be answered as for an unread file: were the call taken for the main agent's, the error
+    // would print the lines around the anchor.
+    let s = setup(
+        vec![
+            reply(vec![call("1", "read", json!({"path": f}))]),
+            reply(vec![call(
+                "2",
+                "task",
+                json!({"description": "edit notes", "prompt": "edit notes.txt"}),
+            )]),
+            reply(vec![call(
+                "s1",
+                "hash_edit",
+                json!({"path": f, "start": format!("1:{wrong}"), "content": "x"}),
+            )]),
+            reply(vec![say("sub done")]),
+            reply(vec![say("done")]),
+        ],
+        &["hashline-edit", "subagent"],
+        opts(&path_str(dir.path()), &[]),
+    )
+    .await;
+    s.agent.prompt_text("delegate an edit").await.unwrap();
+    let reqs = s.requests();
+    let out = last(&reqs[3]).text();
+    assert!(out.contains("no current anchors") && out.contains("first."), "{out}");
+    assert!(!out.contains("MAIN_ONLY_LINE"), "judged as the main agent: {out}");
+}
+
+#[tokio::test]
+async fn hash_edit_two_edits_in_one_message_both_give_anchors_and_an_outside_change_forgets_every_anchor() {
+    let dir = temp_dir("sasacode-hashline-two-edits-");
+    let file = dir.path().join("multi.txt");
+    let other = dir.path().join("aux.txt");
+    let initial = (1..=12).map(|i| format!("line-{i:02}")).collect::<Vec<_>>().join("\n") + "\n";
+    std::fs::write(&file, &initial).unwrap();
+    std::fs::write(&other, "aux\n").unwrap();
+    let f = path_str(&file);
+    let o = path_str(&other);
+    let h1 = line_hash("line-01");
+    let h2 = line_hash("line-02");
+    let h9 = line_hash("line-09");
+    let h2_new = line_hash("line-02-edited");
+    let h9_new = line_hash("line-09-edited");
+
+    // 1. One message with 3 calls [hash_edit(line 2), hash_edit(line 9), read(other)]. The next
+    //    message must accept the anchors printed by BOTH edits without re-reading.
+    let s = setup(
+        vec![
+            reply(vec![call("1", "read", json!({"path": f}))]),
+            reply(vec![
+                call(
+                    "2",
+                    "hash_edit",
+                    json!({"path": f, "start": format!("2:{h2}"), "content": "line-02-edited"}),
+                ),
+                call(
+                    "3",
+                    "hash_edit",
+                    json!({"path": f, "start": format!("9:{h9}"), "content": "line-09-edited"}),
+                ),
+                call("4", "read", json!({"path": o})),
+            ]),
+            reply(vec![
+                call(
+                    "5",
+                    "hash_edit",
+                    json!({"path": f, "start": format!("2:{h2_new}"), "content": "line-02-v2"}),
+                ),
+                call(
+                    "6",
+                    "hash_edit",
+                    json!({"path": f, "start": format!("9:{h9_new}"), "content": "line-09-v2"}),
+                ),
+            ]),
+            reply(vec![say("done")]),
+        ],
+        &["hashline-edit"],
+        opts(&path_str(dir.path()), &[]),
+    )
+    .await;
+    s.agent.prompt_text("two edits").await.unwrap();
+    let reqs = s.requests();
+    let turn3_out = json_of(&reqs[3].messages);
+    assert!(
+        turn3_out.contains("lines 2-2") && turn3_out.contains("lines 9-9"),
+        "{turn3_out}"
+    );
+    assert!(!turn3_out.contains("Stale anchor"), "{turn3_out}");
+    let disk = std::fs::read_to_string(&file).unwrap();
+    assert!(disk.contains("line-02-v2\n") && disk.contains("line-09-v2\n"), "{disk}");
+
+    // 2. Also a message with just the 2 edits: the anchors printed by the 1st edit survive the 2nd
+    //    one into the next message.
+    std::fs::write(&file, &initial).unwrap();
+    let s2 = setup(
+        vec![
+            reply(vec![call("1", "read", json!({"path": f}))]),
+            reply(vec![
+                call(
+                    "2",
+                    "hash_edit",
+                    json!({"path": f, "start": format!("2:{h2}"), "content": "line-02-edited"}),
+                ),
+                call(
+                    "3",
+                    "hash_edit",
+                    json!({"path": f, "start": format!("9:{h9}"), "content": "line-09-edited"}),
+                ),
+            ]),
+            reply(vec![call(
+                "4",
+                "hash_edit",
+                json!({"path": f, "start": format!("2:{h2_new}"), "content": "line-02-v3"}),
+            )]),
+            reply(vec![say("done")]),
+        ],
+        &["hashline-edit"],
+        opts(&path_str(dir.path()), &[]),
+    )
+    .await;
+    s2.agent.prompt_text("two edits direct").await.unwrap();
+    let reqs2 = s2.requests();
+    assert!(last(&reqs2[3]).text().contains("Edited"), "{}", last(&reqs2[3]).text());
+    assert!(std::fs::read_to_string(&file).unwrap().contains("line-02-v3\n"));
+
+    // 3. A change by another tool, even one far below, forgets every anchor of the file: lines
+    //    that moved can look unchanged. Edits at lines 1 and 10 are refused until a re-read.
+    std::fs::write(&file, &initial).unwrap();
+    let h10 = line_hash("line-10");
+    let s3 = setup(
+        vec![
+            reply(vec![call("1", "read", json!({"path": f}))]),
+            reply(vec![call(
+                "2",
+                "edit",
+                json!({"path": f, "old_string": "line-12", "new_string": "line-12-ext"}),
+            )]),
+            reply(vec![call(
+                "3",
+                "hash_edit",
+                json!({"path": f, "start": format!("1:{h1}"), "content": "line-01-edited"}),
+            )]),
+            reply(vec![call(
+                "4",
+                "hash_edit",
+                json!({"path": f, "start": format!("10:{h10}"), "content": "line-10-edited"}),
+            )]),
+            reply(vec![call("5", "read", json!({"path": f}))]),
+            reply(vec![call(
+                "6",
+                "hash_edit",
+                json!({"path": f, "start": format!("10:{h10}"), "content": "line-10-edited"}),
+            )]),
+            reply(vec![say("done")]),
+        ],
+        &["hashline-edit"],
+        opts(&path_str(dir.path()), &[]),
+    )
+    .await;
+    s3.agent.prompt_text("outside change").await.unwrap();
+    let reqs3 = s3.requests();
+    for i in [3, 4] {
+        assert!(
+            last(&reqs3[i]).text().contains("Stale anchor"),
+            "{}",
+            last(&reqs3[i]).text()
+        );
+    }
+    assert!(last(&reqs3[6]).text().contains("Edited"), "{}", last(&reqs3[6]).text());
+    let disk = std::fs::read_to_string(&file).unwrap();
+    assert!(
+        disk.starts_with("line-01\n") && disk.contains("line-10-edited\nline-11\nline-12-ext\n"),
+        "{disk}"
+    );
+}
+
+/// Reads `file`, lets `edit` change it as given, then tries `hash_edit` with `anchor`: the answer.
+async fn hash_edit_after_outside_edit(
+    dir: &std::path::Path,
+    file: &std::path::Path,
+    edit: Value,
+    anchor: String,
+) -> String {
+    let f = path_str(file);
+    let mut edit = edit;
+    edit["path"] = json!(f);
+    let s = setup(
+        vec![
+            reply(vec![call("1", "read", json!({"path": f}))]),
+            reply(vec![call("2", "edit", edit)]),
+            reply(vec![call(
+                "3",
+                "hash_edit",
+                json!({"path": f, "start": anchor, "content": "EDITED"}),
+            )]),
+            reply(vec![say("done")]),
+        ],
+        &["hashline-edit"],
+        opts(&path_str(dir), &[]),
+    )
+    .await;
+    s.agent.prompt_text("edit after an outside change").await.unwrap();
+    last(&s.requests()[3]).text()
+}
+
+#[tokio::test]
+async fn hash_edit_rejects_anchors_that_an_outside_edit_shifted_onto_identical_lines() {
+    let dir = temp_dir("sasacode-hashline-shifted-");
+
+    // 1. Another tool inserts an object before the first one, starting with the same three lines:
+    //    lines 2-4 still hash as before, but now belong to the new object.
+    let json_file = dir.path().join("users.json");
+    let users = "[\n  {\n    \"type\": \"user\",\n    \"name\": \"x\",\n    \"id\": 1\n  }\n]\n";
+    std::fs::write(&json_file, users).unwrap();
+    let out = hash_edit_after_outside_edit(
+        dir.path(),
+        &json_file,
+        json!({
+            "old_string": "[\n",
+            "new_string": "[\n  {\n    \"type\": \"user\",\n    \"name\": \"x\",\n    \"id\": 0\n  },\n"
+        }),
+        format!("3:{}", line_hash("    \"type\": \"user\",")),
+    )
+    .await;
+    assert!(out.contains("Stale anchor"), "{out}");
+    assert!(!std::fs::read_to_string(&json_file).unwrap().contains("EDITED"));
+
+    // 2. Another tool deletes the first of three `}` lines: line 2 is still a `}`, but not the one
+    //    that was read there.
+    let braces = dir.path().join("braces.txt");
+    std::fs::write(&braces, "a\n}\n}\n}\nb\n").unwrap();
+    let out = hash_edit_after_outside_edit(
+        dir.path(),
+        &braces,
+        json!({"old_string": "a\n}\n}\n}", "new_string": "a\n}\n}"}),
+        format!("2:{}", line_hash("}")),
+    )
+    .await;
+    assert!(out.contains("Stale anchor"), "{out}");
+    assert_eq!(std::fs::read_to_string(&braces).unwrap(), "a\n}\n}\nb\n");
+}
+
+#[tokio::test]
+async fn hash_edit_range_needs_every_line_in_it_shown_not_just_its_ends() {
+    let dir = temp_dir("sasacode-hashline-range-");
+    let file = dir.path().join("ten.txt");
+    let initial = (1..=10).map(|i| format!("line-{i:02}")).collect::<Vec<_>>().join("\n") + "\n";
+    std::fs::write(&file, &initial).unwrap();
+    let f = path_str(&file);
+    let (h2, h9) = (line_hash("line-02"), line_hash("line-09"));
+    let range = json!({"path": f, "start": format!("2:{h2}"), "end": format!("9:{h9}"), "content": "merged"});
+
+    // Lines 1-3 and 8-10 were read; 4-7 never were.
+    let s = setup(
+        vec![
+            reply(vec![call("1", "read", json!({"path": f, "limit": 3}))]),
+            reply(vec![call("2", "read", json!({"path": f, "offset": 8}))]),
+            reply(vec![call("3", "hash_edit", range.clone())]),
+            reply(vec![call("4", "read", json!({"path": f}))]),
+            reply(vec![call("5", "hash_edit", range)]),
+            reply(vec![say("done")]),
+        ],
+        &["hashline-edit"],
+        opts(&path_str(dir.path()), &[]),
+    )
+    .await;
+    s.agent.prompt_text("range").await.unwrap();
+    let reqs = s.requests();
+    assert!(!last(&reqs[1]).text().contains("line-04"), "{}", last(&reqs[1]).text());
+    assert!(
+        last(&reqs[3]).text().contains("Stale anchor"),
+        "{}",
+        last(&reqs[3]).text()
+    );
+    assert!(last(&reqs[5]).text().contains("Edited"), "{}", last(&reqs[5]).text());
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), "line-01\nmerged\nline-10\n");
+}
+
+/// `names` in the order a run loads them: that of `PLUGINS`.
+fn plugins_order<const N: usize>(mut names: [&'static str; N]) -> [&'static str; N] {
+    names.sort_by_key(|name| sasacode_bundled::PLUGINS.iter().position(|p| p.name == *name));
+    names
+}
+
+#[tokio::test]
+async fn hash_edit_anchors_crlf_and_over_long_lines_as_read_shows_them() {
+    let dir = temp_dir("sasacode-hashline-crlf-");
+    let file = dir.path().join("crlf.txt");
+    let long = "y".repeat(2500);
+    std::fs::write(&file, format!("short\r\n{long}\r\nend\r\n")).unwrap();
+    let f = path_str(&file);
+    let (h1, h2) = (line_hash("short"), line_hash(&long));
+    let s = setup(
+        vec![
+            reply(vec![call("1", "read", json!({"path": f}))]),
+            reply(vec![call(
+                "2",
+                "hash_edit",
+                json!({"path": f, "start": format!("2:{h2}"), "content": "long"}),
+            )]),
+            reply(vec![call(
+                "3",
+                "hash_edit",
+                json!({"path": f, "start": format!("1:{h1}"), "content": "first"}),
+            )]),
+            reply(vec![say("done")]),
+        ],
+        &["hashline-edit"],
+        opts(&path_str(dir.path()), &[]),
+    )
+    .await;
+    s.agent.prompt_text("crlf").await.unwrap();
+    let reqs = s.requests();
+    let read_out = last(&reqs[1]).text();
+    assert!(
+        read_out.contains(&format!("2:{h2}|yyy")) && read_out.contains("[line truncated"),
+        "{read_out}"
+    );
+    assert!(last(&reqs[2]).text().contains("Edited"), "{}", last(&reqs[2]).text());
+    assert!(last(&reqs[3]).text().contains("Edited"), "{}", last(&reqs[3]).text());
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), "first\r\nlong\r\nend\r\n");
+}
+
+#[tokio::test]
+async fn hash_edit_trusts_no_anchor_of_a_line_slim_profile_cut_from_the_read() {
+    let dir = temp_dir("sasacode-hashline-slim-cut-");
+    let file = dir.path().join("long.txt");
+    let initial = (1..=120)
+        .map(|i| format!("line-{i:03} padding text"))
+        .collect::<Vec<_>>()
+        .join("\n")
+        + "\n";
+    std::fs::write(&file, &initial).unwrap();
+    let f = path_str(&file);
+    let (h2, h60) = (line_hash("line-002 padding text"), line_hash("line-060 padding text"));
+
+    let s = setup(
+        vec![
+            reply(vec![call("1", "read", json!({"path": f}))]),
+            reply(vec![call(
+                "2",
+                "hash_edit",
+                json!({"path": f, "start": format!("60:{h60}"), "content": "line-060 edited"}),
+            )]),
+            reply(vec![call(
+                "3",
+                "hash_edit",
+                json!({"path": f, "start": format!("2:{h2}"), "content": "line-002 edited"}),
+            )]),
+            reply(vec![say("done")]),
+        ],
+        &plugins_order(["hashline-edit", "slim-profile"]),
+        opts(&path_str(dir.path()), &[("slim-profile", json!({"readMaxChars": 800}))]),
+    )
+    .await;
+    s.agent.prompt_text("edit a long file").await.unwrap();
+    let reqs = s.requests();
+    let read_out = last(&reqs[1]).text();
+    assert!(
+        read_out.contains("[slim-profile: truncated") && !read_out.contains("line-060"),
+        "{read_out}"
+    );
+    assert!(read_out.contains(&format!("2:{h2}|line-002")), "{read_out}");
+    assert!(
+        last(&reqs[2]).text().contains("Stale anchor"),
+        "{}",
+        last(&reqs[2]).text()
+    );
+    assert!(last(&reqs[3]).text().contains("Edited"), "{}", last(&reqs[3]).text());
+    let disk = std::fs::read_to_string(&file).unwrap();
+    assert!(
+        disk.contains("line-002 edited\n") && disk.contains("line-060 padding text\n"),
+        "{disk}"
+    );
+}
+
+#[tokio::test]
+async fn hash_edit_in_the_message_of_another_call_trusts_only_anchors_shown_before_that_message() {
+    let dir = temp_dir("sasacode-hashline-same-message-");
+    let file = dir.path().join("mod.rs");
+    let original = "fn a() {\n    x();\n}\nfn b() {\n    y();\n}\nfn c() {\n}\n";
+    std::fs::write(&file, original).unwrap();
+    let f = path_str(&file);
+    let hx = line_hash("    x();");
+    let hy = line_hash("    y();");
+    let h_brace = line_hash("}");
+
+    // 1. Two replaces on neighbouring lines in one message: line 5 is printed again by the first
+    //    result, which must not take away the anchor the model already held for it. Neither does
+    //    reading the unchanged file again in the message that edits it.
+    let s = setup(
+        vec![
+            reply(vec![call("1", "read", json!({"path": f}))]),
+            reply(vec![
+                call(
+                    "2",
+                    "hash_edit",
+                    json!({"path": f, "start": "4:".to_string() + &line_hash("fn b() {"), "content": "fn b2() {"}),
+                ),
+                call(
+                    "3",
+                    "hash_edit",
+                    json!({"path": f, "start": format!("5:{hy}"), "content": "    y2();"}),
+                ),
+            ]),
+            reply(vec![
+                call("4", "read", json!({"path": f})),
+                call(
+                    "5",
+                    "hash_edit",
+                    json!({"path": f, "start": format!("2:{hx}"), "content": "    x2();"}),
+                ),
+            ]),
+            reply(vec![say("done")]),
+        ],
+        &["hashline-edit"],
+        opts(&path_str(dir.path()), &[]),
+    )
+    .await;
+    s.agent.prompt_text("neighbours").await.unwrap();
+    let reqs = s.requests();
+    assert!(
+        !json_of(&reqs[2].messages).contains("Stale anchor"),
+        "{}",
+        json_of(&reqs[2].messages)
+    );
+    assert!(last(&reqs[3]).text().contains("Edited"), "{}", last(&reqs[3]).text());
+    assert_eq!(
+        std::fs::read_to_string(&file).unwrap(),
+        "fn a() {\n    x2();\n}\nfn b2() {\n    y2();\n}\nfn c() {\n}\n"
+    );
+
+    // 2. Another tool inserted two lines, then one message both re-reads the file and edits by an
+    //    anchor from the first read: `8:}` was `fn c`'s brace and is now `fn b`'s. The read in the
+    //    same message shows line 8 again, but only after the call was written.
+    std::fs::write(&file, original).unwrap();
+    let s2 = setup(
+        vec![
+            reply(vec![call("1", "read", json!({"path": f}))]),
+            reply(vec![call(
+                "2",
+                "edit",
+                json!({"path": f, "old_string": "    x();", "new_string": "    x();\n    if w() {\n    }"}),
+            )]),
+            reply(vec![
+                call("3", "read", json!({"path": f})),
+                call(
+                    "4",
+                    "hash_edit",
+                    json!({"path": f, "start": format!("8:{h_brace}"), "content": "} // c"}),
+                ),
+            ]),
+            reply(vec![say("done")]),
+        ],
+        &["hashline-edit"],
+        opts(&path_str(dir.path()), &[]),
+    )
+    .await;
+    s2.agent.prompt_text("read and edit at once").await.unwrap();
+    let out = json_of(&s2.requests()[3].messages);
+    assert!(out.contains("Stale anchor"), "{out}");
+    assert!(!std::fs::read_to_string(&file).unwrap().contains("} // c"));
+}
+
+#[tokio::test]
+async fn hash_edit_rejects_equal_length_external_change_with_matching_context() {
+    let dir = temp_dir("sasacode-hashline-equal-len-");
+    let file = dir.path().join("code.rs");
+    let before = [
+        "fn one() {",
+        "    step_a();",
+        "    step_b();",
+        "}",
+        "",
+        "}",
+        "",
+        "fn two() {",
+        "    step_c();",
+        "}",
+    ]
+    .join("\n")
+        + "\n";
+    std::fs::write(&file, &before).unwrap();
+    let f = path_str(&file);
+    let h_brace = line_hash("}");
+
+    // External change keeps the exact same line count (10 lines) AND identical [line-1, line, line+1]
+    // around line 6 ("", "}", ""), but modifies interior lines 2-3 above line 6.
+    let s = setup(
+        vec![
+            reply(vec![call("1", "read", json!({"path": f}))]),
+            reply(vec![call(
+                "2",
+                "edit",
+                json!({
+                    "path": f,
+                    "old_string": "    step_a();\n    step_b();",
+                    "new_string": "    changed_a();\n    changed_b();"
+                }),
+            )]),
+            reply(vec![call(
+                "3",
+                "hash_edit",
+                json!({"path": f, "start": format!("6:{h_brace}"), "content": "} // edited"}),
+            )]),
+            reply(vec![say("done")]),
+        ],
+        &["hashline-edit"],
+        opts(&path_str(dir.path()), &[]),
+    )
+    .await;
+    s.agent.prompt_text("equal length external").await.unwrap();
+    let reqs = s.requests();
+    let out = last(&reqs[3]).text();
+    assert!(out.contains("changed since your last read"), "{out}");
+    assert!(!std::fs::read_to_string(&file).unwrap().contains("} // edited"));
+}
+
+#[tokio::test]
+async fn hash_edit_clears_state_on_session_start_and_evicts_lru_over_64_files() {
+    let dir = temp_dir("sasacode-hashline-session-lru-");
+    let secret = dir.path().join("secret.txt");
+    std::fs::write(&secret, "TOP_SECRET_LINE=xyz\n").unwrap();
+    let sec = path_str(&secret);
+
+    // 1. SessionStart (/new) must clear recorded files so a hash mismatch in the new session
+    //    neither treats the file as read nor leaks file lines.
+    let s = setup(
+        vec![
+            reply(vec![call("1", "read", json!({"path": sec}))]),
+            reply(vec![say("read done")]),
+            reply(vec![call(
+                "2",
+                "hash_edit",
+                json!({"path": sec, "start": "1:00", "content": "overwrite"}),
+            )]),
+            reply(vec![say("done")]),
+        ],
+        &["hashline-edit"],
+        opts(&path_str(dir.path()), &[]),
+    )
+    .await;
+    s.agent.prompt_text("session 1").await.unwrap();
+    s.agent.reset(Vec::new());
+    s.agent
+        .hooks()
+        .emit::<hook::SessionStart>(SessionStartEvent {
+            session_id: Some("new-session".into()),
+            resumed: false,
+        })
+        .await;
+    s.agent.prompt_text("session 2").await.unwrap();
+    let reqs = s.requests();
+    let mismatch = last(&reqs[3]).text();
+    assert!(
+        mismatch.contains("no current anchors") && mismatch.contains("Read"),
+        "{mismatch}"
+    );
+    assert!(!mismatch.contains("TOP_SECRET_LINE"), "leaked across /new: {mismatch}");
+
+    // 2. Capping tracked files at 64 entries evicts the least recently used file.
+    let l = load_plugin("builtin-tools", builtin_tools, &path_str(dir.path()), json!({})).await;
+    assert!(l.host.load("hashline-edit", bundled("hashline-edit")).await);
+    let mut paths = Vec::new();
+    for i in 0..65 {
+        let p = dir.path().join(format!("f{i:02}.txt"));
+        std::fs::write(&p, format!("SECRET_{i:02}=val\n")).unwrap();
+        paths.push(path_str(&p));
+    }
+    for p in &paths[..64] {
+        let r = l.invoke("read", json!({"path": p})).await;
+        assert!(!r.is_error(), "{}", text_of(&r));
+    }
+    // Touch f00 so it becomes MRU and f01 becomes LRU.
+    let r = l.invoke("read", json!({"path": &paths[0]})).await;
+    assert!(!r.is_error(), "{}", text_of(&r));
+    // Read the 65th file (f64) -> evicts f01.
+    let r = l.invoke("read", json!({"path": &paths[64]})).await;
+    assert!(!r.is_error(), "{}", text_of(&r));
+
+    // The anchors shown by those reads are usable from the next assistant message on.
+    l.agent
+        .hooks()
+        .emit::<hook::AssistantMessage>(AssistantMessageEvent {
+            message: reply(vec![say("now edit")]),
+            stopped: None,
+        })
+        .await;
+
+    // Evicted f01 must not count as recorded (must not leak file lines on hash mismatch).
+    let r_evicted = l
+        .invoke("hash_edit", json!({"path": &paths[1], "start": "1:00", "content": "x"}))
+        .await;
+    let t_evicted = text_of(&r_evicted);
+    assert!(t_evicted.contains("no current anchors"), "{t_evicted}");
+    assert!(!t_evicted.contains("SECRET_01=val"), "evicted f01 leaked: {t_evicted}");
+
+    // Refreshed f00 and newly read f64 stay recorded.
+    let r_kept = l
+        .invoke("hash_edit", json!({"path": &paths[0], "start": "1:00", "content": "x"}))
+        .await;
+    assert!(text_of(&r_kept).contains("SECRET_00=val"), "{}", text_of(&r_kept));
+    let r_new = l
+        .invoke(
+            "hash_edit",
+            json!({"path": &paths[64], "start": "1:00", "content": "x"}),
+        )
+        .await;
+    assert!(text_of(&r_new).contains("SECRET_64=val"), "{}", text_of(&r_new));
+}
+
+#[tokio::test]
+async fn a_file_too_large_to_track_gets_no_anchors_and_hash_edit_refuses_it() {
+    let dir = temp_dir("sasacode-hashline-large-");
+    let big = dir.path().join("big.txt");
+    let line = "x".repeat(99);
+    std::fs::write(&big, format!("{line}\n").repeat(21_000)).unwrap();
+    let b = path_str(&big);
+    let l = load_plugin("builtin-tools", builtin_tools, &path_str(dir.path()), json!({})).await;
+    assert!(l.host.load("hashline-edit", bundled("hashline-edit")).await);
+
+    let r = l.invoke("read", json!({"path": &b, "limit": 3})).await;
+    let out = text_of(&r);
+    assert!(!r.is_error() && out.contains(&format!("1\t{line}")), "{out}");
+    assert!(
+        !out.contains(&format!("1:{}|", line_hash(&line))),
+        "anchors that could never be used: {out}"
+    );
+
+    l.agent
+        .hooks()
+        .emit::<hook::AssistantMessage>(AssistantMessageEvent {
+            message: reply(vec![say("now edit")]),
+            stopped: None,
+        })
+        .await;
+    let anchor = format!("1:{}", line_hash(&line));
+    let r = l
+        .invoke("hash_edit", json!({"path": &b, "start": anchor, "content": "y"}))
+        .await;
+    assert!(r.is_error() && text_of(&r).contains("too large"), "{}", text_of(&r));
+    assert!(std::fs::read_to_string(&big).unwrap().starts_with(&line));
+}
+
+#[test]
+fn strip_hashline_prefixes_requires_every_non_empty_line_to_match() {
+    assert_eq!(
+        strip_hashline_prefixes("12:ab|let a = 1;\n13:cd|let b = 2;\n"),
+        Some("let a = 1;\nlet b = 2;\n".into())
+    );
+    assert_eq!(strip_hashline_prefixes("12:ab|single"), Some("single".into()));
+    assert_eq!(
+        strip_hashline_prefixes("12:ab|first\n\n14:cd|third"),
+        Some("first\n\nthird".into())
+    );
+    assert_eq!(strip_hashline_prefixes("12:ab|first\nplain second"), None);
+    assert_eq!(strip_hashline_prefixes("12:ab|first\n15:cd|jumped"), None);
+    assert_eq!(strip_hashline_prefixes(""), None);
+}

@@ -245,9 +245,10 @@ async fn background_sessions_a_job_from_an_earlier_run_is_judged_by_its_exit_fil
         Entries::default(),
     )
     .await;
-    // Up to 15 s, not 2: on Windows bg-2 is judged by its start time, which PowerShell is started to
-    // read, and on the CI runner that alone has taken longer than 2 s (bg-1's notice came alone).
-    until(750, 20, || b.injected().len() >= 2).await;
+    // Up to 30 s, not 2: on Windows bg-2 is judged by its start time, which PowerShell is started to
+    // read, and on the CI runner that alone has taken longer than 2 s (bg-1's notice came alone), or
+    // timed out (10 s) once, so that only the next ask answered.
+    until(1500, 20, || b.injected().len() >= 2).await;
     let said = b.injected().join("\n");
     assert!(said.contains("bg-1"), "{said}");
     assert!(said.contains("bg-2"), "{said}");

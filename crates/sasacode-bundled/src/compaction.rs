@@ -83,7 +83,7 @@ fn wide_content(m: &Message) -> usize {
 /// Tokens of a message, weighed as summary_request weighs them: at 4 characters a token, the tail
 /// kept of a Japanese session was 3 times its budget. The wide characters are looked for in what
 /// content_chars counts, without an image's base64: going through megabytes of it took 0.6 s.
-fn estimate(m: &Message) -> f64 {
+pub(crate) fn estimate(m: &Message) -> f64 {
     ((content_chars(&without_base64(m)) + 3 * wide_content(m)) as f64 / 4.0).ceil()
 }
 
