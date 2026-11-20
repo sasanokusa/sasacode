@@ -34,7 +34,7 @@ const DEFAULT_KEY_VARIABLES: [&str; 3] = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_T
 /// values of a trusted `config`.
 pub fn hide_configured(providers: &IndexMap<String, ProviderConfig>, config: &serde_json::Map<String, Value>) {
     // What records hold as paths (the working directory, the home) is never hidden.
-    let paths: Vec<String> = [std::env::current_dir().ok(), Some(sasacode_plugin_api::home_dir())]
+    let paths: Vec<String> = [std::env::current_dir().ok(), sasacode_plugin_api::home_dir()]
         .into_iter()
         .flatten()
         .map(|p| p.to_string_lossy().into_owned())
