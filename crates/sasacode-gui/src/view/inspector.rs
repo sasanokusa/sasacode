@@ -287,6 +287,9 @@ fn git_tab(app: &App) -> El<'_> {
     let (t, s) = (app.t, app.s);
     let g = &app.git;
     let w = s.w();
+    if !g.repo && !app.git_allowed() {
+        return empty(app, Icon::Branch, s.tab_git, w.git_after_trust);
+    }
     if !g.repo {
         return column![
             empty(app, Icon::Branch, s.tab_git, s.git_none),

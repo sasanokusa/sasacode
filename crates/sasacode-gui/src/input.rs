@@ -260,10 +260,10 @@ impl App {
             return Task::none();
         }
         self.files_asked = true;
-        let cwd = self.cwd.clone();
+        let (cwd, git) = (self.cwd.clone(), self.git_allowed());
         Task::perform(
             async move {
-                tokio::task::spawn_blocking(move || composer::project_files(&cwd))
+                tokio::task::spawn_blocking(move || composer::project_files(&cwd, git))
                     .await
                     .unwrap_or_default()
             },

@@ -5,7 +5,6 @@
 //! committed, and its branch kept.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use iced::Task;
 
@@ -20,7 +19,7 @@ pub struct Tree {
 }
 
 fn git(cwd: &Path, args: &[&std::ffi::OsStr]) -> Result<String, String> {
-    let out = Command::new("git")
+    let out = crate::git::command()
         .args(args)
         .current_dir(cwd)
         .output()
@@ -98,7 +97,7 @@ pub fn fetch(cwd: &Path) -> Result<(), String> {
     if git(cwd, &["remote".as_ref()]).is_ok_and(|r| r.trim().is_empty()) {
         return Ok(());
     }
-    let mut command = Command::new("git");
+    let mut command = crate::git::command();
     command
         .args(["fetch", "--quiet"])
         .current_dir(cwd)
@@ -526,7 +525,11 @@ mod tests {
     use super::*;
 
     fn run(cwd: &Path, args: &[&str]) {
-        let out = Command::new("git").args(args).current_dir(cwd).output().unwrap();
+        let out = std::process::Command::new("git")
+            .args(args)
+            .current_dir(cwd)
+            .output()
+            .unwrap();
         assert!(
             out.status.success(),
             "{args:?}: {}",

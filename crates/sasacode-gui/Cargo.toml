@@ -22,6 +22,8 @@ ratex-parser = { version = "0.1.16", default-features = false }
 ratex-layout = { version = "0.1.16", default-features = false }
 ratex-svg = { version = "0.1.16", default-features = false, features = ["embed-fonts"] }
 mermaid-rs-renderer = { version = "0.3.1", default-features = false }
+# Temporary files and folders named so they cannot be guessed, readable by the user alone.
+tempfile.workspace = true
 
 # Whether a screen still shows where the window was last: Windows keeps one on a screen that is gone
 # where it is, out of sight. Already built for winit.

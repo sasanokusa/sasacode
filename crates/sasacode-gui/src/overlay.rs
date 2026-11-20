@@ -860,6 +860,10 @@ const CASCADE: f32 = 28.0;
 impl App {
     /// The repository looked at again, away from the window.
     pub(crate) fn refresh_git(&mut self) -> Task<Msg> {
+        // Read once the folder is trusted ([`App::git_allowed`]).
+        if !self.git_allowed() {
+            return Task::none();
+        }
         let cwd = self.cwd.clone();
         Task::perform(
             async move {

@@ -3,7 +3,6 @@
 //! home), so both remember the same.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 /// How many of the files a list offers at once.
 pub const SHOWN: usize = 8;
@@ -60,9 +59,9 @@ pub fn rank<'a>(files: &'a [String], query: &str, max: usize) -> Vec<&'a str> {
 
 /// The files of the project at `cwd` and the folders they are in, relative to it, folders ending
 /// in `/`: what git tracks or would track, else what a walk of the folder finds, hidden folders,
-/// `node_modules` and `target` left out.
-pub fn project_files(cwd: &Path) -> Vec<String> {
-    let mut files = git_files(cwd).unwrap_or_else(|| walk(cwd));
+/// `node_modules` and `target` left out. Git is not asked unless `git`.
+pub fn project_files(cwd: &Path, git: bool) -> Vec<String> {
+    let mut files = git.then(|| git_files(cwd)).flatten().unwrap_or_else(|| walk(cwd));
     files.sort();
     let mut folders: Vec<String> = files
         .iter()
@@ -75,7 +74,7 @@ pub fn project_files(cwd: &Path) -> Vec<String> {
 }
 
 fn git_files(cwd: &Path) -> Option<Vec<String>> {
-    let out = Command::new("git")
+    let out = crate::git::command()
         .args(["ls-files", "-z", "--cached", "--others", "--exclude-standard"])
         .current_dir(cwd)
         .output()

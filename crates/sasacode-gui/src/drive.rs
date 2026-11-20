@@ -1747,6 +1747,7 @@ fn the_git_tab_shows_the_branch_or_a_commit_side_by_side_with_files_marked_viewe
     let mut app = window("ja");
     app.tab = Tab::Git;
     app.insp = true;
+    app.listing.trust = listed_trusted().trust;
     app.git = crate::git::Status {
         repo: true,
         branch: Some("topic".into()),
@@ -1827,6 +1828,7 @@ fn the_git_tab_shows_what_the_shown_conversations_last_turn_changed() {
     let w = crate::words::JA;
     app.tab = Tab::Git;
     app.insp = true;
+    app.listing.trust = listed_trusted().trust;
     app.git = crate::git::Status {
         repo: true,
         branch: Some("topic".into()),
@@ -4174,4 +4176,35 @@ fn a_press_on_a_panels_words_keeps_it_open_and_one_beside_it_closes_it() {
     // Beside it, the backdrop: closed.
     act(&mut app, |ui| press(ui, 8.0, 700.0));
     assert_eq!(app.overlay, None);
+}
+
+#[test]
+fn git_is_not_run_in_a_folder_until_the_cli_says_it_is_trusted() {
+    let mut app = window("ja");
+    let w = crate::words::JA;
+    app.tab = Tab::Git;
+    // Not known yet: nothing is run, and the tab says why.
+    assert!(app.listing.trust.is_none() && !app.git_allowed());
+    assert_eq!(app.refresh_git().units(), 0);
+    assert!(says(&app, w.git_after_trust) && !says(&app, w.git_init));
+    // The folder's config waits for trust: still nothing.
+    let task = app.update(Msg::Listed(Box::new(listed())));
+    assert_eq!(task.units(), 0);
+    assert!(!app.git_allowed() && app.refresh_git().units() == 0);
+    // Used in this window: the repository is read now.
+    let task = app.update(Msg::TrustOnce);
+    assert!(app.git_allowed() && task.units() > 0);
+    // A folder the CLI says is trusted (one with nothing that needs trust, for one) is read as
+    // soon as it says so.
+    let mut app = window("ja");
+    let task = app.update(Msg::Listed(Box::new(listed_trusted())));
+    assert!(app.git_allowed() && task.units() > 0);
+    // Saying so again reads nothing more.
+    assert_eq!(app.update(Msg::Listed(Box::new(listed_trusted()))).units(), 0);
+}
+
+fn listed_trusted() -> crate::cli::Listing {
+    let mut l = listed();
+    l.trust.as_mut().unwrap().trusted = true;
+    l
 }
