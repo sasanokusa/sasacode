@@ -596,6 +596,249 @@ async fn syntax_check_flags_broken_json_and_rust_without_false_positives_on_life
     }
 }
 
+/// What each call of a syntax-check script should get back: `Some(file)` a note naming the file,
+/// `None` no note at all. Call ids are "1", "2", ... in order.
+async fn syntax_check_run(cwd: &std::path::Path, calls: Vec<(&str, Value, Option<&str>)>) {
+    let mut script: Vec<_> = calls
+        .iter()
+        .enumerate()
+        .map(|(i, (tool, input, _))| reply(vec![call(&(i + 1).to_string(), tool, input.clone())]))
+        .collect();
+    script.push(reply(vec![say("done")]));
+    // A generous timeout: the external checkers start slowly when every test runs at once.
+    let settings = [("syntax-check", json!({"timeoutMs": 10000}))];
+    let s = setup(script, &["syntax-check"], opts(&path_str(cwd), &settings)).await;
+    s.agent.prompt_text("go").await.unwrap();
+    let reqs = s.requests();
+    assert_eq!(reqs.len(), calls.len() + 1);
+    for (i, (tool, input, expected)) in calls.iter().enumerate() {
+        let result = json_of(last(&reqs[i + 1]));
+        let what = format!("call {} ({tool} {}): {result}", i + 1, input["path"]);
+        assert!(!result.contains("\"isError\":true"), "the call failed: {what}");
+        match expected {
+            Some(file) => assert!(
+                result.contains(&format!("[syntax-check] Syntax error in {file}")),
+                "no note: {what}"
+            ),
+            None => assert!(!result.contains("[syntax-check]"), "a note: {what}"),
+        }
+    }
+}
+
+#[tokio::test]
+async fn syntax_check_reports_only_what_the_edit_broke() {
+    let dir = temp_dir("sasacode-syntax-baseline-");
+    let root = dir.path();
+    let at = |name: &str| path_str(&root.join(name));
+    // Broken before the model touched them: a file the checker cannot read is not the model's to fix.
+    std::fs::write(root.join("old.rs"), "pub fn f() {\n    let x = (1 + 2;\n}\n").unwrap();
+    std::fs::write(root.join("old.json"), "{\n  // a comment\n  \"a\": 1\n}\n").unwrap();
+    std::fs::create_dir_all(root.join("sub")).unwrap();
+    std::fs::write(root.join("sub/old.json"), "{\n  // a comment\n  \"a\": 1\n}\n").unwrap();
+
+    let broken = "{\n  \"a\": 1,\n}\n";
+    let jsonc = "{\n  // comments and trailing commas are this format's own\n  \"compilerOptions\": { \"strict\": true, },\n}\n";
+    syntax_check_run(
+        root,
+        vec![
+            // Already failing, still failing: silent, whether edited or rewritten.
+            (
+                "edit",
+                json!({"path": at("old.rs"), "old_string": "let x", "new_string": "let y"}),
+                None,
+            ),
+            (
+                "write",
+                json!({"path": at("old.json"), "content": "{\n  // a comment\n  \"a\": 2\n}\n"}),
+                None,
+            ),
+            // The same by a path relative to the working directory, as models mostly give it.
+            (
+                "edit",
+                json!({"path": "sub/old.json", "old_string": "\"a\": 1", "new_string": "\"a\": 3"}),
+                None,
+            ),
+            (
+                "write",
+                json!({"path": "./sub/fresh.json", "content": broken}),
+                Some("sub/fresh.json"),
+            ),
+            (
+                "edit",
+                json!({"path": "sub/fresh.json", "old_string": "\"a\": 1", "new_string": "\"a\": 4"}),
+                Some("sub/fresh.json"),
+            ),
+            // A new file has no earlier state: the error is the write's.
+            (
+                "write",
+                json!({"path": at("new.json"), "content": broken}),
+                Some("new.json"),
+            ),
+            // A failed fix of a reported error is reported again, not taken for "it was like that".
+            (
+                "write",
+                json!({"path": at("new.json"), "content": "{\n  \"a\": 2,\n}\n"}),
+                Some("new.json"),
+            ),
+            (
+                "write",
+                json!({"path": at("new.json"), "content": "{\n  \"a\": 2\n}\n"}),
+                None,
+            ),
+            (
+                "edit",
+                json!({"path": at("new.json"), "old_string": "\"a\": 2", "new_string": "\"a\": 2,"}),
+                Some("new.json"),
+            ),
+            // Once it parses, the next break is the edit's doing, in the old file as well.
+            (
+                "write",
+                json!({"path": at("old.rs"), "content": "pub fn f() {\n    let y = (1 + 2);\n}\n"}),
+                None,
+            ),
+            (
+                "edit",
+                json!({"path": at("old.rs"), "old_string": "(1 + 2);", "new_string": "(1 + 2;"}),
+                Some("old.rs"),
+            ),
+            // JSON its tools read with comments: never put to the strict parser, new file or not.
+            ("write", json!({"path": at("tsconfig.json"), "content": jsonc}), None),
+            (
+                "write",
+                json!({"path": at("tsconfig.build.json"), "content": jsonc}),
+                None,
+            ),
+            ("write", json!({"path": at("jsconfig.json"), "content": jsonc}), None),
+            (
+                "write",
+                json!({"path": at(".vscode/settings.json"), "content": jsonc}),
+                None,
+            ),
+            // The same text under any other name is an error.
+            (
+                "write",
+                json!({"path": at("data.json"), "content": jsonc}),
+                Some("data.json"),
+            ),
+        ],
+    )
+    .await;
+    assert_eq!(
+        std::fs::read_to_string(root.join("old.rs")).unwrap(),
+        "pub fn f() {\n    let y = (1 + 2;\n}\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(root.join(".vscode/settings.json")).unwrap(),
+        jsonc
+    );
+}
+
+/// The external checkers run without approval: whatever the project holds, none of it may run.
+#[tokio::test]
+async fn syntax_check_runs_nothing_of_the_project() {
+    let dir = temp_dir("sasacode-syntax-hostile-");
+    let root = dir.path();
+    let at = |name: &str| path_str(&root.join(name));
+    let marker = |name: &str| root.join(name);
+    let py_mark = |name: &str| format!("open({:?}, 'w').write('x')\n", path_str(&marker(name)));
+
+    // A module named like the one the checker imports, and a preload for bun.
+    std::fs::write(
+        root.join("ast.py"),
+        format!("{}def parse(*a, **k): pass\n", py_mark("MARK_AST")),
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("evil.js"),
+        format!(
+            "require('fs').writeFileSync({:?}, 'x');\n",
+            path_str(&marker("MARK_PRELOAD"))
+        ),
+    )
+    .unwrap();
+    std::fs::write(root.join("bunfig.toml"), "preload = [\"./evil.js\"]\n").unwrap();
+    std::fs::write(root.join("legacy.py"), "def f(:\n    pass\n").unwrap();
+
+    let has_bun = std::process::Command::new("bun")
+        .arg("--version")
+        .output()
+        .is_ok_and(|o| o.status.success());
+    let has_py = std::process::Command::new("python3")
+        .args(["-I", "-S", "-B", "-c", "import ast"])
+        .output()
+        .is_ok_and(|o| o.status.success());
+
+    // A venv whose site-packages run code at interpreter start: started through the venv, even an
+    // isolated Python runs it (checked here, so the fixture is known to be live).
+    let venv_python = root.join(".venv").join("bin").join("python");
+    let made_venv = has_py
+        && cfg!(unix)
+        && std::process::Command::new("python3")
+            .args(["-m", "venv", "--without-pip"])
+            .arg(root.join(".venv"))
+            .output()
+            .is_ok_and(|o| o.status.success());
+    if made_venv {
+        let lib = root.join(".venv").join("lib");
+        for entry in std::fs::read_dir(&lib).unwrap().flatten() {
+            let site = entry.path().join("site-packages");
+            if site.is_dir() {
+                std::fs::write(site.join("evil.pth"), format!("import os; {}", py_mark("MARK_PTH"))).unwrap();
+            }
+        }
+        let _ = std::process::Command::new(&venv_python)
+            .args(["-I", "-c", "pass"])
+            .output();
+        if marker("MARK_PTH").exists() {
+            std::fs::remove_file(marker("MARK_PTH")).unwrap();
+        } else {
+            eprintln!("this venv does not run its .pth: that part of the test shows nothing");
+        }
+    }
+
+    let mut calls = vec![
+        (
+            "write",
+            json!({"path": at("mod.py"), "content": "x = 1\ndef f():\n    return (1 + 2\n"}),
+            has_py.then_some("mod.py"),
+        ),
+        (
+            "write",
+            json!({"path": at("mod.py"), "content": "def f():\n    return 1\n"}),
+            None,
+        ),
+        // Broken before the edit: silent.
+        (
+            "edit",
+            json!({"path": at("legacy.py"), "old_string": "pass", "new_string": "return 1"}),
+            None,
+        ),
+        // JSX in plain .js is no error, with bun or with node.
+        (
+            "write",
+            json!({"path": at("view.js"), "content": "export const View = () => <div className=\"a\">hi</div>;\n"}),
+            None,
+        ),
+    ];
+    if has_bun {
+        calls.push((
+            "write",
+            json!({"path": at("app.ts"), "content": "export function broken(x: number {\n  return x + 1;\n}\n"}),
+            Some("app.ts"),
+        ));
+        calls.push((
+            "write",
+            json!({"path": at("app.ts"), "content": "const n = <number>(1 as unknown);\nexport const id = <T>(x: T) => x ?? n;\n"}),
+            None,
+        ));
+    }
+    syntax_check_run(root, calls).await;
+
+    for name in ["MARK_AST", "MARK_PRELOAD", "MARK_PTH"] {
+        assert!(!marker(name).exists(), "the project's code ran: {name}");
+    }
+}
+
 #[tokio::test]
 async fn context_slim_masks_old_tool_outputs_in_step_batches_preserving_prefix() {
     let dir = temp_dir("sasacode-context-slim-");
