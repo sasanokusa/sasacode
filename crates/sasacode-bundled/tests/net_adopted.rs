@@ -552,7 +552,7 @@ async fn bg_start_gives_the_judge_the_paths_in_its_command_from_the_directory_it
         vec![
             (s(&work.join("sub")), true),
             (s(&home.join(".ssh")), false),
-            (s(&work.join("sub/build")), true),
+            (s(&work.join("sub").join("build")), true),
             (s(&work.join("up")), true),
         ]
     );
