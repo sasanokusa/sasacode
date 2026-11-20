@@ -12,7 +12,7 @@ use axum::Router;
 use serde_json::{Value, json};
 
 use sasacode_bundled::{auto_reconnect, background_sessions, goal};
-use sasacode_plugin_api::{Lang, StopCause, ToolResult};
+use sasacode_plugin_api::{Decision, Lang, StopCause, ToolResult};
 use support_net::*;
 
 async fn fake(plugin: sasacode_plugin_api::PluginFn, root: &Path, settings: Value, entries: Entries) -> Arc<FakeHost> {
@@ -169,6 +169,42 @@ async fn background_sessions_a_job_two_sessions_watched_is_reported_once_and_bg_
     let out = first_text(&s3.exec("bg_output", json!({ "id": detail(&lines, "id") })).await);
     assert!(out.contains("Use from_line=1 to read from the start."), "{out}");
     assert!(!out.contains("from_line=-"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn background_sessions_a_job_of_another_working_directory_is_not_read_and_listing_every_directory_asks() {
+    let _l = lang(Lang::Ja).await;
+    let root = temp_dir("sasacode-adopted-");
+    let home = root.path().join("home-cwds");
+    let (here, there) = (root.path().join("here"), root.path().join("there"));
+    for d in [&here, &there] {
+        std::fs::create_dir_all(d).unwrap_or_else(|e| panic!("{e}"));
+    }
+    let other = fake(background_sessions::plugin, &there, bg_settings(&home, 400), Entries::default()).await;
+    let theirs = other.exec("bg_start", json!({ "command": "echo secret-of-there" })).await;
+    let their_id = detail(&theirs, "id");
+    until(750, 20, || !other.injected().is_empty()).await;
+    let mine = fake(background_sessions::plugin, &here, bg_settings(&home, 400), Entries::default()).await;
+    let own = mine.exec("bg_start", json!({ "command": "echo mine" })).await;
+    until(750, 20, || !mine.injected().is_empty()).await;
+
+    // The log of the job here is read; the other directory's job is no job of this one.
+    let ok = mine.exec("bg_output", json!({ "id": detail(&own, "id") })).await;
+    assert!(!ok.is_error() && first_text(&ok).contains("mine"), "{}", first_text(&ok));
+    let denied = mine.exec("bg_output", json!({ "id": their_id })).await;
+    assert!(denied.is_error(), "{}", first_text(&denied));
+    assert!(!first_text(&denied).contains("secret-of-there"));
+    assert!(mine.exec("bg_kill", json!({ "id": their_id })).await.is_error());
+    // The listing names this directory's jobs only, unless every directory's are asked for.
+    let listed = first_text(&mine.exec("bg_list", json!({})).await);
+    assert!(listed.contains("echo mine") && !listed.contains("secret-of-there"), "{listed}");
+
+    // Asking for every directory's jobs goes back to the user.
+    let h = load_plugin("background-sessions", background_sessions::plugin, &s(&here), bg_settings(&home, 400)).await;
+    assert_eq!(h.decision("bg_list", json!({})), Decision::Allow);
+    assert_eq!(h.decision("bg_list", json!({ "all": false })), Decision::Allow);
+    assert_eq!(h.decision("bg_list", json!({ "all": true })), Decision::Ask);
+    assert_eq!(h.decision("bg_output", json!({ "id": "bg-1" })), Decision::Allow);
 }
 
 #[tokio::test(flavor = "multi_thread")]
