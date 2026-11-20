@@ -157,10 +157,19 @@ async fn search_tools_enforce_read_permissions_and_exclude_secret_files() {
     std::fs::write(root.join(".env.local"), "SECRET_TOKEN=local_secret\n").unwrap();
     std::fs::write(root.join(".env.example"), "SECRET_TOKEN=example_placeholder\n").unwrap();
     std::fs::write(root.join(".env.sample"), "SECRET_TOKEN=sample_placeholder\n").unwrap();
+    std::fs::write(root.join(".envrc"), "SECRET_TOKEN=envrc_secret\n").unwrap();
+    std::fs::write(root.join(".npmrc"), "SECRET_TOKEN=npmrc_secret\n").unwrap();
+    std::fs::write(root.join(".pypirc"), "SECRET_TOKEN=pypirc_secret\n").unwrap();
+    std::fs::write(root.join(".netrc"), "SECRET_TOKEN=netrc_secret\n").unwrap();
+    std::fs::write(root.join(".pgpass"), "SECRET_TOKEN=pgpass_secret\n").unwrap();
+    std::fs::write(root.join("prod.env"), "SECRET_TOKEN=prod_env_secret\n").unwrap();
     std::fs::write(root.join("sub/.env"), "SECRET_TOKEN=sub_secret\n").unwrap();
     std::fs::write(root.join("sub/.env.production"), "SECRET_TOKEN=prod_secret\n").unwrap();
+    std::fs::write(root.join("sub/staging.env"), "SECRET_TOKEN=staging_env_secret\n").unwrap();
     std::fs::write(root.join("certs/server.pem"), "SECRET_TOKEN=pem_secret\n").unwrap();
     std::fs::write(root.join("certs/private.key"), "SECRET_TOKEN=key_secret\n").unwrap();
+    std::fs::write(root.join("certs/app.jks"), "SECRET_TOKEN=jks_secret\n").unwrap();
+    std::fs::write(root.join("certs/release.keystore"), "SECRET_TOKEN=keystore_secret\n").unwrap();
     std::fs::write(root.join("ssh/id_rsa"), "SECRET_TOKEN=rsa_secret\n").unwrap();
     std::fs::write(root.join("ssh/id_rsa.pub"), "SECRET_TOKEN=rsa_pub\n").unwrap();
     std::fs::write(root.join("ssh/id_ed25519"), "SECRET_TOKEN=ed25519_secret\n").unwrap();
@@ -212,10 +221,19 @@ async fn search_tools_enforce_read_permissions_and_exclude_secret_files() {
     for forbidden in [
         ".env",
         ".env.local",
+        ".envrc",
+        ".npmrc",
+        ".pypirc",
+        ".netrc",
+        ".pgpass",
+        "prod.env",
         "sub/.env",
         "sub/.env.production",
+        "sub/staging.env",
         "certs/server.pem",
         "certs/private.key",
+        "certs/app.jks",
+        "certs/release.keystore",
         "ssh/id_rsa",
         "ssh/id_rsa.pub",
         "ssh/id_ed25519",
@@ -231,10 +249,19 @@ async fn search_tools_enforce_read_permissions_and_exclude_secret_files() {
     for leaked in [
         "root_secret",
         "local_secret",
+        "envrc_secret",
+        "npmrc_secret",
+        "pypirc_secret",
+        "netrc_secret",
+        "pgpass_secret",
+        "prod_env_secret",
         "sub_secret",
         "prod_secret",
+        "staging_env_secret",
         "pem_secret",
         "key_secret",
+        "jks_secret",
+        "keystore_secret",
         "rsa_secret",
         "rsa_pub",
         "ed25519_secret",
@@ -335,6 +362,238 @@ async fn search_tools_supports_gitignore_negation_nested_gitignore_and_skips_sym
     assert_eq!(
         sub_lines,
         vec!["sub/.gitignore", "sub/deep/local_only.txt", "sub/keep.log"]
+    );
+}
+
+fn git_ls_unignored(root: &std::path::Path, subpath: Option<&str>) -> Option<Vec<String>> {
+    let init = std::process::Command::new("git")
+        .args(["init", "-q"])
+        .current_dir(root)
+        .status()
+        .ok()?;
+    if !init.success() {
+        return None;
+    }
+    let mut cmd = std::process::Command::new("git");
+    cmd.args([
+        "-c",
+        "core.quotepath=false",
+        "ls-files",
+        "--others",
+        "--exclude-standard",
+    ]);
+    if let Some(sub) = subpath {
+        cmd.args(["--", sub]);
+    }
+    let out = cmd.current_dir(root).output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let mut files: Vec<String> = String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .map(str::to_string)
+        .collect();
+    files.sort();
+    Some(files)
+}
+
+#[tokio::test]
+async fn search_tools_matches_git_ignore_directory_and_negation_semantics() {
+    // 1. `dist/*` + `!dist/important/` (and `/*` + `!sub/`, `generated/` + `!generated/`)
+    let dir1 = temp_dir("sasacode-gi-dir-negate-");
+    let r1 = dir1.path();
+    std::fs::create_dir_all(r1.join("dist/important/nested")).unwrap();
+    std::fs::create_dir_all(r1.join("dist/other")).unwrap();
+    std::fs::write(r1.join(".gitignore"), "dist/*\n!dist/important/\n").unwrap();
+    std::fs::write(r1.join("dist/drop.js"), "needle\n").unwrap();
+    std::fs::write(r1.join("dist/other/skip.js"), "needle\n").unwrap();
+    std::fs::write(r1.join("dist/important/app.js"), "needle\n").unwrap();
+    std::fs::write(r1.join("dist/important/nested/mod.js"), "needle\n").unwrap();
+
+    let l1 = load_plugin("search-tools", bundled("search-tools"), &path_str(r1), json!({})).await;
+    let dist_files: Vec<String> = text_of(&l1.invoke("find_files", json!({"path": "dist"})).await)
+        .lines()
+        .map(str::to_string)
+        .collect();
+    assert_eq!(
+        dist_files,
+        vec!["dist/important/app.js", "dist/important/nested/mod.js"]
+    );
+    if let Some(git_files) = git_ls_unignored(r1, Some("dist")) {
+        assert_eq!(dist_files, git_files);
+    }
+
+    // `/*` + `!sub/` keeps `sub/**` while ignoring root files and other directories.
+    let dir2 = temp_dir("sasacode-gi-root-star-");
+    let r2 = dir2.path();
+    std::fs::create_dir_all(r2.join("sub/deep")).unwrap();
+    std::fs::create_dir_all(r2.join("other")).unwrap();
+    std::fs::write(r2.join(".gitignore"), "/*\n!sub/\n").unwrap();
+    std::fs::write(r2.join("root.txt"), "x\n").unwrap();
+    std::fs::write(r2.join("other/drop.txt"), "x\n").unwrap();
+    std::fs::write(r2.join("sub/keep.txt"), "x\n").unwrap();
+    std::fs::write(r2.join("sub/deep/keep2.txt"), "x\n").unwrap();
+
+    let l2 = load_plugin("search-tools", bundled("search-tools"), &path_str(r2), json!({})).await;
+    let r2_files: Vec<String> = text_of(&l2.invoke("find_files", json!({})).await)
+        .lines()
+        .map(str::to_string)
+        .collect();
+    assert_eq!(r2_files, vec!["sub/deep/keep2.txt", "sub/keep.txt"]);
+    if let Some(git_files) = git_ls_unignored(r2, None) {
+        assert_eq!(r2_files, git_files);
+    }
+
+    // `generated/` + `!generated/` re-includes the directory and its contents.
+    let dir3 = temp_dir("sasacode-gi-generated-");
+    let r3 = dir3.path();
+    std::fs::create_dir_all(r3.join("generated/sub")).unwrap();
+    std::fs::write(r3.join(".gitignore"), "generated/\n!generated/\n").unwrap();
+    std::fs::write(r3.join("generated/a.txt"), "x\n").unwrap();
+    std::fs::write(r3.join("generated/sub/b.txt"), "x\n").unwrap();
+
+    let l3 = load_plugin("search-tools", bundled("search-tools"), &path_str(r3), json!({})).await;
+    let r3_files: Vec<String> = text_of(&l3.invoke("find_files", json!({})).await)
+        .lines()
+        .map(str::to_string)
+        .collect();
+    assert_eq!(r3_files, vec![".gitignore", "generated/a.txt", "generated/sub/b.txt"]);
+    if let Some(git_files) = git_ls_unignored(r3, None) {
+        assert_eq!(r3_files, git_files);
+    }
+
+    // 2. `build/` + `!build/keep.txt`: ignored ancestor dir cannot be re-included via `!build/keep.txt`
+    // even when searching directly inside `build` (or `ignored_dir` / `node_modules` / `target/`).
+    let dir4 = temp_dir("sasacode-gi-ignored-ancestor-");
+    let r4 = dir4.path();
+    std::fs::create_dir_all(r4.join("build/nested")).unwrap();
+    std::fs::create_dir_all(r4.join("ignored_dir/sub")).unwrap();
+    std::fs::create_dir_all(r4.join("node_modules/pkg")).unwrap();
+    std::fs::create_dir_all(r4.join("target/debug")).unwrap();
+    std::fs::create_dir_all(r4.join("src/node_modules")).unwrap();
+    std::fs::write(
+        r4.join(".gitignore"),
+        "build/\n!build/keep.txt\nignored_dir/\n!ignored_dir/keep.txt\nnode_modules\ntarget/\n",
+    )
+    .unwrap();
+    std::fs::write(r4.join("build/keep.txt"), "secret\n").unwrap();
+    std::fs::write(r4.join("build/nested/file.txt"), "secret\n").unwrap();
+    std::fs::write(r4.join("ignored_dir/keep.txt"), "secret\n").unwrap();
+    std::fs::write(r4.join("ignored_dir/sub/file.txt"), "secret\n").unwrap();
+    std::fs::write(r4.join("node_modules/pkg/index.js"), "secret\n").unwrap();
+    std::fs::write(r4.join("src/node_modules/mod.js"), "secret\n").unwrap();
+    std::fs::write(r4.join("target/debug/bin.txt"), "secret\n").unwrap();
+    std::fs::write(r4.join("src/main.rs"), "fn main() {}\n").unwrap();
+
+    if let Some(git_files) = git_ls_unignored(r4, None) {
+        assert_eq!(git_files, vec![".gitignore", "src/main.rs"]);
+    }
+    if let Some(git_build) = git_ls_unignored(r4, Some("build")) {
+        assert!(git_build.is_empty(), "{git_build:?}");
+    }
+    let l4 = load_plugin("search-tools", bundled("search-tools"), &path_str(r4), json!({})).await;
+    assert_eq!(
+        text_of(&l4.invoke("find_files", json!({})).await),
+        ".gitignore\nsrc/main.rs"
+    );
+    for entry in [
+        "build",
+        "build/nested",
+        "ignored_dir",
+        "ignored_dir/sub",
+        "node_modules",
+        "node_modules/pkg",
+        "src/node_modules",
+        "target",
+        "target/debug",
+    ] {
+        assert_eq!(
+            text_of(&l4.invoke("find_files", json!({"path": entry})).await),
+            "No files found.",
+            "entry path `{entry}` should stay excluded"
+        );
+        assert_eq!(
+            text_of(
+                &l4.invoke("search_text", json!({"path": entry, "query": "secret"}))
+                    .await
+            ),
+            "No matches found for \"secret\".",
+            "search_text on `{entry}` should stay excluded"
+        );
+    }
+}
+
+#[tokio::test]
+async fn search_tools_handles_unnormalized_double_slash_non_ascii_paths() {
+    let dir = temp_dir("sasacode-gi-nonascii-");
+    let root = dir.path();
+    let target = root.join("日本語/サブ/c");
+    std::fs::create_dir_all(&target).unwrap();
+    std::fs::create_dir_all(root.join("日本語/無視/c")).unwrap();
+    std::fs::write(root.join(".gitignore"), "*.log\n").unwrap();
+    std::fs::write(root.join("日本語/.gitignore"), "無視/\n").unwrap();
+    std::fs::write(root.join("日本語/サブ/.gitignore"), "!keep.log\n*.tmp\n").unwrap();
+    std::fs::write(root.join("日本語/サブ/c/.gitignore"), "drop.txt\n").unwrap();
+    std::fs::write(target.join("keep.log"), "needle_nonascii\n").unwrap();
+    std::fs::write(target.join("drop.log"), "needle_nonascii\n").unwrap();
+    std::fs::write(target.join("drop.tmp"), "needle_nonascii\n").unwrap();
+    std::fs::write(target.join("drop.txt"), "needle_nonascii\n").unwrap();
+    std::fs::write(target.join("残す.txt"), "needle_nonascii\n").unwrap();
+    std::fs::write(root.join("日本語/無視/c/hidden.txt"), "needle_nonascii\n").unwrap();
+
+    let l = load_plugin("search-tools", bundled("search-tools"), &path_str(root), json!({})).await;
+    let abs_double = format!("{}/日本語//サブ/c", path_str(root));
+    let abs_triple_dot = format!("{}/日本語///サブ/./c/", path_str(root));
+
+    for abs in [&abs_double, &abs_triple_dot] {
+        let found: Vec<String> = text_of(&l.invoke("find_files", json!({"path": abs})).await)
+            .lines()
+            .map(str::to_string)
+            .collect();
+        assert_eq!(
+            found,
+            vec![
+                "日本語/サブ/c/.gitignore",
+                "日本語/サブ/c/keep.log",
+                "日本語/サブ/c/残す.txt",
+            ],
+            "unexpected find_files output for `{abs}`"
+        );
+
+        let searched = text_of(
+            &l.invoke("search_text", json!({"path": abs, "query": "needle_nonascii"}))
+                .await,
+        );
+        assert!(searched.contains("日本語/サブ/c/keep.log:1:"), "{searched}");
+        assert!(searched.contains("日本語/サブ/c/残す.txt:1:"), "{searched}");
+        assert!(
+            !searched.contains("drop.log") && !searched.contains("drop.tmp") && !searched.contains("drop.txt"),
+            "{searched}"
+        );
+        assert_eq!(
+            text_of(
+                &l.invoke("find_files", json!({"path": abs, "pattern": "日本語/サブ/c/*.log"}))
+                    .await
+            ),
+            "日本語/サブ/c/keep.log"
+        );
+    }
+
+    if let Some(git_files) = git_ls_unignored(root, Some("日本語/サブ/c")) {
+        assert_eq!(
+            git_files,
+            vec![
+                "日本語/サブ/c/.gitignore",
+                "日本語/サブ/c/keep.log",
+                "日本語/サブ/c/残す.txt",
+            ]
+        );
+    }
+
+    let ignored_unnorm = format!("{}/日本語//無視/c", path_str(root));
+    assert_eq!(
+        text_of(&l.invoke("find_files", json!({"path": ignored_unnorm})).await),
+        "No files found."
     );
 }
 

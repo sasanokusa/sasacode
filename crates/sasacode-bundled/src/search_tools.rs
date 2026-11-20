@@ -4,7 +4,8 @@
 //! settings: { maxResults?: number (default 50), maxFileBytes?: number (default 1048576) }
 
 use std::collections::HashSet;
-use std::path::Path;
+use std::ffi::OsStr;
+use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
 use futures::future::BoxFuture;
@@ -71,13 +72,20 @@ pub(crate) fn slash_path(p: &Path) -> String {
 /// skip common secret files here.
 fn is_secret_file(name: &str) -> bool {
     let lower = name.to_ascii_lowercase();
-    if lower == ".env" || (lower.starts_with(".env.") && !matches!(lower.as_str(), ".env.example" | ".env.sample")) {
+    if matches!(
+        lower.as_str(),
+        ".env" | ".envrc" | ".npmrc" | ".pypirc" | ".netrc" | ".pgpass"
+    ) || (lower.starts_with(".env.") && !matches!(lower.as_str(), ".env.example" | ".env.sample"))
+    {
         return true;
     }
-    lower.ends_with(".pem")
+    lower.ends_with(".env")
+        || lower.ends_with(".pem")
         || lower.ends_with(".key")
         || lower.ends_with(".p12")
         || lower.ends_with(".pfx")
+        || lower.ends_with(".jks")
+        || lower.ends_with(".keystore")
         || lower.starts_with("id_rsa")
         || lower.starts_with("id_ed25519")
         || lower.starts_with("id_ecdsa")
@@ -191,15 +199,9 @@ fn load_gitignore(dir: &Path, prefix_len: usize) -> Option<GitignoreLayer> {
         };
 
         if anchored || has_slash {
-            add_rule(vec![pat.clone()], dir_only);
-            if !negated {
-                add_rule(vec![format!("{pat}/**")], false);
-            }
+            add_rule(vec![pat], dir_only);
         } else {
             add_rule(vec![pat.clone(), format!("**/{pat}")], dir_only);
-            if !negated {
-                add_rule(vec![format!("{pat}/**"), format!("**/{pat}/**")], false);
-            }
         }
     }
 
@@ -234,28 +236,47 @@ pub(crate) fn walk_project_files(
     signal: Option<&CancellationToken>,
 ) -> Vec<String> {
     let mut layers = Vec::new();
+    let mut scratch = Vec::new();
     let mut initial_rel = String::new();
     if let Some(extra) = extra_ignore_root
         && let Ok(rel) = root.strip_prefix(extra)
-        && !rel.as_os_str().is_empty()
     {
-        if let Some(layer) = load_gitignore(extra, 0) {
-            layers.push(layer);
-        }
-        let mut cur = extra.to_path_buf();
-        let comps: Vec<_> = rel.components().collect();
-        for comp in &comps[..comps.len().saturating_sub(1)] {
-            cur.push(comp);
-            let seg = comp.as_os_str().to_string_lossy();
-            if !initial_rel.is_empty() {
-                initial_rel.push('/');
+        let mut segs: Vec<&OsStr> = Vec::new();
+        let mut escaped = false;
+        for comp in rel.components() {
+            match comp {
+                Component::Normal(s) if !s.is_empty() && s != "." => segs.push(s),
+                Component::CurDir => {}
+                Component::ParentDir if segs.pop().is_none() => {
+                    escaped = true;
+                    break;
+                }
+                _ => {}
             }
-            initial_rel.push_str(&seg);
-            if let Some(layer) = load_gitignore(&cur, initial_rel.len() + 1) {
+        }
+        if !escaped && !segs.is_empty() {
+            if let Some(layer) = load_gitignore(extra, 0) {
                 layers.push(layer);
             }
+            let mut cur = extra.to_path_buf();
+            let last_idx = segs.len() - 1;
+            for (idx, seg_os) in segs.iter().enumerate() {
+                cur.push(seg_os);
+                let seg = seg_os.to_string_lossy();
+                if !initial_rel.is_empty() {
+                    initial_rel.push('/');
+                }
+                initial_rel.push_str(&seg);
+                if is_ignored(&layers, &initial_rel, true, &mut scratch) {
+                    return Vec::new();
+                }
+                if idx < last_idx
+                    && let Some(layer) = load_gitignore(&cur, initial_rel.len() + 1)
+                {
+                    layers.push(layer);
+                }
+            }
         }
-        initial_rel = slash_path(rel);
     }
     let target_prefix_len = if initial_rel.is_empty() {
         0
@@ -344,7 +365,7 @@ pub(crate) fn walk_project_files(
         max_entries,
         target_prefix_len,
         layers,
-        scratch: Vec::new(),
+        scratch,
         signal,
         visited: 0,
         out: Vec::new(),
@@ -395,9 +416,29 @@ impl Pattern {
     }
 }
 
-fn display_rel(cwd: &Path, target_root: &Path, rel_to_root: &str) -> String {
-    let full = target_root.join(rel_to_root);
-    if let Ok(rel_cwd) = full.strip_prefix(cwd) {
+fn normalize_lexical(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for c in path.components() {
+        match c {
+            Component::Prefix(_) | Component::RootDir => out.push(c.as_os_str()),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if matches!(out.components().next_back(), Some(Component::Normal(_))) {
+                    out.pop();
+                } else if !out.has_root() {
+                    out.push(c.as_os_str());
+                }
+            }
+            Component::Normal(n) => out.push(n),
+        }
+    }
+    out
+}
+
+fn display_path(cwd: &Path, full_path: &Path) -> String {
+    let full = normalize_lexical(full_path);
+    let norm_cwd = normalize_lexical(cwd);
+    if let Ok(rel_cwd) = full.strip_prefix(&norm_cwd) {
         let s = slash_path(rel_cwd);
         if !s.is_empty() {
             return s;
@@ -442,11 +483,7 @@ async fn run_find_files(args: JsonObject, ctx: ToolContext, default_limit: usize
             return ToolResult::error(format!("Path not found: {target_str}"));
         };
         if meta.is_file() {
-            let shown = target
-                .strip_prefix(&cwd)
-                .map(slash_path)
-                .unwrap_or_else(|_| slash_path(target));
-            return ToolResult::text(shown);
+            return ToolResult::text(display_path(&cwd, target));
         }
         if !meta.is_dir() {
             return ToolResult::error(format!("Not a file or directory: {target_str}"));
@@ -458,7 +495,7 @@ async fn run_find_files(args: JsonObject, ctx: ToolContext, default_limit: usize
         let mut matched: Vec<String> = files
             .into_iter()
             .filter_map(|rel| {
-                let disp = display_rel(&cwd, target, &rel);
+                let disp = display_path(&cwd, &target.join(&rel));
                 if pattern.as_ref().is_none_or(|p| p.matches(&rel, &disp)) {
                     Some(disp)
                 } else {
@@ -534,18 +571,15 @@ async fn run_search_text(
             return ToolResult::error(format!("Path not found: {target_str}"));
         };
         let candidates: Vec<(String, std::path::PathBuf)> = if meta.is_file() {
-            let disp = target
-                .strip_prefix(&cwd)
-                .map(slash_path)
-                .unwrap_or_else(|_| slash_path(target));
-            vec![(disp, target.to_path_buf())]
+            vec![(display_path(&cwd, target), target.to_path_buf())]
         } else if meta.is_dir() {
             walk_project_files(target, Some(&cwd), 32, MAX_WALK_ENTRIES, Some(&signal))
                 .into_iter()
                 .filter_map(|rel| {
-                    let disp = display_rel(&cwd, target, &rel);
+                    let full = target.join(&rel);
+                    let disp = display_path(&cwd, &full);
                     if glob_filter.as_ref().is_none_or(|g| g.matches(&rel, &disp)) {
-                        Some((disp, target.join(rel)))
+                        Some((disp, full))
                     } else {
                         None
                     }
@@ -685,4 +719,80 @@ pub fn plugin(api: PluginApi) -> BoxFuture<'static, anyhow::Result<()>> {
 
         Ok(())
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn secret_file_names_cover_new_and_existing_patterns() {
+        for secret in [
+            ".env",
+            ".env.local",
+            ".envrc",
+            ".npmrc",
+            ".pypirc",
+            ".netrc",
+            ".pgpass",
+            "prod.env",
+            "STAGING.ENV",
+            "server.pem",
+            "private.key",
+            "cert.p12",
+            "cert.pfx",
+            "keystore.jks",
+            "app.JKS",
+            "release.keystore",
+            "id_rsa",
+            "id_ed25519",
+            "id_ecdsa",
+            "id_dsa",
+        ] {
+            assert!(is_secret_file(secret), "expected secret: {secret}");
+        }
+        for allowed in [
+            ".env.example",
+            ".env.sample",
+            "prod.env.example",
+            "main.rs",
+            "README.md",
+        ] {
+            assert!(!is_secret_file(allowed), "expected non-secret: {allowed}");
+        }
+    }
+
+    #[test]
+    fn walk_project_files_normalizes_double_slash_and_non_ascii_ancestors() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let target_real = root.join("日本語/サブ/c");
+        std::fs::create_dir_all(&target_real).unwrap();
+        std::fs::write(root.join(".gitignore"), "*.log\n").unwrap();
+        std::fs::write(root.join("日本語/サブ/.gitignore"), "!keep.log\n*.tmp\n").unwrap();
+        std::fs::write(target_real.join("keep.log"), "ok\n").unwrap();
+        std::fs::write(target_real.join("drop.log"), "no\n").unwrap();
+        std::fs::write(target_real.join("drop.tmp"), "no\n").unwrap();
+        std::fs::write(target_real.join("note.txt"), "ok\n").unwrap();
+
+        let unnorm = PathBuf::from(format!("{}/日本語//サブ/./c", root.display()));
+        let mut found = walk_project_files(&unnorm, Some(root), 32, MAX_WALK_ENTRIES, None);
+        found.sort();
+        assert_eq!(found, vec!["keep.log", "note.txt"]);
+
+        let triple_slash = PathBuf::from(format!("{}/日本語///サブ/c", root.display()));
+        let mut found3 = walk_project_files(&triple_slash, Some(root), 32, MAX_WALK_ENTRIES, None);
+        found3.sort();
+        assert_eq!(found3, vec!["keep.log", "note.txt"]);
+
+        // Escaping extra_ignore_root via `..` must not apply extra_ignore_root's layers as a prefix.
+        let outside = root.join("outside");
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("drop.log"), "still here\n").unwrap();
+        let escaped = PathBuf::from(format!("{}/日本語/../outside", root.display()));
+        assert_eq!(
+            walk_project_files(&escaped, Some(&root.join("日本語")), 32, MAX_WALK_ENTRIES, None),
+            vec!["drop.log"]
+        );
+    }
 }
