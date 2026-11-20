@@ -635,6 +635,10 @@ fn an_allow_rule_follows_the_links_there_when_it_was_added_only() {
     std::fs::remove_dir(at("proj/skills")).unwrap();
     std::os::unix::fs::symlink(at("keys"), at("proj/skills")).unwrap();
     assert_eq!(read(at("proj/skills/id")), Ask);
+    // Added again (a plugin loaded again), it keeps where it went the first time.
+    let again = json!({ "allow": [format!("read({}/**)", at("proj/skills"))] });
+    p.add_rules(&serde_json::from_value(again).unwrap()).unwrap();
+    assert_eq!(read(at("proj/skills/id")), Ask);
     // A deny rule follows the links there at each call.
     let deny = policy(M::Auto, json!({ "deny": [format!("read({}/**)", at("proj/skills"))] }));
     assert_eq!(d(&deny, &call(read_tool(), &at("keys/id"), &at("proj"))), Deny);
@@ -651,6 +655,7 @@ fn on_windows_a_path_is_judged_as_win32_opens_it_too() {
     let verbatim = format!("\\\\?\\{cwd}\\.git\\x");
     for path in [
         ".git.\\hooks\\x",
+        ".git::$INDEX_ALLOCATION\\hooks\\x",
         ".sasacode \\x",
         "HEAD ",
         "HEAD::$DATA",

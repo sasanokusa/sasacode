@@ -99,13 +99,13 @@ impl PermissionPolicy {
         for (list, which) in lists {
             for s in list {
                 let mut parsed = parse_rule(s).ok_or_else(|| anyhow::anyhow!("invalid permission rule: {s}"))?;
-                // An allow rule follows the links there now; one made later does not take it elsewhere.
-                let abs = parsed
-                    .pattern
-                    .as_deref()
-                    .map(|p| path_pattern(p, "."))
-                    .filter(|p| paths::is_absolute(p));
-                if let Some(p) = abs.filter(|_| which == 0) {
+                // An allow rule follows the links there now; one made later, or the rule added again, does not
+                // take it elsewhere.
+                if which == 0 && r.allow.iter().any(|a| a.source == *s) {
+                    continue;
+                }
+                let abs = parsed.pattern.as_deref().map(|p| path_pattern(p, "."));
+                if let Some(p) = abs.filter(|p| which == 0 && paths::is_absolute(p)) {
                     parsed.real = Some((p.clone(), real_pattern(&p)));
                 }
                 match which {
@@ -170,7 +170,7 @@ impl PermissionPolicy {
         let cwd = try_real_path(&c.cwd).unwrap_or_else(|| c.cwd.clone());
         let real: Vec<String> = paths_of(c)
             .iter()
-            .flat_map(|p| spellings(p, false))
+            .flat_map(|p| spellings(p, true))
             .map(|p| try_real_path(&p).unwrap_or(p))
             .collect();
         let inside_cwd = real.iter().all(|p| is_inside(p, &cwd));
@@ -491,16 +491,12 @@ fn rule_matches(rule: &ParsedRule, c: &PermissionCheck, for_allow: bool) -> bool
     }
 }
 
-/// A path as written and, on Windows, as Win32 opens it (`.git.` is `.git`; with `stream`, `a:s` is `a` too).
-fn spellings(p: &str, stream: bool) -> Vec<String> {
+/// A path as written and, on Windows, as Win32 opens it (`.git.` is `.git`; with `streams`, `a:s` is `a` too).
+fn spellings(p: &str, streams: bool) -> Vec<String> {
     let mut v = vec![p.to_string()];
+    let open = |s| paths::resolve(&[&sasacode_plugin_api::win32_path::win32_open_form(p, s)]);
     if WINDOWS {
-        let open = paths::resolve(&[&sasacode_plugin_api::win32_path::win32_open_form(p)]);
-        let at = open.rfind(paths::is_sep).map_or(0, |i| i + 1);
-        if let Some(i) = open[at..].find(':').filter(|_| stream) {
-            v.push(open[..at + i].to_string());
-        }
-        v.push(open);
+        v.extend([open(false), open(true)].into_iter().take(1 + streams as usize));
     }
     v
 }

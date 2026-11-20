@@ -15,25 +15,27 @@ pub fn without_verbatim(p: &str) -> String {
 }
 
 /// A path in the form Win32 opens it: without a `\\?\`, `\\.\` or `\\?\UNC\` prefix, and each name without the
-/// dots and spaces that end it (`.git.` is `.git`) or `::$DATA`, the stream that is the file itself.
-pub fn win32_open_form(p: &str) -> String {
+/// dots and spaces that end it (`.git.` is `.git`) or a `::$DATA`, the stream that is the file (or folder) itself.
+/// With `streams`, a name is also cut at any `:` (`a:s` is `a`), the drive's aside.
+pub fn win32_open_form(p: &str, streams: bool) -> String {
     let lower = p.replace('/', "\\").to_ascii_lowercase();
     let p = match () {
         _ if lower.starts_with(r"\\?\unc\") || lower.starts_with(r"\\.\unc\") => format!(r"\\{}", &p[8..]),
         _ if lower.starts_with(r"\\?\") || lower.starts_with(r"\\.\") => p[4..].to_string(),
         _ => p.to_string(),
     };
-    let name = |n: &str| {
-        let i = n.len().saturating_sub(7);
-        let n = if n.get(i..).is_some_and(|t| t.eq_ignore_ascii_case("::$DATA")) {
-            &n[..i]
-        } else {
-            n
-        };
+    let name = |(i, n): (usize, &str)| {
+        let n = n
+            .find(if streams && i > 0 { ":" } else { "::$" })
+            .map_or(n, |j| &n[..j]);
         let t = n.trim_end_matches(['.', ' ']);
         if t.is_empty() { n.to_string() } else { t.to_string() }
     };
-    p.split(['\\', '/']).map(name).collect::<Vec<_>>().join("\\")
+    p.split(['\\', '/'])
+        .enumerate()
+        .map(name)
+        .collect::<Vec<_>>()
+        .join("\\")
 }
 
 /// `path.win32.resolve` against this process's working directory, and the per-drive ones Windows
@@ -204,11 +206,18 @@ mod win32_tests {
 
     #[test]
     fn a_path_is_spelled_as_win32_opens_it() {
-        assert_eq!(win32_open_form(r"\\?\C:\p\.git.\HEAD "), r"C:\p\.git\HEAD");
-        assert_eq!(win32_open_form(r"\\.\C:\p\config::$DATA"), r"C:\p\config");
-        assert_eq!(win32_open_form(r"\\?\UNC\srv\sh\a. . \b"), r"\\srv\sh\a\b");
-        assert_eq!(win32_open_form("//?/C:/p/.sasacode./x"), r"C:\p\.sasacode\x");
-        assert_eq!(win32_open_form(r"C:\p\..\.\a:s\é."), r"C:\p\..\.\a:s\é");
-        assert_eq!(win32_open_form(r"C:\p\x::$data"), r"C:\p\x");
+        let open = |p: &str| win32_open_form(p, false);
+        assert_eq!(open(r"\\?\C:\p\.git.\HEAD "), r"C:\p\.git\HEAD");
+        assert_eq!(open(r"\\.\C:\p\config::$DATA"), r"C:\p\config");
+        assert_eq!(open(r"\\?\UNC\srv\sh\a. . \b"), r"\\srv\sh\a\b");
+        assert_eq!(open("//?/C:/p/.sasacode./x"), r"C:\p\.sasacode\x");
+        assert_eq!(open(r"C:\p\..\.\a:s\é."), r"C:\p\..\.\a:s\é");
+        assert_eq!(open(r"C:\p\x::$data"), r"C:\p\x");
+        assert_eq!(open(r"C:\p\.git::$INDEX_ALLOCATION\hooks\x"), r"C:\p\.git\hooks\x");
+        // With streams, every name before its first `:`, the drive's aside.
+        let streams = |p: &str| win32_open_form(p, true);
+        assert_eq!(streams(r"C:\p\.git:$I30:$INDEX_ALLOCATION\x"), r"C:\p\.git\x");
+        assert_eq!(streams(r"C:\p\k.txt:zone"), r"C:\p\k.txt");
+        assert_eq!(streams(r"\\?\C:\p\a. :s"), r"C:\p\a");
     }
 }
