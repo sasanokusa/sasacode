@@ -107,6 +107,9 @@ pub struct TrustServer {
     pub cwd: Option<String>,
     pub env: Vec<String>,
     pub headers: Vec<String>,
+    /// The entry is laid over the global server of the same name.
+    #[serde(rename = "overlaysGlobal")]
+    pub overlays_global: bool,
 }
 
 /// How long a setting's value is shown before it is cut; a command, an address or a model's name
@@ -166,6 +169,9 @@ impl Trust {
             if let Some(command) = &s.command {
                 let line: Vec<String> = std::iter::once(command).chain(&s.args).map(|a| shell_word(a)).collect();
                 out.push(format!("  {}{}", w.trust_runs, line.join(" ")));
+            } else if !s.args.is_empty() {
+                let line: Vec<String> = s.args.iter().map(|a| shell_word(a)).collect();
+                out.push(format!("  {}{}", w.trust_args, line.join(" ")));
             }
             if let Some(url) = &s.url {
                 out.push(format!("  {}{}", w.trust_url, plain_line(url)));
@@ -178,6 +184,9 @@ impl Trust {
             }
             if !s.headers.is_empty() {
                 out.push(format!("  {}{}", w.trust_headers, names(&s.headers)));
+            }
+            if s.overlays_global {
+                out.push(format!("  {}", w.trust_overlays));
             }
         }
         if let Some(model) = &self.model {
@@ -497,7 +506,9 @@ mod tests {
             r#"{"trusted":false,"needed":true,"complete":true,"items":["MCP server db"],"mcpServers":["db"],
                 "mcpServerDetails":[{"name":"d\u202eb","command":"npx","args":["-y","db-server","/a b"],"url":null,
                   "cwd":"/srv","env":["DB_TOKEN"],"headers":[]},
-                  {"name":"api","command":null,"args":[],"url":"https://example.invalid/mcp","cwd":null,"env":[],"headers":["Authorization"]}],
+                  {"name":"api","command":null,"args":[],"url":"https://example.invalid/mcp","cwd":null,"env":[],"headers":["Authorization"]},
+                  {"name":"fx","command":null,"args":["--other","a b"],"url":null,"cwd":"/w","env":["TOKEN"],"headers":[],
+                   "overlaysGlobal":true}],
                 "model":"far/away-model-with-a-long-name","judgeModel":null,"models":["far/a","far/b"],
                 "modelOverrides":{"far/a":{"contextWindow":1000}},
                 "pluginSettings":{"syntax-check":{"externalCheck":"/opt/check --all","note":"x\u001b[2Ky"}}}"#,
@@ -514,6 +525,11 @@ mod tests {
                 "MCPサーバー「api」",
                 "  接続先：https://example.invalid/mcp",
                 "  ヘッダー（名前だけ）：Authorization",
+                "MCPサーバー「fx」",
+                "  引数：--other 'a b'",
+                "  作業フォルダ：/w",
+                "  環境変数（名前だけ）：TOKEN",
+                "  同じ名前のグローバルのサーバーに重ねて使う",
                 "モデル：far/away-model-with-a-long-name",
                 "モデルの一覧：far/a, far/b",
                 "modelOverrides：",
