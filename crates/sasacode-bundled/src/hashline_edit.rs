@@ -6,14 +6,18 @@
 //! Two hex digits cannot tell one `}` from the next, so a matching hash is not enough: the model
 //! must also have been shown the line where it is now. For each agent and file a [`Snapshot`]
 //! holds the file as that agent last saw it and, per line, the assistant message during which its
-//! anchor was shown (by `read` or by a `hash_edit` result). An anchor is accepted when both hold:
-//! - Its line was shown during an earlier message than the one making the call. A second call in
+//! anchor was shown (by `read` or by a `hash_edit` result). An edit is accepted when every line
+//! from its start to its end anchor holds both:
+//! - Its anchor was shown during an earlier message than the one making the call. A second call in
 //!   the same message was written before the first one's result existed.
-//! - Nothing above it has moved since. A `hash_edit` that changes the line count forgets every
-//!   line below it. Any other change to the file forgets every line from just above the first
-//!   difference on, so an anchor survives only while lines 1 through its own + 1 are untouched.
+//! - It has not moved since. The plugin knows exactly what the agent's own `hash_edit` did: one
+//!   that changes the line count forgets every line below it. Any other change to the file (another
+//!   tool, another agent, the user) forgets every anchor of it: shifted lines can look unchanged.
 //!
-//! A file the agent has no snapshot of (never read, too large, forgotten) is checked by hash alone.
+//! Only lines `read` showed as they are on disk get an anchor, and only after slim-profile has cut
+//! the output (it loads first). A file the agent has no snapshot of (never read, too large,
+//! forgotten) is checked by hash alone. When it is unclear which agent made a call, every agent
+//! that has a snapshot of the file must have been shown the lines.
 
 use std::ops::Range;
 use std::sync::{Arc, LazyLock, Mutex, MutexGuard};
@@ -33,13 +37,21 @@ const MAX_DISK_HASH_BYTES: u64 = 2_000_000;
 const EDIT_CONTEXT_LINES: usize = 2;
 const MAX_TRACKED_FILES: usize = 64;
 const MAX_TRACKED_SUBAGENTS: usize = 16;
+const MAX_IN_FLIGHT: usize = 64;
 
 /// `None`: the main agent. `Some("sub-N")`: a subagent. Each has its own snapshots.
 type AgentId = Option<String>;
 
+/// The agent running a `hash_edit`, or `Unknown` when the arguments do not tell.
+#[derive(Debug, PartialEq)]
+enum Caller {
+    Agent(AgentId),
+    Unknown,
+}
+
 #[derive(Default)]
 struct PluginState {
-    /// Oldest first.
+    /// Least recently used first.
     agents: Vec<(AgentId, AgentState)>,
     /// `hash_edit` calls between their `ToolCall` hook and their result. `ToolContext` does not
     /// say which agent is calling, so the hook notes it here and the tool finds it by its arguments.
@@ -68,6 +80,19 @@ struct Snapshot {
     shown_in: Vec<Option<u64>>,
 }
 
+/// A refused `hash_edit`: the message for the model and the lines (1-based, end exclusive) whose
+/// anchors it prints.
+struct Refusal {
+    message: String,
+    shown: Range<usize>,
+}
+
+impl From<String> for Refusal {
+    fn from(message: String) -> Self {
+        Refusal { message, shown: 0..0 }
+    }
+}
+
 /// A `hash_edit` that passed every check, ready to be written.
 struct Plan {
     after: String,
@@ -84,23 +109,59 @@ fn lock(state: &Mutex<PluginState>) -> MutexGuard<'_, PluginState> {
 }
 
 impl PluginState {
-    /// The state of `id`, created on first use. Room is made by forgetting the oldest subagent,
-    /// never the main agent.
+    /// The state of `id`, created on first use, now the most recently used. Room is made by
+    /// forgetting the least recently used subagent, never the main agent.
     fn agent_mut(&mut self, id: &AgentId) -> &mut AgentState {
-        if let Some(found) = self.agents.iter().position(|(agent, _)| agent == id) {
-            return &mut self.agents[found].1;
+        let state = match self.agents.iter().position(|(agent, _)| agent == id) {
+            Some(found) => self.agents.remove(found).1,
+            None => {
+                let subagents = self.agents.iter().filter(|(agent, _)| agent.is_some()).count();
+                let lru = self.agents.iter().position(|(agent, _)| agent.is_some());
+                if let Some(lru) = lru
+                    && id.is_some()
+                    && subagents >= MAX_TRACKED_SUBAGENTS
+                {
+                    self.agents.remove(lru);
+                }
+                AgentState::default()
+            }
+        };
+        self.agents.push((id.clone(), state));
+        &mut self.agents.last_mut().expect("just pushed").1
+    }
+
+    /// The `ToolCall` hook saw `agent` make call `call_id`. Seen again (the user edited the
+    /// arguments at approval), the newer arguments replace the older ones.
+    fn note_call(&mut self, agent: AgentId, call_id: String, args: JsonObject) {
+        self.in_flight.retain(|c| c.agent != agent || c.call_id != call_id);
+        if self.in_flight.len() >= MAX_IN_FLIGHT {
+            self.in_flight.remove(0);
         }
-        let subagents = self.agents.iter().filter(|(agent, _)| agent.is_some()).count();
-        let oldest = self.agents.iter().position(|(agent, _)| agent.is_some());
-        if let Some(oldest) = oldest
-            && id.is_some()
-            && subagents >= MAX_TRACKED_SUBAGENTS
-        {
-            self.agents.remove(oldest);
+        self.in_flight.push(InFlight { agent, call_id, args });
+    }
+
+    /// The agent of the `hash_edit` with these arguments: the only agent with a call in flight
+    /// with exactly them. None or several such agents: `Unknown`.
+    fn caller_of(&self, args: &JsonObject) -> Caller {
+        let mut agents = self.in_flight.iter().filter(|c| c.args == *args).map(|c| &c.agent);
+        match agents.next() {
+            Some(first) if agents.all(|agent| agent == first) => Caller::Agent(first.clone()),
+            _ => Caller::Unknown,
         }
-        self.agents.push((id.clone(), AgentState::default()));
-        let new = self.agents.len() - 1;
-        &mut self.agents[new].1
+    }
+
+    /// Per line of `text`, the file on disk now: was `caller` shown its anchor, where the line is
+    /// now, before writing its current message? An unknown caller counts as shown only what every
+    /// agent with a snapshot was shown. `None`: no snapshot to go by.
+    fn lines_shown(&mut self, caller: &Caller, key: &str, text: &str) -> Option<Vec<bool>> {
+        match caller {
+            Caller::Agent(id) => self.agent_mut(id).shown_before_now(key, text),
+            Caller::Unknown => self
+                .agents
+                .iter_mut()
+                .filter_map(|(_, agent)| agent.shown_before_now(key, text))
+                .reduce(|all, one| all.iter().zip(one).map(|(a, b)| *a && b).collect()),
+        }
     }
 }
 
@@ -111,6 +172,15 @@ impl AgentState {
         let mut snapshot = self.files.remove(found).1;
         snapshot.follow_disk(text);
         Some(snapshot)
+    }
+
+    /// Per line of `text`: was the anchor shown before the current message? See [`PluginState::lines_shown`].
+    fn shown_before_now(&mut self, key: &str, text: &str) -> Option<Vec<bool>> {
+        let snapshot = self.take(key, text)?;
+        let now = self.message;
+        let shown = snapshot.shown_in.iter().map(|m| m.is_some_and(|m| m < now)).collect();
+        self.store(key.to_string(), snapshot);
+        Some(shown)
     }
 
     /// Keeps a snapshot that was taken out, or a new one, as the most recently used file.
@@ -132,19 +202,14 @@ impl Snapshot {
         }
     }
 
-    /// Brings the snapshot up to `text`, the file on disk now. If something other than `hash_edit`
-    /// changed it, the line just above the first difference and everything below may have changed
-    /// or moved, so those anchors are forgotten.
+    /// Brings the snapshot up to `text`, the file on disk now. If something other than this
+    /// agent's `hash_edit` changed it, any line may have moved, even one whose hash and position
+    /// look the same (an inserted copy of the lines below it), so every anchor is forgotten.
     fn follow_disk(&mut self, text: &str) {
         let disk = Snapshot::of(text);
-        if disk.line_hashes == self.line_hashes {
-            return;
+        if disk.line_hashes != self.line_hashes {
+            *self = disk;
         }
-        let pairs = self.line_hashes.iter().zip(&disk.line_hashes);
-        let untouched = pairs.take_while(|(old, new)| old == new).count();
-        self.shown_in.truncate(untouched.saturating_sub(1));
-        self.shown_in.resize(disk.line_hashes.len(), None);
-        self.line_hashes = disk.line_hashes;
     }
 
     /// The snapshot once `plan` is written, given the one from before it (already following the
@@ -210,9 +275,17 @@ static READ_LINE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^ *(\d+)\t(.*)
 static HASHLINE_PREFIX: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^\s*(\d+):([0-9a-fA-F]{2})\|(.*)$").expect("valid regex"));
 
+/// Whether `read` showed `body` for the disk line `on_disk`: as it is, or shortened to a prefix.
+fn shows(body: &str, on_disk: &str) -> bool {
+    let (body, on_disk) = (without_cr(body), without_cr(on_disk));
+    let shortened = body.rsplit_once("… [line truncated, ");
+    body == on_disk || shortened.is_some_and(|(head, tail)| tail.ends_with(" chars]") && on_disk.starts_with(head))
+}
+
 /// `read` output with the `<n>\t` of each numbered line turned into `<n>:<hash>|`. The hash is
-/// that of the line on disk, which `read` may show shortened. The numbers are added to `shown`.
-fn annotate_read(text: &str, disk_lines: Option<&[&str]>, shown: &mut Vec<usize>) -> String {
+/// that of the line on disk; the numbers are added to `shown`. `None` when a line differs from the
+/// one on disk (the file changed while it was read): the anchors would not match what was shown.
+fn annotate_read(text: &str, disk_lines: Option<&[&str]>, shown: &mut Vec<usize>) -> Option<String> {
     let mut out: Vec<String> = Vec::new();
     for row in text.split('\n') {
         if let Some(cap) = READ_LINE.captures(row)
@@ -220,14 +293,17 @@ fn annotate_read(text: &str, disk_lines: Option<&[&str]>, shown: &mut Vec<usize>
             && n >= 1
         {
             let body = &cap[2];
-            let on_disk = disk_lines.and_then(|d| d.get(n - 1).copied()).unwrap_or(body);
+            let on_disk = match disk_lines {
+                Some(lines) => *lines.get(n - 1).filter(|line| shows(body, line))?,
+                None => body,
+            };
             out.push(format!("{n}:{}|{body}", line_hash(on_disk)));
             shown.push(n);
         } else {
             out.push(row.to_string());
         }
     }
-    out.join("\n")
+    Some(out.join("\n"))
 }
 
 /// Strip sequential `N:hh|` prefixes when every non-empty line carries one (copied from
@@ -288,12 +364,16 @@ async fn tracked_text(path: &str) -> Option<String> {
     Some(String::from_utf8_lossy(&bytes).into_owned())
 }
 
-/// `read` showed lines `shown` (1-based) of `text` to `agent`.
-fn record_read(state: &Mutex<PluginState>, agent: &AgentId, key: String, text: &str, shown: &[usize]) {
+/// `agent` was shown the anchors of lines `shown` (1-based) of `text`, the file on disk now.
+/// `None`: it was shown lines that may not be the file's, so it forgets every anchor of it.
+fn record_read(state: &Mutex<PluginState>, agent: &AgentId, key: String, text: &str, shown: Option<&[usize]>) {
     let mut st = lock(state);
     let agent = st.agent_mut(agent);
     let mut snapshot = agent.take(&key, text).unwrap_or_else(|| Snapshot::of(text));
-    snapshot.show(shown.iter().copied(), agent.message);
+    match shown {
+        Some(lines) => snapshot.show(lines.iter().copied(), agent.message),
+        None => snapshot.shown_in.fill(None),
+    }
     agent.store(key, snapshot);
 }
 
@@ -307,33 +387,18 @@ fn record_edit(state: &Mutex<PluginState>, agent: &AgentId, key: String, before:
     }
 }
 
-/// For each line of `text`, the file on disk now: was `agent` shown its anchor, where the line is
-/// now, before writing its current message? `None`: the agent has no snapshot of the file.
-fn lines_shown(state: &Mutex<PluginState>, agent: &AgentId, key: &str, text: &str) -> Option<Vec<bool>> {
-    let mut st = lock(state);
-    let agent = st.agent_mut(agent);
-    let snapshot = agent.take(key, text)?;
-    let earlier = |shown: &Option<u64>| shown.is_some_and(|message| message < agent.message);
-    let shown = snapshot.shown_in.iter().map(earlier).collect();
-    agent.store(key.to_string(), snapshot);
-    Some(shown)
-}
-
-/// Which agent is running the `hash_edit` with these arguments (see [`PluginState::in_flight`]).
-fn take_caller(state: &Mutex<PluginState>, args: &JsonObject) -> AgentId {
-    let mut st = lock(state);
-    let same_args = st.in_flight.iter().position(|c| c.args == *args);
-    // The user or a later hook may have edited the arguments since ours ran: go by the path.
-    let same_path = || st.in_flight.iter().position(|c| c.args.get("path") == args.get("path"));
-    let found = same_args.or_else(same_path)?;
-    st.in_flight.remove(found).agent
-}
-
 /// Checks one `hash_edit` against `before`, the file on disk, and works out what to write.
-/// `shown` is [`lines_shown`] for it. `Err` is the message for the model.
-fn plan_edit(args: &JsonObject, path: &str, before: &str, shown: Option<&[bool]>) -> Result<Plan, String> {
+/// `shown` is [`PluginState::lines_shown`] for it. Without `anchors` (the caller is unknown) the
+/// messages print none: no agent would be recorded as shown them.
+fn plan_edit(
+    args: &JsonObject,
+    path: &str,
+    before: &str,
+    shown: Option<&[bool]>,
+    anchors: bool,
+) -> Result<Plan, Refusal> {
     if before.is_empty() {
-        return Err(format!("{path} is empty. Use write to populate it."));
+        return Err(format!("{path} is empty. Use write to populate it.").into());
     }
     let (start, start_hash) = parse_anchor(str_arg(args, "start"))?;
     let (end, end_hash) = match str_arg(args, "end").trim() {
@@ -347,36 +412,43 @@ fn plan_edit(args: &JsonObject, path: &str, before: &str, shown: Option<&[bool]>
 
     // An error must not print lines of a file the agent has not read (`shown` is `None`).
     if end < start || end > total {
-        return Err(format!(
-            "Lines {start}-{end} are not a range in {path} ({total} lines). Re-read {path} first."
-        ));
+        return Err(
+            format!("Lines {start}-{end} are not a range in {path} ({total} lines). Re-read {path} first.").into(),
+        );
     }
-    if shown.is_some_and(|shown| !shown[start - 1] || !shown[end - 1]) {
+    // Every line in the range, not just its ends: they are what gets replaced. A shown line has the
+    // hash it had then, as any change but the agent's own `hash_edit` forgets every anchor.
+    if shown.is_some_and(|shown| !shown[start - 1..end].iter().all(|&s| s)) {
         return Err(format!(
-            "Stale anchor at {path} lines {start}-{end}: the file changed since your last read of these lines, or they moved. Re-read {path} before editing."
-        ));
+            "Stale anchor at {path} lines {start}-{end}: the file changed since your last read of these lines, they moved, or you have not read all of them. Re-read {path} before editing."
+        )
+        .into());
     }
     for (line, expected) in [(start, &start_hash), (end, &end_hash)] {
         let found = line_hash(lines[line - 1]);
         if found == *expected {
             continue;
         }
-        if shown.is_none() {
-            return Err(format!("Hash mismatch at {path} line {line}. Read {path} first."));
+        if shown.is_none() || !anchors {
+            return Err(format!("Hash mismatch at {path} line {line}. Read {path} first.").into());
         }
-        let nearby = anchored(&lines, line.saturating_sub(4)..line + 3);
-        return Err(format!(
-            "Hash mismatch at {path} line {line}: expected {expected}, found {found}. Current lines:\n{nearby}"
-        ));
+        let nearby = line.saturating_sub(4)..(line + 3).min(total);
+        return Err(Refusal {
+            message: format!(
+                "Hash mismatch at {path} line {line}: expected {expected}, found {found}. Current lines:\n{}",
+                anchored(&lines, nearby.clone())
+            ),
+            shown: nearby.start + 1..nearby.end + 1,
+        });
     }
     if mode != "replace" && content.is_empty() {
-        return Err(format!("content must not be empty for mode \"{mode}\"."));
+        return Err(format!("content must not be empty for mode \"{mode}\".").into());
     }
     let replaced = match mode {
         "replace" => start - 1..end,
         "insert_after" => end..end,
         "insert_before" => start - 1..start - 1,
-        other => return Err(format!("Unknown mode \"{other}\"")),
+        other => return Err(format!("Unknown mode \"{other}\"").into()),
     };
 
     let body = content.strip_suffix('\n').unwrap_or(content);
@@ -394,7 +466,9 @@ fn plan_edit(args: &JsonObject, path: &str, before: &str, shown: Option<&[bool]>
         after.push_str(newline);
     }
     if after == before {
-        return Err("No changes made (replacement matches existing lines).".into());
+        return Err("No changes made (replacement matches existing lines)."
+            .to_string()
+            .into());
     }
 
     // The result prints the new lines (after a deletion, the line now in their place) with some
@@ -405,6 +479,8 @@ fn plan_edit(args: &JsonObject, path: &str, before: &str, shown: Option<&[bool]>
     let to = (last + EDIT_CONTEXT_LINES + 1).min(next.len());
     let region = if next.is_empty() {
         "File is now empty.".to_string()
+    } else if !anchors {
+        format!("Re-read {path} before editing it again.")
     } else {
         format!("Updated lines {}-{to}:\n{}", from + 1, anchored(&next, from..to))
     };
@@ -422,7 +498,7 @@ async fn execute_hash_edit(
     ctx: ToolContext,
     state: Arc<Mutex<PluginState>>,
 ) -> anyhow::Result<ToolResult> {
-    let caller = take_caller(&state, &args);
+    let caller = lock(&state).caller_of(&args);
     let path = resolve_path(str_arg(&args, "path"), &ctx.cwd);
     let key = canonical_key(&path);
     let Ok(bytes) = tokio::fs::read(&path).await else {
@@ -435,10 +511,19 @@ async fn execute_hash_edit(
             "{path} is not valid UTF-8; edit it with bash instead."
         )));
     };
-    let shown = lines_shown(&state, &caller, &key, &before);
-    let plan = match plan_edit(&args, &path, &before, shown.as_deref()) {
+    let shown = lock(&state).lines_shown(&caller, &key, &before);
+    let anchors = caller != Caller::Unknown;
+    let plan = match plan_edit(&args, &path, &before, shown.as_deref(), anchors) {
         Ok(plan) => plan,
-        Err(message) => return Ok(ToolResult::error(message)),
+        Err(refusal) => {
+            if let Caller::Agent(agent) = &caller
+                && !refusal.shown.is_empty()
+            {
+                let printed: Vec<usize> = refusal.shown.collect();
+                record_read(&state, agent, key, &before, Some(&printed));
+            }
+            return Ok(ToolResult::error(refusal.message));
+        }
     };
     if ctx.signal.is_cancelled() {
         return Ok(ToolResult::error("Interrupted by the user; the file was not changed."));
@@ -446,7 +531,10 @@ async fn execute_hash_edit(
     tokio::fs::write(&path, &plan.after)
         .await
         .map_err(|e| fs_error(&e, "open", &path))?;
-    record_edit(&state, &caller, key, &before, &plan);
+    // After an unknown caller's edit no snapshot follows it, so every agent must read the file again.
+    if let Caller::Agent(agent) = &caller {
+        record_edit(&state, agent, key, &before, &plan);
+    }
 
     let mut details = JsonObject::new();
     details.insert("path".into(), json!(path));
@@ -514,11 +602,7 @@ pub fn plugin(api: PluginApi) -> BoxFuture<'static, anyhow::Result<()>> {
             let st = st.clone();
             async move {
                 if ev.tool.name() == "hash_edit" {
-                    lock(&st).in_flight.push(InFlight {
-                        agent: ctx.agent,
-                        call_id: ev.call.id,
-                        args: ev.args,
-                    });
+                    lock(&st).note_call(ctx.agent, ev.call.id, ev.args);
                 }
                 Ok(None)
             }
@@ -541,16 +625,28 @@ pub fn plugin(api: PluginApi) -> BoxFuture<'static, anyhow::Result<()>> {
 
                 let mut result = ev.result;
                 let mut shown = Vec::new();
-                for item in &mut result.content {
-                    if let UserContent::Text(part) = item {
-                        part.text = annotate_read(&part.text, disk_lines.as_deref(), &mut shown);
-                    }
-                }
-                if shown.is_empty() {
-                    return Ok(None);
-                }
+                let mut parts: Vec<&mut String> = result
+                    .content
+                    .iter_mut()
+                    .filter_map(|item| match item {
+                        UserContent::Text(part) => Some(&mut part.text),
+                        _ => None,
+                    })
+                    .collect();
+                let annotated: Option<Vec<String>> = parts
+                    .iter()
+                    .map(|text| annotate_read(text, disk_lines.as_deref(), &mut shown))
+                    .collect();
+                // Shown text that is not the file's (it changed while being read): forget every anchor.
                 if let Some(text) = &disk {
-                    record_read(&st, &ctx.agent, canonical_key(&path), text, &shown);
+                    let lines = annotated.as_ref().map(|_| &shown[..]);
+                    record_read(&st, &ctx.agent, canonical_key(&path), text, lines);
+                }
+                let Some(annotated) = annotated.filter(|_| !shown.is_empty()) else {
+                    return Ok(None);
+                };
+                for (part, text) in parts.iter_mut().zip(annotated) {
+                    **part = text;
                 }
                 Ok(Some(ToolResultResult { result: Some(result) }))
             }
@@ -590,15 +686,98 @@ pub fn plugin(api: PluginApi) -> BoxFuture<'static, anyhow::Result<()>> {
 mod tests {
     use super::*;
 
+    fn args(path: &str) -> JsonObject {
+        json!({"path": path, "start": "1:00", "content": "x"})
+            .as_object()
+            .unwrap()
+            .clone()
+    }
+
     #[test]
-    fn subagents_beyond_the_cap_push_out_the_oldest_subagent_never_the_main_agent() {
+    fn subagents_beyond_the_cap_push_out_the_least_recently_used_subagent_never_the_main_agent() {
         let mut st = PluginState::default();
         st.agent_mut(&None).message = 7;
-        for i in 1..=MAX_TRACKED_SUBAGENTS + 5 {
+        for i in 1..=MAX_TRACKED_SUBAGENTS {
             st.agent_mut(&Some(format!("sub-{i}")));
         }
+        // sub-1 is the oldest but was just used: sub-2 is the one to go.
+        st.agent_mut(&Some("sub-1".into()));
+        st.agent_mut(&Some("sub-new".into()));
+        let has = |st: &PluginState, name: &str| st.agents.iter().any(|(a, _)| a.as_deref() == Some(name));
         assert_eq!(st.agents.len(), 1 + MAX_TRACKED_SUBAGENTS);
+        assert!(has(&st, "sub-1") && !has(&st, "sub-2") && has(&st, "sub-new"));
         assert_eq!(st.agent_mut(&None).message, 7);
-        assert!(!st.agents.iter().any(|(agent, _)| agent.as_deref() == Some("sub-1")));
+    }
+
+    #[test]
+    fn a_call_is_attributed_only_when_exactly_one_agent_has_it_in_flight() {
+        let mut st = PluginState::default();
+        let sub = Some("sub-1".to_string());
+        assert_eq!(st.caller_of(&args("a")), Caller::Unknown);
+        st.note_call(None, "1".into(), args("a"));
+        st.note_call(None, "2".into(), args("a"));
+        assert_eq!(st.caller_of(&args("a")), Caller::Agent(None));
+        st.note_call(sub.clone(), "1".into(), args("a"));
+        assert_eq!(
+            st.caller_of(&args("a")),
+            Caller::Unknown,
+            "main agent and subagent alike"
+        );
+        // The same call seen again with arguments the user edited replaces its first note.
+        st.note_call(sub.clone(), "1".into(), args("b"));
+        assert_eq!(st.caller_of(&args("a")), Caller::Agent(None));
+        assert_eq!(st.caller_of(&args("b")), Caller::Agent(sub));
+        assert_eq!(st.in_flight.len(), 3);
+        for i in 0..MAX_IN_FLIGHT + 5 {
+            st.note_call(None, format!("x{i}"), args("c"));
+        }
+        assert_eq!(st.in_flight.len(), MAX_IN_FLIGHT);
+    }
+
+    #[test]
+    fn an_unknown_caller_needs_every_agent_with_a_snapshot_to_have_been_shown_the_lines() {
+        let mut st = PluginState::default();
+        let text = "a\nb\nc\n";
+        let sub = Some("sub-1".to_string());
+        assert_eq!(st.lines_shown(&Caller::Unknown, "f", text), None);
+        for (agent, lines) in [(&None, vec![1, 2]), (&sub, vec![2, 3])] {
+            let state = st.agent_mut(agent);
+            let mut snapshot = Snapshot::of(text);
+            snapshot.show(lines, state.message);
+            state.message += 1;
+            state.store("f".into(), snapshot);
+        }
+        assert_eq!(
+            st.lines_shown(&Caller::Agent(None), "f", text),
+            Some(vec![true, true, false])
+        );
+        assert_eq!(
+            st.lines_shown(&Caller::Unknown, "f", text),
+            Some(vec![false, true, false])
+        );
+    }
+
+    #[test]
+    fn read_output_that_differs_from_the_disk_gets_no_anchors() {
+        let disk = ["one", "two", "x".repeat(30).leak()];
+        let read = "     1\tone\n     2\ttwo\n     3\txxxxx… [line truncated, 30 chars]\n[note]";
+        let mut shown = Vec::new();
+        let out = annotate_read(read, Some(&disk), &mut shown).expect("same as disk");
+        assert!(out.starts_with(&format!("1:{}|one\n", line_hash("one"))), "{out}");
+        assert_eq!(shown, vec![1, 2, 3]);
+        // The file changed between `read` and the hook: line 2 is no longer what was shown.
+        let changed = ["one", "TWO", "x"];
+        assert_eq!(annotate_read(read, Some(&changed), &mut Vec::new()), None);
+        assert_eq!(annotate_read("     4\tfour", Some(&disk), &mut Vec::new()), None);
+    }
+
+    #[test]
+    fn any_change_but_the_agents_own_hash_edit_forgets_every_anchor() {
+        let mut snapshot = Snapshot::of("[\n  {\n  },\n]\n");
+        snapshot.show(1..=4, 0);
+        snapshot.follow_disk("[\n  {\n  },\n]\n");
+        assert!(snapshot.shown_in.iter().all(Option::is_some));
+        snapshot.follow_disk("[\n  {\n  },\n  {\n  },\n]\n");
+        assert_eq!(snapshot.shown_in, vec![None; 6]);
     }
 }

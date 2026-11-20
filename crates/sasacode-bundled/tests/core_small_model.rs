@@ -2756,7 +2756,7 @@ async fn hash_edit_by_a_subagent_is_judged_by_what_the_subagent_was_shown_not_th
 }
 
 #[tokio::test]
-async fn hash_edit_two_edits_in_one_message_both_give_anchors_and_an_outside_change_below_keeps_lines_above() {
+async fn hash_edit_two_edits_in_one_message_both_give_anchors_and_an_outside_change_forgets_every_anchor() {
     let dir = temp_dir("sasacode-hashline-two-edits-");
     let file = dir.path().join("multi.txt");
     let other = dir.path().join("aux.txt");
@@ -2852,41 +2852,29 @@ async fn hash_edit_two_edits_in_one_message_both_give_anchors_and_an_outside_cha
     assert!(last(&reqs2[3]).text().contains("Edited"), "{}", last(&reqs2[3]).text());
     assert!(std::fs::read_to_string(&file).unwrap().contains("line-02-v3\n"));
 
-    // 3. A change by another tool at line 12 leaves lines 1..=11 untouched, so anchors survive
-    //    exactly up to line 10 (lines 1 through their own + 1 untouched): edits at lines 5, 1 and
-    //    10 succeed without a re-read, while line 11, next to the change, is rejected as stale.
+    // 3. A change by another tool, even one far below, forgets every anchor of the file: lines
+    //    that moved can look unchanged. Edits at lines 1 and 10 are refused until a re-read.
     std::fs::write(&file, &initial).unwrap();
-    let h5 = line_hash("line-05");
     let h10 = line_hash("line-10");
-    let h11 = line_hash("line-11");
     let s3 = setup(
         vec![
             reply(vec![call("1", "read", json!({"path": f}))]),
-            // External edit strictly below line 6 (modifies line 12).
             reply(vec![call(
                 "2",
                 "edit",
                 json!({"path": f, "old_string": "line-12", "new_string": "line-12-ext"}),
             )]),
-            // Accepted: lines 1..=6 are untouched. The result prints lines 3..=7.
             reply(vec![call(
                 "3",
                 "hash_edit",
-                json!({"path": f, "start": format!("5:{h5}"), "content": "line-05-edited"}),
+                json!({"path": f, "start": format!("1:{h1}"), "content": "line-01-edited"}),
             )]),
-            // Line 1 (above the edit, not in its result) must still be usable.
             reply(vec![call(
                 "4",
                 "hash_edit",
-                json!({"path": f, "start": format!("1:{h1}"), "content": "line-01-edited"}),
+                json!({"path": f, "start": format!("10:{h10}"), "content": "line-10-edited"}),
             )]),
-            // Line 11 borders the changed line 12: its anchor is forgotten.
-            reply(vec![call(
-                "5",
-                "hash_edit",
-                json!({"path": f, "start": format!("11:{h11}"), "content": "line-11-edited"}),
-            )]),
-            // Line 10 has not moved (the edits above kept the line count) and lines 1..=11 are untouched.
+            reply(vec![call("5", "read", json!({"path": f}))]),
             reply(vec![call(
                 "6",
                 "hash_edit",
@@ -2898,18 +2886,180 @@ async fn hash_edit_two_edits_in_one_message_both_give_anchors_and_an_outside_cha
         opts(&path_str(dir.path()), &[]),
     )
     .await;
-    s3.agent.prompt_text("prefix unchanged").await.unwrap();
+    s3.agent.prompt_text("outside change").await.unwrap();
     let reqs3 = s3.requests();
-    assert!(last(&reqs3[3]).text().contains("Edited"), "{}", last(&reqs3[3]).text());
-    assert!(last(&reqs3[4]).text().contains("Edited"), "{}", last(&reqs3[4]).text());
-    assert!(
-        last(&reqs3[5]).text().contains("Stale anchor"),
-        "{}",
-        last(&reqs3[5]).text()
-    );
+    for i in [3, 4] {
+        assert!(
+            last(&reqs3[i]).text().contains("Stale anchor"),
+            "{}",
+            last(&reqs3[i]).text()
+        );
+    }
     assert!(last(&reqs3[6]).text().contains("Edited"), "{}", last(&reqs3[6]).text());
     let disk = std::fs::read_to_string(&file).unwrap();
-    assert!(disk.contains("line-10-edited\nline-11\nline-12-ext\n"), "{disk}");
+    assert!(
+        disk.starts_with("line-01\n") && disk.contains("line-10-edited\nline-11\nline-12-ext\n"),
+        "{disk}"
+    );
+}
+
+/// Reads `file`, lets `edit` change it as given, then tries `hash_edit` with `anchor`: the answer.
+async fn hash_edit_after_outside_edit(
+    dir: &std::path::Path,
+    file: &std::path::Path,
+    edit: Value,
+    anchor: String,
+) -> String {
+    let f = path_str(file);
+    let mut edit = edit;
+    edit["path"] = json!(f);
+    let s = setup(
+        vec![
+            reply(vec![call("1", "read", json!({"path": f}))]),
+            reply(vec![call("2", "edit", edit)]),
+            reply(vec![call(
+                "3",
+                "hash_edit",
+                json!({"path": f, "start": anchor, "content": "EDITED"}),
+            )]),
+            reply(vec![say("done")]),
+        ],
+        &["hashline-edit"],
+        opts(&path_str(dir), &[]),
+    )
+    .await;
+    s.agent.prompt_text("edit after an outside change").await.unwrap();
+    last(&s.requests()[3]).text()
+}
+
+#[tokio::test]
+async fn hash_edit_rejects_anchors_that_an_outside_edit_shifted_onto_identical_lines() {
+    let dir = temp_dir("sasacode-hashline-shifted-");
+
+    // 1. Another tool inserts an object before the first one, starting with the same three lines:
+    //    lines 2-4 still hash as before, but now belong to the new object.
+    let json_file = dir.path().join("users.json");
+    let users = "[\n  {\n    \"type\": \"user\",\n    \"name\": \"x\",\n    \"id\": 1\n  }\n]\n";
+    std::fs::write(&json_file, users).unwrap();
+    let out = hash_edit_after_outside_edit(
+        dir.path(),
+        &json_file,
+        json!({
+            "old_string": "[\n",
+            "new_string": "[\n  {\n    \"type\": \"user\",\n    \"name\": \"x\",\n    \"id\": 0\n  },\n"
+        }),
+        format!("3:{}", line_hash("    \"type\": \"user\",")),
+    )
+    .await;
+    assert!(out.contains("Stale anchor"), "{out}");
+    assert!(!std::fs::read_to_string(&json_file).unwrap().contains("EDITED"));
+
+    // 2. Another tool deletes the first of three `}` lines: line 2 is still a `}`, but not the one
+    //    that was read there.
+    let braces = dir.path().join("braces.txt");
+    std::fs::write(&braces, "a\n}\n}\n}\nb\n").unwrap();
+    let out = hash_edit_after_outside_edit(
+        dir.path(),
+        &braces,
+        json!({"old_string": "a\n}\n}\n}", "new_string": "a\n}\n}"}),
+        format!("2:{}", line_hash("}")),
+    )
+    .await;
+    assert!(out.contains("Stale anchor"), "{out}");
+    assert_eq!(std::fs::read_to_string(&braces).unwrap(), "a\n}\n}\nb\n");
+}
+
+#[tokio::test]
+async fn hash_edit_range_needs_every_line_in_it_shown_not_just_its_ends() {
+    let dir = temp_dir("sasacode-hashline-range-");
+    let file = dir.path().join("ten.txt");
+    let initial = (1..=10).map(|i| format!("line-{i:02}")).collect::<Vec<_>>().join("\n") + "\n";
+    std::fs::write(&file, &initial).unwrap();
+    let f = path_str(&file);
+    let (h2, h9) = (line_hash("line-02"), line_hash("line-09"));
+    let range = json!({"path": f, "start": format!("2:{h2}"), "end": format!("9:{h9}"), "content": "merged"});
+
+    // Lines 1-3 and 8-10 were read; 4-7 never were.
+    let s = setup(
+        vec![
+            reply(vec![call("1", "read", json!({"path": f, "limit": 3}))]),
+            reply(vec![call("2", "read", json!({"path": f, "offset": 8}))]),
+            reply(vec![call("3", "hash_edit", range.clone())]),
+            reply(vec![call("4", "read", json!({"path": f}))]),
+            reply(vec![call("5", "hash_edit", range)]),
+            reply(vec![say("done")]),
+        ],
+        &["hashline-edit"],
+        opts(&path_str(dir.path()), &[]),
+    )
+    .await;
+    s.agent.prompt_text("range").await.unwrap();
+    let reqs = s.requests();
+    assert!(!last(&reqs[1]).text().contains("line-04"), "{}", last(&reqs[1]).text());
+    assert!(
+        last(&reqs[3]).text().contains("Stale anchor"),
+        "{}",
+        last(&reqs[3]).text()
+    );
+    assert!(last(&reqs[5]).text().contains("Edited"), "{}", last(&reqs[5]).text());
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), "line-01\nmerged\nline-10\n");
+}
+
+#[tokio::test]
+async fn hash_edit_trusts_no_anchor_of_a_line_slim_profile_cut_from_the_read() {
+    let dir = temp_dir("sasacode-hashline-slim-cut-");
+    let file = dir.path().join("long.txt");
+    let initial = (1..=120)
+        .map(|i| format!("line-{i:03} padding text"))
+        .collect::<Vec<_>>()
+        .join("\n")
+        + "\n";
+    std::fs::write(&file, &initial).unwrap();
+    let f = path_str(&file);
+    let (h2, h60) = (line_hash("line-002 padding text"), line_hash("line-060 padding text"));
+
+    // Loaded as a run loads them: in `PLUGINS` order.
+    let order = |name: &str| sasacode_bundled::PLUGINS.iter().position(|p| p.name == name);
+    let mut names = ["hashline-edit", "slim-profile"];
+    names.sort_by_key(|name| order(name));
+    let s = setup(
+        vec![
+            reply(vec![call("1", "read", json!({"path": f}))]),
+            reply(vec![call(
+                "2",
+                "hash_edit",
+                json!({"path": f, "start": format!("60:{h60}"), "content": "line-060 edited"}),
+            )]),
+            reply(vec![call(
+                "3",
+                "hash_edit",
+                json!({"path": f, "start": format!("2:{h2}"), "content": "line-002 edited"}),
+            )]),
+            reply(vec![say("done")]),
+        ],
+        &names,
+        opts(&path_str(dir.path()), &[("slim-profile", json!({"readMaxChars": 800}))]),
+    )
+    .await;
+    s.agent.prompt_text("edit a long file").await.unwrap();
+    let reqs = s.requests();
+    let read_out = last(&reqs[1]).text();
+    assert!(
+        read_out.contains("[slim-profile: truncated") && !read_out.contains("line-060"),
+        "{read_out}"
+    );
+    assert!(read_out.contains(&format!("2:{h2}|line-002")), "{read_out}");
+    assert!(
+        last(&reqs[2]).text().contains("Stale anchor"),
+        "{}",
+        last(&reqs[2]).text()
+    );
+    assert!(last(&reqs[3]).text().contains("Edited"), "{}", last(&reqs[3]).text());
+    let disk = std::fs::read_to_string(&file).unwrap();
+    assert!(
+        disk.contains("line-002 edited\n") && disk.contains("line-060 padding text\n"),
+        "{disk}"
+    );
 }
 
 #[tokio::test]

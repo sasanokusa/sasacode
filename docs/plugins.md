@@ -256,6 +256,8 @@ description: Write release notes from the commits since the last tag.
 
 `read` の各行の先頭を `<行番号>:<2桁ハッシュ>|` に変え、`hash_edit` ツールを足す。小型モデルが空白やインデントの一字一句コピーに失敗する問題を抑える。誤って `N:hh|` を付けたまま `write` を呼んだ場合は接頭辞を自動で外す。
 
+2桁のハッシュでは同じ内容の行（`}`など）を区別できないため、`hash_edit`はハッシュの一致だけでなく、範囲内のすべての行がそのエージェントに見せた位置のままであることを確かめる。自分の`hash_edit`以外（`edit`・`write`・別のエージェント・利用者）でファイルが変わると、そのファイルのアンカーはすべて無効になり、もう一度`read`が必要になる。`slim-profile`と併用したときは、切り詰め後に残った行にだけアンカーを付ける。
+
 ### clean-retry
 
 編集エラー（`consecutive_edit_errors`、既定4回）やテスト失敗（`triggerFailures`、既定3回）が続いたとき、変更したファイルをタスク開始前に自動で戻し、失敗の要約だけを残した綺麗なコンテキストでやり直す。`maxRetries`（既定 1）、`triggerFailures`（既定 3）、`triggerEditErrors`（既定 4）、`maxFileKB`（既定 1024）を設定できる。

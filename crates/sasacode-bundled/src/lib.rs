@@ -86,6 +86,8 @@ pub const PLUGINS: &[Bundled] = &[
     on("text-tool-calls", text_tool_calls::plugin),
     on("repetition-guard", repetition_guard::plugin),
     on("thinking-budget", thinking_budget::plugin),
+    // Before hashline-edit: it cuts `read` output, and hashline-edit anchors only the lines left.
+    off("slim-profile", slim_profile::plugin),
     // After tool-repair and before write-guard: strips N:hh| prefixes before write-guard inspects content.
     off("hashline-edit", hashline_edit::plugin),
     on("error-hints", error_hints::plugin),
@@ -127,7 +129,6 @@ pub const PLUGINS: &[Bundled] = &[
     off("free-search", free_search::plugin),
     // After syntax-check & hashline-edit: observes syntax errors and snapshots any edit tool.
     off("clean-retry", clean_retry::plugin),
-    off("slim-profile", slim_profile::plugin),
 ];
 
 /// The shipped plugin called `name`.
@@ -158,6 +159,7 @@ mod tests {
         assert!(at("tool-repair") < at("text-tool-calls"));
         assert!(at("tool-repair") < at("hashline-edit"));
         assert!(at("hashline-edit") < at("write-guard"));
+        assert!(at("slim-profile") < at("hashline-edit"));
         assert!(at("tool-repair") < at("write-guard"));
         assert!(at("image-attach") < at("image-slim"));
         assert!(at("image-slim") < at("context-slim"));
