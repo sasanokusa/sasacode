@@ -1,6 +1,6 @@
 //! Text from config files, models, tools or servers, made safe to print on a terminal.
 
-/// The terminal must not act on escape sequences in the text (hidden text in an approval prompt, a
+/// The terminal must not act on control sequences in the text (hidden text in an approval prompt, a
 /// rewritten clipboard, a fake link), nor reorder it. ESC shows as ␛ so the attempt stays visible;
 /// other controls (C0 but newline and tab, DEL, C1) and the bidirectional controls are dropped.
 pub fn plain(s: &str) -> String {
@@ -49,7 +49,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn escape_shows_and_other_controls_go() {
+    fn esc_shows_and_other_controls_go() {
         assert_eq!(plain("a\x1b[2Kb\rc\x07d\x7fe\u{85}f"), "a␛[2Kbcdef");
         assert_eq!(plain("x\ny\tz"), "x\ny\tz");
     }
