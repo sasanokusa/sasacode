@@ -26,9 +26,13 @@ pub fn agents_files(cwd: &Path, home: &Path) -> Vec<PathBuf> {
             None => break,
         }
     }
-    std::iter::once(home.join("AGENTS.md"))
-        .chain(chain.iter().map(|d| d.join("AGENTS.md")))
+    let global = home.join("AGENTS.md");
+    // A project's AGENTS.md is read only as a file of its own: a link there could put any file the
+    // user can read into the prompt before anything is approved. The global one is the user's own.
+    let own_file = |p: &PathBuf| std::fs::symlink_metadata(p).is_ok_and(|m| m.is_file());
+    std::iter::once(global.clone())
         .filter(|p| std::fs::metadata(p).is_ok_and(|m| m.is_file()))
+        .chain(chain.iter().map(|d| d.join("AGENTS.md")).filter(own_file))
         .collect()
 }
 

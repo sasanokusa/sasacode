@@ -99,6 +99,29 @@ fn agents_md_global_and_repo_root_to_cwd_agents_md_go_into_the_system_prompt() {
     });
 }
 
+#[cfg(unix)]
+#[test]
+fn a_project_agents_md_that_is_a_link_is_not_read_the_global_one_may_be() {
+    let root = temp_dir("sasacode-bundled-");
+    let (home, repo, elsewhere) = (
+        root.path().join("home"),
+        root.path().join("repo"),
+        root.path().join("elsewhere"),
+    );
+    for d in [repo.join(".git"), repo.join("pkg"), home.clone(), elsewhere.clone()] {
+        std::fs::create_dir_all(d).unwrap();
+    }
+    std::fs::write(elsewhere.join("notes"), "not the project's").unwrap();
+    std::fs::write(elsewhere.join("global.md"), "global rule").unwrap();
+    std::os::unix::fs::symlink(elsewhere.join("global.md"), home.join("AGENTS.md")).unwrap();
+    std::os::unix::fs::symlink("../elsewhere/notes", repo.join("AGENTS.md")).unwrap();
+    std::fs::write(repo.join("pkg/AGENTS.md"), "pkg rule").unwrap();
+    assert_eq!(
+        agents_files(&repo.join("pkg"), &home),
+        vec![home.join("AGENTS.md"), repo.join("pkg/AGENTS.md")]
+    );
+}
+
 #[test]
 fn todo_list_persists_in_the_session_restores_on_resume_shows_in_the_status_line() {
     ja(async {
