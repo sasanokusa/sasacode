@@ -24,7 +24,7 @@ sasacodeのツール・コマンド・フックは、どれもプラグインが
 | --- | --- |
 | `command` / `args` | stdioのサーバーを起動するコマンドと引数。`command`があればstdioのサーバー、なければ`url`のサーバーとして読む |
 | `env` | stdioのサーバーに渡す環境変数。サーバーが受け取るのは、`HOME`・`LOGNAME`・`PATH`・`SHELL`・`TERM`・`USER`（Windowsでは`APPDATA`・`PATH`・`USERPROFILE`など）と、ここに書いたものだけ。値の`${VAR}`は起動時に環境変数から展開する |
-| `cwd` | stdioのサーバーの作業ディレクトリ。既定は、グローバルの`~/.sasacode/config.json`に書いたサーバーなら、プロジェクトの外にある専用のフォルダ（`<sasacodeのホーム>/tmp/mcp/<サーバー名>`。名前の英数字・`_`・`-`以外は`%XX`にする。Unixでは0700）。プロジェクトの`.sasacode/config.json`に書いたサーバー（信頼したあと）なら、sasacodeの作業ディレクトリ。`${SASACODE_PROJECT}`と書くと、sasacodeの作業ディレクトリ（プロジェクト）になる（`"${SASACODE_PROJECT}/tools"`のように続けてもよい）。このほかの`${VAR}`は展開しない。相対パスは、sasacodeを起動したディレクトリから見る |
+| `cwd` | stdioのサーバーの作業ディレクトリ。既定は、グローバルの`~/.sasacode/config.json`に書いたサーバーなら、プロジェクトの外にある専用のフォルダ（`<sasacodeのホーム>/tmp/mcp/<サーバー名>`。名前の英数字・`_`・`-`以外は`%XX`にする。Unixでは0700）。プロジェクトの`.sasacode/config.json`に、起動のしかた（`command`、または`url`）まで書いたサーバー（信頼したあと）なら、sasacodeの作業ディレクトリ。グローバルのサーバーに`disabled`や`timeout`だけを足したときは、グローバルのサーバーのまま。`${SASACODE_PROJECT}`と書くと、sasacodeの作業ディレクトリ（プロジェクト）になる（`"${SASACODE_PROJECT}/tools"`のように続けてもよい）。このほかの`${VAR}`は展開しない。相対パスは、sasacodeを起動したディレクトリから見る |
 | `url` / `headers` | Streamable HTTPのサーバー。どちらも`${VAR}`を展開する |
 | `disabled` | `true`なら接続しない |
 | `alwaysLoad` | ツールの遅延ロードが有効でも、このサーバーのツールの定義を常に送る |

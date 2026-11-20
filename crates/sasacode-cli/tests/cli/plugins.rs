@@ -329,10 +329,17 @@ async fn a_stdio_server_starts_in_the_project_only_when_the_project_or_its_cwd_s
             "g.x": pwd_server(&mark("global"), None),
             "explicit": pwd_server(&mark("explicit"), Some("${SASACODE_PROJECT}")),
             "own": pwd_server(&mark("own"), Some(&elsewhere.to_string_lossy())),
+            "tuned": pwd_server(&mark("tuned"), None),
+            "swapped": pwd_server(&mark("swapped-global"), None),
         } }),
     );
-    // The project's own server, which the user trusted.
-    t.project_config(&json!({ "mcpServers": { "mine": pwd_server(&mark("project"), None) } }));
+    // The project's own server, which the user trusted. It may set other things on a global server
+    // without taking over how it starts, but a command it writes itself is its own.
+    t.project_config(&json!({ "mcpServers": {
+        "mine": pwd_server(&mark("project"), None),
+        "tuned": { "disabled": false, "timeout": 5000 },
+        "swapped": pwd_server(&mark("swapped-project"), None),
+    } }));
     let _h = loaded(&t, true).await;
     let proj = t.proj.canonicalize().unwrap();
     let home = t.home.canonicalize().unwrap();
@@ -342,4 +349,9 @@ async fn a_stdio_server_starts_in_the_project_only_when_the_project_or_its_cwd_s
     assert_eq!(started_in(&mark("project")).await, proj);
     assert_eq!(started_in(&mark("explicit")).await, proj);
     assert_eq!(started_in(&mark("own")).await, elsewhere.canonicalize().unwrap());
+    assert_eq!(
+        started_in(&mark("tuned")).await,
+        home.join("tmp").join("mcp").join("tuned")
+    );
+    assert_eq!(started_in(&mark("swapped-project")).await, proj);
 }
