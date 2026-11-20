@@ -237,6 +237,104 @@ fn permission_presets_guard_denies_destructive_commands_even_in_auto_mode_read_o
 }
 
 #[test]
+fn read_only_shell_allows_the_listed_commands_but_not_longer_words_that_start_with_them() {
+    ja(async {
+        let root = temp_dir("sasacode-bundled-");
+        let cwd = path_str(root.path());
+        let s = setup(
+            Vec::new(),
+            &["permission-presets"],
+            opts_with(
+                &cwd,
+                &[("permission-presets", json!({ "presets": ["guard", "read-only-shell"] }))],
+            ),
+        )
+        .await;
+        s.agent.permissions().set_mode(PermissionMode::Edits);
+        for c in [
+            "ls",
+            "ls -la src",
+            "tree",
+            "tree -a",
+            "git status",
+            "git status -s",
+            "git diff",
+            "git diff HEAD~1",
+            "git log",
+            "git log --oneline",
+            "git show",
+            "git show HEAD",
+            "git rev-parse",
+            "git rev-parse --show-toplevel",
+        ] {
+            assert_eq!(bash_check(&s, &cwd, c), Decision::Allow, "{c}");
+        }
+        for c in [
+            "git difftool HEAD",
+            "git diff-tree HEAD",
+            "git log-tree HEAD",
+            "git showtool",
+            "git status-x",
+            "git rev-parse-x",
+            "lsof -i",
+            "lsattr x",
+            "treex",
+        ] {
+            assert_eq!(bash_check(&s, &cwd, c), Decision::Ask, "{c}");
+        }
+    });
+}
+
+#[test]
+fn tests_preset_allows_the_listed_commands_but_not_longer_names_that_start_with_them() {
+    ja(async {
+        let root = temp_dir("sasacode-bundled-");
+        let cwd = path_str(root.path());
+        let s = setup(
+            Vec::new(),
+            &["permission-presets"],
+            opts_with(&cwd, &[("permission-presets", json!({ "presets": ["tests"] }))]),
+        )
+        .await;
+        s.agent.permissions().set_mode(PermissionMode::Edits);
+        for c in [
+            "cargo test",
+            "cargo test --workspace",
+            "bun test",
+            "bun test src",
+            "npm test",
+            "pnpm test -- --run",
+            "yarn test",
+            "go test ./...",
+            "pytest",
+            "pytest -x tests/",
+            "tsc --noEmit",
+            "tsc --noEmit -p .",
+            "bun run typecheck",
+            "bun run typecheck --watch",
+            "cargo test && pytest -q",
+        ] {
+            assert_eq!(bash_check(&s, &cwd, c), Decision::Allow, "{c}");
+        }
+        for c in [
+            "cargo test-foo",
+            "cargo testx",
+            "pytest-watch",
+            "pytestx",
+            "npm test-foo",
+            "yarn test:unit",
+            "go testing",
+            "bun testy",
+            "tsc --noEmitFoo",
+            "bun run typecheck-all",
+            "cargo test; cargo test-foo",
+        ] {
+            assert_eq!(bash_check(&s, &cwd, c), Decision::Ask, "{c}");
+        }
+    });
+}
+
+#[test]
 fn read_only_shell_options_that_write_files_or_run_programs_go_back_to_the_user() {
     for c in [
         "rg --pre ./x foo",

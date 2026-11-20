@@ -41,7 +41,7 @@ use sasacode_ai::json::{js_number, stringify_pretty};
 use sasacode_host::t;
 use sasacode_plugin_api::{
     Command, CommandContext, InjectWhen, NotifyLevel, PermissionRules, PluginApi, SelectOption, ToolDef, ToolKind,
-    ToolResult, apply_child_env, detach_session, error_result, hook, sasacode_home,
+    ToolResult, apply_child_env, create_private_dir, detach_session, error_result, hook, sasacode_home,
 };
 use sasacode_tools::{KillSignal, bash_path, kill_tree};
 
@@ -709,8 +709,16 @@ impl Bg {
 
     // ── helpers shared by the tools ────────────────────────────────────
 
-    /// The job by id: this process's (with its table entry) or one on disk.
+    /// The job by id, when it was started from this working directory: another project's job (its
+    /// command, its log) is not one the tools here may read or stop.
     fn find_job(&self, id: &str) -> Option<(Meta, PathBuf, bool)> {
+        let cwd = self.cwd();
+        self.find_job_any(id).filter(|(m, _, _)| m.cwd == cwd)
+    }
+
+    /// The job by id from any working directory: this process's (with its table entry) or one on
+    /// disk. For the user's own `/bg <id>`, never for a tool.
+    fn find_job_any(&self, id: &str) -> Option<(Meta, PathBuf, bool)> {
         if let Some(job) = self.jobs().get(id) {
             return Some((job.meta.clone(), job.dir.clone(), true));
         }
@@ -1162,11 +1170,11 @@ impl Bg {
             .iter()
             .find(|m| m.id == *first)
             .cloned()
-            .or_else(|| self.find_job(first).map(|(m, _, _)| m));
+            .or_else(|| self.find_job_any(first).map(|(m, _, _)| m));
         let Some(meta) = found else {
             return ui.notify(&t!("ジョブが見つかりません: {id}", id = *first), NotifyLevel::Warning);
         };
-        let dir = self.find_job(&meta.id).map(|(_, d, _)| d).unwrap_or_default();
+        let dir = self.find_job_any(&meta.id).map(|(_, d, _)| d).unwrap_or_default();
         let tail = tail_of(&log_path_of(&dir), 40);
         let lines = [
             self.job_row(&meta),
@@ -1201,7 +1209,7 @@ pub fn plugin(api: PluginApi) -> BoxFuture<'static, anyhow::Result<()>> {
             foreign_grace_ms: num(settings.get("foreignGraceMs"), DEFAULT_FOREIGN_GRACE_MS, 0.0),
             auto_notify: settings.get("autoNotify") != Some(&Value::Bool(false)),
         };
-        if let Err(e) = std::fs::create_dir_all(&s.root) {
+        if let Err(e) = create_private_dir(&s.root) {
             api.log(&format!("background-sessions: cannot create {}: {e}", s.root.display()));
         }
         let bg = Arc::new(Bg {
@@ -1335,6 +1343,8 @@ pub fn plugin(api: PluginApi) -> BoxFuture<'static, anyhow::Result<()>> {
             )
             .concurrent(true)
             .paths(move |_a, _cwd| vec![list_root.clone()])
+            // What the rule below matches: a listing of other projects' jobs (their commands) asks.
+            .match_target(|a| if a.get("all").and_then(Value::as_bool) == Some(true) { "all" } else { "" }.to_string())
             .summary(|_a| "background jobs".to_string())
             .into_ref(),
         );
@@ -1403,10 +1413,12 @@ pub fn plugin(api: PluginApi) -> BoxFuture<'static, anyhow::Result<()>> {
             .summary(|a| format!("kill {}", a.get("id").and_then(Value::as_str).unwrap_or("")))
             .into_ref(),
         );
-        // Reading our own job logs cannot hurt anything; bg_start / bg_kill keep the normal permission
-        // flow (bg_start as bash, via permissions_as).
+        // Reading this directory's job logs cannot hurt anything; bg_start / bg_kill keep the normal
+        // permission flow (bg_start as bash, via permissions_as). A listing of every directory's jobs
+        // shows other projects' commands, so it asks.
         api.add_permission_rules(PermissionRules {
             allow: vec!["bg_list".into(), "bg_output".into()],
+            ask: vec!["bg_list(all)".into()],
             ..PermissionRules::default()
         })?;
 
