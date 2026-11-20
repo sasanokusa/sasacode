@@ -481,7 +481,7 @@ pub static TO_EN: &[(&str, &str)] = &[
         "always deny what cannot be undone (sudo, rm -rf at the root, disk operations, piping into sh, …). rm -rf under the home directory and force pushes are softDeny (jev-guard and the like can hand them to you). ssh, scp, sftp and rsync to a remote host always ask",
     ),
     (
-        "読み取りだけのシェルコマンドを確認なしで許可（ls, cat, rg, git status/diff/log など）。書き出しやコマンドの実行をするオプション（rg --pre、git diff --output、tree -o など）、それを作りうるシェル展開、.git以下の編集は確認に回す。cat などは作業ディレクトリの外のファイルも読める",
+        "読み取りだけのシェルコマンドを確認なしで許可（ls, cat, rg, git status/diff/log など）。書き出しやコマンドの実行をするオプション（rg --pre、git diff --output、tree -o など）、それを作りうるシェル展開、.git以下の編集は確認に回す。catなどは作業ディレクトリの外のファイルも読める",
         "allow read-only shell commands without asking (ls, cat, rg, git status/diff/log, …). Options that write files or run programs (rg --pre, git diff --output, tree -o, …), shell expansions that could make one, and edits under .git ask. cat and the like can read files outside the working directory",
     ),
     (
