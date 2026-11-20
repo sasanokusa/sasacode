@@ -85,7 +85,7 @@ pub fn detach_session(cmd: &mut tokio::process::Command) {
     {
         // SAFETY: the closure runs in the forked child before exec. setsid(2) is async-signal-safe,
         // allocates nothing and touches no state shared with the parent; it is the only call made.
-        // This is the one `unsafe` in the code base (rust/DECISIONS.md ADR-012).
+        // One of the few `unsafe` blocks in the code base (rust/DECISIONS.md ADR-012).
         #[allow(unsafe_code)]
         unsafe {
             cmd.pre_exec(|| nix::unistd::setsid().map(|_| ()).map_err(std::io::Error::from));

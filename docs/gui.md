@@ -57,7 +57,7 @@ sasacode gui install --path <チェックアウト>   # sasacodeのチェック�
 - cargoは`~/.sasacode/gui`で動かす。今のフォルダのプロジェクトの`rust-toolchain.toml`で、別のツールチェーンが選ばれないようにするため。環境変数は、bashなどの子プロセスと同じく、APIキーなどを除いて渡す。
 - コミットやタグからのビルドは、毎回はじめからになる（`cargo install`は使い捨てのフォルダでビルドする）。M1 Pro（AC電源、クレートはダウンロード済み）で154秒と163秒（同じ版の1回目と2回目）。sasacodeを更新するたびに、この時間がかかる。`--path`ではチェックアウトの`target`を使うので、初回は124秒、2回目は2秒だった。
 - `SASACODE_GUI_GIT`で、ソースを取るリポジトリを変えられる（ミラーやテスト用）。
-- v0.20.0にはまだタグがないので、引数なしではビルドできない。cargoのエラーのあとに、`--path`でチェックアウトからビルドするよう案内する。
+- リリース版は、埋め込まれたコミットからビルドするので、タグがあるかどうかに関わらない（コミットが取れなければ、cargoのエラーだけが出る）。手元でビルドしたsasacode（コミットを知らない）では、タグ`v<版>`がまだなければ引数なしではビルドできない。そのとき、cargoのエラーのあとに、`--path`でチェックアウトからビルドするよう案内する。
 - `install`という名前のフォルダを開くときは、`sasacode gui ./install`と書く。
 
 ### 版と更新
@@ -219,7 +219,7 @@ cargo test -p sasacode-gui -- --ignored snapshots   # 主な状態をtarget/snap
 
 ## 未決事項
 
-- `sasacode gui install`（2026-11-18）を確かめたのはmacOSだけ。WindowsとLinuxでのビルドは、CIで`cargo build`が通ることしか確かめていない。Windowsでは、窓が開いているあいだに入れ直すと、動いている`sasacode-gui.exe`を置き換えられずにcargoが失敗するはず（確かめていない）。そのときもタグがないことを疑う案内が出る。
+- `sasacode gui install`（2026-11-18）を確かめたのはmacOSだけ。WindowsとLinuxでのビルドは、CIで`cargo build`が通ることしか確かめていない。Windowsでは、窓が開いているあいだに入れ直すと、動いている`sasacode-gui.exe`を置き換えられずにcargoが失敗するはず（確かめていない）。手元でビルドしたsasacodeでは、そのときもタグがないことを疑う案内が出る（リリース版では出ない）。
 - 入力ごとの再起動で体感が許せるか。遅ければ、`--control stdio` に「`agent_end` の後も終了せず次の入力を待つ」モードを足す。
 - TUIとGUIが同じセッションを同時に開いたときの扱い。`/gui`は進行中の会話を窓で開くので、この状態になりやすい。今は防がず、開いたときに「続きはどちらか一方で進める」と表示するだけ。
 - `sasacode gui`と`/gui`からの起動で確かめたこと（macOS、2026-11-16、偽のモデルサーバー）：`cargo install --locked --path crates/sasacode-gui`で入れた`sasacode-gui`が、PATHから見つかって`sasacode gui <フォルダ>`で起動し、sasacodeの終了後も残る。その窓から送信すると返答が表示される。その会話をTUIで再開して`/gui`を打つと`--session <id>`つきで起動し、TUIの終了後も残る。その窓は会話を読み込んだ状態で開き、続きを送ると同じ会話のログに追記される。確かめていないこと：WindowsとLinuxで、sasacodeの終了後に窓が残るか（起動のしかたはバックグラウンド実行と同じ`detached`）。

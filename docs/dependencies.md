@@ -49,7 +49,7 @@
 - `crates/sasacode-cli/src/main.rs`：起動時、スレッドが1つのうちに、空のキーの環境変数を`remove_var`し、`~/.sasacode/.env`のキーを`set_var`する（2か所。ADR-012）。
 - `crates/sasacode-gui/src/main.rs`：Finderやランチャーから起動したとき、ログインシェルの環境変数を`set_var`する（Unix）。Windowsでは、ウィンドウの位置が画面に収まるかを調べるため、`MonitorFromRect`を呼ぶ。
 
-これ以外の`unsafe`は、ADR（`rust/DECISIONS.md`）に理由を書いてから足す。
+CLIのクレートに`unsafe`を足すときは、ADR（`rust/DECISIONS.md`）に理由を書く。guiの2か所には、コードのSAFETYコメントだけがある。
 
 MCPのクライアントは、公式のRust SDK（`rmcp`）を使わずに書いた（`crates/sasacode-mcp`）。必要なのは小さなクライアントで、`rmcp`ではプロトコルの版、clientInfo、環境変数、stderr、タイムアウトなどの既定をほとんど上書きすることになるため（`rust/research/mcp.md`）。`rmcp`はテスト用のサーバーとしてだけ使う。
 
