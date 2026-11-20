@@ -4,13 +4,15 @@
 
 pub mod builtin;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use indexmap::IndexMap;
 
 use sasacode_plugin_api::hooks::{SystemPromptEvent, SystemPromptResult};
-use sasacode_plugin_api::{Command, CommandContext, InjectWhen, Lang, NotifyLevel, PermissionRules, PluginApi, hook};
+use sasacode_plugin_api::{
+    Command, CommandContext, InjectWhen, Lang, NotifyLevel, PermissionRules, PluginApi, hook, sasacode_home,
+};
 
 pub use builtin::{BUILTIN_SKILLS, materialize_builtin_skills};
 
@@ -117,11 +119,20 @@ fn unquote(value: &str) -> &str {
 /// Folders holding a SKILL.md with a name and a description. A later directory (project) overrides
 /// an earlier one (global) for a skill of the same name, which keeps its place in the list.
 pub fn discover_skills(dirs: &[PathBuf]) -> std::io::Result<Vec<Skill>> {
+    discover_skills_in(dirs, None)
+}
+
+/// [`discover_skills`], with `project` (the project's skills folder, read before the project is
+/// trusted) taken only as files of its own: a skill folder or SKILL.md there that is a link is left
+/// out, as it could put any file into the prompt.
+pub fn discover_skills_in(dirs: &[PathBuf], project: Option<&Path>) -> std::io::Result<Vec<Skill>> {
     let mut by_name: IndexMap<String, Skill> = IndexMap::new();
+    let is_link = |p: &Path| std::fs::symlink_metadata(p).is_ok_and(|m| m.file_type().is_symlink());
     for dir in dirs {
         if !dir.exists() {
             continue;
         }
+        let own = project == Some(dir.as_path());
         // Sorted by name, as Node's readdirSync returns them (libuv sorts scandir), so the result
         // does not depend on the file system's own order.
         let mut entries: Vec<std::ffi::OsString> = std::fs::read_dir(dir)?
@@ -129,8 +140,10 @@ pub fn discover_skills(dirs: &[PathBuf]) -> std::io::Result<Vec<Skill>> {
             .collect::<Result<_, _>>()?;
         entries.sort();
         for entry in entries {
-            let path = dir.join(entry).join("SKILL.md");
-            if !std::fs::metadata(&path).is_ok_and(|m| m.is_file()) {
+            let path = dir.join(&entry).join("SKILL.md");
+            if !std::fs::metadata(&path).is_ok_and(|m| m.is_file())
+                || own && (is_link(&dir.join(entry)) || is_link(&path))
+            {
                 continue;
             }
             let fm = parse_frontmatter(&String::from_utf8_lossy(&std::fs::read(&path)?));
@@ -168,6 +181,20 @@ pub fn create_skills_plugin(dirs: Vec<PathBuf>, opts: SkillsOptions) -> PluginIn
     Box::new(move |api| Box::pin(skills_plugin(api, dirs, opts)))
 }
 
+/// `<cwd>/.sasacode/skills`, missing or a folder of its own: neither it nor `.sasacode` is a link, and
+/// its real path is the one its name gives.
+fn in_place(project: &Path, cwd: &Path) -> bool {
+    let link = |p: &Path| std::fs::symlink_metadata(p).is_ok_and(|m| m.file_type().is_symlink());
+    if link(project) || project.parent().is_some_and(link) {
+        return false;
+    }
+    match (std::fs::canonicalize(project), std::fs::canonicalize(cwd)) {
+        (Ok(real), Ok(cwd)) => real == cwd.join(".sasacode").join("skills"),
+        (Err(e), _) => e.kind() == std::io::ErrorKind::NotFound,
+        _ => false,
+    }
+}
+
 fn en(api: &PluginApi) -> bool {
     api.ui().lang() == Lang::En
 }
@@ -188,7 +215,12 @@ pub async fn skills_plugin(api: PluginApi, mut dirs: Vec<PathBuf>, opts: SkillsO
             }
         }
     }
-    let skills = discover_skills(&dirs)?;
+    // The project's folder counts only where it really is <cwd>/.sasacode/skills: through a link it
+    // could be any folder, and the read rule below would cover all of it.
+    // Run from the home folder, it is the user's own ~/.sasacode/skills.
+    let project = Some(api.cwd().join(".sasacode").join("skills")).filter(|p| p != &sasacode_home().join("skills"));
+    dirs.retain(|d| project.as_ref() != Some(d) || in_place(d, &api.cwd()));
+    let skills = discover_skills_in(&dirs, project.as_deref())?;
     if skills.is_empty() {
         return Ok(());
     }
