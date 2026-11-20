@@ -20,12 +20,12 @@ pub trait Fetch: Send + Sync {
     fn send(&self, req: reqwest::Request) -> BoxFuture<'static, anyhow::Result<reqwest::Response>>;
 }
 
-/// The plain transport: the shared client.
+/// The plain transport: the shared client for model APIs (redirects not followed).
 pub struct DefaultFetch;
 
 impl Fetch for DefaultFetch {
     fn send(&self, req: reqwest::Request) -> BoxFuture<'static, anyhow::Result<reqwest::Response>> {
-        Box::pin(async move { Ok(crate::http::client().execute(req).await?) })
+        Box::pin(async move { Ok(crate::http::api_client().execute(req).await?) })
     }
 }
 

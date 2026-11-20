@@ -515,7 +515,7 @@ fn trust_reports_what_the_project_needs_and_yes_trusts_it_until_it_changes() {
     let items = [
         "endpoint local (http://127.0.0.1:9/v1)",
         "endpoint bare (openai-chat)",
-        "MCP server fx",
+        "MCP server fx: true",
         "allow rules bash",
         "permission mode auto",
     ];
@@ -537,6 +537,14 @@ fn trust_reports_what_the_project_needs_and_yes_trusts_it_until_it_changes() {
             ],
             "allow": ["bash"],
             "mode": "auto",
+            "mcpServerDetails": [
+                { "name": "fx", "command": "true", "args": [], "url": null, "cwd": null, "env": [], "headers": [] },
+            ],
+            "model": null,
+            "judgeModel": null,
+            "models": [],
+            "modelOverrides": {},
+            "pluginSettings": {},
         })
     );
     let keys: Vec<&str> = status.as_object().unwrap().keys().map(String::as_str).collect();
@@ -552,7 +560,13 @@ fn trust_reports_what_the_project_needs_and_yes_trusts_it_until_it_changes() {
             "mcpServers",
             "endpoints",
             "allow",
-            "mode"
+            "mode",
+            "mcpServerDetails",
+            "model",
+            "judgeModel",
+            "models",
+            "modelOverrides",
+            "pluginSettings"
         ]
     );
     let (_, text) = d.trust(&[]);
@@ -603,6 +617,12 @@ fn a_plain_folder_needs_no_trust() {
             "endpoints": [],
             "allow": [],
             "mode": null,
+            "mcpServerDetails": [],
+            "model": null,
+            "judgeModel": null,
+            "models": [],
+            "modelOverrides": {},
+            "pluginSettings": {},
         })
     );
     assert_eq!(
@@ -641,4 +661,37 @@ fn wrong_arguments_are_a_usage_error() {
         );
     }
     assert!(list_args(&strings(&["models", "--all"])).is_err());
+}
+
+#[test]
+fn trust_json_says_what_each_server_runs_and_names_its_variables_and_headers_without_their_values() {
+    english();
+    let d = dirs();
+    d.project(json!({
+        "mcpServers": {
+            "fx": { "command": "npx", "args": ["-y", "a b"], "env": { "TOKEN": "secret-value" } },
+            "web": { "url": "https://mcp.example", "headers": { "Authorization": "Bearer secret-value" } },
+        },
+        "model": "openrouter/some-lab/model",
+        "modelOverrides": { "a/b": { "contextWindow": 1000 } },
+        "plugins": { "settings": { "todo": { "remindAfter": 3 } } },
+    }));
+    let (_, status) = d.trust_json(&["--json"]);
+    assert_eq!(
+        status["mcpServerDetails"],
+        json!([
+            { "name": "fx", "command": "npx", "args": ["-y", "a b"], "url": null, "cwd": null, "env": ["TOKEN"], "headers": [] },
+            { "name": "web", "command": null, "args": [], "url": "https://mcp.example", "cwd": null, "env": [], "headers": ["Authorization"] },
+        ])
+    );
+    assert_eq!(status["model"], "openrouter/some-lab/model");
+    assert_eq!(status["modelOverrides"], json!({ "a/b": { "contextWindow": 1000 } }));
+    assert_eq!(status["pluginSettings"], json!({ "todo": { "remindAfter": 3 } }));
+    assert!(!status.to_string().contains("secret-value"));
+    let (_, text) = d.trust(&[]);
+    assert!(
+        text.contains("  - MCP server fx: npx -y \"a b\"; environment TOKEN\n"),
+        "{text}"
+    );
+    assert!(!text.contains("secret-value"));
 }
