@@ -275,26 +275,34 @@ fn get_key(providers: &Providers) -> GetKey {
 
 /// A server whose own `command` the project's config writes runs in the project (the user trusted
 /// it); one that only the global config launches starts in a folder of its own under the sasacode
-/// home, whatever else the project sets on it (`disabled`, `timeout`, a `url`, ...). A `url` needs
-/// no working folder, and laid over a global command server it does not change what starts (the
-/// command wins). The two files are merged by now, so this reads the project's entries.
+/// home, whatever else the project sets on it (`disabled`, `timeout`, ...). A project entry with a
+/// `url` and no command connects to that url, as the trust list shows it: laid over a global command
+/// server, the global command, arguments, environment and folder are dropped. The two files are
+/// merged by now, so this reads the project's entries.
 fn project_servers_start_in_project(config: &mut Config, project: &Config) {
     let Some(Value::Object(merged)) = config.get_mut("mcpServers") else {
         return;
     };
     // A non-empty command: an entry that only adjusts a global server (args, env, cwd, a url, or an
     // empty command) starts nothing of its own.
-    let launched = |s: &Value| s.get("command").and_then(Value::as_str).is_some_and(|v| !v.is_empty());
+    let set = |s: &Value, key: &str| s.get(key).and_then(Value::as_str).is_some_and(|v| !v.is_empty());
     let names = project
         .get("mcpServers")
         .and_then(Value::as_object)
         .into_iter()
         .flatten();
-    for (name, _) in names.filter(|(_, own)| launched(own)) {
-        if let Some(Value::Object(server)) = merged.get_mut(name)
-            && !server.contains_key("cwd")
-        {
-            server.insert("cwd".into(), sasacode_mcp::PROJECT_CWD.into());
+    for (name, own) in names {
+        let Some(Value::Object(server)) = merged.get_mut(name) else {
+            continue;
+        };
+        if set(own, "command") {
+            if !server.contains_key("cwd") {
+                server.insert("cwd".into(), sasacode_mcp::PROJECT_CWD.into());
+            }
+        } else if set(own, "url") {
+            for key in ["command", "args", "env", "cwd"] {
+                server.remove(key);
+            }
         }
     }
 }

@@ -97,7 +97,7 @@ fn only_a_project_server_with_its_own_command_starts_in_the_project() {
         "a": { "args": ["x"], "env": { "K": "v" } },
         "b": { "url": "" },
         "c": { "command": "p" },
-        // Laid over a global command server, a url starts nothing and needs no folder.
+        // Laid over a global command server, a url replaces what it starts: it connects there.
         "d": { "url": "https://mcp.example" },
         "e": { "url": "https://project.example" },
         "f": { "disabled": false },
@@ -112,4 +112,6 @@ fn only_a_project_server_with_its_own_command_starts_in_the_project() {
     }
     assert_eq!(servers["c"]["cwd"], sasacode_mcp::PROJECT_CWD);
     assert_eq!(servers["h"]["cwd"], sasacode_mcp::PROJECT_CWD);
+    assert_eq!(servers["d"], json!({ "url": "https://mcp.example" }));
+    assert_eq!(servers["a"]["command"], "g");
 }
