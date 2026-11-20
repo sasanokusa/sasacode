@@ -352,7 +352,14 @@ pub async fn list_models(
     } else {
         let base = sdk_base(p.base_url.as_deref(), "OPENAI_BASE_URL", "https://api.openai.com/v1");
         let key = api_key.filter(|k| !k.is_empty()).unwrap_or("none");
-        let client = ApiClient::openai(key, &base, 1, p.headers.as_ref(), None);
+        let client = ApiClient::openai(
+            key,
+            matches!(name, "openai" | "openai-chat"),
+            &base,
+            1,
+            p.headers.as_ref(),
+            None,
+        );
         let res = client.get("/models", signal).await?;
         let body = sdk_body(signal, res).await?;
         for x in page_items(&body) {

@@ -190,7 +190,7 @@ fn num(v: Option<&Value>) -> Option<f64> {
 
 /// The provider part of a "<provider>/<model>" spec. With no slash, as the TS read it
 /// (`spec.slice(0, spec.indexOf("/"))`): indexOf is -1 and the slice drops the last character.
-fn provider_of(spec: &str) -> &str {
+pub(crate) fn provider_of(spec: &str) -> &str {
     match spec.find('/') {
         Some(i) => &spec[..i],
         None => &spec[..spec.char_indices().last().map_or(0, |(i, _)| i)],
