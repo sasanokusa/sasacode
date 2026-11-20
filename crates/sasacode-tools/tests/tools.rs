@@ -287,6 +287,26 @@ async fn bash_a_flood_of_output_is_kept_to_its_tail_in_memory_and_saved_whole_pr
 }
 
 #[tokio::test]
+async fn bash_a_flood_of_output_is_saved_without_the_values_sasacode_hides() {
+    if !in_sandboxed_home("bash_a_flood_of_output_is_saved_without_the_values_sasacode_hides") {
+        return;
+    }
+    sasacode_plugin_api::hide_secrets(["flood-secret-0123456789"]);
+    let d = sandbox();
+    let r = run(
+        &BashTool,
+        d.path(),
+        json!({ "command": "echo first-flood-secret-0123456789; for i in $(seq 1 20000); do echo line-$i; done; echo last-flood-secret-0123456789" }),
+    )
+    .await;
+    let text = out(&r);
+    let saved = read(saved_file(&text).unwrap());
+    assert!(saved.starts_with("first-[REDACTED]\n"), "{}", &saved[..60]);
+    assert!(saved.trim_end().ends_with("last-[REDACTED]"));
+    assert!(!saved.contains("flood-secret"));
+}
+
+#[tokio::test]
 async fn read_pipes_and_devices_are_refused_big_images_too_big_files_read_only_as_far_as_shown() {
     let d = sandbox();
     let dir = d.path();
