@@ -279,7 +279,11 @@ fn configured_path(configured: &str, from: Option<&Path>, project: &ProjectRoot)
     if path.is_absolute() {
         return path.exists().then(|| configured.to_string());
     }
-    let found = from?.join(path);
+    let mut found = from?.join(path);
+    if !found.is_absolute() {
+        // A drive-relative path (`C:bin\tool` on Windows) stays relative when joined.
+        found = std::path::absolute(&found).ok()?;
+    }
     if !found.exists() {
         return None;
     }
@@ -719,5 +723,26 @@ mod tests {
         // An absolute path is the user's own say, as it was written.
         let absolute = here.join("bin/tool").display().to_string();
         assert_eq!(configured_path(&absolute, Some(&project), &root), Some(absolute));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_configured_drive_relative_path_is_started_by_an_absolute_path() {
+        use std::path::Component;
+        let cwd = std::env::current_dir().expect("cwd");
+        let Some(Component::Prefix(prefix)) = cwd.components().next() else {
+            return;
+        };
+        let here = tempfile::tempdir_in(&cwd).expect("dir");
+        let name = here.path().file_name().expect("name").to_string_lossy().into_owned();
+        std::fs::write(here.path().join("tool.exe"), "").expect("file");
+        let other = tempfile::tempdir().expect("dir");
+        let root = ProjectRoot::new(&other.path().join("project"));
+        // `C:name\tool.exe`: the current directory of that drive, with no root of its own.
+        let configured = format!("{}{name}\\tool.exe", prefix.as_os_str().to_string_lossy());
+        assert!(!Path::new(&configured).is_absolute(), "{configured}");
+        let found = configured_path(&configured, Some(&cwd), &root).expect("found");
+        assert!(Path::new(&found).is_absolute(), "{found}");
+        assert!(Path::new(&found).ends_with(format!("{name}\\tool.exe")), "{found}");
     }
 }
