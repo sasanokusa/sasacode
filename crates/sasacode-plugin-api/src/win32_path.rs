@@ -14,6 +14,28 @@ pub fn without_verbatim(p: &str) -> String {
     }
 }
 
+/// A path in the form Win32 opens it: without a `\\?\`, `\\.\` or `\\?\UNC\` prefix, and each name without the
+/// dots and spaces that end it (`.git.` is `.git`) or `::$DATA`, the stream that is the file itself.
+pub fn win32_open_form(p: &str) -> String {
+    let lower = p.replace('/', "\\").to_ascii_lowercase();
+    let p = match () {
+        _ if lower.starts_with(r"\\?\unc\") || lower.starts_with(r"\\.\unc\") => format!(r"\\{}", &p[8..]),
+        _ if lower.starts_with(r"\\?\") || lower.starts_with(r"\\.\") => p[4..].to_string(),
+        _ => p.to_string(),
+    };
+    let name = |n: &str| {
+        let i = n.len().saturating_sub(7);
+        let n = if n.get(i..).is_some_and(|t| t.eq_ignore_ascii_case("::$DATA")) {
+            &n[..i]
+        } else {
+            n
+        };
+        let t = n.trim_end_matches(['.', ' ']);
+        if t.is_empty() { n.to_string() } else { t.to_string() }
+    };
+    p.split(['\\', '/']).map(name).collect::<Vec<_>>().join("\\")
+}
+
 /// `path.win32.resolve` against this process's working directory, and the per-drive ones Windows
 /// keeps in the environment (`=C:`).
 pub fn win32_resolve_here(parts: &[&str]) -> String {
@@ -144,7 +166,7 @@ pub fn win32_resolve(parts: &[&str], cwd: &str, drive_cwd: impl Fn(&str) -> Opti
 /// system: the function takes the directory it resolves against).
 #[cfg(test)]
 mod win32_tests {
-    use super::{win32_resolve, without_verbatim};
+    use super::{win32_open_form, win32_resolve, without_verbatim};
 
     #[test]
     fn resolves_as_node_win32_does() {
@@ -178,5 +200,15 @@ mod win32_tests {
         assert_eq!(without_verbatim(r"\\?\C:\x"), r"C:\x");
         assert_eq!(without_verbatim(r"\\?\UNC\server\share\x"), r"\\server\share\x");
         assert_eq!(without_verbatim("/tmp/x"), "/tmp/x");
+    }
+
+    #[test]
+    fn a_path_is_spelled_as_win32_opens_it() {
+        assert_eq!(win32_open_form(r"\\?\C:\p\.git.\HEAD "), r"C:\p\.git\HEAD");
+        assert_eq!(win32_open_form(r"\\.\C:\p\config::$DATA"), r"C:\p\config");
+        assert_eq!(win32_open_form(r"\\?\UNC\srv\sh\a. . \b"), r"\\srv\sh\a\b");
+        assert_eq!(win32_open_form("//?/C:/p/.sasacode./x"), r"C:\p\.sasacode\x");
+        assert_eq!(win32_open_form(r"C:\p\..\.\a:s\é."), r"C:\p\..\.\a:s\é");
+        assert_eq!(win32_open_form(r"C:\p\x::$data"), r"C:\p\x");
     }
 }

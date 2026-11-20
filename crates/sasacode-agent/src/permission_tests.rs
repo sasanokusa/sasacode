@@ -517,40 +517,157 @@ fn deny_and_ask_rules_fold_letters_that_fold_to_another_allow_rules_do_not() {
     assert_eq!(check("src/a.rs"), Ask);
 }
 
-/// Git takes a folder with HEAD, objects/ and refs/ for a repository, and runs what its config
-/// says. In edits mode a write that could make one is asked about; ordinary files named config are not.
+/// Git takes a folder with a HEAD and a config (or a commondir pointing at a repository) for a repository, and runs
+/// what its config says. In edits mode a write that could make or point one is asked about; files of an ordinary
+/// project named config, objects/ or refs/ are not.
 #[test]
 fn edits_mode_asks_before_a_write_that_could_make_a_folder_a_git_repository() {
     let tmp = tempfile::tempdir().unwrap();
     let cwd = tmp.path().to_string_lossy().to_string();
     let write = |path: &str| d(&edits(), &call(write_tool(), path, &cwd));
-    // A file named HEAD, anywhere.
-    assert_eq!(write("HEAD"), Ask);
-    assert_eq!(write("sub/HEAD"), Ask);
-    assert_eq!(write("Head"), Ask);
+    let put = |path: &str| {
+        let p = tmp.path().join(path);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(p, "x").unwrap();
+    };
+    // A file named HEAD, commondir or gitdir, anywhere.
+    for path in ["HEAD", "sub/HEAD", "Head", "commondir", "sub/gitdir"] {
+        assert_eq!(write(path), Ask, "{path}");
+    }
     assert_eq!(write("HEAD.md"), Allow);
-    // config, before and after the folder has the rest of a repository's shape.
-    assert_eq!(write("config"), Allow);
-    std::fs::write(tmp.path().join("HEAD"), "ref: refs/heads/main\n").unwrap();
-    assert_eq!(write("config"), Allow);
-    std::fs::create_dir(tmp.path().join("objects")).unwrap();
-    assert_eq!(write("config"), Allow);
-    std::fs::create_dir(tmp.path().join("refs")).unwrap();
-    assert_eq!(write("config"), Ask);
-    assert_eq!(write("CONFIG"), Ask);
-    // Elsewhere in such a project, nothing changes.
+    // An ordinary project with a config file and objects/ and refs/ folders, but no HEAD.
+    put("config");
+    put("objects/a.txt");
+    put("refs/notes.md");
     for path in [
-        "config/app.yml",
-        "src/config",
-        "config.json",
+        "config",
         "objects/a.txt",
+        "objects/x/y",
         "refs/notes.md",
+        "packed-refs",
+        "src/config",
     ] {
         assert_eq!(write(path), Allow, "{path}");
     }
+    // With a HEAD beside it (a tracked file too), config, objects/, refs/ and packed-refs are asked about.
+    put("HEAD");
+    for path in [
+        "config",
+        "CONFIG",
+        "conﬁg",
+        "objects/a.txt",
+        "objects/ab/cd",
+        "refs/heads/x",
+        "packed-refs",
+    ] {
+        assert_eq!(write(path), Ask, "{path}");
+    }
+    // Elsewhere in such a project, nothing changes.
+    for path in [
+        "src/config",
+        "config.json",
+        "src/objects/a",
+        "src/refs/b",
+        "docs/packed-refs",
+    ] {
+        assert_eq!(write(path), Allow, "{path}");
+    }
+    // A config beside a HEAD alone, or beside a commondir alone.
+    put("wt/HEAD");
+    put("lk/commondir");
+    assert_eq!(write("wt/config"), Ask);
+    assert_eq!(write("lk/config"), Ask);
+    assert_eq!(write("wt/objects/x"), Allow);
     // Reading is not writing.
     assert_eq!(d(&edits(), &call(read_tool(), "config", &cwd)), Allow);
     assert_eq!(d(&edits(), &call(read_tool(), "HEAD", &cwd)), Allow);
+}
+
+/// Where the file system folds case in full (APFS takes `ß` as `ss` and `ﬁ` as `fi`), deny and ask rules hold for
+/// such names too. The volume the path is on counts
+/// as well as the working directory's.
+#[test]
+fn deny_and_ask_rules_fold_names_in_full_where_the_file_system_does() {
+    let tmp = tempfile::Builder::new().prefix("sasacode-perm-").tempdir().unwrap();
+    let dir = tmp.path().to_string_lossy().to_string();
+    std::fs::create_dir(tmp.path().join("secrets")).unwrap();
+    let folds = tmp.path().join("SECRETS").exists();
+    let rules = json!({ "deny": ["read(secrets/**)", "read(config.txt)"], "ask": ["edit(strasse/**)"] });
+    let p = policy(M::Auto, rules);
+    let check = |tool: ToolRef, path: &str| d(&p, &call(tool, path, &dir));
+    let either = |yes: bool, d: Decision| if yes { d } else { Allow };
+    assert_eq!(check(read_tool(), "conﬁg.txt"), either(folds, Deny));
+    assert_eq!(check(read_tool(), "CONﬁG.TXT"), either(folds, Deny));
+    assert_eq!(check(edit_tool(), "ﬆraße/x"), either(folds, Ask));
+    assert_eq!(check(edit_tool(), "STRASSE/x"), either(folds, Ask));
+    assert_eq!(check(read_tool(), "other.txt"), Allow);
+    // The working directory ("/") has no letters to tell by; the path's folder does.
+    let abs = policy(M::Auto, json!({ "deny": [format!("read({dir}/secrets/**)")] }));
+    assert_eq!(
+        d(&abs, &call(read_tool(), &format!("{dir}/SECRETS/k"), "/")),
+        either(folds, Deny)
+    );
+    assert_eq!(
+        d(&abs, &call(read_tool(), &format!("{dir}/ſECRETS/k"), "/")),
+        either(folds, Deny)
+    );
+    // An allow rule is no wider: `ß` is not `ss` to it.
+    let ask = policy(M::Ask, json!({ "allow": ["read(strasse/**)"] }));
+    assert_eq!(d(&ask, &call(read_tool(), "straße/a", &dir)), Ask);
+}
+
+/// An allow rule's fixed folders follow the links there when the rule is added (/var is /private/var on macOS),
+/// not a link made there later.
+#[cfg(unix)]
+#[test]
+fn an_allow_rule_follows_the_links_there_when_it_was_added_only() {
+    let tmp = tempfile::tempdir().unwrap();
+    let at = |p: &str| tmp.path().join(p).to_string_lossy().to_string();
+    for p in ["proj/skills", "keys", "old"] {
+        std::fs::create_dir_all(tmp.path().join(p)).unwrap();
+    }
+    std::os::unix::fs::symlink(at("old"), at("ln")).unwrap();
+    let rules = json!({ "allow": [format!("read({}/**)", at("proj/skills")), format!("read({}/**)", at("ln"))] });
+    let p = policy(M::Ask, rules);
+    let read = |path: String| d(&p, &call(read_tool(), &path, &at("proj")));
+    assert_eq!(read(at("proj/skills/a.md")), Allow);
+    assert_eq!(read(at("ln/a")), Allow);
+    std::fs::remove_dir(at("proj/skills")).unwrap();
+    std::os::unix::fs::symlink(at("keys"), at("proj/skills")).unwrap();
+    assert_eq!(read(at("proj/skills/id")), Ask);
+    // A deny rule follows the links there at each call.
+    let deny = policy(M::Auto, json!({ "deny": [format!("read({}/**)", at("proj/skills"))] }));
+    assert_eq!(d(&deny, &call(read_tool(), &at("keys/id"), &at("proj"))), Deny);
+}
+
+/// On Windows a path is judged in the form Win32 opens it too: deny and ask rules match either spelling (and the
+/// name before a `:stream`), allow rules only both.
+#[cfg(windows)]
+#[test]
+fn on_windows_a_path_is_judged_as_win32_opens_it_too() {
+    let tmp = tempfile::tempdir().unwrap();
+    let cwd = tmp.path().to_string_lossy().to_string();
+    let write = |path: &str| d(&edits(), &call(write_tool(), path, &cwd));
+    let verbatim = format!("\\\\?\\{cwd}\\.git\\x");
+    for path in [
+        ".git.\\hooks\\x",
+        ".sasacode \\x",
+        "HEAD ",
+        "HEAD::$DATA",
+        verbatim.as_str(),
+    ] {
+        assert_eq!(write(path), Ask, "{path}");
+    }
+    assert_eq!(write("src\\a.rs"), Allow);
+    let p = policy(M::Auto, json!({ "deny": ["read(secrets/**)", "read(k.txt)"] }));
+    let read = |path: &str| d(&p, &call(read_tool(), path, &cwd));
+    let device = format!("\\\\.\\{cwd}\\secrets\\a");
+    for path in ["secrets. \\a", "k.txt.", "k.txt::$DATA", "k.txt:zone", device.as_str()] {
+        assert_eq!(read(path), Deny, "{path}");
+    }
+    let ask = policy(M::Ask, json!({ "allow": ["read(docs/**)"] }));
+    assert_eq!(d(&ask, &call(read_tool(), "docs\\a", &cwd)), Allow);
+    assert_eq!(d(&ask, &call(read_tool(), "docs.\\a", &cwd)), Ask);
 }
 
 #[test]
