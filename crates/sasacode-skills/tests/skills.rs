@@ -215,4 +215,21 @@ async fn project_skills_are_read_only_from_files_of_the_projects_own() {
     assert!(prompt.contains("- mine: the project's"));
     assert!(!prompt.contains("- far:"));
     assert_eq!(read_rules(&host), vec![format!("read({}/**)", own.display())]);
+
+    // A folder of its own spelled in another case, where the file system folds case, still counts.
+    let other = root.join("other");
+    skill(
+        &other.join(".sasacode/Skills"),
+        "upper",
+        "name: upper\ndescription: in Skills",
+        "Upper.",
+    );
+    if other.join(".sasacode/skills").exists() {
+        let host = FakeHost::new(other.clone(), serde_json::json!({}));
+        let dirs = vec![other.join(".sasacode/skills")];
+        host.load("skills", create_skills_plugin(dirs, SkillsOptions::default()))
+            .await
+            .unwrap();
+        assert!(host.system_prompt("base").await.contains("- upper: in Skills"));
+    }
 }

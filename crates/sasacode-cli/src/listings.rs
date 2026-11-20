@@ -14,7 +14,7 @@ use sasacode_agent::agent::{Agent, AgentOptions};
 use sasacode_agent::plugins::{PluginHost, PluginHostOptions};
 use sasacode_ai::{ModelInfo, fmt_tokens};
 use sasacode_host::{current_lang, t};
-use sasacode_skills::{discover_skills, materialize_builtin_skills};
+use sasacode_skills::{discover_skills_in, materialize_builtin_skills, project_skills_dir};
 
 use crate::args::{boolean, parse_args};
 use crate::catalog::ModelChoice;
@@ -331,7 +331,8 @@ fn skill_listing_in(home: &Path, cwd: &Path) -> anyhow::Result<Vec<ListedSkill>>
     {
         dirs.insert(0, builtin);
     }
-    Ok(discover_skills(&dirs)?
+    let project = project_skills_dir(cwd, &home.join("skills"));
+    Ok(discover_skills_in(&dirs, project.as_deref())?
         .into_iter()
         .map(|s| ListedSkill {
             name: s.name,
