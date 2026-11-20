@@ -108,7 +108,7 @@ async fn install_the_pinned_release_checksum_checked_into_the_sasacode_bin_then_
 
 /// A shell script whose `--version` names the SASACODE_TEST_SECRET it was started with (or none).
 #[cfg(unix)]
-const LEAKY: &str = "#!/bin/sh\necho \"RustXNG ${SASACODE_TEST_SECRET:-none}\"\n";
+const PRINTS_THE_VARIABLE: &str = "#!/bin/sh\necho \"RustXNG ${SASACODE_TEST_SECRET:-none}\"\n";
 
 // The check that the downloaded binary runs is a child like any other: it gets the environment
 // commands get, without the keys sasacode loaded for itself.
@@ -130,13 +130,13 @@ async fn the_version_check_does_not_hand_the_downloaded_program_sasacodes_keys()
         return;
     }
     let home = temp_dir("sasacode-rustxng-");
-    let page = releases(LEAKY).await;
+    let page = releases(PRINTS_THE_VARIABLE).await;
     run_child(
         "the_version_check_does_not_hand_the_downloaded_program_sasacodes_keys",
         &[
             ("SASACODE_HOME", s(home.path())),
             ("SASACODE_RUSTXNG_BASE", format!("http://127.0.0.1:{}", page.port)),
-            ("SASACODE_RUSTXNG_SHA256", sha256(LEAKY)),
+            ("SASACODE_RUSTXNG_SHA256", sha256(PRINTS_THE_VARIABLE)),
             ("SASACODE_TEST_SECRET", "hunter2".to_string()),
         ],
     )
