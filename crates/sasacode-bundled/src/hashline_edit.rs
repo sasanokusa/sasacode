@@ -22,6 +22,7 @@
 
 use std::collections::HashMap;
 use std::ops::Range;
+use std::path::Path;
 use std::sync::{Arc, LazyLock, Mutex, MutexGuard, Weak};
 
 use futures::future::BoxFuture;
@@ -58,12 +59,20 @@ struct PluginState {
     /// `hash_edit` calls between their `ToolCall` hook and their result. `ToolContext` does not
     /// say which agent is calling, so the hook notes it here and the tool finds it by its arguments.
     in_flight: Vec<InFlight>,
+    /// `read` calls between their `ToolCall` hook and their result: the path each one runs with.
+    reads_in_flight: Vec<ReadInFlight>,
 }
 
 struct InFlight {
     agent: AgentId,
     call_id: String,
     args: JsonObject,
+}
+
+struct ReadInFlight {
+    agent: AgentId,
+    call_id: String,
+    path: String,
 }
 
 #[derive(Default)]
@@ -140,6 +149,26 @@ impl PluginState {
             self.in_flight.remove(0);
         }
         self.in_flight.push(InFlight { agent, call_id, args });
+    }
+
+    /// The `ToolCall` hook saw `agent` make `read` call `call_id` on `path`. Seen again (the user
+    /// edited the arguments at approval), the newer path replaces the older one.
+    fn note_read(&mut self, agent: AgentId, call_id: String, path: String) {
+        self.reads_in_flight
+            .retain(|r| r.agent != agent || r.call_id != call_id);
+        if self.reads_in_flight.len() >= MAX_IN_FLIGHT {
+            self.reads_in_flight.remove(0);
+        }
+        self.reads_in_flight.push(ReadInFlight { agent, call_id, path });
+    }
+
+    /// The path `agent`'s `read` call `call_id` was noted with, taken out so that it is used once.
+    fn take_read(&mut self, agent: &AgentId, call_id: &str) -> Option<String> {
+        let found = self
+            .reads_in_flight
+            .iter()
+            .position(|r| r.agent == *agent && r.call_id == call_id)?;
+        Some(self.reads_in_flight.remove(found).path)
     }
 
     /// The agent of the `hash_edit` with these arguments: the only agent with a call in flight
@@ -584,6 +613,49 @@ async fn execute_hash_edit(
     Ok(ToolResult::text(plan.summary).with_details(details))
 }
 
+/// A finished `read` call `call_id` by `agent`, with the path its `ToolCall` note gave (`None`:
+/// no note, so no anchor can be trusted). `result` with anchored lines, or `None` when there is
+/// nothing to anchor.
+async fn annotate_read_result(
+    state: &Mutex<PluginState>,
+    agent: &AgentId,
+    read: Option<String>,
+    cwd: &Path,
+    result: ToolResult,
+) -> Option<ToolResultResult> {
+    // The call's own arguments may not be the ones that ran (the user edited them at approval):
+    // the file to annotate from is the one the `ToolCall` hook noted last.
+    let path = resolve_path(&read?, cwd);
+    // No snapshot can be kept of this file, so `hash_edit` would refuse every anchor: show none.
+    let (Some(key), Some(disk)) = (canonical_key(&path), tracked_text(&path).await) else {
+        return None;
+    };
+    let disk_lines = split_lines(&disk);
+
+    let mut result = result;
+    let mut shown = Vec::new();
+    let mut parts: Vec<&mut String> = result
+        .content
+        .iter_mut()
+        .filter_map(|item| match item {
+            UserContent::Text(part) => Some(&mut part.text),
+            _ => None,
+        })
+        .collect();
+    let annotated: Option<Vec<String>> = parts
+        .iter()
+        .map(|text| annotate_read(text, &disk_lines, &mut shown))
+        .collect();
+    // Shown text that is not the file's (it changed while being read): forget every anchor.
+    let lines = annotated.as_ref().map(|_| &shown[..]);
+    record_read(state, agent, key, &disk, lines);
+    let annotated = annotated.filter(|_| !shown.is_empty())?;
+    for (part, text) in parts.iter_mut().zip(annotated) {
+        **part = text;
+    }
+    Some(ToolResultResult { result: Some(result) })
+}
+
 pub fn plugin(api: PluginApi) -> BoxFuture<'static, anyhow::Result<()>> {
     Box::pin(async move {
         let cwd = api.cwd();
@@ -645,6 +717,11 @@ pub fn plugin(api: PluginApi) -> BoxFuture<'static, anyhow::Result<()>> {
             async move {
                 if ev.tool.name() == "hash_edit" {
                     lock(&st).note_call(ctx.agent, ev.call.id, ev.args);
+                } else if ev.tool.name() == "read" {
+                    // Noted again with the arguments the user edited at approval: the last one is
+                    // what runs, and so the file the result has to be annotated from.
+                    let path = str_arg(&ev.args, "path").to_string();
+                    lock(&st).note_read(ctx.agent, ev.call.id, path);
                 }
                 Ok(None)
             }
@@ -654,45 +731,19 @@ pub fn plugin(api: PluginApi) -> BoxFuture<'static, anyhow::Result<()>> {
         api.on::<hook::ToolResult, _, _>(move |ev, ctx| {
             let (cwd, st) = (cwd.clone(), st.clone());
             async move {
-                // A `hash_edit` that was refused never ran, so its note is still there.
-                lock(&st)
-                    .in_flight
-                    .retain(|c| c.agent != ctx.agent || c.call_id != ev.call.id);
+                // A `hash_edit` that was refused never ran, so its note is still there. A `read`
+                // note goes whatever the call ended in.
+                let read = {
+                    let mut state = lock(&st);
+                    state
+                        .in_flight
+                        .retain(|c| c.agent != ctx.agent || c.call_id != ev.call.id);
+                    state.take_read(&ctx.agent, &ev.call.id)
+                };
                 if !ev.ran || ev.result.is_error() || ev.call.name != "read" {
                     return Ok(None);
                 }
-                let path = resolve_path(str_arg(&ev.call.input, "path"), &cwd);
-                // No snapshot can be kept of this file, so `hash_edit` would refuse every anchor:
-                // show none.
-                let (Some(key), Some(disk)) = (canonical_key(&path), tracked_text(&path).await) else {
-                    return Ok(None);
-                };
-                let disk_lines = split_lines(&disk);
-
-                let mut result = ev.result;
-                let mut shown = Vec::new();
-                let mut parts: Vec<&mut String> = result
-                    .content
-                    .iter_mut()
-                    .filter_map(|item| match item {
-                        UserContent::Text(part) => Some(&mut part.text),
-                        _ => None,
-                    })
-                    .collect();
-                let annotated: Option<Vec<String>> = parts
-                    .iter()
-                    .map(|text| annotate_read(text, &disk_lines, &mut shown))
-                    .collect();
-                // Shown text that is not the file's (it changed while being read): forget every anchor.
-                let lines = annotated.as_ref().map(|_| &shown[..]);
-                record_read(&st, &ctx.agent, key, &disk, lines);
-                let Some(annotated) = annotated.filter(|_| !shown.is_empty()) else {
-                    return Ok(None);
-                };
-                for (part, text) in parts.iter_mut().zip(annotated) {
-                    **part = text;
-                }
-                Ok(Some(ToolResultResult { result: Some(result) }))
+                Ok(annotate_read_result(&st, &ctx.agent, read, &cwd, ev.result).await)
             }
         });
 
@@ -964,5 +1015,49 @@ mod tests {
         assert!(snapshot.shown_in.iter().all(Option::is_some));
         snapshot.follow_disk("[\n  {\n  },\n  {\n  },\n]\n");
         assert_eq!(snapshot.shown_in, vec![None; 6]);
+    }
+
+    #[tokio::test]
+    async fn a_read_whose_path_was_changed_at_approval_is_annotated_from_the_file_it_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let (a, b) = (dir.path().join("a.txt"), dir.path().join("b.txt"));
+        std::fs::write(&a, "one\ntwo\n").unwrap();
+        std::fs::write(&b, "three\nfour\n").unwrap();
+        let (a, b) = (a.to_string_lossy().into_owned(), b.to_string_lossy().into_owned());
+        let state: Arc<Mutex<PluginState>> = Arc::default();
+        // The `ToolCall` hook: the model's path first, then the one the user edited it to at approval.
+        lock(&state).note_read(None, "1".into(), a.clone());
+        lock(&state).note_read(None, "1".into(), b.clone());
+        // `read` ran on b, but its call still carries the model's path (a).
+        let result = ToolResult::text("     1\tthree\n     2\tfour\n");
+        // The `ToolResult` hook takes the note out, then annotates from that path.
+        let read = lock(&state).take_read(&None, "1");
+        let out = annotate_read_result(&state, &None, read, dir.path(), result)
+            .await
+            .expect("b's lines are anchored");
+        let text = text_of(out.result.as_ref().unwrap());
+        assert!(text.starts_with(&format!("1:{}|three\n", line_hash("three"))), "{text}");
+        assert!(text.contains(&format!("2:{}|four", line_hash("four"))), "{text}");
+        let files: Vec<(String, Vec<Option<u64>>)> = lock(&state)
+            .agents
+            .iter()
+            .flat_map(|(_, agent)| agent.files.iter().map(|(path, s)| (path.clone(), s.shown_in.clone())))
+            .collect();
+        assert_eq!(
+            files,
+            vec![(canonical_key(&b).unwrap(), vec![Some(0); 2])],
+            "b, never a"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_read_with_no_recorded_call_gets_no_anchors() {
+        let f = fixture("one\ntwo\n");
+        // No `ToolCall` hook noted this read.
+        let result = ToolResult::text("     1\tone\n     2\ttwo\n");
+        let read = lock(&f.state).take_read(&None, "1");
+        let out = annotate_read_result(&f.state, &None, read, f.dir.path(), result).await;
+        assert!(out.is_none());
+        assert!(lock(&f.state).agents.is_empty(), "no snapshot recorded");
     }
 }
