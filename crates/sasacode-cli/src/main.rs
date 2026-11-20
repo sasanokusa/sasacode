@@ -9,10 +9,11 @@ use sasacode_cli::args::{OptionSpec, boolean, parse_args, string, strings};
 use sasacode_cli::config::{read_config_files, sasacode_home};
 use sasacode_cli::control::control_mode;
 use sasacode_cli::env::{blank_keys, ensure_env_file, parse_env_file};
+use sasacode_cli::git_folder::{ProjectGit, allowed_in, ask_git, runs_git, start_the_list};
 use sasacode_cli::headless::{HeadlessOptions, OutputFormat, run_headless};
 use sasacode_cli::setup::{SetupOptions, read_prompt_file, setup};
 use sasacode_cli::stdin::read_piped_stdin;
-use sasacode_cli::trust::{ask_trust, assess_project, is_trusted, save_trust};
+use sasacode_cli::trust::{ask_trust, assess_project_with, is_trusted, save_trust};
 use sasacode_cli::{subcommands, tui};
 use sasacode_host::{builtin_providers, resolve_lang, set_lang, t};
 use sasacode_plugin_api::{PermissionMode, PermissionRules, hide_from_children};
@@ -50,11 +51,11 @@ Subcommands:
   sasacode endpoint remove <name> [--project]
   sasacode endpoint list
   sasacode list models|commands|skills [--json]   what a run here can use (the GUI asks with --json)
-  sasacode trust [--yes] [--json]   is this folder trusted, and what would trust enable; --yes trusts it
+  sasacode trust [--yes] [--json]   is this folder trusted, and what would trust enable; --yes trusts it and lets git run here
   sasacode plugin list --json       the bundled plugins and whether each is on (the GUI asks)
   sasacode login [status|logout]    use a ChatGPT plan instead of an API key (openai-codex/… models)
   sasacode update [--check] [tag]   download and install the newest release (checksum-verified)
-  sasacode web-search install [tag] install RustXNG for the web_search tool (checksum-verified)
+  sasacode web-search install       install RustXNG for the web_search tool (checksum-verified)
   sasacode gui [folder]             open the desktop GUI on a folder (sasacode gui install puts it in)
   sasacode gui install [--path <dir>]   build the desktop GUI on this machine with Rust (docs/gui.md)
   -h, --help
@@ -128,6 +129,7 @@ fn main() {
             std::env::set_var(name, value)
         };
     }
+    sasacode_plugin_api::hide_secrets(loaded.iter().map(|(_, v)| v));
     hide_from_children(loaded.into_iter().map(|(n, _)| n));
     // An Anthropic request without any key falls back on the `ant auth login` profile, as the SDK did.
     sasacode_ai::transport::set_default_credentials(Some(sasacode_cli::anthropic_profile::credentials()));
@@ -151,7 +153,10 @@ fn main() {
         match run(args, cwd).await {
             Ok(code) => code,
             Err(e) => {
-                eprintln!("{}", t!("sasacode: {error}", error = format!("{e:#}")));
+                eprintln!(
+                    "{}",
+                    t!("sasacode: {error}", error = sasacode_host::plain(&format!("{e:#}")))
+                );
                 1
             }
         }
@@ -212,17 +217,26 @@ async fn run(args: Vec<String>, cwd: String) -> anyhow::Result<i32> {
         .string("append-system-prompt-file")
         .map(read_prompt_file)
         .transpose()?;
+    // The folders git may run in are listed the first time, before this run keeps a conversation.
+    start_the_list(&sasacode_home());
     // One trust decision covers the parts of .sasacode/config.json that could run code or send
     // data elsewhere. Asked here, before anything from the project is used.
-    let project = assess_project(Path::new(&cwd))?;
-    let mut trusted = values.flag("trust-project") || is_trusted(&cwd, &project);
+    let project = assess_project_with(Path::new(&cwd), values.string("model"))?;
+    let mut for_good = is_trusted(&cwd, &project);
+    let mut trusted = values.flag("trust-project") || for_good;
     let interactive = print.is_none() && std::io::stdin().is_terminal() && std::io::stderr().is_terminal();
     if !trusted && interactive {
         trusted = ask_trust(&cwd, &project).await;
         if trusted {
             save_trust(&cwd, &project)?;
+            for_good = true;
         }
     }
+    // The shipped plugins that run git do so only in a folder allowed for it: asked once here.
+    let said = ProjectGit::said(!project.items.is_empty(), for_good, values.flag("trust-project"));
+    let wanted = runs_git(Path::new(&cwd), trusted, &project.files);
+    let ask = interactive.then(|| ask_git(&cwd));
+    let git = allowed_in(&sasacode_home(), Path::new(&cwd), wanted, said, ask).await;
     let max_turns = values
         .string("max-turns")
         .filter(|v| !v.is_empty())
@@ -241,10 +255,11 @@ async fn run(args: Vec<String>, cwd: String) -> anyhow::Result<i32> {
     opts.no_session = values.flag("no-session");
     opts.append_system_prompt = append_system_prompt;
     opts.trust_project = trusted;
+    opts.git = git;
     opts.preloaded = Some((project.files, project.warnings));
     let harness = setup(opts).await?;
     for w in harness.warnings() {
-        eprintln!("{}", t!("warning: {warning}", warning = w));
+        eprintln!("{}", t!("warning: {warning}", warning = sasacode_host::plain(&w)));
     }
     // As if "always" had been answered for each: a window that starts a process per message keeps
     // its grants this way.

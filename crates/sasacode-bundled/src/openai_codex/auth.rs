@@ -39,6 +39,14 @@ pub struct CodexTokens {
     pub expires_at: Option<f64>,
 }
 
+impl CodexTokens {
+    /// Every record sasacode keeps shows these tokens as `[REDACTED]`.
+    fn hide(&self) {
+        let id = self.id_token.as_deref().unwrap_or_default();
+        sasacode_plugin_api::hide_secrets([self.access.as_str(), self.refresh.as_str(), id]);
+    }
+}
+
 /// Stored beside the user's config, never in a project: a repository must not supply a login.
 pub fn codex_auth_path() -> PathBuf {
     codex_auth_path_in(&sasacode_home())
@@ -69,13 +77,15 @@ pub fn read_codex_auth_at(path: &Path) -> Option<CodexTokens> {
         .or_else(|| account_id(id_token.as_deref()))
         .or_else(|| account_id(Some(&access)));
     let expires_at = expiry(&access);
-    Some(CodexTokens {
+    let tokens = CodexTokens {
         access,
         refresh,
         id_token,
         account_id,
         expires_at,
-    })
+    };
+    tokens.hide();
+    Some(tokens)
 }
 
 /// The last tokens [`codex_tokens`] looked up, shared for a few seconds.
@@ -89,7 +99,7 @@ fn clear_cache() {
 /// Save credentials (owner-only), replacing the file in one step.
 pub fn write_codex_auth(tokens: &CodexTokens, path: &Path) -> anyhow::Result<()> {
     if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
+        sasacode_plugin_api::create_private_dir(dir)?;
     }
     // Temp file + rename: a crash mid-write must not leave a broken credential behind.
     let tmp = PathBuf::from(format!("{}.tmp", path.display()));
@@ -97,6 +107,7 @@ pub fn write_codex_auth(tokens: &CodexTokens, path: &Path) -> anyhow::Result<()>
         "{}\n",
         sasacode_ai::json::stringify_pretty(&serde_json::to_value(tokens)?)
     );
+    tokens.hide();
     sasacode_plugin_api::write_private(&tmp, text.as_bytes())?;
     std::fs::rename(&tmp, path)?;
     clear_cache();
@@ -278,6 +289,27 @@ pub fn codex_tokens() -> BoxFuture<'static, anyhow::Result<Option<CodexTokens>>>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_saved_or_read_login_is_hidden_from_every_record() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("codex-auth.json");
+        let tokens = CodexTokens {
+            access: "codex-access-auth-t-0123456789".into(),
+            refresh: "codex-refresh-auth-t-0123456789".into(),
+            ..CodexTokens::default()
+        };
+        write_codex_auth(&tokens, &path).unwrap();
+        let shown =
+            sasacode_plugin_api::redact_secrets("a=codex-access-auth-t-0123456789 r=codex-refresh-auth-t-0123456789");
+        assert_eq!(shown, "a=[REDACTED] r=[REDACTED]");
+        // Read back at a start: the file may have been written by another process.
+        let other = tokens.access.replace("access", "other");
+        let text = std::fs::read_to_string(&path).unwrap().replace(&tokens.access, &other);
+        std::fs::write(&path, text).unwrap();
+        assert!(read_codex_auth_at(&path).is_some());
+        assert_eq!(sasacode_plugin_api::redact_secrets(&other), "[REDACTED]");
+    }
 
     #[test]
     fn claims_decode_like_node_base64url() {

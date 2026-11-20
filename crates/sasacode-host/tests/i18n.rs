@@ -166,9 +166,20 @@ fn the_tables_hold_every_ts_entry() {
     // level, `sasacode plugin` being removed) and less the one it dropped (project plugin code that
     // could not be read for the trust decision), plus the four that `--allow` and `--slash` brought
     // and the nine of `sasacode list` and `sasacode trust`, ported with the GUI's listings. Then
-    // `sasacode gui install`: ten English texts, and the GUI's version note in Japanese.
-    assert_eq!(TO_EN.len(), 273 + 1);
-    assert_eq!(TO_JA.len(), 158 + 3 - 1 + 4 + 9 + 10);
+    // `sasacode gui install`: ten English texts, and the GUI's version note in Japanese. Then the
+    // trust list showing what each entry runs and sets (three lines became six) and the warning for a
+    // judge model the project picks. Then the release's build provenance check (`sasacode update`):
+    // seven English texts, and one for a release built from something that is not a commit. RustXNG
+    // pinned to one release: one Japanese text, in the English table, and the Japanese for the usage
+    // of `web-search install` and for a release base that is not https. Then the trust list for an
+    // MCP entry that starts nothing itself or lies on a global server: two English texts. Then the
+    // question before git is run in a folder: one English text. Then `trust --yes` saying git may run
+    // here, and an MCP command that is not a string: one English text each.
+    assert_eq!(TO_EN.len(), 273 + 1 + 1);
+    assert_eq!(
+        TO_JA.len(),
+        158 + 3 - 1 + 4 + 9 + 10 - 3 + 6 + 1 + 7 + 1 + 2 + 2 + 1 + 1 + 1
+    );
 }
 
 #[test]

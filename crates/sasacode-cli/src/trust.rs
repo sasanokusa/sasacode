@@ -13,7 +13,7 @@ use indexmap::IndexMap;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
-use sasacode_host::t;
+use sasacode_host::{plain_line, t};
 
 use crate::config::{ConfigFiles, describe_elevated, load_config, read_config_files, sasacode_home};
 use crate::json::{read_json_or, write_json};
@@ -36,7 +36,14 @@ fn read_trust(home: &Path) -> IndexMap<String, String> {
 }
 
 pub fn assess_project(cwd: &Path) -> anyhow::Result<ProjectTrust> {
-    Ok(assess_files(cwd, read_config_files(cwd)?))
+    assess_project_with(cwd, None)
+}
+
+/// [`assess_project`] for a run given the model `-m` named.
+pub fn assess_project_with(cwd: &Path, cli_model: Option<&str>) -> anyhow::Result<ProjectTrust> {
+    let mut files = read_config_files(cwd)?;
+    files.cli_model = cli_model.map(str::to_string);
+    Ok(assess_files(cwd, files))
 }
 
 /// [`assess_project`] with the config files already read.
@@ -45,7 +52,7 @@ pub fn assess_files(cwd: &Path, files: ConfigFiles) -> ProjectTrust {
         Ok(l) => l.elevated,
         Err(_) => Default::default(),
     };
-    let items = describe_elevated(&elevated);
+    let items = describe_elevated(&elevated, &files.global);
     let manifests: Vec<Value> = Vec::new();
     let digest = Sha256::digest(sasacode_ai::json::stringify(
         &json!({ "elevated": elevated, "manifests": manifests }),
@@ -99,7 +106,8 @@ pub async fn ask_trust(cwd: &str, trust: &ProjectTrust) -> bool {
             .join("\n"),
         t!("MCP servers run code as you; endpoints receive your conversation and code.")
     );
-    text.push_str(&t!("Trust {cwd}? [y/N] ", cwd = cwd));
+    // The items are already shown safely (describe_elevated); a folder name can hold controls too.
+    text.push_str(&t!("Trust {cwd}? [y/N] ", cwd = plain_line(cwd)));
     eprint!("{text}");
     let answer = tokio::task::spawn_blocking(|| {
         let mut line = String::new();
@@ -137,7 +145,7 @@ mod tests {
         .unwrap();
         let t = assess(&home, &proj);
         assert_eq!(t.items.len(), 1);
-        assert!(t.items[0].ends_with("fx"));
+        assert!(t.items[0].ends_with("fx: true"), "{}", t.items[0]);
         assert!(!is_trusted_in(&home, &cwd, &t));
         save_trust_in(&home, &cwd, &t).unwrap();
         assert!(is_trusted_in(&home, &cwd, &assess(&home, &proj)));

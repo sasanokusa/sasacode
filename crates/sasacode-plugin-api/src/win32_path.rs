@@ -14,6 +14,34 @@ pub fn without_verbatim(p: &str) -> String {
     }
 }
 
+/// A path in the form Win32 opens it: without a `\\?\`, `\\.\` or `\\?\UNC\` prefix, and each name without the
+/// dots and spaces that end it (`.git.` is `.git`) or a `::$DATA`, the stream that is the file (or folder) itself.
+/// With `streams`, a name is also cut at any `:` (`a:s` is `a`), the drive's aside.
+pub fn win32_open_form(p: &str, streams: bool) -> String {
+    let lower = p.replace('/', "\\").to_ascii_lowercase();
+    let p = match () {
+        _ if lower.starts_with(r"\\?\unc\") || lower.starts_with(r"\\.\unc\") => format!(r"\\{}", &p[8..]),
+        _ if lower.starts_with(r"\\?\") || lower.starts_with(r"\\.\") => p[4..].to_string(),
+        _ => p.to_string(),
+    };
+    let name = |(i, n): (usize, &str)| {
+        let n = n
+            .find(if streams && i > 0 { ":" } else { "::$" })
+            .map_or(n, |j| &n[..j]);
+        // `. ` and `.. ` are `.` and `..`; a name of dots and spaces only is otherwise kept.
+        let (t, dots) = (n.trim_end_matches(['.', ' ']), n.trim_end_matches(' '));
+        let t = Some(t).filter(|t| !t.is_empty());
+        t.or(matches!(dots, "." | "..").then_some(dots))
+            .unwrap_or(n)
+            .to_string()
+    };
+    p.split(['\\', '/'])
+        .enumerate()
+        .map(name)
+        .collect::<Vec<_>>()
+        .join("\\")
+}
+
 /// `path.win32.resolve` against this process's working directory, and the per-drive ones Windows
 /// keeps in the environment (`=C:`).
 pub fn win32_resolve_here(parts: &[&str]) -> String {
@@ -144,7 +172,7 @@ pub fn win32_resolve(parts: &[&str], cwd: &str, drive_cwd: impl Fn(&str) -> Opti
 /// system: the function takes the directory it resolves against).
 #[cfg(test)]
 mod win32_tests {
-    use super::{win32_resolve, without_verbatim};
+    use super::{win32_open_form, win32_resolve, without_verbatim};
 
     #[test]
     fn resolves_as_node_win32_does() {
@@ -178,5 +206,25 @@ mod win32_tests {
         assert_eq!(without_verbatim(r"\\?\C:\x"), r"C:\x");
         assert_eq!(without_verbatim(r"\\?\UNC\server\share\x"), r"\\server\share\x");
         assert_eq!(without_verbatim("/tmp/x"), "/tmp/x");
+    }
+
+    #[test]
+    fn a_path_is_spelled_as_win32_opens_it() {
+        let open = |p: &str| win32_open_form(p, false);
+        assert_eq!(open(r"\\?\C:\p\.git.\HEAD "), r"C:\p\.git\HEAD");
+        assert_eq!(open(r"\\.\C:\p\config::$DATA"), r"C:\p\config");
+        assert_eq!(open(r"\\?\UNC\srv\sh\a. . \b"), r"\\srv\sh\a\b");
+        assert_eq!(open("//?/C:/p/.sasacode./x"), r"C:\p\.sasacode\x");
+        assert_eq!(open(r"C:\p\..\.\a:s\é."), r"C:\p\..\.\a:s\é");
+        assert_eq!(open(r"C:\p\x::$data"), r"C:\p\x");
+        assert_eq!(open(r"C:\p\.git::$INDEX_ALLOCATION\hooks\x"), r"C:\p\.git\hooks\x");
+        // `. ` and `.. ` are `.` and `..`; other names of dots and spaces only are kept.
+        assert_eq!(open(r"C:\p\.. \x\.  \y"), r"C:\p\..\x\.\y");
+        assert_eq!(open(r"C:\p\...\ .\. .\z"), r"C:\p\...\ .\. .\z");
+        // With streams, every name before its first `:`, the drive's aside.
+        let streams = |p: &str| win32_open_form(p, true);
+        assert_eq!(streams(r"C:\p\.git:$I30:$INDEX_ALLOCATION\x"), r"C:\p\.git\x");
+        assert_eq!(streams(r"C:\p\k.txt:zone"), r"C:\p\k.txt");
+        assert_eq!(streams(r"\\?\C:\p\a. :s"), r"C:\p\a");
     }
 }

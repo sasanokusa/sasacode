@@ -41,7 +41,7 @@ use sasacode_ai::json::{js_number, stringify_pretty};
 use sasacode_host::t;
 use sasacode_plugin_api::{
     Command, CommandContext, InjectWhen, NotifyLevel, PermissionRules, PluginApi, SelectOption, ToolDef, ToolKind,
-    ToolResult, apply_child_env, detach_session, error_result, hook, sasacode_home,
+    ToolResult, apply_child_env, create_private_dir, detach_session, error_result, hook, redact_secrets, sasacode_home,
 };
 use sasacode_tools::{KillSignal, bash_path, kill_tree};
 
@@ -281,7 +281,21 @@ fn tail_of(path: &Path, lines: usize) -> String {
     if ls.last() == Some(&"") {
         ls.pop();
     }
-    ls[ls.len().saturating_sub(lines)..].join("\n")
+    redact_secrets(&ls[ls.len().saturating_sub(lines)..].join("\n")).into_owned()
+}
+
+/// A finished job's log with the values sasacode hides replaced. The job writes its log by itself,
+/// so nothing can filter it as it is written; what the model is shown is filtered as it is read.
+fn redact_log(path: &Path) {
+    if std::fs::metadata(path).is_ok_and(|m| m.len() <= MAX_LOG_BYTES)
+        && let Ok(bytes) = std::fs::read(path)
+    {
+        let text = String::from_utf8_lossy(&bytes);
+        let redacted = redact_secrets(&text);
+        if redacted != text {
+            let _ = std::fs::write(path, redacted.as_bytes());
+        }
+    }
 }
 
 /// Whether a process exists (`process.kill(pid, 0)`, EPERM counting as alive).
@@ -547,6 +561,7 @@ impl Bg {
         if job.meta.spawn_error.as_deref().is_some_and(|e| !e.is_empty()) {
             job.meta.exit_code = Some(None);
         }
+        redact_log(&job.log_path);
         self.save(job); // the result is on disk even if nobody gets to notify
         self.notify_once(job)
     }
@@ -709,8 +724,16 @@ impl Bg {
 
     // ── helpers shared by the tools ────────────────────────────────────
 
-    /// The job by id: this process's (with its table entry) or one on disk.
+    /// The job by id, when it was started from this working directory: another project's job (its
+    /// command, its log) is not one the tools here may read or stop.
     fn find_job(&self, id: &str) -> Option<(Meta, PathBuf, bool)> {
+        let cwd = self.cwd();
+        self.find_job_any(id).filter(|(m, _, _)| m.cwd == cwd)
+    }
+
+    /// The job by id from any working directory: this process's (with its table entry) or one on
+    /// disk. For the user's own `/bg <id>`, never for a tool.
+    fn find_job_any(&self, id: &str) -> Option<(Meta, PathBuf, bool)> {
         if let Some(job) = self.jobs().get(id) {
             return Some((job.meta.clone(), job.dir.clone(), true));
         }
@@ -816,11 +839,7 @@ impl Bg {
         if js_trim(&command).is_empty() {
             return error_result("command is empty; pass the shell command to run");
         }
-        let run_cwd = match args.get("cwd").and_then(Value::as_str).filter(|c| !c.is_empty()) {
-            Some(c) if Path::new(c).is_absolute() => PathBuf::from(c),
-            Some(c) => ctx_cwd.join(c),
-            None => ctx_cwd.to_path_buf(),
-        };
+        let run_cwd = start_dir(args, ctx_cwd).unwrap_or_else(|| ctx_cwd.to_path_buf());
         let shown_cwd = run_cwd.display().to_string();
         match std::fs::metadata(&run_cwd) {
             Ok(m) if !m.is_dir() => return error_result(format!("{shown_cwd} is not a directory; pass a valid cwd")),
@@ -1005,7 +1024,7 @@ impl Bg {
             }
         }
         let text = std::fs::read(&path)
-            .map(|b| String::from_utf8_lossy(&b).into_owned())
+            .map(|b| redact_secrets(&String::from_utf8_lossy(&b)).into_owned())
             .unwrap_or_default();
         let mut all: Vec<&str> = text.split('\n').collect();
         if all.last() == Some(&"") {
@@ -1162,11 +1181,11 @@ impl Bg {
             .iter()
             .find(|m| m.id == *first)
             .cloned()
-            .or_else(|| self.find_job(first).map(|(m, _, _)| m));
+            .or_else(|| self.find_job_any(first).map(|(m, _, _)| m));
         let Some(meta) = found else {
             return ui.notify(&t!("ジョブが見つかりません: {id}", id = *first), NotifyLevel::Warning);
         };
-        let dir = self.find_job(&meta.id).map(|(_, d, _)| d).unwrap_or_default();
+        let dir = self.find_job_any(&meta.id).map(|(_, d, _)| d).unwrap_or_default();
         let tail = tail_of(&log_path_of(&dir), 40);
         let lines = [
             self.job_row(&meta),
@@ -1179,6 +1198,43 @@ impl Bg {
             },
         ];
         ui.notify(&lines.join("\n"), NotifyLevel::Info);
+    }
+}
+
+/// The directory `bg_start` runs in when the call names one (`~` and relative paths resolved from the
+/// session's working directory, as the other tools resolve a path): what the permission check sees
+/// and what the command starts in. `None`: the session's own directory.
+fn start_dir(args: &sasacode_ai::JsonObject, cwd: &Path) -> Option<PathBuf> {
+    let named = args.get("cwd").and_then(Value::as_str).filter(|c| !c.is_empty())?;
+    Some(PathBuf::from(sasacode_tools::util::resolve_path(named, cwd)))
+}
+
+/// What the permission rules see of a `bg_start`: the command, or, in a directory other than the
+/// session's, `cd '<dir>' && <command>` as bash would be written. Deny and ask rules still meet the
+/// command as one piece of the chain; "always allow" makes its rule from the whole, and a rule for the
+/// command alone does not cover the `cd`, so a command allowed here is not allowed elsewhere.
+fn start_target(args: &sasacode_ai::JsonObject, session_cwd: &Path) -> String {
+    let command = args.get("command").and_then(Value::as_str).unwrap_or("").to_string();
+    match start_dir(args, session_cwd) {
+        Some(dir) if !same_dir(&dir, session_cwd) => {
+            let dir = dir.display().to_string().replace('\'', "'\\''");
+            format!("cd '{dir}' && {command}")
+        }
+        _ => command,
+    }
+}
+
+/// Whether two paths are the same directory, as the file system sees them where it can.
+fn same_dir(a: &Path, b: &Path) -> bool {
+    a == b || matches!((std::fs::canonicalize(a), std::fs::canonicalize(b)), (Ok(x), Ok(y)) if x == y)
+}
+
+/// What an approval shows of a `bg_start`: the command, and the directory when it is not the session's.
+fn start_summary(args: &sasacode_ai::JsonObject) -> String {
+    let command = args.get("command").and_then(Value::as_str).unwrap_or("");
+    match args.get("cwd").and_then(Value::as_str).filter(|c| !c.is_empty()) {
+        Some(dir) => format!("{command} (in {dir})"),
+        None => command.to_string(),
     }
 }
 
@@ -1201,7 +1257,7 @@ pub fn plugin(api: PluginApi) -> BoxFuture<'static, anyhow::Result<()>> {
             foreign_grace_ms: num(settings.get("foreignGraceMs"), DEFAULT_FOREIGN_GRACE_MS, 0.0),
             auto_notify: settings.get("autoNotify") != Some(&Value::Bool(false)),
         };
-        if let Err(e) = std::fs::create_dir_all(&s.root) {
+        if let Err(e) = create_private_dir(&s.root) {
             api.log(&format!("background-sessions: cannot create {}: {e}", s.root.display()));
         }
         let bg = Arc::new(Bg {
@@ -1281,6 +1337,7 @@ pub fn plugin(api: PluginApi) -> BoxFuture<'static, anyhow::Result<()>> {
 
         // ── tools ──────────────────────────────────────────────────────────
         let starter = bg.clone();
+        let target_cwd = bg.clone();
         api.register_tool(
             ToolDef::new(
                 "bg_start",
@@ -1305,11 +1362,15 @@ pub fn plugin(api: PluginApi) -> BoxFuture<'static, anyhow::Result<()>> {
                 },
             )
             .concurrent(true)
-            .match_target(|a| a.get("command").and_then(Value::as_str).unwrap_or("").to_string())
+            // The command, and the directory when it is not the session's: a rule made for the
+            // command here does not cover it elsewhere.
+            .match_target(move |a| start_target(a, Path::new(&target_cwd.cwd())))
+            // The directory it runs in, resolved as the tool resolves it, is a path of the call.
+            .paths(|a, cwd| start_dir(a, cwd).map(|d| d.display().to_string()).into_iter().collect())
             // Judged by the rules written for bash (guard preset, the user's bash(sudo *) deny rules,
             // bash(...) allow rules) against the command: no way around them.
             .permissions_as("bash")
-            .summary(|a| a.get("command").and_then(Value::as_str).unwrap_or("").to_string())
+            .summary(start_summary)
             .into_ref(),
         );
 
@@ -1335,6 +1396,8 @@ pub fn plugin(api: PluginApi) -> BoxFuture<'static, anyhow::Result<()>> {
             )
             .concurrent(true)
             .paths(move |_a, _cwd| vec![list_root.clone()])
+            // What the rule below matches: a listing of other projects' jobs (their commands) asks.
+            .match_target(|a| if a.get("all").and_then(Value::as_bool) == Some(true) { "all" } else { "" }.to_string())
             .summary(|_a| "background jobs".to_string())
             .into_ref(),
         );
@@ -1403,10 +1466,12 @@ pub fn plugin(api: PluginApi) -> BoxFuture<'static, anyhow::Result<()>> {
             .summary(|a| format!("kill {}", a.get("id").and_then(Value::as_str).unwrap_or("")))
             .into_ref(),
         );
-        // Reading our own job logs cannot hurt anything; bg_start / bg_kill keep the normal permission
-        // flow (bg_start as bash, via permissions_as).
+        // Reading this directory's job logs cannot hurt anything; bg_start / bg_kill keep the normal
+        // permission flow (bg_start as bash, via permissions_as). A listing of every directory's jobs
+        // shows other projects' commands, so it asks.
         api.add_permission_rules(PermissionRules {
             allow: vec!["bg_list".into(), "bg_output".into()],
+            ask: vec!["bg_list(all)".into()],
             ..PermissionRules::default()
         })?;
 

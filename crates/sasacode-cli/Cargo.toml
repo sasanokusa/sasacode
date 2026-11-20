@@ -8,6 +8,7 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+sasacode-protocol = { path = "../sasacode-protocol" }
 sasacode-ai.workspace = true
 sasacode-plugin-api.workspace = true
 sasacode-agent.workspace = true
@@ -39,6 +40,5 @@ name = "sasacode"
 path = "src/main.rs"
 
 [dev-dependencies]
-sasacode-protocol = { path = "../sasacode-protocol" }
 sasacode-testing.workspace = true
 tempfile.workspace = true

@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 // sasacode from npm: a launcher, not the program. The first run downloads the single binary of
 // this package's version for this machine from GitHub Releases, checks it against the release's
-// SHA256SUMS, keeps it under ~/.sasacode/npm-bin, and every run then starts it. The platform rules
-// are the ones scripts/install.sh uses.
+// SHA256SUMS (and, when gh is installed and signed in, the release's signed build provenance), keeps
+// it under ~/.sasacode/npm-bin, and every run then starts it. The platform rules are the ones
+// scripts/install.sh uses.
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
@@ -12,7 +13,9 @@ import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const version = JSON.parse(readFileSync(join(here, "..", "package.json"), "utf8")).version;
-const base = (process.env.SASACODE_DOWNLOAD_BASE ?? "https://github.com/sasanokusa/sasacode/releases").replace(/\/$/, "");
+const repo = "sasanokusa/sasacode";
+const officialBase = `https://github.com/${repo}/releases`;
+const base = (process.env.SASACODE_DOWNLOAD_BASE ?? officialBase).replace(/\/$/, "");
 
 function die(message) {
   process.stderr.write(`sasacode (npm): ${message}\n`);
@@ -55,10 +58,53 @@ function readSafe(path) {
   }
 }
 
+/** https, or http to this machine (a test server): releases come from nowhere else. */
+function secure(url) {
+  try {
+    const { protocol, hostname } = new URL(url);
+    return protocol === "https:" || (protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(hostname.toLowerCase()));
+  } catch {
+    return false;
+  }
+}
+
 async function download(url) {
-  const res = await fetch(url);
-  if (!res.ok) die(`download failed: ${url} (${res.status})`);
-  return Buffer.from(await res.arrayBuffer());
+  // Redirects are followed by hand, so that none of them can lead away from https.
+  let at = url;
+  for (let hops = 0; hops < 10; hops++) {
+    if (!secure(at)) die(`${at} is not an https URL (http is allowed only for localhost)`);
+    const res = await fetch(at, { redirect: "manual" });
+    const next = res.headers.get("location");
+    if (res.status >= 300 && res.status < 400 && next) {
+      at = new URL(next, at).href;
+      continue;
+    }
+    if (!res.ok) die(`download failed: ${url} (${res.status})`);
+    return Buffer.from(await res.arrayBuffer());
+  }
+  return die(`download failed: ${url} (too many redirects)`);
+}
+
+/**
+ * The signed build provenance of a downloaded file (`gh attestation verify`), for the official
+ * releases. A failed check stops here; one that cannot be made (no gh, not signed in) says so, with
+ * how to make it by hand.
+ */
+function checkProvenance(path, file) {
+  const byHand = (why) =>
+    process.stderr.write(`sasacode (npm): build provenance was not checked (${why}). By hand: gh attestation verify ${file} --repo ${repo}\n`);
+  if (base !== officialBase) return byHand("not the official releases");
+  const gh = (args) => spawnSync("gh", args, { encoding: "utf8", windowsHide: true, timeout: 120_000 });
+  const auth = gh(["auth", "status"]);
+  if (auth.error?.code === "ENOENT") return byHand("gh is not installed");
+  if (auth.status !== 0) return byHand("gh is not signed in");
+  const verified = gh(["attestation", "verify", path, "--repo", repo]);
+  if (verified.status !== 0) {
+    process.stderr.write(`${verified.stdout ?? ""}${verified.stderr ?? ""}`);
+    rmSync(dirname(path), { recursive: true, force: true }); // die() exits without reaching install()'s finally
+    die(`build provenance check failed for ${file}; nothing was installed`);
+  }
+  process.stderr.write("sasacode (npm): build provenance verified\n");
 }
 
 /** Download, check and keep the binary `name` at `dest`. With `mayNotRun`, false when it does not run here. */
@@ -75,6 +121,7 @@ async function install(name, dest, mayNotRun = false) {
   const tmp = mkdtempSync(join(dirname(dest), ".download-"));
   try {
     writeFileSync(join(tmp, file), archive);
+    checkProvenance(join(tmp, file), file);
     // Windows' own tar (bsdtar) reads .zip; a GNU tar earlier on the PATH (Git's) would not.
     const tar = windows ? join(process.env.SystemRoot ?? "C:\\Windows", "System32", "tar.exe") : "tar";
     if (spawnSync(tar, [windows ? "-xf" : "-xzf", file], { cwd: tmp, windowsHide: true }).status !== 0) die(`could not unpack ${file}`);

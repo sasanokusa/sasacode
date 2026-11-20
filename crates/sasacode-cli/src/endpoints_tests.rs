@@ -163,7 +163,7 @@ async fn lists_models_from_both_kinds_with_context_sizes() {
         ..Default::default()
     };
     assert_eq!(
-        list_models(&a, Some("k"), &signal, None).await.unwrap(),
+        list_models("a", &a, Some("k"), &signal, None).await.unwrap(),
         [ListedModel {
             id: "claude-local".into(),
             context_window: Some(200_000),
@@ -174,7 +174,7 @@ async fn lists_models_from_both_kinds_with_context_sizes() {
     );
     let mut l = openai(&format!("{}/v1", llamacpp.url()));
     l.llamacpp = Some(true);
-    let listed = list_models(&l, None, &signal, None).await.unwrap();
+    let listed = list_models("l", &l, None, &signal, None).await.unwrap();
     // /props wins over meta.n_ctx
     assert_eq!(
         (listed[0].id.as_str(), listed[0].context_window, listed[0].max_context),
@@ -202,7 +202,9 @@ async fn lm_studio_is_told_apart_by_api_v0_models_a_loaded_models_size_is_what_i
         ..openai(&format!("{url}/v1"))
     };
     assert_eq!(providers["studio"], studio);
-    let listed = list_models(&providers["studio"], None, &signal, None).await.unwrap();
+    let listed = list_models("studio", &providers["studio"], None, &signal, None)
+        .await
+        .unwrap();
     assert_eq!(
         listed
             .iter()

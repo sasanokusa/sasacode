@@ -24,6 +24,7 @@ use sasacode_ai::now_ms;
 use sasacode_host::{Lang, current_lang, t};
 use sasacode_plugin_api::{Command, NotifyLevel, PluginApi, SelectOption, ToolKind, hook};
 
+use crate::regular_file::read_capped;
 use crate::repair::js::{js_trim, num_setting};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -110,21 +111,11 @@ pub(crate) fn snapshot(path: &str, max_kb: f64) -> Change {
             ..Change::new(path)
         };
     }
-    let Ok(meta) = std::fs::metadata(p) else {
-        return Change {
-            skipped: Some(true),
-            ..Change::new(path)
-        };
-    };
-    if meta.len() as f64 > max_kb * 1024.0 {
-        return Change {
-            skipped: Some(true),
-            ..Change::new(path)
-        };
-    }
-    match std::fs::read(p) {
+    // Read before the call is judged: a regular file only, and no more than the limit (a FIFO or a
+    // device is not read; one that keeps growing is cut off and not kept).
+    match read_capped(p, (max_kb * 1024.0).max(0.0) as u64) {
         // Not UTF-8 text: as a string its undecodable bytes would become U+FFFD, and /undo would write those back (#117).
-        Ok(bytes) => match String::from_utf8(bytes) {
+        Some(bytes) => match String::from_utf8(bytes) {
             Ok(text) if !text.as_bytes().contains(&0) => Change {
                 before: Some(text),
                 ..Change::new(path)
@@ -140,7 +131,7 @@ pub(crate) fn snapshot(path: &str, max_kb: f64) -> Change {
                 ..Change::new(path)
             },
         },
-        Err(_) => Change {
+        None => Change {
             skipped: Some(true),
             ..Change::new(path)
         },
@@ -228,8 +219,9 @@ pub fn plugin(api: PluginApi) -> BoxFuture<'static, anyhow::Result<()>> {
                             if ch.created() {
                                 return Path::new(&ch.path).exists();
                             }
-                            // なくなったり読めなくなったりした: 戻せるに越したことはない
-                            std::fs::read(&ch.path).map_or(true, |now| now != ch.content())
+                            // なくなったり読めなくなったり、退避したものより大きくなったりした: 戻せるに越したことはない
+                            let before = ch.content();
+                            read_capped(Path::new(&ch.path), before.len() as u64).is_none_or(|now| now != before)
                         })
                         .collect();
                     if keep.is_empty() {

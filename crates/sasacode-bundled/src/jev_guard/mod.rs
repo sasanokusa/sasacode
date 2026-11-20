@@ -549,7 +549,13 @@ fn real(p: &str) -> String {
         head.push_str(&sep);
     }
     while !Path::new(&head).exists() && paths::dirname(&head) != head {
-        rest.insert(0, basename(&head));
+        // The last name as this system splits it (`\` too on Windows; `basename` is POSIX's).
+        let name = head
+            .trim_end_matches(paths::is_sep)
+            .rsplit(paths::is_sep)
+            .next()
+            .unwrap_or_default();
+        rest.insert(0, name.to_string());
         head = paths::dirname(&head);
     }
     // Spelled as realpathSync.native does: no `\\?\` on Windows (its `?` would read as a glob).
@@ -565,7 +571,7 @@ fn real(p: &str) -> String {
 
 /// git's output, or None when it fails or takes over two seconds.
 async fn git(cwd: &str, args: &[&str]) -> Option<String> {
-    let mut cmd = tokio::process::Command::new("git");
+    let mut cmd = crate::git_args::command();
     cmd.arg("-C").arg(cwd).args(args);
     apply_child_env(&mut cmd, &[]);
     cmd.stdin(Stdio::null())
@@ -738,7 +744,13 @@ pub struct CallFacts<'a> {
     pub user_request: Option<&'a str>,
     /// `os.homedir()`.
     pub home: &'a str,
+    /// Git may be run in the folder. Otherwise it is not: what it would say of the targets is
+    /// left unknown, and so not taken to be restorable.
+    pub trusted: bool,
 }
+
+/// A target's git state where git is not run.
+const GIT_UNREAD: &str = "unknown: git is not run in a folder not allowed for it (do not assume it can be restored)";
 
 /// The state Jev judges: facts the harness gathered, and the user's own words.
 pub async fn build_state(f: &CallFacts<'_>) -> JsonObject {
@@ -749,13 +761,45 @@ pub async fn build_state(f: &CallFacts<'_>) -> JsonObject {
         Some(c) => call.insert("command".into(), json!(clip(&redact(c), 4000))),
         None => call.insert("arguments".into(), json!(clip(&redact(&stringify(f.args)), 4000))),
     };
-    let written = f
-        .tool
-        .paths(f.args, Path::new(f.cwd))
-        .unwrap_or_else(|| command.as_deref().map(path_args).unwrap_or_default());
-    let top = git(f.cwd, &["rev-parse", "--show-toplevel"])
-        .await
-        .map(|t| js_trim(&t).to_string());
+    // Where the command runs, when the call names a directory: its relative paths are that
+    // directory's.
+    let run_dir = f
+        .args
+        .get("cwd")
+        .and_then(Value::as_str)
+        .filter(|c| !c.is_empty())
+        .map(|c| expand(c, f.cwd, f.home));
+    let in_command = |text: &str| -> Vec<String> {
+        path_args(text)
+            .into_iter()
+            .map(|p| match &run_dir {
+                Some(dir) => expand(&p, dir, f.home),
+                None => p,
+            })
+            .collect()
+    };
+    // A tool's own paths (the directory a command runs in) do not stand in for the command's.
+    let command_text = match f.args.get("command").and_then(Value::as_str) {
+        Some(c) => Some(c.to_string()),
+        None if f.tool.kind() == ToolKind::Exec => command.clone(),
+        None => None,
+    };
+    let written = match f.tool.paths(f.args, Path::new(f.cwd)) {
+        Some(mut own) => {
+            for p in command_text.as_deref().map(in_command).unwrap_or_default() {
+                if !own.contains(&p) {
+                    own.push(p);
+                }
+            }
+            own
+        }
+        None => command.as_deref().map(in_command).unwrap_or_default(),
+    };
+    let top = match f.trusted {
+        true => git(f.cwd, &["rev-parse", "--show-toplevel"]).await,
+        false => None,
+    }
+    .map(|t| js_trim(&t).to_string());
     // Spelled like the targets (C:/x from git on Windows).
     let root = top.filter(|t| !t.is_empty()).map(|t| real(&paths::resolve(&[&t])));
     let workspace = real(f.cwd);
@@ -779,7 +823,9 @@ pub async fn build_state(f: &CallFacts<'_>) -> JsonObject {
         } else {
             "outside the workspace"
         };
-        let git = if meta.is_some() {
+        let git = if meta.is_some() && !f.trusted {
+            GIT_UNREAD
+        } else if meta.is_some() {
             git_state(&place, root.as_deref()).await
         } else {
             "n/a"
@@ -915,7 +961,9 @@ impl Guard {
         self.deps
             .home
             .clone()
-            .unwrap_or_else(|| sasacode_plugin_api::home_dir().to_string_lossy().into_owned())
+            .or_else(|| sasacode_plugin_api::home_dir().map(|h| h.to_string_lossy().into_owned()))
+            // No home directory: `~` stays as written.
+            .unwrap_or_else(|| "~".into())
     }
 
     /// Named, or the first of Command Code / TypeSafe with a key (Command Code when neither has one,
@@ -1258,6 +1306,7 @@ pub fn plugin_with(api: PluginApi, deps: PluginDeps) -> BoxFuture<'static, anyho
                     cwd: &cwd,
                     user_request: user_request.as_deref(),
                     home: &home,
+                    trusted: crate::project_trust::is_trusted(&g.api.cwd()),
                 })
                 .await;
                 let Some(answers) = g.ask(&state).await else {

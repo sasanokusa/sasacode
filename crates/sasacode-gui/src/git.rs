@@ -18,6 +18,51 @@ const DIFFED: usize = 200;
 /// stopped, rather than leaving the git tab busy for good.
 const REMOTE_WAIT: Duration = Duration::from_secs(120);
 
+/// Given to every git the window runs, before the subcommand: no file-system monitor started from
+/// the repository's config, and no bare repository found in the folder unless one is named. The
+/// same as `sasacode-bundled`'s `git_args::GUARD`; a test compares the two.
+pub(crate) const GUARD: [&str; 4] = ["-c", "core.fsmonitor=false", "-c", "safe.bareRepository=explicit"];
+
+/// After a subcommand that shows a diff: no external diff program and no textconv filter from the
+/// repository's config. The same as `sasacode-bundled`'s `git_args::NO_DIFF_HELPERS`.
+pub(crate) const NO_DIFF_HELPERS: [&str; 2] = ["--no-ext-diff", "--no-textconv"];
+
+/// `git <sub>` (`diff` or `show`) uncolored, given [`NO_DIFF_HELPERS`], then `more`.
+fn shown<'a>(sub: &'a str, more: &[&'a str]) -> Vec<&'a str> {
+    let mut args = vec![sub, "--no-color"];
+    args.extend(NO_DIFF_HELPERS);
+    args.extend(more);
+    args
+}
+
+/// `git`, given [`GUARD`].
+pub(crate) fn command() -> Command {
+    let mut c = Command::new("git");
+    c.args(GUARD);
+    c
+}
+
+/// [`command`], to be awaited.
+pub(crate) fn async_command() -> tokio::process::Command {
+    let mut c = tokio::process::Command::new("git");
+    c.args(GUARD);
+    c
+}
+
+/// The same as [`GUARD`], for the git that another program (`gh`) runs: as the environment says
+/// it, when the environment does not already set config so.
+fn guard_env(c: &mut Command) {
+    if std::env::var_os("GIT_CONFIG_COUNT").is_some() {
+        return;
+    }
+    let pairs: Vec<(&str, &str)> = GUARD.chunks(2).filter_map(|pair| pair[1].split_once('=')).collect();
+    c.env("GIT_CONFIG_COUNT", pairs.len().to_string());
+    for (i, (key, value)) in pairs.into_iter().enumerate() {
+        c.env(format!("GIT_CONFIG_KEY_{i}"), key)
+            .env(format!("GIT_CONFIG_VALUE_{i}"), value);
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Status {
     /// The folder is in a git repository.
@@ -210,7 +255,15 @@ fn exec_with(
     envs: &[(&str, &str)],
 ) -> Result<String, String> {
     use std::io::{Read, Write};
-    let mut child = Command::new(program)
+    let mut command = if program == "git" {
+        command()
+    } else {
+        Command::new(program)
+    };
+    if program == "gh" {
+        guard_env(&mut command);
+    }
+    let mut child = command
         .args(args)
         .current_dir(cwd)
         .envs(envs.iter().copied())
@@ -287,12 +340,11 @@ fn top(cwd: &Path) -> Option<std::path::PathBuf> {
 pub fn commit_context(cwd: &Path) -> Result<(String, String), String> {
     let top = top(cwd).ok_or_else(|| "not a git repository".to_owned())?;
     let log = git(&top, &["log", "-10", "--format=%s"]).unwrap_or_default();
-    let staged = git(&top, &["diff", "--cached", "--quiet"]).is_err();
+    let staged = git(&top, &shown("diff", &["--cached", "--quiet"])).is_err();
     let mut change = if staged {
-        git(&top, &["diff", "--cached", "--no-color", "--no-ext-diff"])?
+        git(&top, &shown("diff", &["--cached"]))?
     } else {
-        git(&top, &["diff", "HEAD", "--no-color", "--no-ext-diff"])
-            .or_else(|_| git(&top, &["diff", "--no-color", "--no-ext-diff"]))?
+        git(&top, &shown("diff", &["HEAD"])).or_else(|_| git(&top, &shown("diff", &[])))?
     };
     if !staged {
         let new = git(&top, &["ls-files", "--others", "--exclude-standard"]).unwrap_or_default();
@@ -341,7 +393,10 @@ pub fn pr_context(cwd: &Path) -> Result<PrContext, String> {
     let top = top(cwd).ok_or_else(|| "not a git repository".to_owned())?;
     let base = base_of(&top).ok_or_else(|| "no branch to compare with".to_owned())?;
     let range = format!("{base}..HEAD");
-    let log = git(&top, &["log", "--reverse", "--format=%s%x1f%b%x1e", &range])?;
+    let log = git(
+        &top,
+        &["log", "--reverse", "--format=%s%x1f%b%x1e", "--end-of-options", &range],
+    )?;
     let commits = log
         .split('\u{1e}')
         .filter_map(|c| {
@@ -352,8 +407,8 @@ pub fn pr_context(cwd: &Path) -> Result<PrContext, String> {
         .collect();
     let since = format!("{base}...HEAD");
     Ok(PrContext {
-        stat: git(&top, &["diff", "--stat", "--no-color", &since]).unwrap_or_default(),
-        diff: git(&top, &["diff", "--no-color", "--no-ext-diff", &since]).unwrap_or_default(),
+        stat: git(&top, &shown("diff", &["--stat", "--end-of-options", &since])).unwrap_or_default(),
+        diff: git(&top, &shown("diff", &["--end-of-options", &since])).unwrap_or_default(),
         base,
         commits,
     })
@@ -436,7 +491,7 @@ fn new_file(file: &Path) -> Diff {
 /// `git diff` of `path`: what is staged (from the last commit, or from nothing before the first),
 /// else what is not.
 fn raw_diff(top: &Path, path: &str, staged: bool) -> Result<String, String> {
-    let mut args = vec!["diff", "--no-color", "--no-ext-diff"];
+    let mut args = shown("diff", &[]);
     if staged {
         args.push("--cached");
     }
@@ -745,7 +800,7 @@ pub fn apply(cwd: &Path, op: &Op, branch: Option<&str>) -> Result<String, String
             }
         }
         Op::Commit(message) => {
-            let staged = git(&top, &["diff", "--cached", "--quiet"]).is_err();
+            let staged = git(&top, &shown("diff", &["--cached", "--quiet"])).is_err();
             if !staged {
                 git(&top, &["add", "-A"])?;
             }
@@ -756,9 +811,12 @@ pub fn apply(cwd: &Path, op: &Op, branch: Option<&str>) -> Result<String, String
             let upstream = git(&top, &["rev-parse", "--abbrev-ref", "@{upstream}"]).is_ok();
             match (upstream, branch) {
                 (true, _) => run_within(&top, "git", &["push", "-q"], Some(REMOTE_WAIT)),
-                (false, Some(branch)) => {
-                    run_within(&top, "git", &["push", "-q", "-u", "origin", branch], Some(REMOTE_WAIT))
-                }
+                (false, Some(branch)) => run_within(
+                    &top,
+                    "git",
+                    &["push", "-q", "-u", "--end-of-options", "origin", branch],
+                    Some(REMOTE_WAIT),
+                ),
                 (false, None) => Err("no branch to push".into()),
             }
             .map(|out| if out.is_empty() { "pushed".to_owned() } else { out })
@@ -780,7 +838,7 @@ pub fn apply(cwd: &Path, op: &Op, branch: Option<&str>) -> Result<String, String
             };
             exec(&top, "git", args, None, Some(&patch)).map(|out| out.trim().to_owned())
         }
-        Op::Switch(branch) => git(&top, &["switch", "-q", branch]).map(|_| branch.clone()),
+        Op::Switch(branch) => git(&top, &["switch", "-q", "--end-of-options", branch]).map(|_| branch.clone()),
         Op::NewBranch(name) => git(&top, &["switch", "-q", "-c", name.trim()]).map(|_| name.trim().to_owned()),
         Op::Merge(how) => run_within(
             &top,
@@ -874,10 +932,11 @@ pub fn branch_diff(cwd: &Path, whitespace: bool) -> Result<Scoped, String> {
     let top = top(cwd).ok_or_else(|| "not a git repository".to_owned())?;
     let base = base_of(&top).ok_or_else(|| "no branch to compare with".to_owned())?;
     let since = format!("{base}...HEAD");
-    let mut args = vec!["diff", "--no-color", "--no-ext-diff", since.as_str()];
+    let mut args = shown("diff", &[]);
     if !whitespace {
         args.push("-w");
     }
+    args.extend(["--end-of-options", since.as_str()]);
     Ok(Scoped {
         files: split_diff(&git(&top, &args)?),
         base,
@@ -892,7 +951,7 @@ pub fn commits(cwd: &Path) -> Vec<(String, String)> {
     let range = base_of(&top).map(|b| format!("{b}..HEAD"));
     let mut args = vec!["log", "--format=%h%x1f%s", "-50"];
     if let Some(range) = &range {
-        args.push(range);
+        args.extend(["--end-of-options", range]);
     }
     let listed = |args: &[&str]| -> Vec<(String, String)> {
         git(&top, args)
@@ -912,10 +971,11 @@ pub fn commits(cwd: &Path) -> Vec<(String, String)> {
 /// What one commit changed.
 pub fn commit_diff(cwd: &Path, sha: &str, whitespace: bool) -> Result<Scoped, String> {
     let top = top(cwd).ok_or_else(|| "not a git repository".to_owned())?;
-    let mut args = vec!["show", "--no-color", "--no-ext-diff", "--format=", sha];
+    let mut args = shown("show", &["--format="]);
     if !whitespace {
         args.push("-w");
     }
+    args.extend(["--end-of-options", sha]);
     Ok(Scoped {
         files: split_diff(&git(&top, &args)?),
         base: format!("{sha}^"),
@@ -927,15 +987,12 @@ pub fn commit_diff(cwd: &Path, sha: &str, whitespace: bool) -> Result<Scoped, St
 /// are (the files' contents are kept as objects, as `git add` keeps them). A turn's start and end
 /// are compared with these. None outside a repository.
 pub fn snapshot(cwd: &Path) -> Option<String> {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static N: AtomicU64 = AtomicU64::new(0);
     let top = top(cwd)?;
     let index = top.join(git(&top, &["rev-parse", "--git-path", "index"]).ok()?);
-    let own = std::env::temp_dir().join(format!(
-        "sasacode-turn-{}-{}.index",
-        std::process::id(),
-        N.fetch_add(1, Ordering::Relaxed)
-    ));
+    // In a folder of its own that no other user can open, named so it cannot be guessed; git
+    // writes its lock next to the index. Removed with all in it when done.
+    let dir = private_dir("sasacode-turn-")?;
+    let own = dir.path().join("index");
     // Begun from the repository's, git does not read again the files it already knows unchanged.
     if index.is_file() && std::fs::copy(&index, &own).is_err() {
         return None;
@@ -943,8 +1000,20 @@ pub fn snapshot(cwd: &Path) -> Option<String> {
     let env = [("GIT_INDEX_FILE", own.to_str()?)];
     let tree = exec_with(&top, "git", &["add", "-A", "."], None, None, &env)
         .and_then(|_| exec_with(&top, "git", &["write-tree"], None, None, &env));
-    let _ = std::fs::remove_file(&own);
     tree.ok().map(|t| t.trim().to_owned()).filter(|t| !t.is_empty())
+}
+
+/// A new folder in the system's temporary one, named `prefix` and what cannot be guessed, that
+/// only the user can open; removed with what is in it when dropped.
+pub(crate) fn private_dir(prefix: &str) -> Option<tempfile::TempDir> {
+    let mut b = tempfile::Builder::new();
+    b.prefix(prefix);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        b.permissions(std::fs::Permissions::from_mode(0o700));
+    }
+    b.tempdir().ok()
 }
 
 /// What a turn changed: from the tree taken as it began to the one taken as it ended, or to the
@@ -959,10 +1028,11 @@ pub fn turn_diff(cwd: &Path, from: &str, to: Option<&str>, whitespace: bool) -> 
             now.as_str()
         }
     };
-    let mut args = vec!["diff", "--no-color", "--no-ext-diff", from, to];
+    let mut args = shown("diff", &[]);
     if !whitespace {
         args.push("-w");
     }
+    args.extend(["--end-of-options", from, to]);
     Ok(Scoped {
         files: split_diff(&git(&top, &args)?),
         base: String::new(),
@@ -1145,7 +1215,9 @@ mod tests {
         apply(&dir, &Op::Push, Some("main")).unwrap();
         let s = status(&dir);
         assert!(s.upstream && s.ahead == 0);
-        assert_eq!(git(&bare, &["log", "-1", "--format=%s", "main"]).unwrap(), "first");
+        // A bare repository is read only when named.
+        let named = ["--git-dir", bare.to_str().unwrap(), "log", "-1", "--format=%s", "main"];
+        assert_eq!(git(&dir, &named).unwrap(), "first");
 
         for n in 0..DIFFED + 5 {
             std::fs::write(dir.join(format!("new{n:03}.txt")), "x\n").unwrap();
@@ -1233,6 +1305,9 @@ mod tests {
         apply(&dir, &Op::Switch("main".into()), None).unwrap();
         assert_eq!(status(&dir).branch.as_deref(), Some("main"));
         assert!(apply(&dir, &Op::Switch("nowhere".into()), None).is_err());
+        // A branch's name is never taken as an option: no such branch, and HEAD stays on main.
+        assert!(apply(&dir, &Op::Switch("--detach".into()), None).is_err());
+        assert_eq!(status(&dir).branch.as_deref(), Some("main"));
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -1297,5 +1372,108 @@ mod tests {
             assert_eq!(status(&dir), Status::default());
         }
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn the_options_given_to_git_are_those_the_shipped_plugins_give() {
+        let bundled = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../sasacode-bundled/src/git_args.rs"
+        ));
+        let quoted = |all: &[&str]| all.iter().map(|a| format!("{a:?}")).collect::<Vec<_>>().join(", ");
+        for (name, ours) in [("GUARD", &GUARD[..]), ("NO_DIFF_HELPERS", &NO_DIFF_HELPERS[..])] {
+            let line = format!("pub const {name}: [&str; {}] = [{}];", ours.len(), quoted(ours));
+            assert!(bundled.contains(&line), "{line}");
+        }
+        let c = command();
+        let args: Vec<_> = c.get_args().map(|a| a.to_string_lossy().into_owned()).collect();
+        assert_eq!(args, GUARD);
+        assert_eq!(
+            shown("diff", &["x"]),
+            ["diff", "--no-color", "--no-ext-diff", "--no-textconv", "x"]
+        );
+    }
+
+    /// A repository whose config starts a program that leaves `marker` when git reads the working
+    /// tree, with a change not committed.
+    #[cfg(unix)]
+    fn monitored(repo: &Path, marker: &Path) {
+        std::fs::create_dir_all(repo).unwrap();
+        git(repo, &["init", "-q", "-b", "main"]).unwrap();
+        std::fs::write(repo.join("a.txt"), "one\n").unwrap();
+        git(repo, &["add", "-A"]).unwrap();
+        let who = [
+            "-c",
+            "user.email=t@example.invalid",
+            "-c",
+            "user.name=t",
+            "-c",
+            "commit.gpgsign=false",
+        ];
+        git(repo, &[&who[..], &["commit", "-q", "-m", "first"]].concat()).unwrap();
+        std::fs::write(repo.join("a.txt"), "two\n").unwrap();
+        let command = format!("touch '{}'; false", marker.display());
+        git(repo, &["config", "core.fsmonitor", &command]).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn reading_a_repository_starts_no_program_its_config_names() {
+        let dir = tempfile::tempdir().unwrap();
+        let (repo, marker) = (dir.path().join("repo"), dir.path().join("marker"));
+        monitored(&repo, &marker);
+        // git as anyone runs it there does start it: what follows is not idle.
+        let plain = Command::new("git")
+            .args(["status", "--porcelain"])
+            .current_dir(&repo)
+            .output()
+            .unwrap();
+        assert!(plain.status.success());
+        if !marker.exists() {
+            eprintln!("this git does not start a config's fsmonitor; nothing to compare with");
+            return;
+        }
+        std::fs::remove_file(&marker).unwrap();
+        let read = status(&repo);
+        assert!(read.repo && read.files.len() == 1, "{read:?}");
+        assert!(snapshot(&repo).is_some());
+        let _ = commit_context(&repo);
+        let _ = branches(&repo);
+        let _ = commits(&repo);
+        let _ = crate::composer::project_files(&repo, true);
+        assert!(!marker.exists(), "a program from the repository's config ran");
+        // The git another program (gh) runs is told the same through its environment.
+        if std::env::var_os("GIT_CONFIG_COUNT").is_none() {
+            let mut c = Command::new("git");
+            guard_env(&mut c);
+            let out = c.args(["status", "--porcelain"]).current_dir(&repo).output().unwrap();
+            assert!(out.status.success());
+            assert!(
+                !marker.exists(),
+                "a program from the repository's config ran under gh's git"
+            );
+        }
+    }
+
+    #[test]
+    fn a_bare_repository_in_the_folder_is_not_read_unless_named() {
+        let dir = tempfile::tempdir().unwrap();
+        let bare = dir.path().join("b.git");
+        Command::new("git")
+            .args(["init", "-q", "--bare"])
+            .arg(&bare)
+            .output()
+            .unwrap();
+        // Found there by a git not told otherwise; not by the window's.
+        let plain = Command::new("git")
+            .args(["rev-parse", "--git-dir"])
+            .current_dir(&bare)
+            .output()
+            .unwrap();
+        if plain.status.success() {
+            assert!(git(&bare, &["rev-parse", "--git-dir"]).is_err());
+        }
+        let named = ["--git-dir", bare.to_str().unwrap(), "rev-parse", "--is-bare-repository"];
+        assert_eq!(git(dir.path(), &named).as_deref(), Ok("true"));
     }
 }

@@ -353,12 +353,16 @@ impl Tool {
             Kind::Edit => t.arg("path").map(|path| Change {
                 path: path.to_owned(),
                 created: Some(false),
-                diff: Diff::replace(t.arg("old_string").unwrap_or(""), t.arg("new_string").unwrap_or("")),
+                // Shown with no control character and none that would reorder a line.
+                diff: Diff::replace(
+                    &crate::plain::plain(t.arg("old_string").unwrap_or("")),
+                    &crate::plain::plain(t.arg("new_string").unwrap_or("")),
+                ),
             }),
             Kind::Write => t.arg("path").map(|path| Change {
                 path: path.to_owned(),
                 created: None,
-                diff: Diff::create(t.arg("content").unwrap_or("")),
+                diff: Diff::create(&crate::plain::plain(t.arg("content").unwrap_or(""))),
             }),
             _ => None,
         };
@@ -919,7 +923,17 @@ impl Transcript {
                 }
                 // A reply that did not stream (or streamed only in part) is shown from the whole message.
                 for (index, c) in a.content.iter().enumerate() {
-                    if self.streaming.contains_key(&index) {
+                    if let Some(&at) = self.streaming.get(&index) {
+                        // The whole message has what the CLI hid; a value split across deltas is raw in what streamed.
+                        match (c, self.current().steps.get_mut(at)) {
+                            (Content::Text { text }, Some(Step::Text(md))) if md.raw != *text => {
+                                **md = Markdown::new(text)
+                            }
+                            (Content::Thinking { thinking, .. }, Some(Step::Thinking(t))) if t != thinking => {
+                                *t = thinking.clone()
+                            }
+                            _ => {}
+                        }
                         continue;
                     }
                     match c {
@@ -1282,6 +1296,39 @@ mod tests {
 
     fn lines(e: &Exchange) -> Vec<String> {
         e.steps.iter().map(line).collect()
+    }
+
+    #[test]
+    fn a_value_split_across_deltas_is_what_the_whole_message_says_once_it_ends() {
+        let end = |text: &str, thinking: &str| {
+            format!(
+                r#"{{"type":"message_end","message":{{"role":"assistant","content":[{{"type":"thinking","thinking":"{thinking}"}},{{"type":"text","text":"{text}"}}],"api":"x","provider":"p","model":"m","usage":{{"input":1,"output":1,"cacheRead":0,"cacheWrite":0,"cost":0}},"stopReason":"stop","timestamp":1}}}}"#
+            )
+        };
+        let delta = |kind: &str, index: usize, text: &str| {
+            format!(r#"{{"type":"message_update","event":{{"type":"{kind}","index":{index},"delta":"{text}"}}}}"#)
+        };
+        let mut t = Transcript::default();
+        let now = Instant::now();
+        t.send("say it", now);
+        for line in [
+            r#"{"type":"message_start"}"#.to_string(),
+            delta("thinking_delta", 0, "plan key=sk-spl"),
+            delta("thinking_delta", 0, "it-0123456789"),
+            delta("text_delta", 1, "key=sk-spl"),
+            delta("text_delta", 1, "it-0123456789 ok"),
+            end("key=[REDACTED] ok", "plan key=[REDACTED]"),
+        ] {
+            t.apply(&parse_event(&line).unwrap(), now);
+        }
+        let shown = lines(&t.exchanges[0]);
+        assert!(shown.contains(&"text:key=[REDACTED] ok".to_string()), "{shown:?}");
+        assert!(shown.contains(&"thinking:plan key=[REDACTED]".to_string()), "{shown:?}");
+        let exported = crate::export::markdown(None, &t, crate::i18n::Strings::get("ja"));
+        assert!(
+            exported.contains("key=[REDACTED] ok") && !exported.contains("sk-spl"),
+            "{exported}"
+        );
     }
 
     #[test]

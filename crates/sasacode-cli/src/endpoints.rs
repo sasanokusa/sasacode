@@ -68,6 +68,8 @@ pub async fn resolve_endpoints_in(
                 return (Ok(found), false);
             }
             let key = get_key(name.clone()).await;
+            // Built before the clock starts: building it reads the system's proxy settings, slow on a busy machine.
+            let _ = sasacode_ai::http::api_client();
             let deadline = Deadline::after(Duration::from_millis(4000));
             (detect_endpoint(url, key.as_deref(), &deadline.token).await, true)
         }
@@ -209,7 +211,7 @@ pub async fn endpoint_command_in(
         let models = match serde_json::from_value::<ProviderConfig>(Value::Object(entry.clone())) {
             Ok(provider) => {
                 let deadline = Deadline::after(Duration::from_millis(10_000));
-                list_models(&provider, keyed, &deadline.token, None)
+                list_models(name, &provider, keyed, &deadline.token, None)
                     .await
                     .unwrap_or_default()
             }

@@ -1,16 +1,16 @@
 name: release
 # Push a tag like v0.20.0: check that the tag matches the version, build single-file binaries with
-# `cargo xtask build` (macOS ones on macOS, so they are natively signed; Linux ones with cross, against
-# an old glibc and as static musl binaries; Windows ones on Windows, with the C runtime linked in, as
-# .zip), start every one of them on a machine that can run it, then attach them to a GitHub release
-# with build provenance. Actions are pinned to commits (Dependabot keeps them current); Rust is the
-# runner's rustup, updated to stable.
+# `cargo xtask build` (macOS ones on macOS, so they are natively signed; Linux ones with cross, in the
+# images Cross.toml pins by digest, against an old glibc and as static musl binaries; Windows ones on
+# Windows, with the C runtime linked in, as .zip), start every one of them on a machine that can run
+# it, then attach them to a GitHub release with build provenance. Actions are pinned to commits
+# (Dependabot keeps them current); Rust is the runner's rustup, updated to stable.
 # A pull request that changes this workflow or the build runs everything but the release itself.
 on:
   push:
     tags: ["v*"]
   pull_request:
-    paths: [.github/workflows/release.yml, xtask/**, .cargo/**, Cargo.toml, Cargo.lock, scripts/install.ps1, npm/**]
+    paths: [.github/workflows/release.yml, xtask/**, .cargo/**, Cross.toml, Cargo.toml, Cargo.lock, scripts/install.ps1, npm/**]
   workflow_dispatch:
 permissions:
   contents: read
@@ -58,7 +58,11 @@ jobs:
         run: rustup target add ${{ matrix.add }}
       - if: matrix.cross
         run: cargo install cross --locked --version 0.2.5
+      # SASACODE_COMMIT is embedded in the binary: `sasacode gui install` builds the window from this
+      # commit, which a moved tag cannot change. (cross passes it on: Cross.toml.)
       - run: cargo xtask build --targets ${{ matrix.targets }} ${{ matrix.cross }}
+        env:
+          SASACODE_COMMIT: ${{ github.sha }}
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: bin-${{ matrix.targets }}

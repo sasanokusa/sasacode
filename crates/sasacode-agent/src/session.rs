@@ -258,6 +258,7 @@ impl SessionFile {
         let mut st = self.lock();
         if js_len(secret) >= 8 && !st.secrets.iter().any(|s| s == secret) {
             st.secrets.push(secret.to_string());
+            sasacode_plugin_api::hide_secrets([secret]);
         }
     }
 
@@ -291,6 +292,7 @@ fn redacted_line(entry: &SessionEntry, secrets: &[String]) -> io::Result<String>
     for s in secrets {
         line = line.replace(s.as_str(), "[REDACTED]");
     }
+    let mut line = sasacode_plugin_api::redact_secrets(&line).into_owned();
     line.push('\n');
     Ok(line)
 }
@@ -773,6 +775,17 @@ mod tests {
         assert_eq!(opened.secrets(), ["sk-secret-123456"]);
         assert_eq!(opened.id(), s.id());
         assert!(!format!("{opened:?}").contains("sk-secret"));
+    }
+
+    #[test]
+    fn values_hidden_for_the_whole_process_are_redacted_in_a_log_that_was_never_given_them() {
+        sasacode_plugin_api::hide_secrets(["oauth-token-session-t-0123456789", "short"]);
+        let root = TempDir::new("process-secrets");
+        let s = SessionFile::create(&root.0.join("sessions"), "/proj", vec![]).unwrap();
+        s.append(&msg(user("token=oauth-token-session-t-0123456789 word=short")))
+            .unwrap();
+        let raw = fs::read_to_string(s.path()).unwrap();
+        assert!(raw.contains("token=[REDACTED] word=short"), "{raw}");
     }
 
     #[test]

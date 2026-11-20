@@ -12,7 +12,7 @@ use axum::Router;
 use serde_json::{Value, json};
 
 use sasacode_bundled::{auto_reconnect, background_sessions, goal};
-use sasacode_plugin_api::{Lang, StopCause, ToolResult};
+use sasacode_plugin_api::{Decision, Lang, StopCause, ToolResult};
 use support_net::*;
 
 async fn fake(plugin: sasacode_plugin_api::PluginFn, root: &Path, settings: Value, entries: Entries) -> Arc<FakeHost> {
@@ -172,6 +172,130 @@ async fn background_sessions_a_job_two_sessions_watched_is_reported_once_and_bg_
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn background_sessions_a_job_of_another_working_directory_is_not_read_and_listing_every_directory_asks() {
+    let _l = lang(Lang::Ja).await;
+    let root = temp_dir("sasacode-adopted-");
+    let home = root.path().join("home-cwds");
+    let (here, there) = (root.path().join("here"), root.path().join("there"));
+    for d in [&here, &there] {
+        std::fs::create_dir_all(d).unwrap_or_else(|e| panic!("{e}"));
+    }
+    let other = fake(
+        background_sessions::plugin,
+        &there,
+        bg_settings(&home, 400),
+        Entries::default(),
+    )
+    .await;
+    let theirs = other
+        .exec("bg_start", json!({ "command": "echo secret-of-there" }))
+        .await;
+    let their_id = detail(&theirs, "id");
+    until(750, 20, || !other.injected().is_empty()).await;
+    // Still running when a session of this directory starts: it is not adopted there.
+    let running = other
+        .exec("bg_start", json!({ "command": "sleep 1; echo running-in-there" }))
+        .await;
+    let mine = fake(
+        background_sessions::plugin,
+        &here,
+        bg_settings(&home, 100),
+        Entries::default(),
+    )
+    .await;
+    let own = mine.exec("bg_start", json!({ "command": "echo mine" })).await;
+    until(750, 20, || !mine.injected().is_empty()).await;
+    until(1500, 20, || other.injected().len() >= 2).await;
+    sleep(300).await;
+    // Neither its end nor its output reaches this session.
+    assert_eq!(mine.injected().len(), 1, "{:?}", mine.injected());
+    assert!(!mine.injected().concat().contains("running-in-there"));
+    let their_running = detail(&running, "id");
+    assert!(mine.exec("bg_output", json!({ "id": their_running })).await.is_error());
+
+    // The log of the job here is read; the other directory's job is no job of this one.
+    let ok = mine.exec("bg_output", json!({ "id": detail(&own, "id") })).await;
+    assert!(
+        !ok.is_error() && first_text(&ok).contains("mine"),
+        "{}",
+        first_text(&ok)
+    );
+    let denied = mine.exec("bg_output", json!({ "id": their_id })).await;
+    assert!(denied.is_error(), "{}", first_text(&denied));
+    assert!(!first_text(&denied).contains("secret-of-there"));
+    assert!(mine.exec("bg_kill", json!({ "id": their_id })).await.is_error());
+    // The listing names this directory's jobs only, unless every directory's are asked for.
+    let listed = first_text(&mine.exec("bg_list", json!({})).await);
+    assert!(
+        listed.contains("echo mine") && !listed.contains("secret-of-there") && !listed.contains("running-in-there"),
+        "{listed}"
+    );
+
+    // Asking for every directory's jobs goes back to the user.
+    let h = load_plugin(
+        "background-sessions",
+        background_sessions::plugin,
+        &s(&here),
+        bg_settings(&home, 400),
+    )
+    .await;
+    assert_eq!(h.decision("bg_list", json!({})), Decision::Allow);
+    assert_eq!(h.decision("bg_list", json!({ "all": false })), Decision::Allow);
+    assert_eq!(h.decision("bg_list", json!({ "all": true })), Decision::Ask);
+    assert_eq!(h.decision("bg_output", json!({ "id": "bg-1" })), Decision::Allow);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn background_sessions_hide_the_values_sasacode_hides_in_the_notice_in_bg_output_and_in_a_finished_log() {
+    let _l = lang(Lang::Ja).await;
+    sasacode_plugin_api::hide_secrets(["bg-job-secret-0123456789"]);
+    let root = temp_dir("sasacode-adopted-");
+    let home = root.path().join("home");
+    let b = fake(
+        background_sessions::plugin,
+        root.path(),
+        bg_settings(&home, 50),
+        Entries::default(),
+    )
+    .await;
+    // Still running: the log on disk is the job's own, what the model reads is not.
+    let running = b
+        .exec(
+            "bg_start",
+            json!({ "command": "echo token=bg-job-$(echo secret)-0123456789; sleep 30" }),
+        )
+        .await;
+    let log = detail(&running, "logPath");
+    until(750, 20, || {
+        std::fs::read_to_string(&log).is_ok_and(|t| t.contains("token="))
+    })
+    .await;
+    let out = first_text(&b.exec("bg_output", json!({ "id": detail(&running, "id") })).await);
+    assert!(
+        out.contains("token=[REDACTED]") && !out.contains("bg-job-secret"),
+        "{out}"
+    );
+    // Finished: the notice quotes the tail, and the log itself is rewritten.
+    let done = b
+        .exec(
+            "bg_start",
+            json!({ "command": "echo done-bg-job-$(echo secret)-0123456789; exit 0" }),
+        )
+        .await;
+    until(750, 20, || !b.injected().is_empty()).await;
+    let notice = b.injected().first().cloned().unwrap_or_default();
+    assert!(
+        notice.contains("done-[REDACTED]") && !notice.contains("bg-job-secret"),
+        "{notice}"
+    );
+    let finished = std::fs::read_to_string(detail(&done, "logPath")).unwrap_or_default();
+    assert_eq!(finished, "done-[REDACTED]\n");
+    b.run_command("bg", &format!("kill {}", detail(&running, "id")))
+        .await
+        .unwrap_or_else(|e| panic!("{e:#}"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn auto_reconnect_after_an_error_while_the_endpoint_is_down_it_waits_and_resumes_the_work_once_it_answers() {
     let _l = lang(Lang::Ja).await;
     let root = temp_dir("sasacode-adopted-");
@@ -318,4 +442,206 @@ fn auto_reconnect_without_a_base_url_it_checks_the_providers_own_api_not_a_third
     let m = model("anthropic", json!({}));
     let target = auto_reconnect::target(None, &m);
     assert!(target.starts_with("https://api.anthropic.com"), "{target}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn bg_start_judges_shows_and_runs_in_the_directory_it_is_given() {
+    let root = temp_dir("sasacode-adopted-");
+    let home = root.path().join("home");
+    let work = root.path().join("work");
+    std::fs::create_dir_all(work.join("sub")).unwrap_or_else(|e| panic!("{e}"));
+    let b = fake(
+        background_sessions::plugin,
+        &work,
+        bg_settings(&home, 50),
+        Entries::default(),
+    )
+    .await;
+    let tool = b.tool("bg_start");
+    let args = |v: Value| match v {
+        Value::Object(m) => m,
+        _ => panic!("not an object"),
+    };
+
+    // A relative directory is resolved from the working directory, an absolute one as it is, and the
+    // permission check is given it.
+    let relative = args(json!({ "command": "make", "cwd": "sub/../sub" }));
+    assert_eq!(tool.paths(&relative, &work), Some(vec![s(&work.join("sub"))]));
+    let absolute = args(json!({ "command": "make", "cwd": s(root.path()) }));
+    assert_eq!(tool.paths(&absolute, &work), Some(vec![s(root.path())]));
+    let up = args(json!({ "command": "make", "cwd": "../home" }));
+    assert_eq!(tool.paths(&up, &work), Some(vec![s(&home)]));
+    // Without one the job runs where the session is: nothing more to judge.
+    assert_eq!(tool.paths(&args(json!({ "command": "make" })), &work), Some(vec![]));
+
+    // The approval shows where the command runs.
+    assert_eq!(tool.summary(&relative).as_deref(), Some("make (in sub/../sub)"));
+    assert_eq!(
+        tool.summary(&args(json!({ "command": "make" }))).as_deref(),
+        Some("make")
+    );
+
+    // And that is where it runs.
+    let started = b.exec("bg_start", json!({ "command": "pwd", "cwd": "sub" })).await;
+    assert!(
+        first_text(&started).contains(&s(&work.join("sub"))),
+        "{}",
+        first_text(&started)
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn bg_start_gives_the_judge_the_paths_in_its_command_from_the_directory_it_runs_in() {
+    use sasacode_bundled::jev_guard::{CallFacts, build_state};
+    let root = temp_dir("sasacode-adopted-");
+    let home = root.path().join("home");
+    let work = root.path().join("work");
+    std::fs::create_dir_all(work.join("sub")).unwrap_or_else(|e| panic!("{e}"));
+    std::fs::create_dir_all(&home).unwrap_or_else(|e| panic!("{e}"));
+    let b = fake(
+        background_sessions::plugin,
+        &work,
+        bg_settings(&home, 50),
+        Entries::default(),
+    )
+    .await;
+    let tool = b.tool("bg_start");
+    let (work_s, home_s) = (s(&work), s(&home));
+    let state = |v: Value| {
+        let (tool, work_s, home_s) = (tool.clone(), work_s.clone(), home_s.clone());
+        async move {
+            let args = obj(v);
+            build_state(&CallFacts {
+                tool: &*tool,
+                args: &args,
+                cwd: &work_s,
+                user_request: None,
+                home: &home_s,
+                trusted: false,
+            })
+            .await
+        }
+    };
+    let targets = |st: &serde_json::Map<String, Value>| -> Vec<(String, bool)> {
+        st.get("targets")
+            .and_then(Value::as_array)
+            .map(|a| {
+                a.iter()
+                    .map(|t| {
+                        (
+                            t["path"].as_str().unwrap_or("").to_string(),
+                            t["location"] == "inside the workspace",
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+
+    // No directory named: a path in the command is a target, as it is for bash.
+    let plain = state(json!({ "command": "rm -rf ~/.ssh build" })).await;
+    assert_eq!(
+        targets(&plain),
+        vec![("~/.ssh".to_string(), false), ("build".to_string(), true),]
+    );
+
+    // A directory named: it is a target too, and the command's relative paths are its own.
+    let named = state(json!({ "command": "rm -rf ~/.ssh build ../up", "cwd": "sub" })).await;
+    assert_eq!(
+        targets(&named),
+        vec![
+            (s(&work.join("sub")), true),
+            (s(&home.join(".ssh")), false),
+            (s(&work.join("sub").join("build")), true),
+            (s(&work.join("up")), true),
+        ]
+    );
+    let elsewhere = state(json!({ "command": "rm -rf build", "cwd": s(root.path()) })).await;
+    assert_eq!(
+        targets(&elsewhere),
+        vec![(s(root.path()), false), (s(&root.path().join("build")), false),]
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn bg_start_always_allow_covers_the_command_in_the_directory_it_was_shown_for_only() {
+    use sasacode_agent::permission::{PermissionCheck, PermissionPolicy};
+    let root = temp_dir("sasacode-adopted-");
+    let home = root.path().join("home");
+    let work = root.path().join("work");
+    let (a, b) = (root.path().join("a"), root.path().join("b"));
+    for d in [&work, &a, &b] {
+        std::fs::create_dir_all(d).unwrap_or_else(|e| panic!("{e}"));
+    }
+    let h = load_plugin(
+        "background-sessions",
+        background_sessions::plugin,
+        &s(&work),
+        bg_settings(&home, 400),
+    )
+    .await;
+    let tool = h.tool("bg_start");
+    let call = |v: Value| PermissionCheck {
+        tool: tool.clone(),
+        args: obj(v),
+        cwd: s(&work),
+    };
+    // The directory the session is in, spelled any way, is the command alone; another is part of it.
+    let own = obj(json!({ "command": "make", "cwd": "sub/.." }));
+    assert_eq!(tool.match_target(&own).as_deref(), Some("make"));
+    assert_eq!(
+        tool.match_target(&obj(json!({ "command": "make", "cwd": s(&work) })))
+            .as_deref(),
+        Some("make")
+    );
+    assert_eq!(
+        tool.match_target(&obj(json!({ "command": "make", "cwd": s(&a) })))
+            .as_deref(),
+        Some(format!("cd '{}' && make", s(&a)).as_str())
+    );
+
+    // "Always allow" in a: the rule is for a.
+    let rules = PermissionPolicy::rules_for(&call(json!({ "command": "make", "cwd": s(&a) })));
+    // A rule's `\` escapes the next character: a Windows path's are doubled.
+    let a_in_rule = s(&a).replace('\\', "\\\\");
+    assert_eq!(rules, vec![format!("bg_start(cd '{a_in_rule}' && make)")]);
+    h.agent
+        .permissions()
+        .add_rules(&sasacode_plugin_api::PermissionRules {
+            allow: rules,
+            ..Default::default()
+        })
+        .unwrap_or_else(|e| panic!("{e}"));
+    let decide = |v: Value| h.agent.permissions().check(&call(v)).decision;
+    assert_eq!(decide(json!({ "command": "make", "cwd": s(&a) })), Decision::Allow);
+    assert_eq!(decide(json!({ "command": "make", "cwd": s(&b) })), Decision::Ask);
+    assert_eq!(decide(json!({ "command": "make" })), Decision::Ask);
+
+    // "Always allow" in the session's own directory: the rule is the command, and a is not covered.
+    let own_rules = PermissionPolicy::rules_for(&call(json!({ "command": "ls" })));
+    assert_eq!(own_rules, vec!["bg_start(ls)".to_string()]);
+    h.agent
+        .permissions()
+        .add_rules(&sasacode_plugin_api::PermissionRules {
+            allow: own_rules,
+            ..Default::default()
+        })
+        .unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(decide(json!({ "command": "ls" })), Decision::Allow);
+    assert_eq!(decide(json!({ "command": "ls", "cwd": s(&work) })), Decision::Allow);
+    assert_eq!(decide(json!({ "command": "ls", "cwd": s(&a) })), Decision::Ask);
+
+    // A deny rule written for bash meets the command in another directory too.
+    h.agent
+        .permissions()
+        .add_rules(&sasacode_plugin_api::PermissionRules {
+            deny: vec!["bash(rm -rf build)".into()],
+            ..Default::default()
+        })
+        .unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(decide(json!({ "command": "rm -rf build" })), Decision::Deny);
+    assert_eq!(
+        decide(json!({ "command": "rm -rf build", "cwd": s(&a) })),
+        Decision::Deny
+    );
 }

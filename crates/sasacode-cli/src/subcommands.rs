@@ -30,14 +30,16 @@ pub async fn login(sub: Option<&str>) -> anyhow::Result<i32> {
     }
 }
 
-/// `sasacode web-search install [tag]`: rustxng into ~/.sasacode/bin, for the web_search tool.
+/// `sasacode web-search install`: rustxng into ~/.sasacode/bin, for the web_search tool.
 pub async fn web_search(args: &[String]) -> anyhow::Result<i32> {
     if args.first().map(String::as_str) != Some("install") {
         let sub = args.first().map(String::as_str).unwrap_or("");
         anyhow::bail!(t!("unknown web-search subcommand \"{sub}\" (install)", sub = sub));
     }
+    if args.len() > 1 {
+        anyhow::bail!(t!("usage: sasacode web-search install"));
+    }
     let installed = install_rustxng(InstallOptions {
-        tag: args.get(1).cloned(),
         log: Some(Arc::new(|m: &str| println!("{m}"))),
         ..Default::default()
     })
@@ -106,7 +108,7 @@ pub fn resolve(p: &str) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use super::resolve;
+    use super::{resolve, web_search};
 
     #[test]
     fn resolve_works_out_dots_from_the_text() {
@@ -116,5 +118,15 @@ mod tests {
         // On Windows `/y` is on the working directory's drive.
         let root: std::path::PathBuf = here.components().take(if cfg!(windows) { 2 } else { 1 }).collect();
         assert_eq!(resolve("/x/../../y"), root.join("y"));
+    }
+
+    #[tokio::test]
+    async fn web_search_install_takes_no_release_to_choose() {
+        // Nothing is downloaded: the extra word is refused first.
+        let e = web_search(&["install".to_string(), "v0.31.2".to_string()])
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("sasacode web-search install"), "{e}");
     }
 }

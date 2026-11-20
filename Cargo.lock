@@ -5218,8 +5218,8 @@ dependencies = [
  "http",
  "image",
  "indexmap",
+ "libc",
  "lol_html",
- "percent-encoding",
  "rand 0.9.5",
  "regex",
  "reqwest",
@@ -5290,6 +5290,7 @@ dependencies = [
  "sasacode-protocol",
  "serde",
  "serde_json",
+ "tempfile",
  "tokio",
  "windows-sys 0.52.0",
 ]

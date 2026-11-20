@@ -237,6 +237,10 @@ pub struct App {
     pub(crate) listing: crate::cli::Listing,
     /// The folder's config is trusted for this window's runs only (`--trust-project`).
     pub(crate) trust_once: bool,
+    /// The folders git is run in without asking ([`crate::known`]), as read at launch.
+    pub(crate) git_folders: sasacode_protocol::git_folders::Folders,
+    /// The home they are kept in, shared with the CLI; none keeps them in this window only.
+    pub(crate) git_home: Option<PathBuf>,
     /// The share of the context window where the conversation is summarised, as configured.
     pub(crate) compact_at: Option<f64>,
     /// The picture shown larger is at its own size, not fitted.
@@ -260,6 +264,8 @@ pub struct App {
     pub(crate) handoff: Option<crate::worktrees::Handoff>,
     /// A message handed over by the window that made this worktree, sent once git is read.
     pub(crate) send_handoff: bool,
+    /// The approval waiting, by id, is shown whole ([`Msg::ApprovalWhole`]).
+    pub(crate) approval_whole: Option<String>,
     /// The permission mode before plan mode was chosen.
     pub(crate) before_plan: Option<&'static str>,
     /// The automation being written.
@@ -793,6 +799,8 @@ pub enum Msg {
     StopCall(String),
     /// The waiting call's arguments edited, then allowed with them.
     ArgsOpen,
+    /// The approval card shown whole, not in its scrolled box; or back in it.
+    ApprovalWhole(bool),
     ArgsEdit(text_editor::Action),
     ArgsSend,
     /// A rule "always" added for the conversation shown, taken back.
@@ -949,6 +957,8 @@ pub enum Msg {
     Indexed(Vec<(PathBuf, std::time::SystemTime, String)>),
     /// The repository looked at again, and as it was found.
     GitRefresh,
+    /// The user asked for this folder's repository to be read: git is run here from now on.
+    GitShow,
     GitStatus(Box<crate::git::Status>),
     /// Something done from the git tab, and what came of it.
     GitDo(crate::git::Op),
@@ -1048,6 +1058,7 @@ impl App {
             .map(crate::composer::read_history)
             .unwrap_or_default();
         app.reload_sessions();
+        app.seed_git_folders();
         if let Some(home) = &app.home {
             crate::rows::purge_trash(home);
         }
@@ -1161,6 +1172,13 @@ impl App {
             plugin_commands: Vec::new(),
             listing: crate::cli::Listing::default(),
             trust_once: false,
+            git_folders: Default::default(),
+            // A window made in a test keeps them to itself: tests run side by side.
+            git_home: if cfg!(test) {
+                None
+            } else {
+                sasacode_protocol::sasacode_home()
+            },
             compact_at: None,
             image_actual: false,
             log: Default::default(),
@@ -1174,6 +1192,7 @@ impl App {
             to_worktree: false,
             handoff: None,
             send_handoff: false,
+            approval_whole: None,
             before_plan: None,
             auto_form: crate::automations::Form::default(),
             gisting: false,
@@ -2463,7 +2482,7 @@ impl App {
         if bare {
             spec.cwd = self.bare_folder();
         }
-        let (repo, cwd) = (self.git.repo && !bare, self.cwd.clone());
+        let (repo, cwd) = (self.git.repo && !bare && self.git_allowed(), self.cwd.clone());
         let Some(chat) = self.chat_mut(key) else {
             return Task::none();
         };
@@ -2742,7 +2761,7 @@ impl App {
         // tree taken as the turn ended, for the git tab's last turn.
         if git {
             tasks.push(self.refresh_git());
-            if key != SIDE && self.git.repo && !self.is_bare(key) {
+            if key != SIDE && self.git.repo && self.git_allowed() && !self.is_bare(key) {
                 let cwd = self.cwd.clone();
                 tasks.push(Task::perform(
                     async move {

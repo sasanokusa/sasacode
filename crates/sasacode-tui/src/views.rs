@@ -28,18 +28,8 @@ pub fn set_expanded(on: bool) {
 
 const COLLAPSED_LINES: usize = 6;
 
-/// Text from the model, tools, MCP servers or files, made safe to print: the terminal must not act on
-/// escape sequences in it (hidden text in an approval prompt, a rewritten clipboard, a fake link). ESC
-/// shows as ␛ so the attempt stays visible; other controls (C0 but newline and tab, DEL, C1) are dropped.
-pub fn plain(s: &str) -> String {
-    s.chars()
-        .filter_map(|c| match c {
-            '\x1b' => Some('␛'),
-            '\x00'..='\x08' | '\x0b'..='\x1f' | '\x7f'..='\u{9f}' => None,
-            c => Some(c),
-        })
-        .collect()
-}
+/// Text from the model, tools, MCP servers, config or files, made safe to print (shared with the CLI).
+pub use sasacode_host::plain;
 
 /// A container: its children's lines one after another.
 #[derive(Default)]

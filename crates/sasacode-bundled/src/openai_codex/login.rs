@@ -145,6 +145,11 @@ async fn serve(mut stream: tokio::net::TcpStream, state: &str) -> Option<Result<
         respond(&mut stream, 404, None).await;
         return None;
     }
+    // Whatever the page says, it counts only for this login: its state is checked first.
+    if query(&url, "state").as_deref() != Some(state) {
+        respond(&mut stream, 400, Some("sasacode: このログインの応答ではありません。")).await;
+        return None;
+    }
     if let Some(error) = query(&url, "error").filter(|e| !e.is_empty()) {
         respond(
             &mut stream,
@@ -155,9 +160,8 @@ async fn serve(mut stream: tokio::net::TcpStream, state: &str) -> Option<Result<
         let description = query(&url, "error_description").unwrap_or_default();
         return Some(Err(js_trim(&format!("login failed: {error} {description}")).to_string()));
     }
-    let got = query(&url, "code").filter(|c| !c.is_empty());
-    match got {
-        Some(code) if query(&url, "state").as_deref() == Some(state) => {
+    match query(&url, "code").filter(|c| !c.is_empty()) {
+        Some(code) => {
             respond(
                 &mut stream,
                 200,
@@ -166,7 +170,7 @@ async fn serve(mut stream: tokio::net::TcpStream, state: &str) -> Option<Result<
             .await;
             Some(Ok(code))
         }
-        _ => {
+        None => {
             respond(&mut stream, 400, Some("sasacode: このログインの応答ではありません。")).await;
             None
         }
@@ -382,5 +386,42 @@ pub fn codex_status_at(path: &std::path::Path, now: f64) -> CodexStatus {
     CodexStatus {
         ok: true,
         text: format!("Signed in{plan}.{left}"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// What `serve` makes of one request for `target`.
+    async fn answer(target: &str) -> Option<Result<String, String>> {
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await.expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let request = format!("GET {target} HTTP/1.1\r\nhost: localhost\r\n\r\n");
+        let client = tokio::spawn(async move {
+            let mut c = tokio::net::TcpStream::connect(addr).await.expect("connect");
+            c.write_all(request.as_bytes()).await.expect("write");
+            let mut reply = Vec::new();
+            let _ = c.read_to_end(&mut reply).await;
+        });
+        let (stream, _) = listener.accept().await.expect("accept");
+        let out = serve(stream, "mine").await;
+        let _ = client.await;
+        out
+    }
+
+    #[tokio::test]
+    async fn only_a_response_carrying_this_logins_state_counts_error_or_code() {
+        assert_eq!(
+            answer("/auth/callback?code=c1&state=mine").await,
+            Some(Ok("c1".to_string()))
+        );
+        assert_eq!(answer("/auth/callback?code=c1&state=other").await, None);
+        assert_eq!(answer("/auth/callback?code=c1").await, None);
+        // An error ends the login only when it is this login's.
+        assert_eq!(answer("/auth/callback?error=access_denied&state=other").await, None);
+        assert_eq!(answer("/auth/callback?error=access_denied").await, None);
+        let failed = answer("/auth/callback?error=access_denied&error_description=no&state=mine").await;
+        assert_eq!(failed, Some(Err("login failed: access_denied no".to_string())));
     }
 }

@@ -282,6 +282,106 @@ async fn search_tools_enforce_read_permissions_and_exclude_secret_files() {
     assert!(r.is_error(), "ask mode should require approval: {}", text_of(&r));
 }
 
+fn rules_policy(rules: PermissionRules) -> Arc<PermissionPolicy> {
+    Arc::new(PermissionPolicy::new(PermissionMode::Edits, &rules).unwrap())
+}
+
+#[tokio::test]
+async fn search_tools_leave_out_files_that_the_read_rules_deny_or_ask_about() {
+    let dir = temp_dir("sasacode-search-rules-");
+    let root = dir.path();
+    std::fs::create_dir_all(root.join("secrets/inner")).unwrap();
+    std::fs::write(root.join("secrets/app.conf"), "PASSWORD=ruled_app\n").unwrap();
+    std::fs::write(root.join("secrets/inner/deep.conf"), "PASSWORD=ruled_deep\n").unwrap();
+    std::fs::write(root.join("readme.txt"), "PASSWORD=public_readme\n").unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(root.join("secrets"), root.join("linked")).unwrap();
+    let l = load_plugin("search-tools", bundled("search-tools"), &path_str(root), json!({})).await;
+
+    // No rules: everything is searched and listed as before, with no note.
+    let t = text_of(&l.invoke("search_text", json!({"query": "PASSWORD"})).await);
+    assert!(
+        t.contains("ruled_app") && t.contains("ruled_deep") && t.contains("public_readme"),
+        "{t}"
+    );
+    assert!(!t.contains("left out"), "{t}");
+    let t = text_of(&l.invoke("find_files", json!({})).await);
+    assert!(
+        t.contains("secrets/app.conf") && t.contains("secrets/inner/deep.conf"),
+        "{t}"
+    );
+    assert!(!t.contains("left out"), "{t}");
+
+    let rules = [
+        PermissionRules {
+            deny: vec!["read(secrets/**)".into()],
+            ..Default::default()
+        },
+        PermissionRules {
+            ask: vec!["read(secrets/**)".into()],
+            ..Default::default()
+        },
+        PermissionRules {
+            deny: vec!["search_text(secrets/**)".into(), "find_files(secrets/**)".into()],
+            ..Default::default()
+        },
+    ];
+    for r in rules {
+        let what = format!("{:?} {:?}", r.deny, r.ask);
+        l.agent.set_permissions(rules_policy(r));
+        for args in [
+            json!({"query": "PASSWORD"}),
+            json!({"query": "PASSWORD", "glob": "*.conf"}),
+        ] {
+            let res = l.invoke("search_text", args).await;
+            let t = text_of(&res);
+            assert!(!res.is_error(), "{what}: {t}");
+            assert!(!t.contains("ruled_"), "{what}: {t}");
+            assert!(
+                t.contains("[2 files left out: the permission rules deny or ask about reading them.]"),
+                "{what}: {t}"
+            );
+        }
+        let t = text_of(&l.invoke("search_text", json!({"query": "PASSWORD"})).await);
+        assert!(t.contains("readme.txt:1: PASSWORD=public_readme"), "{what}: {t}");
+        // Nothing left to match still says what was left out.
+        let t = text_of(&l.invoke("search_text", json!({"query": "ruled_"})).await);
+        assert!(
+            t.starts_with("No matches found") && t.contains("2 files left out"),
+            "{what}: {t}"
+        );
+
+        let t = text_of(&l.invoke("find_files", json!({})).await);
+        assert!(!t.contains("secrets/"), "{what}: {t}");
+        assert!(
+            t.contains("readme.txt") && t.contains("2 files left out"),
+            "{what}: {t}"
+        );
+        // The count does not depend on the pattern, so it tells nothing about the names.
+        let t = text_of(&l.invoke("find_files", json!({"pattern": "*.conf"})).await);
+        assert!(
+            t.starts_with("No files found.") && t.contains("2 files left out"),
+            "{what}: {t}"
+        );
+
+        // Naming the folder itself leaves its files out too.
+        for (tool, args) in [
+            ("search_text", json!({"path": "secrets", "query": "PASSWORD"})),
+            ("find_files", json!({"path": "secrets"})),
+            // A link to the folder is judged where it leads.
+            ("search_text", json!({"path": "linked", "query": "PASSWORD"})),
+            ("find_files", json!({"path": "linked"})),
+        ] {
+            let res = l.invoke(tool, args).await;
+            let t = text_of(&res);
+            assert!(
+                !t.contains("ruled_") && !t.contains("app.conf") && !t.contains("deep.conf"),
+                "{what}: {t}"
+            );
+        }
+    }
+}
+
 #[tokio::test]
 async fn search_tools_supports_gitignore_negation_nested_gitignore_and_skips_symlinks() {
     // 1. Allow-list style .gitignore (`*` + `!src/` + `!src/**`)

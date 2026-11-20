@@ -41,6 +41,8 @@ struct ParsedRule {
     tool: Regex,
     pattern: Option<String>,
     source: String,
+    /// An allow rule's absolute pattern and its links as resolved when it was added.
+    real: Option<(String, String)>,
 }
 
 #[derive(Debug, Default)]
@@ -96,7 +98,16 @@ impl PermissionPolicy {
         ];
         for (list, which) in lists {
             for s in list {
-                let parsed = parse_rule(s).ok_or_else(|| anyhow::anyhow!("invalid permission rule: {s}"))?;
+                let mut parsed = parse_rule(s).ok_or_else(|| anyhow::anyhow!("invalid permission rule: {s}"))?;
+                // An allow rule follows the links there now; one made later, or the rule added again, does not
+                // take it elsewhere.
+                if which == 0 && r.allow.iter().any(|a| a.source == *s) {
+                    continue;
+                }
+                let abs = parsed.pattern.as_deref().map(|p| path_pattern(p, "."));
+                if let Some(p) = abs.filter(|p| which == 0 && paths::is_absolute(p)) {
+                    parsed.real = Some((p.clone(), real_pattern(&p)));
+                }
                 match which {
                     0 => r.allow.push(parsed),
                     1 => r.ask.push(parsed),
@@ -128,8 +139,12 @@ impl PermissionPolicy {
         if let Some(a) = rules.ask.iter().find(|r| rule_matches(r, c, false)) {
             return v(Decision::Ask, format!("rule ask: {}", a.source), VerdictSource::Rule);
         }
-        // Where a path really goes cannot be told (a link loop, no permission): let the user decide.
-        if let Some(unclear) = paths_of(c).into_iter().find(|p| try_real_path(p).is_none()) {
+        // Where a path goes cannot be told (a link loop), or differs opened as given (a ".." after a link): ask.
+        let cwd = std::path::Path::new(&c.cwd);
+        if let Some(unclear) = c.tool.paths(&c.args, cwd).unwrap_or_default().into_iter().find(|p| {
+            let real = try_real_path(&paths::resolve2(&c.cwd, p));
+            real.is_none() || try_real_path(&cwd.join(p).to_string_lossy()).is_some_and(|os| Some(os) != real)
+        }) {
             return v(Decision::Ask, format!("cannot resolve {unclear}"), VerdictSource::Rule);
         }
         if allowed_by_rules(&rules.allow, c) {
@@ -140,18 +155,27 @@ impl PermissionPolicy {
         v(decision, reason.into(), VerdictSource::Mode)
     }
 
+    /// What the deny, softDeny and ask rules alone say about this call (no mode, no allow rules).
+    pub fn rule_decision(&self, c: &PermissionCheck) -> Option<Decision> {
+        let rules = self.rules.read().unwrap_or_else(|e| e.into_inner());
+        let hit = |list: &[ParsedRule]| list.iter().any(|r| rule_matches(r, c, false));
+        if hit(&rules.deny) || hit(&rules.soft_deny) {
+            return Some(Decision::Deny);
+        }
+        hit(&rules.ask).then_some(Decision::Ask)
+    }
+
     fn mode_decision(&self, c: &PermissionCheck) -> (Decision, &'static str) {
         // Through a symlink, a path inside the project can point anywhere: judge where it really goes.
         let cwd = try_real_path(&c.cwd).unwrap_or_else(|| c.cwd.clone());
         let real: Vec<String> = paths_of(c)
-            .into_iter()
+            .iter()
+            .flat_map(|p| spellings(p, true))
             .map(|p| try_real_path(&p).unwrap_or(p))
             .collect();
         let inside_cwd = real.iter().all(|p| is_inside(p, &cwd));
-        // Edits under .git (hooks, config) or .sasacode (plugins, rules) run code at the next git command
-        // or start (#127).
         let has_paths = c.tool.paths(&c.args, std::path::Path::new(&c.cwd)).is_some();
-        let runs_code = real.iter().any(|p| runs_code_re().is_match(&paths::relative(&cwd, p)));
+        let runs_code = real.iter().any(|p| runs_code(&cwd, p));
         let kind = c.tool.kind();
         match self.mode() {
             PermissionMode::Auto => (Decision::Allow, "mode auto"),
@@ -210,6 +234,31 @@ fn runs_code_re() -> &'static Regex {
     R.get_or_init(|| Regex::new(r"(?i)(^|[\\/])\.(git|sasacode)([\\/]|$)").expect("valid regex"))
 }
 
+/// Edits under .git (hooks, config) or .sasacode (plugins, rules) run code at the next git command or start (#127).
+/// Git takes a folder with a HEAD and a config, commondir, objects/ or refs/ for a repository: a write that could make
+/// or point one, or change its hooks, is asked about. Names are compared folded in full (`ﬁ` as `fi`), as a file
+/// system that folds case takes them.
+fn runs_code(cwd: &str, p: &str) -> bool {
+    use std::path::Path;
+    let path = Path::new(p);
+    let name = |q: &Path| full_fold(&q.file_name().unwrap_or_default().to_string_lossy());
+    let has = |d: &Path, n: &str| d.join(n).metadata().is_ok_and(|m| !m.is_dir());
+    let repo = |d: &Path| {
+        has(d, "HEAD")
+            && ["config", "commondir", "objects", "refs"]
+                .iter()
+                .any(|n| d.join(n).exists())
+    };
+    let dir = path.parent().unwrap_or(path);
+    let in_store = |a: &Path| matches!(&*name(a), "objects" | "refs" | "hooks") && a.parent().is_some_and(repo);
+    match &*name(path) {
+        "head" | "commondir" | "gitdir" => true,
+        "config" | "config.worktree" if has(dir, "HEAD") || has(dir, "commondir") => true,
+        "packed-refs" if repo(dir) => true,
+        _ => path.ancestors().skip(1).any(in_store) || runs_code_re().is_match(&full_fold(&paths::relative(cwd, p))),
+    }
+}
+
 /// Escape `\ * ? [ ] { } ! ( ) + @` with a backslash (`/[\\*?[\]{}!()+@]/g` → `\\$&`).
 fn escape_glob(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
@@ -241,6 +290,7 @@ fn parse_rule(source: &str) -> Option<ParsedRule> {
         tool,
         pattern: m.get(2).map(|p| p.as_str().to_string()),
         source: source.to_string(),
+        real: None,
     })
 }
 
@@ -303,35 +353,94 @@ fn escape_extglob(s: &str) -> String {
     out
 }
 
-/// A compiled glob as Bun.Glob matched it: `*` stops at `/`, `**` crosses it, `\` escapes.
-fn glob(pattern: &str) -> globset::GlobMatcher {
-    let pattern = &bun_glob_syntax(pattern);
-    let built = globset::GlobBuilder::new(pattern)
+/// A compiled glob as Bun.Glob matched it: `*` stops at `/`, `**` crosses it, `\` escapes. Kept: a walk asks per file.
+/// Folded (glob_path) outside `[…]` after its backslashes are read, so `\B` is a `B` folded, not `\b`. With `ci`
+/// (deny and ask rules) it matches any case, but for a negated class.
+fn glob(pattern: &str, fold: Option<bool>, ci: bool) -> regex::bytes::Regex {
+    static SEEN: OnceLock<Mutex<HashMap<String, regex::bytes::Regex>>> = OnceLock::new();
+    let seen = SEEN.get_or_init(Mutex::default);
+    let mut seen = seen.lock().unwrap_or_else(|e| e.into_inner());
+    if seen.len() > 512 {
+        seen.clear();
+    }
+    let g = seen
+        .entry(format!("{fold:?}{ci}{pattern}"))
+        .or_insert_with(|| compile_glob(pattern, fold, ci));
+    g.clone()
+}
+
+fn compile_glob(pattern: &str, fold: Option<bool>, ci: bool) -> regex::bytes::Regex {
+    let built = globset::GlobBuilder::new(&bun_glob_syntax(pattern, fold))
         .literal_separator(true)
         .backslash_escape(true)
         .empty_alternates(true)
         .build();
     match built {
-        Ok(g) => g.compile_matcher(),
+        Ok(g) => char_regex(&g, fold, ci),
         // An unparsable pattern (an unclosed `[`) is taken literally, never as matching nothing:
         // a deny rule must not disappear.
-        Err(_) => globset::GlobBuilder::new(&escape_glob(pattern))
+        Err(_) => globset::GlobBuilder::new(&escape_glob(&folded(bun_glob_syntax(pattern, None), fold)))
             .literal_separator(true)
             .backslash_escape(true)
             .build()
-            .map(|g| g.compile_matcher())
+            .map(|g| char_regex(&g, None, ci))
             // INFALLIBLE: every special character is escaped.
-            .unwrap_or_else(|_| globset::Glob::new("").expect("empty glob").compile_matcher()),
+            .unwrap_or_else(|_| char_regex(&globset::Glob::new("").expect("empty glob"), None, ci)),
     }
+}
+
+/// globset's regex reads bytes (its `?` and `[!a]` take one byte of `ß`); Bun.Glob read characters. The same regex
+/// with its bytes of a character (`\xc3\x9f`) put back as that character, read over characters; `.` takes a newline
+/// too (a name may hold one). Folded, a class `[…]` matches any case, as the file systems that fold case do.
+fn char_regex(g: &globset::Glob, fold: Option<bool>, ci: bool) -> regex::bytes::Regex {
+    let (mut out, mut bytes, mut it) = (String::new(), Vec::new(), g.regex().trim_start_matches("(?-u)").chars());
+    let mut start = 0;
+    while let Some(ch) = it.next() {
+        let esc = if ch == '\\' { it.next() } else { None };
+        let hex: String = if esc == Some('x') {
+            it.by_ref().take(2).collect()
+        } else {
+            String::new()
+        };
+        if let Ok(b @ 0x80..) = u8::from_str_radix(&hex, 16) {
+            bytes.push(b);
+            continue;
+        }
+        out.push_str(&String::from_utf8_lossy(&std::mem::take(&mut bytes)));
+        match (ch, esc) {
+            ('[', None) if fold.is_some() || ci => start = out.len(),
+            (']', None) if fold.is_some() || ci => {
+                let class = format!("[{}]", out.split_off(start));
+                let flags = match (ci, class.starts_with("[^")) {
+                    (false, _) => "i",
+                    (true, negated) => ["", "-i"][negated as usize],
+                };
+                out.push_str(&format!("(?{flags}:{class})"));
+            }
+            _ => out.extend([ch].into_iter().chain(esc).chain(hex.chars())),
+        }
+    }
+    out.push_str(&String::from_utf8_lossy(&bytes));
+    let re = |r: &str| {
+        (regex::bytes::RegexBuilder::new(r).dot_matches_new_line(true))
+            .case_insensitive(ci)
+            .build()
+    };
+    // INFALLIBLE in practice: globset's own regex, read over bytes, is the fallback.
+    re(&out).or_else(|_| re(g.regex())).expect("globset's regex")
 }
 
 /// Bun.Glob's reading where globset's differs. A `}` that closes no `{` is a literal brace
 /// (`\{a,b}` matched the name `{a,b}`; globset refuses the pattern), and `\b` `\n` `\r` `\t`
-/// are the control characters, as in a JS string (`a\b` did not match `ab`).
-fn bun_glob_syntax(pattern: &str) -> String {
-    let mut out = String::with_capacity(pattern.len());
+/// are the control characters, as in a JS string (`a\b` did not match `ab`). Folded (`fold`) outside `[…]`.
+fn bun_glob_syntax(pattern: &str, fold: Option<bool>) -> String {
+    let (mut out, mut run) = (String::with_capacity(pattern.len()), String::new());
     let (mut depth, mut in_class, mut chars) = (0usize, false, pattern.chars().peekable());
     while let Some(ch) = chars.next() {
+        if ch == '[' && !in_class {
+            out.push_str(&folded(std::mem::take(&mut run), fold));
+        }
+        let out = if in_class || ch == '[' { &mut out } else { &mut run };
         match ch {
             '\\' => {
                 match chars.next() {
@@ -340,6 +449,7 @@ fn bun_glob_syntax(pattern: &str) -> String {
                     Some('r') => out.push('\r'),
                     Some('t') => out.push('\t'),
                     Some(next) => {
+                        in_class &= next != ']'; // globset's class ends at `\]` too
                         out.push(ch);
                         out.push(next);
                     }
@@ -374,7 +484,8 @@ fn bun_glob_syntax(pattern: &str) -> String {
         }
         out.push(ch);
     }
-    out
+    out.push_str(&folded(run, fold));
+    folded(out, None)
 }
 
 /// deny/ask rules match when any spelling of a path does (as written, or with symlinks resolved);
@@ -396,36 +507,50 @@ fn rule_matches(rule: &ParsedRule, c: &PermissionCheck, for_allow: bool) -> bool
     // but links inside the project are not followed (a repo could point `src` at ~/.ssh). An
     // absolute pattern is the user's own path: its fixed part is resolved (/var → /private/var).
     let pattern = path_pattern(pattern, &c.cwd);
-    // .ENV is .env where the file system folds case (macOS by default): compared as it would be, a
-    // deny rule could be spelled past (#98).
+    // .ENV is .env where the file system folds case (#98). Whether a path's volume does cannot be told reliably, so
+    // deny and ask rules hit in any case as written, or folded in full (`ß` is `ss`). Allow rules hit as written or,
+    // only where the working directory folds case, in lower case.
     let real_cwd = try_real_path(&c.cwd).unwrap_or_else(|| c.cwd.clone());
-    let fold = folds_case(&real_cwd);
-    let mut sources: Vec<String> = if paths::is_absolute(&pattern) {
-        [pattern.clone(), real_pattern(&pattern)]
-            .iter()
-            .map(|g| escape_extglob(&glob_path(g, fold)))
-            .collect()
-    } else {
-        [c.cwd.clone(), real_cwd]
-            .iter()
-            .map(|d| anchored(d, &pattern, fold))
-            .collect()
-    };
-    sources.dedup();
-    let globs: Vec<globset::GlobMatcher> = sources.iter().map(|g| glob(g)).collect();
-    let hit = |p: &str| {
-        let gp = glob_path(p, fold);
-        globs.iter().any(|g| g.is_match(&gp))
-    };
     let spellings: Vec<String> = paths
         .iter()
-        .flat_map(|p| [p.clone(), try_real_path(p).unwrap_or_else(|| p.clone())])
+        .flat_map(|p| spellings(p, !for_allow))
+        .flat_map(|p| [try_real_path(&p).unwrap_or_else(|| p.clone()), p])
         .collect();
-    if for_allow {
-        spellings.iter().all(|s| hit(s))
+    let mut sources: Vec<String> = if paths::is_absolute(&pattern) {
+        // An allow rule's links as they were when it was added; deny and ask rules' as they are.
+        let real = match &rule.real {
+            _ if !for_allow => real_pattern(&pattern),
+            Some((p, real)) if *p == pattern => real.clone(),
+            _ => pattern.clone(),
+        };
+        [pattern, real]
+            .iter()
+            .map(|g| escape_extglob(&glob_path(g, None)))
+            .collect()
     } else {
-        spellings.iter().any(|s| hit(s))
+        [&c.cwd, &real_cwd].iter().map(|d| anchored(d, &pattern)).collect()
+    };
+    sources.dedup();
+    let hit = |fold: Option<bool>| {
+        let globs: Vec<regex::bytes::Regex> = sources.iter().map(|g| glob(g, fold, !for_allow)).collect();
+        move |p: &String| globs.iter().any(|g| g.is_match(glob_path(p, fold).as_bytes()))
+    };
+    let fold = [Some(true), folds_case(&real_cwd).then_some(false)][for_allow as usize];
+    let (exact, folded) = (hit(None), hit(fold));
+    match for_allow {
+        true => spellings.iter().all(|p| exact(p) || folded(p)),
+        false => spellings.iter().any(|p| exact(p) || folded(p)),
     }
+}
+
+/// A path as written and, on Windows, as Win32 opens it (`.git.` is `.git`; with `streams`, `a:s` is `a` too).
+fn spellings(p: &str, streams: bool) -> Vec<String> {
+    let mut v = vec![p.to_string()];
+    let open = |s| paths::resolve(&[&sasacode_plugin_api::win32_path::win32_open_form(p, s)]);
+    if WINDOWS {
+        v.extend([open(false), open(true)].into_iter().take(1 + streams as usize));
+    }
+    v
 }
 
 /// On Windows, `\` as `/`: rules are globs, where `\` escapes (and no Windows name holds `*` or `?`).
@@ -447,7 +572,7 @@ fn path_pattern(pattern: &str, cwd: &str) -> String {
 }
 
 /// A relative pattern under `dir`, which is a literal path: a `[`, `{` or `+(` in it is not a wildcard.
-fn anchored(dir: &str, pattern: &str, fold: bool) -> String {
+fn anchored(dir: &str, pattern: &str) -> String {
     // Normalized as resolve(dir, pattern) would, a ".." anywhere included (#50).
     let mut dir = dir.to_string();
     let mut rest: Vec<&str> = Vec::new();
@@ -466,21 +591,37 @@ fn anchored(dir: &str, pattern: &str, fold: bool) -> String {
     }
     // resolve: on Windows a cwd given as /work/x gets its drive, as the paths compared with it do.
     // ( ) + @ too: Bun.Glob read +(…) and @(…) as extglobs (#98, #131).
-    let base = escape_glob(&glob_path(&paths::resolve(&[&dir]), fold));
+    let base = escape_glob(&glob_path(&paths::resolve(&[&dir]), None));
     let base = base.strip_suffix('/').unwrap_or(&base).to_string();
     if rest.is_empty() {
         if base.is_empty() { "/".into() } else { base }
     } else {
-        format!("{base}/{}", escape_extglob(&glob_path(&rest.join("/"), fold)))
+        format!("{base}/{}", escape_extglob(&glob_path(&rest.join("/"), None)))
     }
 }
 
-/// A path or glob as compared, as the file system sees names: on Windows with `/`; in one case
-/// where it folds case; NFC (macOS takes NFD as the same).
-fn glob_path(p: &str, fold: bool) -> String {
-    let s = slashes(p);
-    let s = if fold { s.to_lowercase() } else { s };
-    s.nfc().collect()
+/// A path or glob as compared, as the file system sees names: on Windows with `/`; NFC (macOS takes NFD as the
+/// same); folded (`Some`) to lower case, or for deny and ask rules in full (full_fold).
+fn glob_path(p: &str, fold: Option<bool>) -> String {
+    folded(slashes(p), fold)
+}
+
+fn folded(s: String, fold: Option<bool>) -> String {
+    let s = match fold {
+        Some(true) => full_fold(&s),
+        Some(false) => s.to_lowercase(),
+        None => s,
+    };
+    if s.is_ascii() { s } else { s.nfc().collect() }
+}
+
+/// Each letter as its lower case's upper case's lower case, which may be longer: `ſ` is `s`, `ẞ` and `ß` are `ss`.
+fn full_fold(s: &str) -> String {
+    s.to_lowercase()
+        .to_uppercase()
+        .chars()
+        .flat_map(char::to_lowercase)
+        .collect()
 }
 
 /// Does the file system at `dir` take a name in another case for the same file (Windows; macOS's
@@ -510,7 +651,11 @@ fn folds_case(dir: &str) -> bool {
         })
         .collect();
     let v = same_file(dir, &other) && other != dir;
-    m.lock().unwrap_or_else(|e| e.into_inner()).insert(dir.to_string(), v);
+    let mut m = m.lock().unwrap_or_else(|e| e.into_inner());
+    if m.len() > 512 {
+        m.clear();
+    }
+    m.insert(dir.to_string(), v);
     v
 }
 
@@ -569,7 +714,7 @@ fn real_pattern(glob: &str) -> String {
 /// link loop, no permission, ".." below a part that does not exist).
 pub fn real_path(p: &str) -> Result<String, String> {
     let root_len = paths::root_of_parse(p).len();
-    let mut todo: std::collections::VecDeque<String> = p[root_len..]
+    let mut todo: std::collections::VecDeque<String> = p[root_len.min(p.len())..]
         .split(paths::is_sep)
         .filter(|s| !s.is_empty())
         .map(str::to_string)
@@ -613,7 +758,7 @@ pub fn real_path(p: &str) -> Result<String, String> {
                     return Err(format!("too many symlinks: {p}"));
                 }
                 let lroot = paths::root_of_parse(&link).len();
-                let parts: Vec<String> = link[lroot..]
+                let parts: Vec<String> = link[lroot.min(link.len())..]
                     .split(paths::is_sep)
                     .filter(|s| !s.is_empty())
                     .map(str::to_string)

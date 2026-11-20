@@ -13,12 +13,12 @@ use serde_json::Value;
 use sasacode_agent::agent::{Agent, AgentOptions};
 use sasacode_agent::plugins::{PluginHost, PluginHostOptions};
 use sasacode_ai::{ModelInfo, fmt_tokens};
-use sasacode_host::{current_lang, t};
-use sasacode_skills::{discover_skills, materialize_builtin_skills};
+use sasacode_host::{current_lang, plain_line, t};
+use sasacode_skills::{discover_skills_in, materialize_builtin_skills, project_skills_dir};
 
 use crate::args::{boolean, parse_args};
 use crate::catalog::ModelChoice;
-use crate::config::{Settings, load_config, read_config_files_from, sasacode_home};
+use crate::config::{McpEntry, Settings, load_config, read_config_files_from, sasacode_home};
 use crate::setup::{PluginChoice, SetupOptions, setup, skill_dirs, skills_options};
 use crate::trust::{ProjectTrust, assess_files, is_trusted_in, save_trust_in};
 
@@ -136,6 +136,38 @@ pub struct TrustEndpoint {
     pub url: Option<String>,
 }
 
+/// An MCP server entry the project's config writes, with the fields it writes (the names, not the
+/// values, of what it is given). `command` and `url` are null when the entry leaves them out, and
+/// an entry with neither non-empty starts or connects to nothing of its own.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct TrustMcpServer {
+    pub name: String,
+    /// Its command as written when that is a string; null when it has none or it is not one.
+    pub command: Option<String>,
+    /// Its command when it is not a string (`null`, a number, a list), as JSON: it starts nothing.
+    #[serde(rename = "commandNotText", skip_serializing_if = "Option::is_none")]
+    pub command_not_text: Option<String>,
+    pub args: Vec<String>,
+    pub url: Option<String>,
+    pub cwd: Option<String>,
+    /// The names of the environment variables it sets.
+    pub env: Vec<String>,
+    /// The names of the headers it sends.
+    pub headers: Vec<String>,
+    /// `disabled`, `alwaysLoad`, `timeout` and `toolNames` as written; left out when not written.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub disabled: Option<String>,
+    #[serde(rename = "alwaysLoad", skip_serializing_if = "Option::is_none")]
+    pub always_load: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timeout: Option<String>,
+    #[serde(rename = "toolNames", skip_serializing_if = "Option::is_none")]
+    pub tool_names: Option<String>,
+    /// The global config has a server of this name; these fields are laid over it.
+    #[serde(rename = "overlaysGlobal")]
+    pub overlays_global: bool,
+}
+
 /// `sasacode trust --json`: whether the folder is trusted and what trusting it turns on.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -157,6 +189,15 @@ pub struct TrustStatus {
     pub allow: Vec<String>,
     /// The permission mode the project asks for, when it is looser than the user's.
     pub mode: Option<String>,
+    /// What each of `mcpServers` starts.
+    pub mcp_server_details: Vec<TrustMcpServer>,
+    /// The model, judge model and models the project picks from providers the user does not use.
+    pub model: Option<String>,
+    pub judge_model: Option<String>,
+    pub models: Vec<String>,
+    /// `modelOverrides` and `plugins.settings` as the project writes them.
+    pub model_overrides: serde_json::Map<String, Value>,
+    pub plugin_settings: serde_json::Map<String, Value>,
 }
 
 /// What `sasacode list` lists.
@@ -274,7 +315,7 @@ async fn model_listing(cwd: &Path) -> anyhow::Result<Vec<ListedModel>> {
     opts.trust_project = trusted;
     opts.preloaded = Some((project.files, project.warnings));
     let h = setup(opts).await?;
-    let warn = |w: String| eprintln!("{}", t!("warning: {warning}", warning = w));
+    let warn = |w: String| eprintln!("{}", t!("warning: {warning}", warning = sasacode_host::plain(&w)));
     for w in h.warnings() {
         warn(w);
     }
@@ -331,7 +372,8 @@ fn skill_listing_in(home: &Path, cwd: &Path) -> anyhow::Result<Vec<ListedSkill>>
     {
         dirs.insert(0, builtin);
     }
-    Ok(discover_skills(&dirs)?
+    let project = project_skills_dir(cwd, &home.join("skills"));
+    Ok(discover_skills_in(&dirs, project.as_deref())?
         .into_iter()
         .map(|s| ListedSkill {
             name: s.name,
@@ -417,7 +459,7 @@ fn plugin_listing_in(home: &Path, cwd: &Path) -> anyhow::Result<Vec<ListedPlugin
 }
 
 /// `sasacode trust [--yes|-y] [--json]`; `args` is what follows `trust`. With `--yes` the project
-/// is trusted; the exit code is 1 only when it still is not.
+/// is trusted and the folder is one git may run in; the exit code is 1 only when it still is not.
 pub fn trust_command(args: &[String], cwd: &Path) -> anyhow::Result<i32> {
     trust_command_in(args, cwd, &sasacode_home(), &mut std::io::stdout().lock())
 }
@@ -429,10 +471,14 @@ fn trust_command_in(args: &[String], cwd: &Path, home: &Path, out: &mut dyn Writ
     }
     let yes = parsed.flag("yes");
     let cwd_text = cwd.to_string_lossy().into_owned();
+    let cwd_shown = plain_line(&cwd_text);
     let project = assess_files(cwd, read_config_files_from(&home.join("config.json"), cwd)?);
     if yes && !project.items.is_empty() && !is_trusted_in(home, &cwd_text, &project) {
         save_trust_in(home, &cwd_text, &project)?;
     }
+    // --yes also lets the shipped plugins run git here, whether or not anything needs trust: a
+    // headless user has no other way to allow it.
+    let git_added = yes && sasacode_protocol::git_folders::add(home, cwd, &[]).is_ok();
     let status = trust_status(home, cwd, &project)?;
     if parsed.flag("json") {
         print_json(out, &status)?;
@@ -440,13 +486,13 @@ fn trust_command_in(args: &[String], cwd: &Path, home: &Path, out: &mut dyn Writ
         writeln!(
             out,
             "{}",
-            t!("{cwd}: nothing in this project needs trust", cwd = cwd_text)
+            t!("{cwd}: nothing in this project needs trust", cwd = cwd_shown)
         )?;
     } else {
         let line = if status.trusted {
-            t!("{cwd} is trusted", cwd = cwd_text)
+            t!("{cwd} is trusted", cwd = cwd_shown)
         } else {
-            t!("{cwd} is not trusted", cwd = cwd_text)
+            t!("{cwd} is not trusted", cwd = cwd_shown)
         };
         writeln!(out, "{line}")?;
         writeln!(out, "{}", t!("This project wants to use:"))?;
@@ -456,6 +502,9 @@ fn trust_command_in(args: &[String], cwd: &Path, home: &Path, out: &mut dyn Writ
         if !status.trusted {
             writeln!(out, "{}", t!("trust it with: sasacode trust --yes"))?;
         }
+    }
+    if git_added && !parsed.flag("json") {
+        writeln!(out, "{}", t!("{cwd}: git may run here", cwd = cwd_shown))?;
     }
     Ok(if yes && !status.trusted { 1 } else { 0 })
 }
@@ -469,6 +518,29 @@ fn trust_status(home: &Path, cwd: &Path, project: &ProjectTrust) -> anyhow::Resu
             .unwrap_or_default()
     };
     let permissions = elevated.get("permissions");
+    let object = |v: Option<&Value>| v.and_then(Value::as_object).cloned().unwrap_or_default();
+    let text = |key: &str| elevated.get(key).and_then(Value::as_str).map(str::to_string);
+    let mcp_server_details = object(elevated.get("mcpServers"))
+        .iter()
+        .map(|(name, v)| {
+            let e = McpEntry::of(name, v, &project.files.global);
+            TrustMcpServer {
+                name: name.clone(),
+                command: e.command,
+                command_not_text: e.command_not_text,
+                args: e.args,
+                url: e.url,
+                cwd: e.cwd,
+                env: e.env,
+                headers: e.headers,
+                disabled: e.disabled,
+                always_load: e.always_load,
+                timeout: e.timeout,
+                tool_names: e.tool_names,
+                overlays_global: e.overlays_global,
+            }
+        })
+        .collect();
     Ok(TrustStatus {
         trusted: is_trusted_in(home, &cwd_text, project),
         needed: !project.items.is_empty(),
@@ -495,6 +567,12 @@ fn trust_status(home: &Path, cwd: &Path, project: &ProjectTrust) -> anyhow::Resu
             .and_then(|p| p.get("mode"))
             .and_then(Value::as_str)
             .map(str::to_string),
+        mcp_server_details,
+        model: text("model"),
+        judge_model: text("judgeModel"),
+        models: strings(elevated.get("models")),
+        model_overrides: object(elevated.get("modelOverrides")),
+        plugin_settings: object(elevated.get("plugins").and_then(|p| p.get("settings"))),
         cwd: cwd_text,
     })
 }

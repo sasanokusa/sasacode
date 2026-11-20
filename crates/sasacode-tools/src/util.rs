@@ -7,18 +7,11 @@ use serde_json::Value;
 
 use sasacode_plugin_api::JsonObject;
 
-/// `resolvePath`: `~` and `~/...` expand to the home directory; an absolute path is returned as it
-/// is (not normalised, like Node); a relative one is resolved against `cwd` and normalised.
+/// `resolvePath`: `~` and `~/...` expand to the home directory; the path is resolved against `cwd`
+/// and normalised, an absolute one too, so a tool opens the path the permission check judged.
 pub fn resolve_path(p: &str, cwd: &Path) -> String {
-    let p = if p == "~" || p.starts_with("~/") {
-        format!("{}{}", sasacode_plugin_api::home_dir().display(), &p[1..])
-    } else {
-        p.to_string()
-    };
-    // Node's isAbsolute: a root, with or without a drive letter on Windows.
-    if Path::new(&p).has_root() {
-        return p;
-    }
+    let home = sasacode_plugin_api::home_dir().filter(|_| p == "~" || p.starts_with("~/"));
+    let p = home.map_or(p.to_string(), |h| format!("{}{}", h.display(), &p[1..])); // no home: `~` as written
     if cfg!(windows) {
         return sasacode_plugin_api::win32_path::win32_resolve_here(&[&cwd.to_string_lossy(), &p]);
     }
@@ -233,12 +226,26 @@ mod tests {
         assert_eq!(resolve_path("a/../b/./c/", cwd), native("/w/p/b/c"));
         assert_eq!(resolve_path("../../../x", cwd), native("/x"));
         assert_eq!(resolve_path("", cwd), native("/w/p"));
-        // Absolute paths and ~ expansions are taken as they are, `..` and all.
-        assert_eq!(resolve_path("/a/../b", cwd), "/a/../b");
-        let home = sasacode_plugin_api::home_dir().display().to_string();
-        assert_eq!(resolve_path("~/x/../y", cwd), format!("{home}/x/../y"));
-        assert_eq!(resolve_path("~", cwd), home);
+        // Absolute paths and ~ expansions are normalised too: a ".." is taken lexically, as the
+        // permission check takes it, not after a link the OS would follow.
+        assert_eq!(resolve_path("/a/../b", cwd), native("/b"));
+        assert_eq!(resolve_path("/p/l/../x", cwd), native("/p/x"));
+        assert_eq!(resolve_path("/p/./q//r/", cwd), native("/p/q/r"));
+        let home = sasacode_plugin_api::home_dir().unwrap().display().to_string();
+        assert_eq!(resolve_path("~/x/../y", cwd), resolve_path(&format!("{home}/y"), cwd));
+        assert_eq!(resolve_path("~", cwd), resolve_path(&home, cwd));
         assert_eq!(resolve_path("~x", cwd), native("/w/p/~x"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn keeps_the_drive_and_the_share_when_normalising() {
+        let cwd = Path::new(r"C:\w\p");
+        assert_eq!(resolve_path(r"C:\p\l\..\x", cwd), r"C:\p\x");
+        assert_eq!(resolve_path("D:/p/l/../x", cwd), r"D:\p\x");
+        assert_eq!(resolve_path(r"\\server\share\l\..\x", cwd), r"\\server\share\x");
+        assert_eq!(resolve_path(r"\\server\share\..\x", cwd), r"\\server\share\x");
+        assert_eq!(resolve_path(r"\p\l\..\x", cwd), r"C:\p\x");
     }
 
     #[test]

@@ -11,7 +11,7 @@ use serde_json::{Map, Value};
 
 use sasacode_agent::tool_search::ToolSearchConfig;
 use sasacode_ai::{ModelInfo, ThinkingLevel};
-use sasacode_host::{builtin_providers, t};
+use sasacode_host::{builtin_providers, plain_clipped, plain_line, t};
 use sasacode_plugin_api::{PermissionMode, PermissionRules};
 
 use crate::json::read_json;
@@ -92,7 +92,11 @@ pub fn sanitize_config(raw: &Value, source: &str, warnings: &mut Vec<String>) ->
     let mut out = Config::new();
     for (k, v) in raw {
         match check(k, v) {
-            None => warnings.push(t!("{source}: unknown key \"{key}\" ignored", source = source, key = k)),
+            None => warnings.push(t!(
+                "{source}: unknown key \"{key}\" ignored",
+                source = source,
+                key = plain_line(k)
+            )),
             Some(false) => warnings.push(t!(
                 "{source}: \"{key}\" has an invalid value; ignored",
                 source = source,
@@ -178,35 +182,78 @@ fn mode_strength(m: &str) -> u8 {
 
 /// Routers reach many companies with one key, so which model they serve decides where the
 /// conversation and code go.
-const ROUTERS: [&str; 1] = ["openrouter"];
+pub(crate) const ROUTERS: [&str; 1] = ["openrouter"];
 
 fn num(v: Option<&Value>) -> Option<f64> {
     v.and_then(Value::as_f64)
 }
 
+/// The provider part of a "<provider>/<model>" spec. With no slash, as the TS read it
+/// (`spec.slice(0, spec.indexOf("/"))`): indexOf is -1 and the slice drops the last character.
+pub(crate) fn provider_of(spec: &str) -> &str {
+    match spec.find('/') {
+        Some(i) => &spec[..i],
+        None => &spec[..spec.char_indices().last().map_or(0, |(i, _)| i)],
+    }
+}
+
+/// The model a run uses when the global config names none: the first provider whose key is set, or
+/// the ChatGPT plan when only that is logged in (as setup decides).
+pub fn user_default_model(global: &Config) -> String {
+    let codex = !strings(global.get("plugins").and_then(|p| p.get("disabled"))).contains(&"openai-codex".into());
+    crate::setup::default_model(builtin_providers(), codex)
+}
+
+/// The providers the user's own config sends conversations to: those of its model, models and
+/// judgeModel, of the model `-m` gave, and of the default model when neither `-m` nor the config
+/// names a model (as the run decides what it starts with). A provider the config only sets up
+/// (`providers`) is not one of them.
+fn user_providers(global: &Config, cli_model: Option<&str>, default_model: impl FnOnce() -> String) -> Vec<String> {
+    let mut specs = strings(global.get("models"));
+    specs.extend(cli_model.map(str::to_string));
+    specs.extend(global.get("judgeModel").and_then(Value::as_str).map(str::to_string));
+    match global.get("model").and_then(Value::as_str) {
+        Some(m) => specs.push(m.to_string()),
+        None if cli_model.is_none() => specs.push(default_model()),
+        None => {}
+    }
+    specs.iter().map(|s| provider_of(s).to_string()).collect()
+}
+
 /// Split a project's config into what it may set on its own and what needs the user's trust.
 /// Without trust a project can only tighten things: it cannot add endpoints (even keyless ones
-/// would receive your code), change model metadata (baseUrl could reroute keys), configure or
-/// disable plugins, start MCP servers, add allow rules, loosen the permission mode, or raise the
-/// turn and retry limits.
-pub fn split_project_config(project: &Config, global: &Config) -> (Config, Config) {
+/// would receive your code), send the conversation to a provider the user's own config does not use,
+/// change model metadata (baseUrl could reroute keys), configure or disable plugins, start MCP
+/// servers, add allow rules, loosen the permission mode, or raise the turn and retry limits.
+pub fn split_project_config(project: &Config, global: &Config, cli_model: Option<&str>) -> (Config, Config) {
+    split_project_config_with(project, global, cli_model, || user_default_model(global))
+}
+
+/// [`split_project_config`] with the model a run would default to given (tests: it depends on the
+/// environment).
+pub fn split_project_config_with(
+    project: &Config,
+    global: &Config,
+    cli_model: Option<&str>,
+    default_model: impl FnOnce() -> String,
+) -> (Config, Config) {
     let mut safe = Config::new();
     let mut elevated = Config::new();
     let global_providers = global.get("providers").and_then(Value::as_object);
-    let known_provider = |spec: &str| {
-        // spec.slice(0, spec.indexOf("/")): with no slash, indexOf is -1 and the slice drops the last char.
-        let name = match spec.find('/') {
-            Some(i) => &spec[..i],
-            None => {
-                let mut cut = spec.char_indices().map(|(i, _)| i).collect::<Vec<_>>();
-                let end = cut.pop().unwrap_or(0);
-                &spec[..end]
-            }
-        };
-        if ROUTERS.contains(&name) {
+    let mut default_model = Some(default_model);
+    let mut users: Option<Vec<String>> = None;
+    let mut known_provider = |spec: &str| {
+        let name = provider_of(spec);
+        if ROUTERS.contains(&name)
+            || !(builtin_providers().contains_key(name) || global_providers.is_some_and(|p| p.contains_key(name)))
+        {
             return false;
         }
-        builtin_providers().contains_key(name) || global_providers.is_some_and(|p| p.contains_key(name))
+        let users = users.get_or_insert_with(|| {
+            let default_model = default_model.take();
+            user_providers(global, cli_model, || default_model.map(|f| f()).unwrap_or_default())
+        });
+        users.iter().any(|u| u == name)
     };
     // tools.disabled only adds to the user's list (see merge_config).
     for key in ["thinking", "instructions", "toolSearch", "tools", "tui"] {
@@ -239,7 +286,7 @@ pub fn split_project_config(project: &Config, global: &Config) -> (Config, Confi
     }
     for key in ["model", "judgeModel"] {
         if let Some(v) = project.get(key) {
-            let target = if v.as_str().is_some_and(known_provider) {
+            let target = if v.as_str().is_some_and(&mut known_provider) {
                 &mut safe
             } else {
                 &mut elevated
@@ -251,7 +298,7 @@ pub fn split_project_config(project: &Config, global: &Config) -> (Config, Confi
         let (ok, rest): (Vec<Value>, Vec<Value>) = models
             .iter()
             .cloned()
-            .partition(|m| m.as_str().is_some_and(known_provider));
+            .partition(|m| m.as_str().is_some_and(&mut known_provider));
         if !ok.is_empty() {
             safe.insert("models".into(), Value::Array(ok));
         }
@@ -295,20 +342,184 @@ pub fn split_project_config(project: &Config, global: &Config) -> (Config, Confi
     (safe, elevated)
 }
 
-fn keys(v: Option<&Value>) -> Vec<String> {
-    v.and_then(Value::as_object)
-        .map(|o| o.keys().cloned().collect())
-        .unwrap_or_default()
-}
 fn strings(v: Option<&Value>) -> Vec<String> {
     v.and_then(Value::as_array)
         .map(|a| a.iter().filter_map(|s| s.as_str().map(str::to_string)).collect())
         .unwrap_or_default()
 }
 
-/// One line per thing the trust prompt covers.
-pub fn describe_elevated(e: &Config) -> Vec<String> {
+/// How much of one plugin setting or model override value a trust line shows.
+const SHOWN: usize = 200;
+
+/// A value from the project's config as a trust line shows it: whole, on one line, without control
+/// characters.
+fn shown(s: &str) -> String {
+    plain_line(s)
+}
+
+/// Plugin settings or a model override: every key, each value on one line and cut when long, so a
+/// long value cannot push the keys after it out of sight.
+fn shown_entries(v: &Value) -> String {
+    let value = |v: &Value| plain_clipped(&serde_json::to_string(v).unwrap_or_default(), SHOWN);
+    match v.as_object() {
+        Some(o) => o
+            .iter()
+            .map(|(k, v)| format!("{}={}", shown(k), value(v)))
+            .collect::<Vec<_>>()
+            .join(", "),
+        None => value(v),
+    }
+}
+
+/// What a project's `mcpServers.<name>` entry writes, field by field as the file has it: a field it
+/// leaves out is `None`/empty here, however `McpServerConfig::from_json` would read the entry. Only
+/// the names of `env` and `headers` are kept, never their values.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct McpEntry {
+    /// The `command` when it is a string (possibly empty): only a non-empty one starts anything.
+    pub command: Option<String>,
+    /// The `command` when it is not a string (`null`, a number, a list), as JSON: it starts nothing.
+    pub command_not_text: Option<String>,
+    pub args: Vec<String>,
+    pub url: Option<String>,
+    pub cwd: Option<String>,
+    pub env: Vec<String>,
+    pub headers: Vec<String>,
+    /// The other fields `McpServerConfig::from_json` reads, as written (`None`: not written).
+    pub disabled: Option<String>,
+    pub always_load: Option<String>,
+    pub timeout: Option<String>,
+    pub tool_names: Option<String>,
+    /// The global config has a server of this name: the entry is laid over it.
+    pub overlays_global: bool,
+}
+
+impl McpEntry {
+    pub fn of(name: &str, entry: &Value, global: &Config) -> McpEntry {
+        let text = |v: &Value| match v {
+            Value::String(s) => s.clone(),
+            other => other.to_string(),
+        };
+        let keys = |key: &str| -> Vec<String> {
+            entry
+                .get(key)
+                .and_then(Value::as_object)
+                .map(|o| o.keys().cloned().collect())
+                .unwrap_or_default()
+        };
+        McpEntry {
+            command: entry.get("command").and_then(Value::as_str).map(str::to_string),
+            command_not_text: entry.get("command").filter(|c| !c.is_string()).map(Value::to_string),
+            args: entry
+                .get("args")
+                .and_then(Value::as_array)
+                .map(|a| a.iter().map(text).collect())
+                .unwrap_or_default(),
+            url: entry.get("url").map(text),
+            cwd: entry.get("cwd").map(text),
+            env: keys("env"),
+            headers: keys("headers"),
+            disabled: entry.get("disabled").map(text),
+            always_load: entry.get("alwaysLoad").map(text),
+            timeout: entry.get("timeout").map(text),
+            tool_names: entry.get("toolNames").map(text),
+            overlays_global: global
+                .get("mcpServers")
+                .and_then(Value::as_object)
+                .is_some_and(|g| g.contains_key(name)),
+        }
+    }
+
+    /// Whether the entry on its own starts a server or connects to one: a non-empty `command`, or
+    /// failing that a non-empty `url`.
+    pub fn launches(&self) -> bool {
+        let set = |v: &Option<String>| v.as_deref().is_some_and(|v| !v.is_empty());
+        set(&self.command) || set(&self.url)
+    }
+}
+
+/// A word of a command line as a trust line shows it: quoted when it is empty or holds a space or a
+/// quote.
+fn quoted(a: &str) -> String {
+    if a.is_empty() || a.contains(|c: char| c.is_whitespace() || c == '"' || c == '\'') {
+        format!("{a:?}")
+    } else {
+        a.to_string()
+    }
+}
+
+/// The trust line for one `mcpServers` entry of the project: what it starts or connects to, or that
+/// it starts nothing itself, then every other field it writes (values of `env` and `headers` never)
+/// and whether it lands on a global server of the same name.
+fn describe_mcp_entry(name: &str, e: &McpEntry) -> String {
+    fn set(v: &Option<String>) -> Option<&str> {
+        v.as_deref().filter(|v| !v.is_empty())
+    }
+    let command = set(&e.command);
+    let url = set(&e.url);
+    let run = match (command, url) {
+        (Some(c), _) => std::iter::once(c)
+            .chain(e.args.iter().map(String::as_str))
+            .map(quoted)
+            .collect::<Vec<_>>()
+            .join(" "),
+        (None, Some(u)) => u.to_string(),
+        (None, None) => t!("no command or url"),
+    };
+    let mut line = t!("MCP server {name}: {run}", name = shown(name), run = shown(&run));
+    let mut add = |part: String| line.push_str(&format!("; {part}"));
+    if command.is_none() {
+        if let Some(c) = &e.command {
+            add(format!("command {}", shown(&quoted(c))));
+        }
+        if let Some(c) = &e.command_not_text {
+            add(t!(
+                "command {value} (not a string, so nothing is started)",
+                value = shown(c)
+            ));
+        }
+        if !e.args.is_empty() {
+            let args: Vec<String> = e.args.iter().map(|a| quoted(a)).collect();
+            add(format!("args {}", shown(&args.join(" "))));
+        }
+    }
+    // Shown whenever it is not the thing the line says it connects to.
+    if let Some(u) = &e.url
+        && (command.is_some() || url.is_none())
+    {
+        add(format!("url {}", shown(&quoted(u))));
+    }
+    if let Some(cwd) = &e.cwd {
+        add(t!("in {dir}", dir = shown(cwd)));
+    }
+    let names = |v: &[String]| v.iter().map(|s| shown(s)).collect::<Vec<_>>().join(", ");
+    if !e.env.is_empty() {
+        add(t!("environment {names}", names = names(&e.env)));
+    }
+    if !e.headers.is_empty() {
+        add(t!("headers {names}", names = names(&e.headers)));
+    }
+    for (key, v) in [
+        ("disabled", &e.disabled),
+        ("alwaysLoad", &e.always_load),
+        ("timeout", &e.timeout),
+        ("toolNames", &e.tool_names),
+    ] {
+        if let Some(v) = v {
+            add(format!("{key} {}", shown(&quoted(v))));
+        }
+    }
+    if e.overlays_global {
+        add(t!("applied on top of the global server of the same name"));
+    }
+    line
+}
+
+/// One line per thing the trust prompt covers. Every value from the project is shown on one line
+/// without control characters, so an entry cannot pass for another or hide what it runs.
+pub fn describe_elevated(e: &Config, global: &Config) -> Vec<String> {
     let mut out = Vec::new();
+    let names = |v: &[String]| v.iter().map(|s| shown(s)).collect::<Vec<_>>().join(", ");
     if let Some(providers) = e.get("providers").and_then(Value::as_object) {
         for (n, p) in providers {
             let url = p
@@ -316,52 +527,58 @@ pub fn describe_elevated(e: &Config) -> Vec<String> {
                 .and_then(Value::as_str)
                 .or_else(|| p.get("api").and_then(Value::as_str))
                 .unwrap_or("?");
-            out.push(t!("endpoint {name} ({url})", name = n, url = url));
+            out.push(t!("endpoint {name} ({url})", name = shown(n), url = shown(url)));
         }
     }
     if let Some(m) = e.get("model").and_then(Value::as_str).filter(|m| !m.is_empty()) {
-        out.push(t!("model {model}", model = m));
+        out.push(t!("model {model}", model = shown(m)));
     }
     let models = strings(e.get("models"));
     if !models.is_empty() {
-        out.push(t!("models {models}", models = models.join(", ")));
+        out.push(t!("models {models}", models = names(&models)));
     }
     // It decides which tool calls run in agent mode: a project must not pick it unseen.
     if let Some(m) = e.get("judgeModel").and_then(Value::as_str).filter(|m| !m.is_empty()) {
-        out.push(t!("judge model {model}", model = m));
+        out.push(t!("judge model {model}", model = shown(m)));
     }
-    if e.contains_key("modelOverrides") {
+    for (spec, v) in e.get("modelOverrides").and_then(Value::as_object).into_iter().flatten() {
         out.push(t!(
-            "model overrides for {models}",
-            models = keys(e.get("modelOverrides")).join(", ")
+            "model override {model}: {value}",
+            model = shown(spec),
+            value = shown_entries(v)
         ));
     }
-    for n in keys(e.get("mcpServers")) {
-        out.push(t!("MCP server {name}", name = n));
+    for (n, v) in e.get("mcpServers").and_then(Value::as_object).into_iter().flatten() {
+        out.push(describe_mcp_entry(n, &McpEntry::of(n, v, global)));
     }
     let plugins = e.get("plugins");
     let disabled = strings(plugins.and_then(|p| p.get("disabled")));
     if !disabled.is_empty() {
-        out.push(t!("disables plugins {names}", names = disabled.join(", ")));
+        out.push(t!("disables plugins {names}", names = names(&disabled)));
     }
     let enabled = strings(plugins.and_then(|p| p.get("enabled")));
     if !enabled.is_empty() {
-        out.push(t!("enables plugins {names}", names = enabled.join(", ")));
+        out.push(t!("enables plugins {names}", names = names(&enabled)));
     }
-    if let Some(s) = plugins.and_then(|p| p.get("settings")) {
-        out.push(t!("settings for plugins {names}", names = keys(Some(s)).join(", ")));
+    let settings = plugins.and_then(|p| p.get("settings")).and_then(Value::as_object);
+    for (n, v) in settings.into_iter().flatten() {
+        out.push(t!(
+            "settings for plugin {name}: {value}",
+            name = shown(n),
+            value = shown_entries(v)
+        ));
     }
     let permissions = e.get("permissions");
     let allow = strings(permissions.and_then(|p| p.get("allow")));
     if !allow.is_empty() {
-        out.push(t!("allow rules {rules}", rules = allow.join(", ")));
+        out.push(t!("allow rules {rules}", rules = names(&allow)));
     }
     if let Some(m) = permissions
         .and_then(|p| p.get("mode"))
         .and_then(Value::as_str)
         .filter(|m| !m.is_empty())
     {
-        out.push(t!("permission mode {mode}", mode = m));
+        out.push(t!("permission mode {mode}", mode = shown(m)));
     }
     if let Some(v) = e.get("maxTurns") {
         let n = v.as_f64().unwrap_or(0.0);
@@ -394,6 +611,8 @@ pub struct ConfigFiles {
     pub global: Config,
     pub project: Config,
     pub warnings: Vec<String>,
+    /// The model `-m` gave: its provider is one the user chose, as the global config's are.
+    pub cli_model: Option<String>,
 }
 
 pub fn global_config_path() -> PathBuf {
@@ -427,6 +646,7 @@ pub fn read_config_files_from(global_path: &Path, cwd: &Path) -> anyhow::Result<
         global,
         project,
         warnings,
+        cli_model: None,
     })
 }
 
@@ -440,17 +660,28 @@ pub fn load_config(cwd: &Path, trusted: bool, files: Option<ConfigFiles>) -> any
         global,
         project,
         warnings,
+        cli_model,
     } = files;
     let mut warnings = warnings;
-    let (safe, elevated) = split_project_config(&project, &global);
-    let items = describe_elevated(&elevated);
-    // Allowed without trust, but the user should know the project, not they, picked the model.
-    if !trusted
-        && let Some(m) = safe.get("model").and_then(Value::as_str).filter(|m| !m.is_empty())
-        && global.get("model").and_then(Value::as_str) != Some(m)
-    {
+    let (safe, elevated) = split_project_config(&project, &global, cli_model.as_deref());
+    let items = describe_elevated(&elevated, &global);
+    // Allowed without trust (the user already uses the provider), but the user should know the
+    // project, not they, picked the model: said whether the project is trusted or not.
+    let picked = |key: &str| {
+        safe.get(key)
+            .and_then(Value::as_str)
+            .filter(|m| !m.is_empty() && global.get(key).and_then(Value::as_str) != Some(*m))
+            .map(shown)
+    };
+    if let Some(m) = picked("model") {
         warnings.push(t!(
             ".sasacode/config.json: this project selects the model {model}",
+            model = m
+        ));
+    }
+    if let Some(m) = picked("judgeModel") {
+        warnings.push(t!(
+            ".sasacode/config.json: this project selects the judge model {model}",
             model = m
         ));
     }

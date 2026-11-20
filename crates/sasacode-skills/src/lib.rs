@@ -4,13 +4,15 @@
 
 pub mod builtin;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use indexmap::IndexMap;
 
 use sasacode_plugin_api::hooks::{SystemPromptEvent, SystemPromptResult};
-use sasacode_plugin_api::{Command, CommandContext, InjectWhen, Lang, NotifyLevel, PermissionRules, PluginApi, hook};
+use sasacode_plugin_api::{
+    Command, CommandContext, InjectWhen, Lang, NotifyLevel, PermissionRules, PluginApi, hook, sasacode_home,
+};
 
 pub use builtin::{BUILTIN_SKILLS, materialize_builtin_skills};
 
@@ -117,9 +119,20 @@ fn unquote(value: &str) -> &str {
 /// Folders holding a SKILL.md with a name and a description. A later directory (project) overrides
 /// an earlier one (global) for a skill of the same name, which keeps its place in the list.
 pub fn discover_skills(dirs: &[PathBuf]) -> std::io::Result<Vec<Skill>> {
+    discover_skills_in(dirs, None)
+}
+
+/// [`discover_skills`], with `project` (the project's skills folder, read before the project is
+/// trusted) taken only as files of its own: the folder is skipped when it or `.sasacode` is a link,
+/// and so is a skill folder or SKILL.md in it that is a link, as it could put any file into the prompt.
+pub fn discover_skills_in(dirs: &[PathBuf], project: Option<&Path>) -> std::io::Result<Vec<Skill>> {
     let mut by_name: IndexMap<String, Skill> = IndexMap::new();
     for dir in dirs {
         if !dir.exists() {
+            continue;
+        }
+        let own = project == Some(dir.as_path());
+        if own && !in_place(dir) {
             continue;
         }
         // Sorted by name, as Node's readdirSync returns them (libuv sorts scandir), so the result
@@ -129,8 +142,10 @@ pub fn discover_skills(dirs: &[PathBuf]) -> std::io::Result<Vec<Skill>> {
             .collect::<Result<_, _>>()?;
         entries.sort();
         for entry in entries {
-            let path = dir.join(entry).join("SKILL.md");
-            if !std::fs::metadata(&path).is_ok_and(|m| m.is_file()) {
+            let path = dir.join(&entry).join("SKILL.md");
+            if !std::fs::metadata(&path).is_ok_and(|m| m.is_file())
+                || own && (is_link(&dir.join(entry)) || is_link(&path))
+            {
                 continue;
             }
             let fm = parse_frontmatter(&String::from_utf8_lossy(&std::fs::read(&path)?));
@@ -168,6 +183,50 @@ pub fn create_skills_plugin(dirs: Vec<PathBuf>, opts: SkillsOptions) -> PluginIn
     Box::new(move |api| Box::pin(skills_plugin(api, dirs, opts)))
 }
 
+/// The project's skills folder, `<cwd>/.sasacode/skills`, unless that is the user's own (`home_skills`, when
+/// run from the home folder).
+pub fn project_skills_dir(cwd: &Path, home_skills: &Path) -> Option<PathBuf> {
+    Some(cwd.join(".sasacode").join("skills")).filter(|p| p != home_skills)
+}
+
+/// Whether `p` is a symbolic link, or on Windows a junction or any other reparse point.
+fn is_link(p: &Path) -> bool {
+    let Ok(meta) = std::fs::symlink_metadata(p) else {
+        return false;
+    };
+    #[cfg(windows)]
+    let reparse = {
+        use std::os::windows::fs::MetadataExt;
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+        meta.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+    };
+    #[cfg(not(windows))]
+    let reparse = false;
+    meta.file_type().is_symlink() || reparse
+}
+
+/// `<cwd>/.sasacode/skills` as a folder of its own: it exists, neither it nor `.sasacode` is a link (or
+/// a junction), and its real path is still `<cwd>/.sasacode/skills`. One that is not there is not
+/// "in place": a link made later at that path must not be covered by what was decided now.
+fn in_place(project: &Path) -> bool {
+    let Some(cwd) = project.parent().and_then(Path::parent) else {
+        return false;
+    };
+    if is_link(project) || project.parent().is_some_and(is_link) {
+        return false;
+    }
+    match (std::fs::canonicalize(project), std::fs::canonicalize(cwd)) {
+        // Spelled as the file system has it: where it folds case, `.sasacode/Skills` is the same folder.
+        (Ok(real), Ok(cwd)) => {
+            let rest: Vec<_> = real.strip_prefix(&cwd).into_iter().flat_map(Path::components).collect();
+            real.is_dir()
+                && matches!(rest.as_slice(), [a, b]
+                    if a.as_os_str().eq_ignore_ascii_case(".sasacode") && b.as_os_str().eq_ignore_ascii_case("skills"))
+        }
+        _ => false,
+    }
+}
+
 fn en(api: &PluginApi) -> bool {
     api.ui().lang() == Lang::En
 }
@@ -188,7 +247,11 @@ pub async fn skills_plugin(api: PluginApi, mut dirs: Vec<PathBuf>, opts: SkillsO
             }
         }
     }
-    let skills = discover_skills(&dirs)?;
+    // The project's folder counts only where it really is <cwd>/.sasacode/skills: through a link it
+    // could be any folder, and the read rule below would cover all of it.
+    let project = project_skills_dir(&api.cwd(), &sasacode_home().join("skills"));
+    dirs.retain(|d| project.as_ref() != Some(d) || in_place(d));
+    let skills = discover_skills_in(&dirs, project.as_deref())?;
     if skills.is_empty() {
         return Ok(());
     }

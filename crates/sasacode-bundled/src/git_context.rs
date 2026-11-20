@@ -22,10 +22,8 @@ const MAX_BUFFER: usize = 8 * 1024 * 1024;
 
 /// Git receives argv, never shell text. External diff/textconv helpers are disabled.
 async fn git(cwd: &Path, args: &[&str], signal: &CancellationToken) -> anyhow::Result<String> {
-    let mut cmd = tokio::process::Command::new("git");
-    cmd.args(["--no-pager", "-c", "core.fsmonitor=false"])
-        .args(args)
-        .current_dir(cwd);
+    let mut cmd = crate::git_args::command();
+    cmd.arg("--no-pager").args(args).current_dir(cwd);
     let extra: Vec<(String, String)> = [
         ("GIT_OPTIONAL_LOCKS", "0"),
         ("GIT_TERMINAL_PROMPT", "0"),
@@ -40,7 +38,7 @@ async fn git(cwd: &Path, args: &[&str], signal: &CancellationToken) -> anyhow::R
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
-    let command = format!("git --no-pager -c core.fsmonitor=false {}", args.join(" "));
+    let command = format!("git --no-pager {}", args.join(" "));
     let mut child = cmd.spawn()?;
     let (Some(mut out), Some(mut err)) = (child.stdout.take(), child.stderr.take()) else {
         anyhow::bail!("Command failed: {command}");
@@ -143,8 +141,8 @@ pub async fn collect_context(args: &JsonObject, ctx: &ToolContext) -> anyhow::Re
     let diff = |options: &'static str| {
         let mut a: Vec<String> = [
             "diff",
-            "--no-ext-diff",
-            "--no-textconv",
+            crate::git_args::NO_DIFF_HELPERS[0],
+            crate::git_args::NO_DIFF_HELPERS[1],
             "--no-color",
             "--ignore-submodules=all",
             options,
@@ -185,8 +183,14 @@ pub async fn collect_context(args: &JsonObject, ctx: &ToolContext) -> anyhow::Re
     Ok(ToolResult::text(text).with_details(details))
 }
 
+/// Said instead of the context in a folder git is not allowed in: git runs what a repository's
+/// config names, so it is not run there.
+pub const UNTRUSTED: &str = "git_context is not available until git is allowed in this folder (answer yes when sasacode \
+                              asks on a terminal here, or allow it in the window's git tab).";
+
 pub fn plugin(api: PluginApi) -> BoxFuture<'static, anyhow::Result<()>> {
     Box::pin(async move {
+        let cwd = api.cwd();
         api.register_tool(
             ToolDef::new(
                 "git_context",
@@ -200,7 +204,15 @@ pub fn plugin(api: PluginApi) -> BoxFuture<'static, anyhow::Result<()>> {
                     }, "additionalProperties": false,
                 }),
                 ToolKind::Read,
-                |args, ctx| async move { collect_context(&args, &ctx).await },
+                move |args, ctx| {
+                    let trusted = crate::project_trust::is_trusted(&cwd);
+                    async move {
+                        if !trusted {
+                            anyhow::bail!(UNTRUSTED);
+                        }
+                        collect_context(&args, &ctx).await
+                    }
+                },
             )
             .concurrent(true)
             .paths(|_args, cwd| vec![cwd.to_string_lossy().into_owned()])

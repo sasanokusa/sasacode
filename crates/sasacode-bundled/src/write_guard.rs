@@ -13,6 +13,7 @@
 //! settings: { lineNumbers?: boolean, shrink?: boolean (both default true), minLines?: number (default 20) }
 
 use std::collections::{HashMap, HashSet};
+use std::path::Path;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use futures::future::BoxFuture;
@@ -20,7 +21,11 @@ use serde_json::Value;
 
 use sasacode_plugin_api::{Decision, PluginApi, ToolCallRawResult, ToolCallResult, hook};
 
+use crate::regular_file::read_capped;
 use crate::repair::js::num_setting;
+
+/// The largest file the guards read before the call is judged; a larger one is not compared.
+const MAX_READ: u64 = 8 << 20;
 
 /// read's line-number prefix (`/^ +(\d+)(?:\t| *(?=\r?$))/`): the number padded with spaces, then
 /// a tab (gone on a blank line whose trailing tab was trimmed). The padding is required: a TSV whose
@@ -195,7 +200,7 @@ pub fn plugin(api: PluginApi) -> BoxFuture<'static, anyhow::Result<()>> {
                 let Some(path) = path else {
                     return Ok(None);
                 };
-                let Ok(file) = tokio::fs::read(&path).await else {
+                let Some(file) = read_capped(Path::new(&path), MAX_READ) else {
                     return Ok(None);
                 };
                 let Some((plain, spaces)) = strip_padding(content, &String::from_utf8_lossy(&file)) else {
@@ -251,7 +256,7 @@ pub fn plugin(api: PluginApi) -> BoxFuture<'static, anyhow::Result<()>> {
                 let path = ev.tool.paths(&ev.args, &cwd).and_then(|p| p.into_iter().next()).filter(|p| !p.is_empty());
                 let before = match path {
                     Some(p) if shrink => {
-                        tokio::fs::read(&p).await.ok().map(|b| String::from_utf8_lossy(&b).into_owned())
+                        read_capped(Path::new(&p), MAX_READ).map(|b| String::from_utf8_lossy(&b).into_owned())
                     }
                     _ => None,
                 };

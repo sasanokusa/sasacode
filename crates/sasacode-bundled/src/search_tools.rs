@@ -15,7 +15,7 @@ use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
 use sasacode_ai::JsonObject;
-use sasacode_plugin_api::{PluginApi, ToolContext, ToolDef, ToolKind, ToolResult};
+use sasacode_plugin_api::{PluginApi, ReadRule, ToolContext, ToolDef, ToolKind, ToolResult};
 use sasacode_tools::util::resolve_path;
 
 use crate::repair::js::num_setting;
@@ -62,14 +62,11 @@ pub(crate) fn slash_path(p: &Path) -> String {
     p.to_string_lossy().replace('\\', "/")
 }
 
-/// Secret-looking filenames always excluded from directory walks.
+/// Secret-looking filenames always excluded from directory walks, rules or not.
 ///
-/// Limitation: `PluginApi` / `HostServices` does not expose `PermissionPolicy` or user `deny` rules
-/// (such as `read(secrets/**)`) to plugins (`api.settings()` only returns this plugin's own
-/// settings). While `.permissions_as("read")` enforces `read(...)` rules on the tool's declared
-/// `path` (protecting single-file calls like `search_text(path=".env", ...)`), directory walks
-/// cannot evaluate arbitrary user `read` deny rules per candidate and therefore unconditionally
-/// skip common secret files here.
+/// The permission check sees only the `path` a call names. Each file a directory walk finds is
+/// judged on its own against the `read` deny and ask rules (`ToolContext::read_rule`, see
+/// [`leave_out_ruled`]), since one call cannot ask about every file it reaches.
 fn is_secret_file(name: &str) -> bool {
     let lower = name.to_ascii_lowercase();
     if matches!(
@@ -447,6 +444,21 @@ fn display_path(cwd: &Path, full_path: &Path) -> String {
     slash_path(&full)
 }
 
+/// Drops the files a deny or ask rule keeps this tool from reading (no prompt per file: they are
+/// left out), and says how many went, so the model does not take them for missing.
+fn leave_out_ruled(files: &mut Vec<String>, target: &Path, rule: Option<&ReadRule>) -> String {
+    let Some(rule) = rule else {
+        return String::new();
+    };
+    let before = files.len();
+    files.retain(|rel| rule(&target.join(rel)).is_none());
+    match before - files.len() {
+        0 => String::new(),
+        1 => "\n[1 file left out: the permission rules deny or ask about reading it.]".into(),
+        n => format!("\n[{n} files left out: the permission rules deny or ask about reading them.]"),
+    }
+}
+
 fn truncate_chars(s: &str, max_chars: usize) -> String {
     let mut chars = s.chars();
     let head: String = chars.by_ref().take(max_chars).collect();
@@ -476,6 +488,7 @@ async fn run_find_files(args: JsonObject, ctx: ToolContext, default_limit: usize
     let limit = limit_arg(&args, default_limit);
     let cwd = ctx.cwd.clone();
     let signal = ctx.signal.clone();
+    let read_rule = ctx.read_rule.clone();
 
     tokio::task::spawn_blocking(move || {
         let target = Path::new(&target_str);
@@ -488,10 +501,12 @@ async fn run_find_files(args: JsonObject, ctx: ToolContext, default_limit: usize
         if !meta.is_dir() {
             return ToolResult::error(format!("Not a file or directory: {target_str}"));
         }
-        let files = walk_project_files(target, Some(&cwd), 32, MAX_WALK_ENTRIES, Some(&signal));
+        let mut files = walk_project_files(target, Some(&cwd), 32, MAX_WALK_ENTRIES, Some(&signal));
         if signal.is_cancelled() {
             return ToolResult::error("The operation was aborted");
         }
+        // Before the pattern, so the count says nothing about which names match it.
+        let left_out = leave_out_ruled(&mut files, target, read_rule.as_ref());
         let mut matched: Vec<String> = files
             .into_iter()
             .filter_map(|rel| {
@@ -506,7 +521,7 @@ async fn run_find_files(args: JsonObject, ctx: ToolContext, default_limit: usize
         matched.sort();
         matched.dedup();
         if matched.is_empty() {
-            return ToolResult::text("No files found.");
+            return ToolResult::text(format!("No files found.{left_out}"));
         }
         let total = matched.len();
         let shown = total.min(limit);
@@ -516,6 +531,7 @@ async fn run_find_files(args: JsonObject, ctx: ToolContext, default_limit: usize
                 "\n[Showing {shown} of {total} matches; narrow pattern or path.]"
             ));
         }
+        out.push_str(&left_out);
         let mut details = JsonObject::new();
         details.insert("total".into(), json!(total));
         details.insert("shown".into(), json!(shown));
@@ -564,16 +580,22 @@ async fn run_search_text(
     let limit = limit_arg(&args, default_limit);
     let cwd = ctx.cwd.clone();
     let signal = ctx.signal.clone();
+    let read_rule = ctx.read_rule.clone();
 
     tokio::task::spawn_blocking(move || {
         let target = Path::new(&target_str);
         let Ok(meta) = std::fs::metadata(target) else {
             return ToolResult::error(format!("Path not found: {target_str}"));
         };
+        // A file named by `path` went through the permission check; files found by a walk did not.
+        let mut left_out = String::new();
         let candidates: Vec<(String, std::path::PathBuf)> = if meta.is_file() {
             vec![(display_path(&cwd, target), target.to_path_buf())]
         } else if meta.is_dir() {
-            walk_project_files(target, Some(&cwd), 32, MAX_WALK_ENTRIES, Some(&signal))
+            let mut files = walk_project_files(target, Some(&cwd), 32, MAX_WALK_ENTRIES, Some(&signal));
+            // Before the glob, so the count says nothing about which names match it.
+            left_out = leave_out_ruled(&mut files, target, read_rule.as_ref());
+            files
                 .into_iter()
                 .filter_map(|rel| {
                     let full = target.join(&rel);
@@ -627,7 +649,7 @@ async fn run_search_text(
             }
         }
         if hits.is_empty() {
-            return ToolResult::text(format!("No matches found for \"{query}\"."));
+            return ToolResult::text(format!("No matches found for \"{query}\".{left_out}"));
         }
         let shown = hits.len();
         let mut out = hits.join("\n");
@@ -636,6 +658,7 @@ async fn run_search_text(
                 "\n[Showing first {shown} matches; more exist. Narrow query, glob, or path.]"
             ));
         }
+        out.push_str(&left_out);
         let mut details = JsonObject::new();
         details.insert("shown".into(), json!(shown));
         details.insert("truncated".into(), json!(has_more));

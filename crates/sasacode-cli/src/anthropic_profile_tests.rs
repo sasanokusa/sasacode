@@ -720,7 +720,13 @@ fn a_keyless_listing_uses_the_installed_profile_end_to_end() {
     };
     let rt = tokio::runtime::Runtime::new().unwrap();
     let models = rt
-        .block_on(crate::list_models::list_models(&p, None, &Default::default(), None))
+        .block_on(crate::list_models::list_models(
+            "anthropic",
+            &p,
+            None,
+            &Default::default(),
+            None,
+        ))
         .unwrap();
     assert_eq!(models.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), ["claude-x"]);
     let seen = seen.lock().unwrap().clone();

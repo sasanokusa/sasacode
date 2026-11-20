@@ -18,20 +18,49 @@ fn fake_cargo(dir: &Path) -> PathBuf {
 }
 
 #[test]
-fn without_path_the_source_is_this_versions_tag_of_the_repository() {
+fn without_path_or_commit_the_source_is_this_versions_tag_of_the_repository() {
     let tag = Source::Tag {
         git: REPO.to_string(),
         tag: format!("v{VERSION}"),
     };
-    assert_eq!(source_for(None, None).unwrap(), tag);
-    assert_eq!(source_for(None, Some("")).unwrap(), tag);
+    assert_eq!(source_for_commit(None, None, None).unwrap(), tag);
+    assert_eq!(source_for_commit(None, Some(""), Some("")).unwrap(), tag);
     assert_eq!(
-        source_for(None, Some("file:///mirror")).unwrap(),
+        source_for_commit(None, Some("file:///mirror"), None).unwrap(),
         Source::Tag {
             git: "file:///mirror".to_string(),
             tag: format!("v{VERSION}")
         }
     );
+}
+
+#[test]
+fn a_release_builds_the_window_from_the_commit_it_was_built_from() {
+    let rev = "0123456789abcdef0123456789ABCDEF01234567";
+    assert_eq!(
+        source_for_commit(None, None, Some(rev)).unwrap(),
+        Source::Commit {
+            git: REPO.to_string(),
+            rev: rev.to_ascii_lowercase()
+        }
+    );
+    assert_eq!(
+        source_for_commit(None, Some("file:///mirror"), Some(rev)).unwrap(),
+        Source::Commit {
+            git: "file:///mirror".to_string(),
+            rev: rev.to_ascii_lowercase()
+        }
+    );
+    // Not a full hash (a branch, a tag, an abbreviation): never handed to cargo as one.
+    for bad in ["main", "v0.20.0", "0123456", "0123456789abcdef0123456789abcdef0123456z"] {
+        let e = source_for_commit(None, None, Some(bad)).unwrap_err().to_string();
+        assert!(e.contains(bad) && e.contains("--path"), "{e}");
+    }
+    // --path wins: a checkout is built as it is.
+    assert!(matches!(
+        source_for_commit(Some(&repo()), None, Some(rev)).unwrap(),
+        Source::Checkout(_)
+    ));
 }
 
 #[test]
@@ -61,6 +90,25 @@ fn cargo_args_build_locked_into_the_root_from_the_tag_or_the_checkout() {
     let head = ["install", "--locked", "--force", "--root", "/home/u/.sasacode/gui"];
     assert_eq!(args[..5], head);
     assert_eq!(args[5..], ["--git", REPO, "--tag", "v0.20.0", "sasacode-gui"]);
+    let commit = Source::Commit {
+        git: REPO.to_string(),
+        rev: "0123456789abcdef0123456789abcdef01234567".to_string(),
+    };
+    let args: Vec<String> = cargo_args(&commit, root)
+        .iter()
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(args[..5], head);
+    assert_eq!(
+        args[5..],
+        [
+            "--git",
+            REPO,
+            "--rev",
+            "0123456789abcdef0123456789abcdef01234567",
+            "sasacode-gui"
+        ]
+    );
     let checkout = Source::Checkout(PathBuf::from("/src/sasacode/crates/sasacode-gui"));
     let args: Vec<String> = cargo_args(&checkout, root)
         .iter()

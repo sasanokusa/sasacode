@@ -37,11 +37,11 @@ irm https://sasanokusa.com/sasacode/install.ps1 | iex
 - npmからも `npm install -g sasacode` で入れられる。npmのパッケージは起動用の小さなスクリプトで、初回の実行時に同じ版のバイナリをGitHub Releasesから取得してSHA256を検証し、`~/.sasacode/npm-bin` に置く。更新は `npm install -g sasacode@latest`。
 - macOS（arm64 / x64）、Linux（x64 / arm64、glibc / musl）、Windows（x64 / arm64）の単一バイナリ。x64版はどれもAVX2のないCPUでも動く（0.15までのbaseline版の名前でも、同じものを置いている）。
 - インストーラーもバイナリも、[GitHub Releases](https://github.com/sasanokusa/sasacode/releases) の最新版から取得してSHA256を検証する。sasanokusa.comのURLは、最新リリースの `install.sh` / `install.ps1` へのリダイレクト。
-- SHA256が防ぐのは壊れたダウンロードまで。ファイルがこのリポジトリのGitHub Actionsでビルドされたものかは、v0.9.8以降のリリースに付けた署名つきの来歴で確かめられる（`gh attestation verify sasacode-darwin-arm64.tar.gz --repo sasanokusa/sasacode`。リリースから落としたファイルに対して。`install.sh` も同じ）。
+- SHA256が防ぐのは壊れたダウンロードまで。ファイルがこのリポジトリのGitHub Actionsでビルドされたものかは、v0.9.8以降のリリースに付けた署名つきの来歴で確かめられる（`gh attestation verify sasacode-darwin-arm64.tar.gz --repo sasanokusa/sasacode`。リリースから落としたファイルに対して。`install.sh` も同じ）。`gh` が入っていてログイン済みなら、`install.sh` と `sasacode update`、npmのランチャーがこの検証を自動で行い、通らなければ入れずに止まる。`gh` がないかログインしていないときは、検証しなかったと表示して先へ進むので、上のコマンドで自分で確かめる。
 - `SASACODE_VERSION=v0.20.1` で版を固定でき、`SASACODE_INSTALL_DIR` で置き場所を変えられる（どちらのインストーラーでも）。
 - 更新は`sasacode update`（インストーラーと同じ検証つき。`--check`で確認だけ）。新しい版が出ていると起動時に一度だけ静かに知らせる（`"updateCheck": false`で止める）。ソースから入れた場合は、`git pull`のあと下の`cargo install`をもう一度実行する。
-- Web検索（`web_search`）に使うRustXNGは `sasacode web-search install`（TUIでは `/web-search install`）で入る。公式リリースをチェックサムで確かめて `~/.sasacode/bin` に置き、再起動しなくても使える。もう一度実行すると最新版に更新する。
-- デスクトップGUI（開発中）は配布物に入っておらず、`sasacode gui install`でこのマシンでビルドして入れる（[Rust](https://rustup.rs)が要る。ないときは入れ方を案内して止まる）。`~/.sasacode/gui/bin`に入り、`sasacode update`では更新されない。sasacodeを更新したら、もう一度`sasacode gui install`を実行する（[docs/gui.md](docs/gui.md)）。
+- Web検索（`web_search`）に使うRustXNGは `sasacode web-search install`（TUIでは `/web-search install`）で入る。sasacodeが決めた版（今はv0.32.0）の公式リリースを、sasacodeが持つチェックサムで確かめて `~/.sasacode/bin` に置き、再起動しなくても使える。入るのはその版だけで、新しい版はsasacodeの更新で入る。
+- デスクトップGUI（開発中）は配布物に入っておらず、`sasacode gui install`でこのマシンでビルドして入れる（[Rust](https://rustup.rs)が要る。ないときは入れ方を案内して止まる）。`~/.sasacode/gui/bin`に入り、`sasacode update`では更新されない。sasacodeを更新したら、もう一度`sasacode gui install`を実行する（[docs/gui.md](docs/gui.md)）。GUIは、初めてのフォルダではgitを自分からは走らせず、gitタブの「gitの状態を表示する」を押すか、フォルダを信頼すると、以後そのフォルダでgitの状態を読む（リポジトリの設定によっては、gitがプログラムを動かすため）。gitを走らせてよいフォルダの一覧（`~/.sasacode/git-folders.json`）は、CLIと共有する（[gitを走らせるフォルダ](#gitを走らせるフォルダ)）。
 
 ソースから使う場合（[Rust](https://www.rust-lang.org/)1.88以上）は次のとおり。
 
@@ -81,12 +81,12 @@ sasacode -r <id> -p "続き"            # セッション ID を指定して続�
 | `sasacode endpoint remove <name> [--project]` / `sasacode endpoint list` | 足したサーバーを外す / 一覧 |
 | `sasacode list models\|commands\|skills [--json]` | このフォルダでの実行が使えるもの。`models` はTUIの `/model` と同じ一覧（`[{"id":"provider/model","contextWindow"?,"maxContext"?,"server"?,"current"?}]`）、`skills` は `[{"name","description","path"}]`、`commands` はTUIのコマンドとSkillsのコマンド（`[{"name","description","argumentHint"?,"owner","headless"}]`）。同梱プラグインのコマンドは、読み込むとプラグインの起動時の処理が走るのでここには出さず、`--control stdio` の実行が `commands` 行で知らせる |
 | `sasacode plugin list --json` | 同梱プラグインを `[{"name","source":"bundled","enabled"}]` で。`enabled` は設定（`plugins.enabled` と `plugins.disabled`）で決まる。0.20の `sasacode plugin` で残るのはこれだけで、GUIが使う |
-| `sasacode trust [--yes] [--json]` | このフォルダを信頼しているかと、信頼すると有効になるもの（`{"cwd","trusted","needed","complete","items","plugins","mcpServers","endpoints","allow","mode"}`）。`--yes` で、起動時の確認に「y」と答えたのと同じく信頼を保存する。0.20はプロジェクトのプラグインを読まないので、`plugins` は空、`complete` は常に `true` |
+| `sasacode trust [--yes] [--json]` | このフォルダを信頼しているかと、信頼すると有効になるもの（`{"cwd","trusted","needed","complete","items","plugins","mcpServers","endpoints","allow","mode","mcpServerDetails","model","judgeModel","models","modelOverrides","pluginSettings"}`。`mcpServerDetails`はサーバーごとに書かれたフィールド。起動するコマンドと引数かURL、作業フォルダ、環境変数とヘッダーの名前（値は出さない）、`disabled`などの上書き、同名のグローバルのサーバーに重ねるか）。`--yes` で、起動時の確認に「y」と答えたのと同じく信頼を保存し、このフォルダでgitを走らせることも許す。0.20はプロジェクトのプラグインを読まないので、`plugins` は空、`complete` は常に `true` |
 | `sasacode login [status\|logout]` | ChatGPTプランでログイン（`openai-codex/…` のモデル用） |
 | `sasacode update [--check] [tag]` | 最新のリリースを取得して入れ替える（チェックサムを検証。`--check`なら確認だけ） |
-| `sasacode web-search install [tag]` | `web_search`が使うRustXNGを入れる（チェックサムを検証） |
+| `sasacode web-search install` | `web_search`が使うRustXNGを入れる（チェックサムを検証） |
 | `sasacode gui [folder]` | デスクトップGUIをフォルダで開く（`sasacode gui install`で入れる。[docs/gui.md](docs/gui.md)） |
-| `sasacode gui install [--path <dir>]` | デスクトップGUIを、このマシンでRustを使ってビルドして入れる（この版のタグから。`--path`ではチェックアウトから） |
+| `sasacode gui install [--path <dir>]` | デスクトップGUIを、このマシンでRustを使ってビルドして入れる（この版をビルドしたコミットから。`--path`ではチェックアウトから） |
 | `-h, --help` / `-v, --version` | 使い方 / 版を出す |
 
 `sasacode plugin`は0.20でなくなった。実行すると、プラグインはsasacodeに同梱になったこと（既定で無効のものは`plugins.enabled`で有効にする）と、ツールはMCPサーバーかSkillsで足すこと（[拡張のしかた](docs/plugins.md)）を示して、エラーで終わる。
@@ -180,7 +180,7 @@ stdinは1行1件のJSON（JSON Lines）で読む。
 
 | provider | API形式 | キー |
 | --- | --- | --- |
-| `anthropic` | Anthropic Messages | `ANTHROPIC_API_KEY`（空なら環境変数`ANTHROPIC_AUTH_TOKEN`をBearerトークンとして、それもなければ`ant auth login`のプロファイルを使う） |
+| `anthropic` | Anthropic Messages | `ANTHROPIC_API_KEY`（空なら環境変数`ANTHROPIC_AUTH_TOKEN`をBearerトークンとして、それもなければ`ant auth login`のプロファイルを使う。この2つの環境変数は`anthropic`にだけ使い、ほかのAnthropic形式のプロバイダーは自分の`apiKeyEnv`だけを使う） |
 | `openai` / `openai-chat` | OpenAI Responses / Chat Completions | `OPENAI_API_KEY` |
 | `openrouter` | Chat Completions | `OPENROUTER_API_KEY` |
 | `commandcode` / `commandcode-responses` / `commandcode-anthropic` | Command CodeのChat Completions / Responses / Messages | `CMD_API_KEY` |
@@ -198,13 +198,13 @@ sasacode endpoint list
 sasacode -m llama/<モデル名>
 ```
 
-`GET /v1/models`の応答から、OpenAI形式（Chat Completionsで呼ぶ）かAnthropic形式（Messagesで呼ぶ）かを自動で判別し、URLも各形式に合わせて整える。llama.cpp、Ollama、LM Studio（0.3.6以降）は、それぞれ`/props`、`/api/show`、`/api/v0/models`から実際のコンテキスト長も取る（LM Studioを見分けなかった以前のバージョンで追加したサーバーも、モデル一覧を取るときに見分ける）。追加したサーバーのモデルは、`/model`の一覧に自動で出る。設定ファイルに`"providers": { "llama": { "baseUrl": "http://…" } }`とURLだけ書いた場合も、起動時に判別する（結果は`~/.sasacode/endpoints.json`にキャッシュする）。
+`GET /v1/models`の応答から、OpenAI形式（Chat Completionsで呼ぶ）かAnthropic形式（Messagesで呼ぶ）かを自動で判別し、URLも各形式に合わせて整える。llama.cpp、Ollama、LM Studio（0.3.6以降）は、それぞれ`/props`、`/api/show`、`/api/v0/models`から実際のコンテキスト長も取る（LM Studioを見分けなかった以前のバージョンで追加したサーバーも、モデル一覧を取るときに見分ける）。追加したサーバーのモデルは、`/model`の一覧に自動で出る。設定ファイルに`"providers": { "llama": { "baseUrl": "http://…" } }`とURLだけ書いた場合も、起動時に判別する（結果は`~/.sasacode/endpoints.json`にキャッシュする）。環境変数の`ANTHROPIC_CUSTOM_HEADERS`は組み込みの`anthropic`にだけ、`OPENAI_CUSTOM_HEADERS`は`openai`と`openai-chat`にだけ付く。追加したサーバーに送るヘッダーは、`"providers": { "llama": { "headers": { "名前": "値" } } }`のように書く（値はそのまま送る）。
 
 プロジェクトの `.sasacode/config.json` に書いたエンドポイントは、そのプロジェクトを信頼するまで使わない（[プロジェクトの信頼](#プロジェクトの信頼)）。キーを使わないサーバーでも、会話とコードが送られるため。
 
 **モデル一覧の自動取得**：TUIの起動時に、キーのあるプロバイダー（とOllama）のModels API（`GET /v1/models`）をバックグラウンドで呼び、`/model` に一覧とコンテキスト長を出す。取得したコンテキスト長は、フッターの使用率や圧縮のしきい値にも使う（設定の `modelOverrides` があればそちらが優先）。Ollamaは独自の `/api/show` から読み、Modelfileの `num_ctx` があればそれを実際の長さとして使い、なければモデルの最大長を参考として表示する（メモリに載っているモデルは `/api/ps` の実際の長さを使う）。LM Studioも同じで、ロード済みのモデルはロードしたときの長さ（`/api/v0/models` の `loaded_context_length`）を使い、未ロードのモデルは最大長を参考として表示する（LM Studioは最大長ではなく自分の既定の長さでロードするため）。長さがまだ分からないOllamaとLM Studioのモデルは、応答の後にサーバーに聞き直し（分からなければ次の応答の後にも聞き、3回まで）、実際にロードされた長さに切り替える。それまでは既定の128Kで計画する（最大長がそれより短ければ最大長で）。`num_ctx` のないOllamaのモデルを選ぶと、Ollamaが既定の長さを超えた入力を気づかないうちに切り詰めることを一度だけ警告する。ヘッドレス（`-p`）でも、ローカルのサーバー（Ollama、LM Studio、llama.cpp）や追加したOpenAI形式のサーバーなら、実行の前に現在のモデルの長さを聞き、同じ警告を標準エラーに出す。OpenAIのModels APIはコンテキスト長を返さないので、組み込みのモデル表の値で補う。Command Codeのように1つのキーで複数のAPI形式を提供するサービスでは、モデルごとに対応する形式のプロバイダーへ自動で振り分ける（例：Claude系は `commandcode-anthropic/…`）。
 
-**APIキー**は次の順で探す：シェルの環境変数 → `~/.sasacode/.env` → OSキーチェーン（macOS: `security add-generic-password -s sasacode -a <provider> -w`、Linux: `secret-tool store --label sasacode service sasacode account <provider>`）。どこでも空欄は無視する。作業ディレクトリの`.env`は読まない（リポジトリが`ANTHROPIC_BASE_URL`などで接続先を差し替えられないようにするため）。セッションのログには、使用中のキーを`[REDACTED]`に置き換えてから書く。`~/.sasacode/.env`にだけ書いたキーは、エージェントが実行するコマンド（bash、バックグラウンドジョブ）には渡さない。`~/.sasacode`（セッションのログ、入力履歴、長い出力の保存先`tmp/`）は本人しか読めない権限（0700）にする。
+**APIキー**は次の順で探す：シェルの環境変数 → `~/.sasacode/.env` → OSキーチェーン（macOS: `security add-generic-password -s sasacode -a <provider> -w`、Linux: `secret-tool store --label sasacode service sasacode account <provider>`）。どこでも空欄は無視する。作業ディレクトリの`.env`は読まない（リポジトリが`ANTHROPIC_BASE_URL`などで接続先を差し替えられないようにするため）。設定にあるすべてのプロバイダーのキー、OAuthのトークン、MCPサーバーのヘッダーの値と、名前に`KEY`、`TOKEN`、`SECRET`、`PASSWORD`、`PASS`、`AUTH`、`CREDENTIAL`、`PAT`、`PRIVATE`のどれかを含む環境変数の値（どちらも`${VAR}`を展開したあと。作業ディレクトリやホームのパスにあたる値は除く。8文字以上）は、セッションのログ、長い出力の保存ファイル、バックグラウンドジョブのログ、`--output jsonl`の出力で`[REDACTED]`に置き換える。`~/.sasacode/.env`にだけ書いたキーは、エージェントが実行するコマンド（bash、バックグラウンドジョブ）には渡さない。`~/.sasacode`（セッションのログ、入力履歴、長い出力の保存先`tmp/`）は本人しか読めない権限（0700）にする。
 
 ## 設定
 
@@ -249,17 +249,21 @@ sasacode -m llama/<モデル名>
 
 | モード | 動作 |
 | --- | --- |
-| `edits`（既定） | 作業ディレクトリ内のread / write / editは自動で許可し、bashやディレクトリ外への操作は確認する。`.git`と`.sasacode`の中への書き込みは確認する（gitのフックや設定は次のgitの実行でコードを動かせ、sasacodeの設定や権限ルールは次の起動で効くため） |
+| `edits`（既定） | 作業ディレクトリ内のread / write / editは自動で許可し、bashやディレクトリ外への操作は確認する。`.git`と`.sasacode`の中への書き込みは確認する（gitのフックや設定は次のgitの実行でコードを動かせ、sasacodeの設定や権限ルールは次の起動で効くため）。名前が`HEAD`、`commondir`、`gitdir`のファイル、`HEAD`か`commondir`があるフォルダの`config`と`config.worktree`、`HEAD`と、`config`、`commondir`、`objects/`、`refs/`のどれかがあるフォルダの`hooks/`、`objects/`、`refs/`の中と`packed-refs`への書き込みも確認する（そのフォルダがgitのリポジトリとして扱われうるため。名前は`ﬁ`を`fi`とみなすように畳み込んで比べる） |
 | `ask` | 読み取りを含む、すべてのツール実行を確認する |
 | `agent` | 作業ディレクトリ内のreadは自動で許可し、それ以外は現在のモデルに危険度を判定させる。安全なら許可、そうでなければ確認する。判定には、設定の `judgeModel`（`"provider/model"`）で別のモデルを使える。速くて安いモデルにすると、確認の待ち時間と費用が減る。判定するモデルは呼び出しの引数も読むため、モデルを誘導する文が判定も誘導しうる。利便のための機能で、プロンプトインジェクションへの防御ではない（それにはdeny / askルールと `guard` プリセットを使う） |
 | `auto` | すべて許可する（denyとaskのルールは効く）。TUIのフッターでは赤字で表示する |
 
 - ルールは `ツール名` か `ツール名(パターン)`。bashはコマンド文字列を `*` のワイルドカードで、read / write / editはパスをglobで照合する。`*` そのものは `\*` と書く。パスのルールは書いたツールにだけ効くので、`.env` を守るならread / edit / writeを並べ、サブディレクトリも含めるには `**/` を付ける（`edit(.env)` は作業ディレクトリ直下の `.env` のeditだけを止める）。コマンドのルールはコマンドの文字列に合わせるだけなので、オプションの順を変えたり絶対パスで呼んだりすれば当たらない。間違いを防ぐ柵であって、完全な防御ではない。
-- 確認の「常に許可」で足すルールは、見たものより広くならない。コマンドはそのまま（中の `*` はワイルドカードにしない）、ファイルを触るツールはそのパスだけを許可する。ルールはsasacodeを終了するまで残る（`/clear` をまたぐ）。
+- 確認の「常に許可」で足すルールは、コマンドはそのまま（中の `*` はワイルドカードにしない）、ファイルを触るツールはそのパスだけを許可する。照合の対象やパスのないツール（MCPツールなど）は、ツール名全体を許可する（例：`mcp__github__create_issue` は、どんな引数でも通る）。ルールはsasacodeを終了するまで残る（`/clear` をまたぐ）。GUIでは、その会話のあとの実行にも `--allow` で引き継ぐ。
 - 判定の順番はdeny → softDeny → ask → allow → モード → `permission`フック（同梱プラグイン）。`softDeny`はdenyと同じく拒否するが、`jev-guard`などのプラグインが「ユーザーに確認」まで下げられる（確認なしに実行されることはない）。広すぎて正当な操作も巻き込むパターン向け。allowルールで通るのは、`&&` `;` `|`でつないだコマンドの**すべて**が許可されている場合だけ。`$(…)`、バッククォート、`>`を含むコマンドは、allowルールでは通らない。
 - 同梱の `permission-presets` が、既定で `guard`（sudo、`rm -rf /`、ディスク操作、`| sh` などを常に拒否。ホーム配下の `rm -rf ~…` とforce pushはsoftDeny。`ssh`、`scp`、`sftp`、リモートへの `rsync` は `auto` モードでも常に確認）を有効にしている。
+- `read-only-shell`プリセット（既定では無効）は、`ls`、`cat`、`rg`、`git status`、`git diff`、`git log`、`git show`などの読み取りだけのコマンドを確認なしで許可する。許可するのはコマンドそのものか、コマンドの後に空白と引数が続く形だけで、`git difftool`のような別のサブコマンドは確認に回る。`cat`、`head`、`tail`、`rg`、`grep`などは任意のパスを読めるので、作業ディレクトリの外のファイルも確認なしで読める（パスは判定しない）。作業ディレクトリの外を読ませたくないときは、このプリセットを有効にしないか、`bash(cat *)`などのaskルールを足す（askはallowより先に効く）。`tests`プリセット（既定では無効）も同じ形で、`cargo test`や`pytest`などのコマンドそのものか、その後に空白と引数が続く形だけを許可する。`yarn test:unit`のように名前が続くものは確認に回る。
 - ヘッドレスでは確認できる人がいないので、確認が必要な呼び出しは実行せず、その理由をモデルに返す。`--control stdio` を付けると、親プロセスがstdinとstdoutで答える（[ヘッドレスの制御](#ヘッドレスの制御)）。
 - パスは、シンボリックリンクをたどった先（実パス）で判定する。作業ディレクトリ内のリンクが外を指していれば、リンク先がまだ存在しなくても外への操作として扱う。プロジェクト内のリンクで、ルールの対象をすり替えることもできない。リンクの循環などで行き先が決まらないパスは、モードによらず確認する。
+- deny / askルールは、ファイルシステムにかかわらず、パスを大文字小文字をそろえて照合する。`ß`と`ẞ`と`ss`、`ﬁ`と`fi`、`ſ`と`s`のように、小文字、大文字、小文字の順に変えると同じになる名前も同じとみなす（大文字小文字を区別するファイルシステムでも、`.ENV`は`.env`のルールに当たる）。allowルールは、作業ディレクトリのファイルシステムが大文字小文字を区別しないとき（macOSとWindowsの既定）だけ、小文字にそろえて照合する。
+- 絶対パスのallowルールは、ルールを足した時点のシンボリックリンクだけをたどる（`/var`は`/private/var`）。あとで作られたリンクの先までは許可しない。deny / askルールは、照合のたびにたどる。
+- Windowsでは、パスをWin32が開く形（`\\?\`などの前置きを外し、名前の末尾の`.`と空白、`::$DATA`を落とした形）でも照合する。deny / askルールはどちらかの綴りが当たれば当たり、`file:stream`は`:`より前の名前でも照合する。allowルールは両方が当たるときだけ当たる。
 - 権限は、ツールを呼ぶ前の判定であって隔離（サンドボックス）ではない。判定から実行までの間にリンクを差し替えるような操作や、許可したbashコマンドの中身までは防げない。信頼できないコードを扱うときは、コンテナなどOS側で隔離すること。
 - 中断（esc）した後は、承認済みでもまだ始まっていないツールは実行しない。
 - 確認の画面でescを押すと、その呼び出しを拒否して実行全体を中断する。「代わりの指示を伝える」の入力中のescは、選択肢に戻る。確認するコマンドが画面に収まらないときは、shift+↑↓で全文をスクロールできる（選択肢はいつも表示したまま）。
@@ -278,9 +282,18 @@ sasacode -m llama/<モデル名>
 
 クローンしたリポジトリは、そのままでは「制限を強める」ことしかできない。次のものは、コードを実行するか、データの送り先を変えうるので、プロジェクトを信頼するまで使わない。
 
-- `.sasacode/config.json`の`providers`（エンドポイント）、`modelOverrides`、`plugins`（有効化・無効化と設定）、`mcpServers`、`allow`ルール、全体設定より緩い権限モード、全体設定より大きい`maxTurns`（0は上限なし）と`maxRetries`、そのプロジェクトにしかないプロバイダーを指す`model`・`models`・`judgeModel`
+- `.sasacode/config.json`の`providers`（エンドポイント）、`modelOverrides`、`plugins`（有効化・無効化と設定）、`mcpServers`、`allow`ルール、全体設定より緩い権限モード、全体設定より大きい`maxTurns`（0は上限なし）と`maxRetries`、全体設定（なければ既定のモデル）が使っていないプロバイダーを指す`model`・`models`・`judgeModel`
 
-これらがあるプロジェクトで起動すると、最初に一覧を出して信頼するかを尋ねる（ヘッドレスでは`--trust-project`）。答えは`~/.sasacode/trust.json`に保存し、上の設定が変わったら再び尋ねる。全体設定の`trustedProjects`に入れたプロジェクトは、尋ねずに信頼する。モデルの選択、`thinking`、`instructions`、deny / askルールやツール無効化の追加、より厳しい権限モードや小さい上限などは、信頼しなくても使う。0.15までは`.sasacode/plugins`のプラグインも信頼の対象だったが、0.20からはそのフォルダを読み込まないので、対象から外した（プロジェクトのプラグインがなく、0.15で信頼したプロジェクトは、そのまま信頼される）。
+これらがあるプロジェクトで起動すると、最初に一覧を出して信頼するかを尋ねる（ヘッドレスでは`--trust-project`）。答えは`~/.sasacode/trust.json`に保存し、上の設定が変わったら再び尋ねる。信頼したプロジェクトのフォルダは、gitを走らせてよいフォルダにも加える（`--trust-project`だけのときは、その起動のあいだだけ。下記）。全体設定の`trustedProjects`に入れたプロジェクトは、尋ねずに信頼する。一覧には、MCPサーバーが起動するコマンドと引数（またはURL）、渡す環境変数とヘッダーの名前（値は出さない）、プラグインの設定と`modelOverrides`のキーと値（長い値は切る）も出す。全体設定と同じプロバイダーの中でのモデルの選択、`thinking`、`instructions`、deny / askルールやツール無効化の追加、より厳しい権限モードや小さい上限などは、信頼しなくても使う。0.15までは`.sasacode/plugins`のプラグインも信頼の対象だったが、0.20からはそのフォルダを読み込まないので、対象から外した（プロジェクトのプラグインがなく、0.15で信頼したプロジェクトは、そのまま信頼される）。プロジェクトが`model`や`judgeModel`を選んだときは、信頼していても警告を出す。
+
+### gitを走らせるフォルダ
+
+同梱の`git-context`と`jev-guard`はgitを走らせる。gitはリポジトリの設定（`.git/config`）に書かれたプログラムを起動しうるので、gitを走らせてよいフォルダの一覧（`~/.sasacode/git-folders.json`、実パス）にあるフォルダでだけ走らせる。設定ファイルが無い、または信頼の要る項目が無いだけでは、一覧には入らない。
+
+- どちらかのプラグインが有効で、一覧に無いフォルダで端末から起動すると、一度だけ「このフォルダでgitを実行してよいか」を尋ねる。許可すると一覧に加える。断ると、その起動ではgitを走らせない（断ったことは覚えないので、次の起動でまた尋ねる）。
+- ヘッドレス（`-p`）や、標準入力が端末でないときは尋ねず、一覧にあるときだけ走らせる。
+- 信頼の確認でプロジェクトを信頼したときや、GUIで許可したときも一覧に加える。ヘッドレスだけで使うときは、そのフォルダで`sasacode trust --yes`を実行すると、信頼の要る項目が無くても一覧に加わる。`--trust-project`は、信頼の要る項目の有無にかかわらず、その起動のあいだだけgitを許す（一覧には加えない）。
+- 一覧が無いときの最初の1回は、sasacodeが会話を保存しているフォルダ（GUIからは、加えてGUIで開いたフォルダ）を一覧に入れる。プラグインが有効かどうかにかかわらず、sasacodeやGUIの最初の起動で、会話を保存する前に作る。そのあとで会話を保存したフォルダは、一覧には入らない。
 
 ## プラグイン・MCP・Skills
 
@@ -297,23 +310,23 @@ sasacode -m llama/<モデル名>
 | `error-hints` | `read` / `edit` のファイル未検出時に近い実在パス（`Did you mean:`）、`Unknown tool` が Skill 名のときは `SKILL.md` のパス（または類似ツール名）、テスト失敗時はインポートやスタックトレースからテスト対象の実装ファイル候補を追記する |
 | `loop-guard` | 同じツール呼び出し（またはA→B→A→Bのような3手までの周期）が同じ結果で続いたら、3回目に注意を添え、5回目からはその周期の呼び出しをすべて止める（ファイルを変更するか、次の依頼で解除）。同じ応答の中で、間に状態を変えうる呼び出しがない重複は1回だけ実行する。同じエラーの繰り返し（引数の不備などで実行されなかった呼び出しを含む）も知らせる。ツールが1件も実行されないターンが5回続いたら、実行を止める |
 | `write-guard` | `write`の内容が`read`の出力の写しなら、行番号を外して書き込み、外したことをモデルに伝える（どの行も空白で始まる行番号を持ち、1つずつ増えているときだけ。行の抜けや追加で数が飛んでいれば書き込まない）。行番号の数字とタブだけを消して、桁揃えの空白（1〜5個）が全行の先頭に残った形でファイルを書き戻したときも、その空白を外して伝える。20行以上ある既存のファイルを半分未満の行数で上書きしようとしたら、書き込まずに`edit`を使うよう返す。同じ内容の`write`がもう一度来れば、そのまま書き込む。`lineNumbers: false` / `shrink: false`で外し、`minLines`で行数を変える |
-| `search-tools` | `.gitignore` と `.git` / `node_modules` / `target` などを除いて件数上限つき（既定 50 件、最大 200 件）で探す `find_files`・`search_text` ツールを足す |
+| `search-tools` | `.gitignore` と `.git` / `node_modules` / `target` などを除いて件数上限つき（既定 50 件、最大 200 件）で探す `find_files`・`search_text` ツールを足す。`read`のdenyやaskのルールに当たるファイルは、ディレクトリを検索しても対象にならず（`find_files`の一覧にも出ない）、除外した件数を結果に1行で示す |
 | `syntax-check` | `edit` / `write` / `hash_edit` 成功直後に構文を軽く確かめ（JSON、Rust、JS/TSは `bun` / `node`、Pythonは `python3`）、その編集で壊れたときだけ該当行の抜粋付きで `[syntax-check]` の注意をその場で返す。外部の検査はプロジェクト外の専用ディレクトリで動き、プロジェクト内のコードは実行しない |
 | `action-nudge` | ローカルモデルだけ（判定は`thinking-budget`と同じ）が、最終文・最終行で「確認します」「Let me check...」のようにやるつもりだけ書いてツールを呼ばずにターンを終えたとき、すぐツールを呼ぶよう促す（1回の依頼につき既定2回まで。質問、「必要であれば」「if you want」などの条件付き提案、完了報告、長文解説には反応しない） |
 | `agents-md` | `~/.sasacode/AGENTS.md` と、リポジトリのルートから作業ディレクトリまでの `AGENTS.md` を読む（CLAUDE.mdは読まない） |
 | `compaction` | コンテキストが 80% に達するか上限に来たら、古い履歴を要約する。`/compact` で手動実行。要約を頼むリクエストはコンテキスト長に収まる大きさにするので、小さいコンテキスト長のローカルモデルでも動く（要約はその15%まで、履歴が入りきらなければ古い部分を省く）。自動の圧縮では、直近の履歴（コンテキスト長の15%、最大4万トークン）を要約せずにそのまま残す。1つの指示のあとツール呼び出しが長く続いていても、直近の手順は残る。`/compact` は全部を要約する。画面の会話はどちらでもそのまま残る（再開したときも、要約する前の会話から表示する） |
-| `subagent` | `task` ツール。別の履歴を持つサブエージェントに作業を任せ、報告だけを受け取る（1ターンに複数あれば並行して動く）。`background: true` なら待たずに作業を続け、終わると報告がメッセージで届く（メインをEscで止めると一緒に止まる）。`task_status`・`task_send`・`task_stop` で進み具合を見る・指示を足す・止める。途中で失敗したときは理由と最後の発言・ツール呼び出しを返す。ユーザーは `/task`（一覧・詳細、`/task send <id> <内容>`、`/task stop <id>`）で同じことができる。サブエージェントは `task` 系・`todo_write`・`set_goal` を使えない（呼び出し元のTODOとゴールを書き換えないため） |
+| `subagent` | `task` ツール。別の履歴を持つサブエージェントに作業を任せ、報告だけを受け取る（1ターンに複数あれば並行して動く）。`background: true` なら待たずに作業を続け、終わると報告がメッセージで届く（メインをEscで止めると一緒に止まる）。`task_status`・`task_send`・`task_stop` で進み具合を見る・指示を足す・止める。途中で失敗したときは理由と最後の発言・ツール呼び出しを返す。ユーザーは `/task`（一覧・詳細、`/task send <id> <内容>`、`/task stop <id>`）で同じことができる。サブエージェントは `task` 系・`todo_write`・`set_goal` を使えない（呼び出し元のTODOとゴールを書き換えないため）。モデルが `model` で選べるのは、利用者が選んだプロバイダー（グローバルの設定と信頼したプロジェクトの設定の `model`、`models`、`judgeModel`、`modelOverrides`、プラグイン設定の `model`、`-m`、どれも指定がないときの既定のモデル、`/model` や `-r` で切り替えたいまのモデル）だけで、キーやログインがあるだけのプロバイダーや、信頼していないプロジェクトの設定にだけ出てくるプロバイダーを指すと送信前にエラーになる。`openrouter` のようなルーターでは、選んだモデルと同じ会社（`openrouter/<会社>/...`）のモデルだけを選べる |
 | `todo` | `todo_write` ツール。作業計画をセッションに残し、進捗をフッターに出す。未完了の項目を残したままツールを10回呼んでも更新しなければ、ツールの結果のあとに、計画の中身と更新を促す一言を足す（モデルへのメッセージとして履歴に残り、画面には薄い1行で出る。`remindAfter` で回数を変え、0で止める） |
 | `progress-notes` | 作業中の進捗の一言を促す。システムプロンプトで、最初のツール呼び出しの前に何をするかを一文で、その後も見つけたこと・終えたこと・方針の変更を短く書くよう頼む。説明なしのツール呼び出しが5回続いたら、ツールの結果のあとに一言足して促す（`todo` と同じく履歴に残り、画面には薄い1行で出る。`remindAfter` で回数を変え、0で促すのだけ止める）。サブエージェントには付けない |
-| `web-fetch` | `web_fetch` ツール。URLを取ってきてテキストにする。メニュー・目次・言語一覧・広告まわり・インラインのCSSやJSを除き、ページが本文の場所（`main`、`article`、Wikipediaの本文など）を示していればそこを読む（その中の折りたたまれた部分も読む）。サイトのナビゲーションのリンクは、本文のあとに1行（最大25件）で残す。ページ内のリンクは絶対URLの番号付き一覧にして返し、推測でURLを組み立てずに辿れるようにする。404のときは、サイトの `llms.txt` / `sitemap.xml` があればそれと検索を案内する |
-| `web-search` | `web_search` ツール。[RustXNG](https://github.com/sahenjp/RustXNG)（キー不要のSearXNG互換メタ検索）で検索する。`include_text` では、検索語に合う上位3件（`textPages` で変更）のページを `web_fetch` と同じ処理で読み、本文を添える（読むのは公開アドレスのページだけ。社内の検索サーバーなどで内部のページも読むなら `privatePages: true`）。`rustxng`（PATHか、`sasacode web-search install` で入れたもの）があれば、最初の検索で `127.0.0.1:47888` に起動し、`RUSTXNG_IDLE_TIMEOUT`（既定600秒）のあいだ使われなければ自分で終了する（常駐しない。同時に動くセッションは同じものを使う）。`plugins.settings.web-search` の `url` で、常駐させているRustXNGやSearXNGを使う。ほかに `command`、`port`、`idleTimeout`、`results`、`textPages`、`privatePages`。browsrの検索がつながっているあいだは、検索手段が重ならないよう出さない |
+| `web-fetch` | `web_fetch` ツール。URLを取ってきてテキストにする。メニュー・目次・言語一覧・広告まわり・インラインのCSSやJSを除き、ページが本文の場所（`main`、`article`、Wikipediaの本文など）を示していればそこを読む（その中の折りたたまれた部分も読む）。サイトのナビゲーションのリンクは、本文のあとに1行（最大25件）で残す。ページ内のリンクは絶対URLの番号付き一覧にして返し、推測でURLを組み立てずに辿れるようにする。404のときは、サイトの `llms.txt` / `sitemap.xml` があればそれと検索を案内する。リダイレクトは一つずつたどり、リダイレクト先が内部アドレス（ループバック、プライベート、リンクローカルなど）なら止める（最初のURLは承認で見たものなので、手元の開発サーバーでも読む。最初のURLと同じオリジンへのリダイレクトも通す）。リダイレクトされたときは、結果に取得元のURLを書く |
+| `web-search` | `web_search` ツール。[RustXNG](https://github.com/sahenjp/RustXNG)（キー不要のSearXNG互換メタ検索）で検索する。`include_text` では、検索語に合う上位3件（`textPages` で変更）のページを `web_fetch` と同じ処理で読み、本文を添える（読むのは公開アドレスのページだけで、名前解決で確かめたアドレスにそのまま接続する。リダイレクトも一つずつ同じ確認をする。社内の検索サーバーなどで内部のページも読むなら `privatePages: true`）。`rustxng`（PATHか、`sasacode web-search install` で入れたもの）があれば、最初の検索で `127.0.0.1:47888` に起動し、`RUSTXNG_IDLE_TIMEOUT`（既定600秒）のあいだ使われなければ自分で終了する（常駐しない。同時に動くセッションは同じものを使う）。`plugins.settings.web-search` の `url` で、常駐させているRustXNGやSearXNGを使う。ほかに `command`、`port`、`idleTimeout`、`results`、`textPages`、`privatePages`。browsrの検索がつながっているあいだは、検索手段が重ならないよう出さない |
 | `browsr` | [browsr-4-agent](https://github.com/sasanokusa/browsr-4-agent) によるWeb検索（`search`）と本文の閲覧（`open`）。`browsr-agent` がPATHにあれば自動で起動する |
 | `permission-presets` | 権限ルールのプリセット（`guard`、`read-only-shell`、`tests`） |
 | `agent-judge` | `agent` モードの判定役。モードが確認に回す呼び出しを、モデル（`judgeModel`、なければ現在のモデル）に判定させる。ルールは緩めない。無効にすると `agent` モードは確認になる |
 | `openai-codex` | ChatGPTプランのモデル（`openai-codex/…`）。`sasacode login` の認証情報を使う |
 | `usage` | `/usage` コマンド。この起動の使用量、今日・直近7日・30日・全期間の合計、ChatGPTプランの残り（5時間・週の枠と、リセットまでの時間）を出す。`/usage graph` は日ごとの使用量をGitHubのContributions Graphのように、`/usage history [日数]` は日別の記録を、`/usage models` はモデル別の合計を、`/usage plan` はプランの残りだけを出す。記録は `~/.sasacode/sessions` のセッションログから読む（サブエージェント、圧縮の要約、agent モードの判定、やり直しで捨てた応答の分も含む。それより前の版のログには残っていない） |
 | `goal` | セッションのゴール（最終目的）。`/goal <目的>` で設定し、`done` / `pause` / `resume` / `clear` で状態を変える。「これをゴールにして」と頼めば、モデルが `set_goal` ツールで会話から要約して設定する。作業中のゴールはシステムプロンプトとフッターに出る |
-| `background-sessions` | `bg_start` ツール。ビルドやテストなど長いコマンドをバックグラウンドで動かし、終わったら終了コードと出力の末尾を会話に届ける（待機中なら自動で続きを始める）。bashと同じ権限ルールで判定する（`permissionsAs`）。sasacodeを終了してもジョブは続き、次の起動で結果を知らせる。`/bg` で一覧・詳細・停止。WindowsではGit Bashで動かす |
+| `background-sessions` | `bg_start` ツール。ビルドやテストなど長いコマンドをバックグラウンドで動かし、終わったら終了コードと出力の末尾を会話に届ける（待機中なら自動で続きを始める）。bashと同じ権限ルールで判定する（`permissionsAs`）。作業フォルダと違う`cwd`で動かす呼び出しは、bashで書いたときと同じく`cd '<絶対パス>' && make`としてルールに当たり、「常に許可」で作るルールも同じ形になる。sasacodeを終了してもジョブは続き、次の起動で結果を知らせる。`/bg` で一覧・詳細・停止。WindowsではGit Bashで動かす |
 | `auto-reconnect` | 実行がエラーで終わったとき、使用中のエンドポイントに届かなければ、復旧を待って作業を自動で再開する（既定は最大10分）。サーバーが一時的なエラー（429・5xx）を返し続けたときは、間を空けて最大4回再試行する。`/reconnect` で手動でも同じことをする |
 | `checkpoints` | write / editが変えたファイルの直前の内容をセッションに退避する。`/undo` で直近の1件から1つずつ戻せる（`/undo list` で一覧、`/undo <path>` で対象を絞る。bashの変更は対象外） |
 | `gui` | `/gui` コマンド。デスクトップGUI（`sasacode-gui`、開発中）をこのフォルダで開き、進行中の会話を読み込んだ状態にする。`sasacode-gui` は、`plugins.settings.gui.command`、`sasacode gui install`で入れたもの、PATHの順に探す。開いたあとは、TUIとGUIのどちらか一方で続ける（互いの発言は読み込まない） |
@@ -333,10 +346,10 @@ sasacode -m llama/<モデル名>
 | 名前 | 内容 |
 | --- | --- |
 | `hashline-edit` | `read` の各行に `<行番号>:<2桁ハッシュ>|` を付け、空白の完全一致なしで編集できる `hash_edit` ツールを足す。`write` に混入した `N:hh|` 接頭辞も外す（[詳しく](docs/plugins.md#hashline-edit)） |
-| `git-context` | `git_context`ツール。レビューに要るGitの状態・変更の統計・パッチを、1回の呼び出しで返す。読み取りだけで、Gitが要る（[詳しく](docs/plugins.md#git-context)） |
+| `git-context` | `git_context`ツール。レビューに要るGitの状態・変更の統計・パッチを、1回の呼び出しで返す。読み取りだけで、Gitが要る。gitを走らせてよいフォルダでなければgitを呼ばない（[gitを走らせるフォルダ](#gitを走らせるフォルダ)、[詳しく](docs/plugins.md#git-context)） |
 | `project-checks` | `project_checks`・`project_check`ツールと`/checks`。テスト・lint・型検査などを名前で実行し、PASS / FAIL、終了コード、時間、ログを返す。bashと同じ権限ルールで判定する。`verifyOnFinish`に名前を書いた検査は、モデルが作業を終えようとしたときにも確認なしで実行し、落ちていれば出力の末尾を返して続けさせる（[詳しく](docs/plugins.md#project-checks)） |
 | `workflows` | `/workflow`。レビュー・失敗の調査・公開前の確認など、繰り返し使う依頼を呼び出す。設定で足す・上書きする・外すことができる（[詳しく](docs/plugins.md#workflows)） |
-| `jev-guard` | 実行前のツール呼び出しをJevに判定させる。有効にする方法は上の「Jevによる実行前判断」にある（[詳しく](docs/plugins.md#jev-guard)） |
+| `jev-guard` | 実行前のツール呼び出しをJevに判定させる。gitを走らせてよいフォルダでなければ、対象のGitの状態を読まず、戻せるとは見なさない。有効にする方法は上の「Jevによる実行前判断」にある（[詳しく](docs/plugins.md#jev-guard)） |
 | `free-search` | MCPサーバー`uvx free-search-mcp`を`free-search`という名前でつなぐ（キー不要でローカルで動くWeb検索。複数の検索エンジン、ページの取得、文書の読み取り）。ツールは`mcp__free-search__<tool>`になる。[uv](https://docs.astral.sh/uv/)が要る（[詳しく](docs/plugins.md#free-search)） |
 | `clean-retry` | 編集エラーやテスト失敗が連続したとき、変更したファイルをタスク開始前に巻き戻し、失敗要約だけを残した綺麗な履歴でやり直す（[詳しく](docs/plugins.md#clean-retry)） |
 | `slim-profile` | 小型ローカルモデル向けに補助的なプラグイン群（`subagent`、`todo`、`goal`、Web系、Skills など）を自動で省き、指示の簡潔化と `read` / `bash` 単発出力の上限カットを行う（[詳しく](docs/plugins.md#slim-profile)） |
@@ -351,6 +364,8 @@ sasacode -m llama/<モデル名>
   }
 }
 ```
+
+グローバルの`~/.sasacode/config.json`に書いたstdioのサーバーは、`cwd`がなければプロジェクトの外にある専用のフォルダ（`~/.sasacode/tmp/mcp/<サーバー名>`）で起動する。`npx`や`uvx`はカレントの`node_modules`や`pyproject.toml`を先に見るので、開いたプロジェクトの中身が動かないようにするためである。プロジェクトのフォルダで動かしたいサーバーには、`"cwd": "${SASACODE_PROJECT}"`と書く。プロジェクトの`.sasacode/config.json`に起動のしかた（`command`か`url`）まで書いたサーバー（信頼したあと）は、これまでどおりプロジェクトのフォルダで起動する。グローバルのサーバーに`disabled`などだけを足した場合は、グローバルのサーバーのままである。同梱の`free-search`も、プロジェクトの外で起動する。
 
 stdioとStreamable HTTPに対応する。ツールは`mcp__<server>__<tool>`という名前になり、通常のツールと同じ権限確認とフックを通る。promptsはスラッシュコマンドになる。サーバーはバックグラウンドで接続するので、起動を待たせない。`${VAR}`は環境変数から展開する。落ちたサーバーは自動で再接続する（間隔を空けて数回まで。`/mcp reconnect [name]`で手動に）。サーバーのツールの一覧が変わったら、外れたツールはモデルに渡さなくなる。プロジェクトの`.sasacode/config.json`に書いたサーバーは、プロジェクトを信頼するまで起動しない（[プロジェクトの信頼](#プロジェクトの信頼)）。サーバーごとの`cwd`、`disabled`、`alwaysLoad`、`timeout`、`toolNames`は[docs/plugins.md](docs/plugins.md)にある。
 
@@ -407,6 +422,6 @@ cargo xtask build                 # 配布用のバイナリ
 
 デスクトップGUI（Rust、開発中）は `crates/` にある。`cargo run -p sasacode-gui -- <フォルダ>` で開き、入力ごとに `sasacode -p … --output jsonl --control stdio` をそのフォルダで動かす（`SASACODE_BIN` か `--sasacode` で実行ファイルを指定できる）。`sasacode gui install --path .` で入れておけば、`sasacode gui [フォルダ]` と、TUIの `/gui`（進行中の会話を読み込んだ状態で開く）でも開ける。`cargo test` で、CLIの出力とセッションログを読めるかも確かめる。設計と段階は [docs/gui.md](docs/gui.md)、ほかのエージェントのGUIとの比べは [docs/gui-parity.md](docs/gui-parity.md)。
 
-コア（`sasacode-ai`・`sasacode-agent`・`sasacode-plugin-api`・`sasacode-tools`）の行数の上限は12,500行で、1行は120桁まで（rustfmtの`max_width = 120`。ほとんどが1つの文字列リテラルの行は除く）。どちらかを超えると`cargo xtask checks`が落ちる。いまの行数は`cargo xtask improve`が出す。
+コア（`sasacode-ai`・`sasacode-agent`・`sasacode-plugin-api`・`sasacode-tools`）の行数の上限は12,720行で、1行は120桁まで（rustfmtの`max_width = 120`。ほとんどが1つの文字列リテラルの行は除く）。どちらかを超えると`cargo xtask checks`が落ちる。いまの行数は`cargo xtask improve`が出す。
 
 リポジトリのドキュメント：[要件](docs/requirements.md)、[マイルストーンの検証](docs/milestones.md)、[実行時依存の記録](docs/dependencies.md)、[拡張のしかた（MCP・Skills・同梱プラグイン）](docs/plugins.md)、[API互換性の確認表](docs/api-compatibility.md)、[ベンチマーク](docs/benchmarks.md)、[改善の回し方](docs/improvement.md)。改善は1周ずつ小さく積む。手順と観点、これまでの記録は[docs/improvement.md](docs/improvement.md)にある。

@@ -343,3 +343,81 @@ async fn a_judge_model_that_does_not_resolve_fails_at_startup() {
     .await;
     assert!(r.is_err());
 }
+
+#[cfg(unix)]
+#[test]
+fn without_a_home_directory_or_sasacode_home_it_exits_and_the_project_config_is_not_taken_for_the_global_one() {
+    let dir = tempfile::tempdir().expect("a temporary directory");
+    let (proj, mark) = (dir.path().join("proj"), dir.path().join("MCP-STARTED"));
+    std::fs::create_dir_all(proj.join(".sasacode")).unwrap();
+    let config = json!({
+        "mcpServers": { "x": { "command": "/usr/bin/touch", "args": [mark.to_string_lossy()] } },
+        "permissions": { "mode": "auto" },
+    });
+    std::fs::write(proj.join(".sasacode/config.json"), config.to_string()).unwrap();
+    for env in [&[][..], &[("HOME", ""), ("USERPROFILE", ""), ("SASACODE_HOME", "")]] {
+        let out = std::process::Command::new(crate::support::bin())
+            .args(["-p", "go", "--output", "jsonl", "--stdin"])
+            .current_dir(&proj)
+            .env_clear()
+            .envs(env.iter().copied())
+            .stdin(Stdio::null())
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(1), "{env:?}: {stderr}");
+        assert!(stderr.contains("set SASACODE_HOME"), "{env:?}: {stderr}");
+        assert!(!mark.exists(), "{env:?}: the project's server started");
+    }
+}
+
+/// A run that is not on a terminal asks nothing before git runs: a folder not kept as allowed is
+/// left alone, and the folders used before are written as known the first time.
+#[test]
+fn a_run_off_the_terminal_does_not_ask_about_git_and_runs_it_only_in_a_folder_kept() {
+    let server = FakeServer::start(vec![Reply::text("ok")]).expect("the fake server");
+    let bin = Bin::new(&fake_config(
+        server.url(),
+        json!({ "plugins": { "enabled": ["git-context"] } }),
+    ));
+    let r = bin.jsonl("hi", &["--no-session"]);
+    assert_eq!(r.code, 0, "{}", r.stderr);
+    assert!(
+        !r.stderr.contains("Run git") && !r.stderr.contains("gitを実行"),
+        "{}",
+        r.stderr
+    );
+    let home = &bin.sb.home;
+    let kept = sasacode_protocol::git_folders::read(home)
+        .unwrap()
+        .expect("written the first time");
+    assert!(
+        !kept.contains_key(&sasacode_protocol::git_folders::key(&bin.cwd())),
+        "{kept:?}"
+    );
+}
+
+/// The list of folders git may run in is started by the first run, with no plugin that runs git
+/// loaded: the folder of a conversation kept from then on is not on it.
+#[test]
+fn the_first_run_starts_the_git_folders_whatever_plugins_load() {
+    let server = FakeServer::start(vec![Reply::text("ok"), Reply::text("ok")]).expect("the fake server");
+    let bin = Bin::new(&fake_config(server.url(), json!({})));
+    let home = &bin.sb.home;
+    assert!(sasacode_protocol::git_folders::read(home).unwrap().is_none());
+    for _ in 0..2 {
+        let r = bin.jsonl("hi", &[]);
+        assert_eq!(r.code, 0, "{}", r.stderr);
+    }
+    let kept = sasacode_protocol::git_folders::read(home)
+        .unwrap()
+        .expect("written by the first run");
+    assert!(
+        !kept.contains_key(&sasacode_protocol::git_folders::key(&bin.cwd())),
+        "{kept:?}"
+    );
+    assert!(
+        sasacode_protocol::git_folders::projects(home).len() == 1,
+        "the conversations were kept"
+    );
+}

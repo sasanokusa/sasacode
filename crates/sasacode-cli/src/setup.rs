@@ -21,7 +21,7 @@ use sasacode_plugin_api::hook;
 use sasacode_plugin_api::{Lang, SessionEndEvent, SessionEndReason, SessionStartEvent, UiBridge};
 
 use crate::catalog::{GetKey, ModelCatalog, ModelChoice, Providers, untold};
-use crate::config::{Config, ConfigFiles, DEFAULT_MAX_TURNS, Settings, load_config, sasacode_home};
+use crate::config::{Config, ConfigFiles, DEFAULT_MAX_TURNS, Settings, load_config, read_config_files, sasacode_home};
 use crate::json::{read_json, write_json};
 use crate::keys::resolve_api_key;
 
@@ -40,6 +40,8 @@ pub struct SetupOptions {
     pub trust_project: bool,
     /// Config files already read for the trust check (see `trust::assess_project`).
     pub preloaded: Option<(ConfigFiles, Vec<String>)>,
+    /// The shipped plugins may run git here (`git_folder::allowed_in`).
+    pub git: bool,
 }
 
 impl SetupOptions {
@@ -55,6 +57,7 @@ impl SetupOptions {
             append_system_prompt: None,
             trust_project: false,
             preloaded: None,
+            git: false,
         }
     }
 }
@@ -163,14 +166,43 @@ pub struct Harness {
     pub judged: sasacode_bundled::agent_judge::Verdicts,
     resolve: Resolve,
     catalog: ModelCatalog,
+    /// How the agent's own options read its model; emptied with the harness (see [`AgentSlot`]).
+    session: AgentSlot,
     opts: SetupOptions,
     home: PathBuf,
     session_entries: Mutex<Vec<SessionEntry>>,
     loading: tokio::sync::OnceCell<()>,
 }
 
+/// The agent, for the closures its own options hold that read its current model. Those closures are
+/// kept by the agent, so they hold it through this slot, which the harness empties when it is
+/// dropped: the agent is not kept alive by itself.
+#[derive(Clone, Default)]
+pub(crate) struct AgentSlot(Arc<Mutex<Option<Agent>>>);
+
+impl AgentSlot {
+    fn fill(&self, agent: &Agent) {
+        *self.0.lock().unwrap_or_else(|e| e.into_inner()) = Some(agent.clone());
+    }
+
+    fn agent(&self) -> Option<Agent> {
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
+    fn empty(&self) {
+        let agent = self.0.lock().unwrap_or_else(|e| e.into_inner()).take();
+        drop(agent);
+    }
+}
+
+impl Drop for Harness {
+    fn drop(&mut self) {
+        self.session.empty();
+    }
+}
+
 /// The first provider whose API key is set; with no key at all but a ChatGPT login, that plan.
-fn default_model(providers: &IndexMap<String, ProviderConfig>, codex: bool) -> String {
+pub(crate) fn default_model(providers: &IndexMap<String, ProviderConfig>, codex: bool) -> String {
     let any_key = providers.values().any(|p| {
         p.api_key_env
             .as_deref()
@@ -202,12 +234,148 @@ fn merge_provider(base: Option<&ProviderConfig>, over: &Value) -> ProviderConfig
     serde_json::from_value(v).unwrap_or_default()
 }
 
+/// The current model of the session, as "<provider>/<model>" (it changes with /model and -r).
+pub(crate) type CurrentModel = Arc<dyn Fn() -> Option<String> + Send + Sync>;
+
+/// Whether `allowed`, a model the user chose, lets the session use `spec`: the same provider, and on
+/// a router (which serves many companies' models) the same company, `openrouter/<company>/...`, or
+/// that very model when it names no company.
+pub(crate) fn admits(allowed: &str, spec: &str) -> bool {
+    let provider = crate::config::provider_of(allowed);
+    if provider != crate::config::provider_of(spec) {
+        return false;
+    }
+    if !crate::config::ROUTERS.contains(&provider) {
+        return true;
+    }
+    let rest = |s: &str| s.get(provider.len() + 1..).unwrap_or_default().to_string();
+    match rest(allowed).split_once('/') {
+        Some((company, _)) => rest(spec).split_once('/').is_some_and(|(c, _)| c == company),
+        None => allowed == spec,
+    }
+}
+
+/// How the error names what `allowed` lets the session use.
+fn admitted(allowed: &str) -> String {
+    let provider = crate::config::provider_of(allowed);
+    if !crate::config::ROUTERS.contains(&provider) {
+        return provider.to_string();
+    }
+    match allowed.get(provider.len() + 1..).and_then(|r| r.split_once('/')) {
+        Some((company, _)) => format!("{provider}/{company}/*"),
+        None => allowed.to_string(),
+    }
+}
+
+/// [`Resolve`] for a model named at run time (a subagent's `model`, the model a plugin's settings
+/// name): only one [`admits`] allows, from the models the user chose (`picked`, see
+/// [`chosen_models`]) and the session's current model, so the conversation never goes to a provider
+/// the user did not choose, however many keys they have set for other tools. Checked before any
+/// request; the error says what can be used.
+pub(crate) fn limited_resolve(
+    resolve: Resolve,
+    providers: Providers,
+    picked: Vec<String>,
+    current: CurrentModel,
+) -> Resolve {
+    Arc::new(move |spec: &str| {
+        let mut allowed = picked.clone();
+        allowed.extend(current());
+        if !allowed.iter().any(|a| admits(a, spec)) {
+            let list = providers.read().unwrap_or_else(|e| e.into_inner());
+            let mut names: Vec<String> = Vec::new();
+            for a in allowed
+                .iter()
+                .filter(|a| list.contains_key(crate::config::provider_of(a)))
+            {
+                let name = admitted(a);
+                if !names.contains(&name) {
+                    names.push(name);
+                }
+            }
+            anyhow::bail!(
+                "\"{spec}\" is not on one of the providers you chose for this session (your config, a trusted project's config, -m, or the current model); use a model from one of: {}",
+                names.join(", ")
+            );
+        }
+        resolve(spec)
+    })
+}
+
+/// The models the user chose: those the config in effect (their own, with a trusted project's laid
+/// over it) names in `model`, `judgeModel`, `models`, `modelOverrides` and the models of plugin
+/// settings, and the model the session starts with (`-m`, the config's, or the default). An
+/// untrusted project's config only keeps models on providers the user's own config already uses
+/// (see `split_project_config`), and a key that is merely set does not count.
+pub(crate) fn chosen_models(config: &Config, start: &str) -> Vec<String> {
+    let user = Settings::of(config);
+    let mut specs: Vec<String> = vec![start.to_string()];
+    specs.extend(user.model.clone());
+    specs.extend(user.judge_model.clone());
+    specs.extend(user.models.clone().unwrap_or_default());
+    specs.extend(
+        user.model_overrides
+            .iter()
+            .flatten()
+            .map(|(k, _)| k.clone())
+            .filter(|k| k.contains('/')),
+    );
+    for plugin in user.plugins.iter() {
+        let models = plugin
+            .settings
+            .values()
+            .filter_map(|s| s.get("model")?.as_str().map(str::to_string));
+        specs.extend(models);
+    }
+    let mut out: Vec<String> = Vec::new();
+    for spec in specs {
+        if !out.contains(&spec) {
+            out.push(spec);
+        }
+    }
+    out
+}
+
 fn get_key(providers: &Providers) -> GetKey {
     let providers = providers.clone();
     Arc::new(move |p: String| {
         let cfg = providers.read().unwrap_or_else(|e| e.into_inner()).get(&p).cloned();
         async move { resolve_api_key(&p, cfg.as_ref()).await }.boxed()
     })
+}
+
+/// A server whose own `command` the project's config writes runs in the project (the user trusted
+/// it); one that only the global config launches starts in a folder of its own under the sasacode
+/// home, whatever else the project sets on it (`disabled`, `timeout`, ...). A project entry with a
+/// `url` and no command connects to that url, as the trust list shows it: laid over a global command
+/// server, the global command, arguments, environment and folder are dropped. The two files are
+/// merged by now, so this reads the project's entries.
+fn project_servers_start_in_project(config: &mut Config, project: &Config) {
+    let Some(Value::Object(merged)) = config.get_mut("mcpServers") else {
+        return;
+    };
+    // A non-empty command: an entry that only adjusts a global server (args, env, cwd, a url, or an
+    // empty command) starts nothing of its own.
+    let set = |s: &Value, key: &str| s.get(key).and_then(Value::as_str).is_some_and(|v| !v.is_empty());
+    let names = project
+        .get("mcpServers")
+        .and_then(Value::as_object)
+        .into_iter()
+        .flatten();
+    for (name, own) in names {
+        let Some(Value::Object(server)) = merged.get_mut(name) else {
+            continue;
+        };
+        if set(own, "command") {
+            if !server.contains_key("cwd") {
+                server.insert("cwd".into(), sasacode_mcp::PROJECT_CWD.into());
+            }
+        } else if set(own, "url") {
+            for key in ["command", "args", "env", "cwd"] {
+                server.remove(key);
+            }
+        }
+    }
 }
 
 pub async fn setup(mut opts: SetupOptions) -> anyhow::Result<Arc<Harness>> {
@@ -217,8 +385,16 @@ pub async fn setup(mut opts: SetupOptions) -> anyhow::Result<Arc<Harness>> {
         Some((f, w)) => (Some(f), w),
         None => (None, Vec::new()),
     };
-    let loaded = load_config(Path::new(&opts.cwd), trusted, files)?;
-    let config = loaded.config;
+    let mut files = match files {
+        Some(f) => f,
+        None => read_config_files(Path::new(&opts.cwd))?,
+    };
+    files.cli_model = opts.model.clone();
+    let loaded = load_config(Path::new(&opts.cwd), trusted, Some(files))?;
+    let mut config = loaded.config;
+    if trusted {
+        project_servers_start_in_project(&mut config, &loaded.elevated);
+    }
     let settings = Settings::of(&config);
     let mut warnings = loaded.warnings;
     warnings.extend(extra);
@@ -230,6 +406,7 @@ pub async fn setup(mut opts: SetupOptions) -> anyhow::Result<Arc<Harness>> {
             providers.insert(name.clone(), merged);
         }
     }
+    crate::redact::hide_configured(&providers, &config);
     let providers: Providers = Arc::new(RwLock::new(providers));
     // Custom endpoints configured with only a URL: detect OpenAI- or Anthropic-style (cached).
     {
@@ -336,8 +513,16 @@ pub async fn setup(mut opts: SetupOptions) -> anyhow::Result<Arc<Harness>> {
     agent_opts.permissions = Some(Arc::new(PermissionPolicy::new(mode, &permissions.rules)?));
     let key = get_key(&providers);
     agent_opts.get_api_key = Some(key.clone());
+    let picked = chosen_models(&config, &model_spec);
+    // Filled once the agent exists: what /model and -r switched to is the user's choice too.
+    let session = AgentSlot::default();
     agent_opts.resolve_model = Some({
-        let resolve = resolve.clone();
+        let session = session.clone();
+        let current: CurrentModel = Arc::new(move || {
+            let m = session.agent()?.model();
+            Some(format!("{}/{}", m.provider, m.id))
+        });
+        let resolve = limited_resolve(resolve.clone(), providers.clone(), picked, current);
         Arc::new(move |s: &str| resolve(s))
     });
     let max_turns = opts
@@ -348,14 +533,15 @@ pub async fn setup(mut opts: SetupOptions) -> anyhow::Result<Arc<Harness>> {
     agent_opts.max_retries = settings.max_retries.map(|n| n as u32);
     agent_opts.tool_search = settings.tool_search_config();
     let agent = Agent::new(agent_opts);
+    session.fill(&agent);
 
     let catalog = ModelCatalog::new(providers.clone(), key.clone(), {
-        let agent = agent.clone();
-        Arc::new(move || agent.model().provider)
+        let session = session.clone();
+        Arc::new(move || session.agent().map(|a| a.model().provider).unwrap_or_default())
     });
     let _ = catalog_cell.set(catalog.clone());
 
-    turn_end_listing(&agent, &providers, &catalog, &resolve, &settings);
+    turn_end_listing(&agent, &session, &providers, &catalog, &resolve, &settings);
 
     let host = PluginHost::new(PluginHostOptions {
         agent: agent.clone(),
@@ -394,6 +580,9 @@ pub async fn setup(mut opts: SetupOptions) -> anyhow::Result<Arc<Harness>> {
         disabled_tools: settings.disabled_tools(),
         lang: current_lang(),
     });
+    // The shipped plugins that would run programs a repository's config names (git) wait for the
+    // folder to be allowed (`git_folder`).
+    sasacode_bundled::project_trust::set(Path::new(&opts.cwd), opts.git);
     // Built-in tools go through the same API as everything else (P2); they load first.
     host.load(sasacode_tools::PLUGIN_NAME, |api| sasacode_tools::plugin(api).boxed())
         .await;
@@ -417,6 +606,7 @@ pub async fn setup(mut opts: SetupOptions) -> anyhow::Result<Arc<Harness>> {
         judged: Default::default(),
         resolve,
         catalog,
+        session,
         opts,
         home,
         session_entries: Mutex::new(Vec::new()),
@@ -465,17 +655,18 @@ pub async fn setup(mut opts: SetupOptions) -> anyhow::Result<Arc<Harness>> {
 /// again. Telling a server apart is the provider's, so it is counted by the provider's name.
 fn turn_end_listing(
     agent: &Agent,
+    session: &AgentSlot,
     providers: &Providers,
     catalog: &ModelCatalog,
     resolve: &Resolve,
     settings: &Settings,
 ) {
     let asked: Arc<Mutex<HashMap<String, u32>>> = Arc::new(Mutex::new(HashMap::new()));
-    let (agent2, providers, catalog, resolve) = (agent.clone(), providers.clone(), catalog.clone(), resolve.clone());
+    let (session, providers, catalog, resolve) = (session.clone(), providers.clone(), catalog.clone(), resolve.clone());
     let overrides = settings.model_overrides.clone().unwrap_or_default();
     agent.hooks().on::<hook::TurnEnd, _, _>("sasacode", move |_e, _ctx| {
-        let (agent, providers, catalog, resolve, asked, overrides) = (
-            agent2.clone(),
+        let (session, providers, catalog, resolve, asked, overrides) = (
+            session.clone(),
             providers.clone(),
             catalog.clone(),
             resolve.clone(),
@@ -483,6 +674,8 @@ fn turn_end_listing(
             overrides.clone(),
         );
         async move {
+            // Held through the slot: the hook is the agent's own, and must not keep it alive.
+            let Some(agent) = session.agent() else { return Ok(None) };
             let model = agent.model();
             let spec = model.spec();
             let name = model.provider.clone();
@@ -809,3 +1002,7 @@ impl Harness {
         &self.opts.cwd
     }
 }
+
+#[cfg(test)]
+#[path = "setup_tests.rs"]
+mod tests;

@@ -463,9 +463,12 @@ fn a_project_changes_which_plugins_load_only_once_it_is_trusted() {
     d.project(json!({ "plugins": { "disabled": ["todo"], "enabled": ["workflows"] } }));
     let plugins = plugin_listing_in(&d.home, &d.proj).unwrap();
     assert!(enabled(&plugins, "todo") && !enabled(&plugins, "workflows"));
+    assert!(!sasacode_protocol::git_folders::is_known(&d.home, &d.proj));
     d.trust(&["--yes"]);
     let plugins = plugin_listing_in(&d.home, &d.proj).unwrap();
     assert!(!enabled(&plugins, "todo") && enabled(&plugins, "workflows"));
+    // Trusted for good, its folder is one git may run in.
+    assert!(sasacode_protocol::git_folders::is_known(&d.home, &d.proj));
 }
 
 #[test]
@@ -515,7 +518,7 @@ fn trust_reports_what_the_project_needs_and_yes_trusts_it_until_it_changes() {
     let items = [
         "endpoint local (http://127.0.0.1:9/v1)",
         "endpoint bare (openai-chat)",
-        "MCP server fx",
+        "MCP server fx: true",
         "allow rules bash",
         "permission mode auto",
     ];
@@ -537,6 +540,14 @@ fn trust_reports_what_the_project_needs_and_yes_trusts_it_until_it_changes() {
             ],
             "allow": ["bash"],
             "mode": "auto",
+            "mcpServerDetails": [
+                { "name": "fx", "command": "true", "args": [], "url": null, "cwd": null, "env": [], "headers": [], "overlaysGlobal": false },
+            ],
+            "model": null,
+            "judgeModel": null,
+            "models": [],
+            "modelOverrides": {},
+            "pluginSettings": {},
         })
     );
     let keys: Vec<&str> = status.as_object().unwrap().keys().map(String::as_str).collect();
@@ -552,7 +563,13 @@ fn trust_reports_what_the_project_needs_and_yes_trusts_it_until_it_changes() {
             "mcpServers",
             "endpoints",
             "allow",
-            "mode"
+            "mode",
+            "mcpServerDetails",
+            "model",
+            "judgeModel",
+            "models",
+            "modelOverrides",
+            "pluginSettings"
         ]
     );
     let (_, text) = d.trust(&[]);
@@ -603,14 +620,28 @@ fn a_plain_folder_needs_no_trust() {
             "endpoints": [],
             "allow": [],
             "mode": null,
+            "mcpServerDetails": [],
+            "model": null,
+            "judgeModel": null,
+            "models": [],
+            "modelOverrides": {},
+            "pluginSettings": {},
         })
     );
+    assert!(!sasacode_protocol::git_folders::is_known(&d.home, &d.proj));
     assert_eq!(
         d.trust(&["--yes"]),
-        (0, format!("{}: nothing in this project needs trust\n", d.cwd()))
+        (
+            0,
+            format!(
+                "{0}: nothing in this project needs trust\n{0}: git may run here\n",
+                d.cwd()
+            )
+        )
     );
-    // --yes had nothing to save.
+    // --yes had nothing to save, but the folder is one git may run in from now on.
     assert!(!d.home.join("trust.json").exists());
+    assert!(sasacode_protocol::git_folders::is_known(&d.home, &d.proj));
 }
 
 #[test]
@@ -641,4 +672,140 @@ fn wrong_arguments_are_a_usage_error() {
         );
     }
     assert!(list_args(&strings(&["models", "--all"])).is_err());
+}
+
+#[test]
+fn trust_json_says_what_each_server_runs_and_names_its_variables_and_headers_without_their_values() {
+    english();
+    let d = dirs();
+    d.project(json!({
+        "mcpServers": {
+            "fx": { "command": "npx", "args": ["-y", "a b"], "env": { "TOKEN": "secret-value" } },
+            "web": { "url": "https://mcp.example", "headers": { "Authorization": "Bearer secret-value" } },
+        },
+        "model": "openrouter/some-lab/model",
+        "modelOverrides": { "a/b": { "contextWindow": 1000 } },
+        "plugins": { "settings": { "todo": { "remindAfter": 3 } } },
+    }));
+    let (_, status) = d.trust_json(&["--json"]);
+    assert_eq!(
+        status["mcpServerDetails"],
+        json!([
+            { "name": "fx", "command": "npx", "args": ["-y", "a b"], "url": null, "cwd": null, "env": ["TOKEN"], "headers": [], "overlaysGlobal": false },
+            { "name": "web", "command": null, "args": [], "url": "https://mcp.example", "cwd": null, "env": [], "headers": ["Authorization"], "overlaysGlobal": false },
+        ])
+    );
+    assert_eq!(status["model"], "openrouter/some-lab/model");
+    assert_eq!(status["modelOverrides"], json!({ "a/b": { "contextWindow": 1000 } }));
+    assert_eq!(status["pluginSettings"], json!({ "todo": { "remindAfter": 3 } }));
+    assert!(!status.to_string().contains("secret-value"));
+    let (_, text) = d.trust(&[]);
+    assert!(
+        text.contains("  - MCP server fx: npx -y \"a b\"; environment TOKEN\n"),
+        "{text}"
+    );
+    assert!(!text.contains("secret-value"));
+}
+
+#[test]
+fn trust_shows_the_fields_of_a_partial_server_entry_and_the_global_server_it_lands_on() {
+    english();
+    let d = dirs();
+    d.global(json!({ "mcpServers": { "fx": { "command": "npx", "args": ["-y", "tool"] } } }));
+    d.project(json!({
+        "mcpServers": {
+            "fx": { "args": ["--other", "a b"], "env": { "TOKEN": "secret-value" }, "cwd": "/w" },
+            "empty": { "url": "" },
+        },
+    }));
+    let (_, status) = d.trust_json(&["--json"]);
+    assert_eq!(
+        status["mcpServerDetails"],
+        json!([
+            { "name": "fx", "command": null, "args": ["--other", "a b"], "url": null, "cwd": "/w",
+              "env": ["TOKEN"], "headers": [], "overlaysGlobal": true },
+            { "name": "empty", "command": null, "args": [], "url": "", "cwd": null,
+              "env": [], "headers": [], "overlaysGlobal": false },
+        ])
+    );
+    assert!(!status.to_string().contains("secret-value"));
+    let (_, text) = d.trust(&[]);
+    assert!(
+        text.contains(
+            "  - MCP server fx: no command or url; args --other \"a b\"; in /w; environment TOKEN; \
+             applied on top of the global server of the same name\n"
+        ),
+        "{text}"
+    );
+    assert!(
+        text.contains("  - MCP server empty: no command or url; url \"\"\n"),
+        "{text}"
+    );
+    assert!(!text.contains("secret-value"));
+}
+
+#[test]
+fn trust_shows_a_command_that_is_not_a_string_as_a_value_that_starts_nothing() {
+    english();
+    let d = dirs();
+    d.project(json!({
+        "mcpServers": {
+            "gone": { "command": null, "url": "https://x.example/mcp" },
+            "list": { "command": ["npx", "x"] },
+        },
+    }));
+    let (_, status) = d.trust_json(&["--json"]);
+    assert_eq!(
+        status["mcpServerDetails"],
+        json!([
+            { "name": "gone", "command": null, "commandNotText": "null", "args": [],
+              "url": "https://x.example/mcp", "cwd": null, "env": [], "headers": [],
+              "overlaysGlobal": false },
+            { "name": "list", "command": null, "commandNotText": "[\"npx\",\"x\"]", "args": [],
+              "url": null, "cwd": null, "env": [], "headers": [], "overlaysGlobal": false },
+        ])
+    );
+    let (_, text) = d.trust(&[]);
+    assert!(
+        text.contains(
+            "  - MCP server gone: https://x.example/mcp; command null (not a string, so nothing is started)\n"
+        ),
+        "{text}"
+    );
+    assert!(
+        text.contains(
+            "  - MCP server list: no command or url; \
+             command [\"npx\",\"x\"] (not a string, so nothing is started)\n"
+        ),
+        "{text}"
+    );
+}
+
+#[test]
+fn trust_shows_a_url_and_the_other_fields_laid_over_a_global_command_server() {
+    english();
+    let d = dirs();
+    d.global(json!({ "mcpServers": { "fx": { "command": "npx" } } }));
+    d.project(json!({
+        "mcpServers": {
+            "fx": { "url": "https://x.example", "disabled": false, "timeout": 5000, "toolNames": "plain" },
+        },
+    }));
+    let (_, status) = d.trust_json(&["--json"]);
+    assert_eq!(
+        status["mcpServerDetails"],
+        json!([
+            { "name": "fx", "command": null, "args": [], "url": "https://x.example", "cwd": null,
+              "env": [], "headers": [], "disabled": "false", "timeout": "5000", "toolNames": "plain",
+              "overlaysGlobal": true },
+        ])
+    );
+    let (_, text) = d.trust(&[]);
+    assert!(
+        text.contains(
+            "  - MCP server fx: https://x.example; disabled false; timeout 5000; toolNames plain; \
+             applied on top of the global server of the same name\n"
+        ),
+        "{text}"
+    );
 }

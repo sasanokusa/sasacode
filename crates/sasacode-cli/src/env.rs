@@ -76,8 +76,9 @@ pub fn ensure_env_file(path: &Path, providers: &IndexMap<String, ProviderConfig>
         t!("Ollama (ollama/<model>) runs locally and needs no key.")
     ));
     lines.push(String::new());
+    // The directory holds keys and logins: owner-only from the start. One that exists keeps its mode.
     if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
+        sasacode_plugin_api::create_private_dir(dir)?;
     }
     sasacode_plugin_api::write_private(path, lines.join("\n").as_bytes())?;
     Ok(true)
@@ -185,6 +186,14 @@ mod ts_tests {
         {
             use std::os::unix::fs::PermissionsExt;
             assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+            // The directory made for it is the owner's alone; one that was there keeps its mode.
+            let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode(path.parent().unwrap()), 0o700);
+            let shared = dir.path().join("shared");
+            std::fs::create_dir(&shared).unwrap();
+            std::fs::set_permissions(&shared, std::fs::Permissions::from_mode(0o755)).unwrap();
+            assert!(ensure_env_file(&shared.join(".env"), providers).unwrap());
+            assert_eq!(mode(&shared), 0o755);
         }
         std::fs::write(&path, "CMD_API_KEY=mine\n").unwrap();
         assert!(!ensure_env_file(&path, providers).unwrap()); // never overwritten

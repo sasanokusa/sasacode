@@ -153,3 +153,117 @@ async fn the_skills_command_and_an_empty_set() {
         vec![format!("x — does x\n  {}", dir.join("x").join("SKILL.md").display())]
     );
 }
+
+/// The project's skills folder is read before the project is trusted: it counts only as files of
+/// its own inside the project, while the global folder may hold links.
+#[cfg(unix)]
+#[tokio::test]
+async fn project_skills_are_read_only_from_files_of_the_projects_own() {
+    use std::os::unix::fs::symlink;
+    let root = tempfile::tempdir().unwrap();
+    let root = std::fs::canonicalize(root.path()).unwrap();
+    let (global, outside) = (root.join("global"), root.join("outside"));
+    skill(&outside, "far", "name: far\ndescription: from elsewhere", "Far away.");
+    std::fs::create_dir_all(&global).unwrap();
+    symlink(outside.join("far"), global.join("far")).unwrap();
+
+    // The whole folder is a link: no skills from it, and no read rule for it.
+    let linked = root.join("linked");
+    std::fs::create_dir_all(linked.join(".sasacode")).unwrap();
+    symlink(&outside, linked.join(".sasacode/skills")).unwrap();
+    // .sasacode is a link: the same.
+    let dot = root.join("dot");
+    std::fs::create_dir_all(&dot).unwrap();
+    std::fs::create_dir_all(root.join("dot-elsewhere/skills")).unwrap();
+    skill(
+        &root.join("dot-elsewhere/skills"),
+        "near",
+        "name: near\ndescription: near",
+        "Near.",
+    );
+    symlink(root.join("dot-elsewhere"), dot.join(".sasacode")).unwrap();
+    for proj in [&linked, &dot] {
+        let host = FakeHost::new(proj.clone(), serde_json::json!({}));
+        let dirs = vec![global.clone(), proj.join(".sasacode/skills")];
+        host.load("skills", create_skills_plugin(dirs, SkillsOptions::default()))
+            .await
+            .unwrap();
+        let prompt = host.system_prompt("base").await;
+        assert!(
+            prompt.contains("- far: from elsewhere"),
+            "the global folder's link is kept"
+        );
+        assert!(!prompt.contains("- near:"));
+        assert_eq!(read_rules(&host), vec![format!("read({}/**)", global.display())]);
+    }
+
+    // A folder of its own: its own skills are read; a skill folder or a SKILL.md that is a link is not.
+    let proj = root.join("proj");
+    let own = proj.join(".sasacode/skills");
+    skill(&own, "mine", "name: mine\ndescription: the project's", "Mine.");
+    symlink(outside.join("far"), own.join("far2")).unwrap();
+    std::fs::create_dir_all(own.join("file-link")).unwrap();
+    symlink(outside.join("far/SKILL.md"), own.join("file-link/SKILL.md")).unwrap();
+    let host = FakeHost::new(proj.clone(), serde_json::json!({}));
+    host.load(
+        "skills",
+        create_skills_plugin(vec![own.clone()], SkillsOptions::default()),
+    )
+    .await
+    .unwrap();
+    let prompt = host.system_prompt("base").await;
+    assert!(prompt.contains("- mine: the project's"));
+    assert!(!prompt.contains("- far:"));
+    assert_eq!(read_rules(&host), vec![format!("read({}/**)", own.display())]);
+
+    // A folder of its own spelled in another case, where the file system folds case, still counts.
+    let other = root.join("other");
+    skill(
+        &other.join(".sasacode/Skills"),
+        "upper",
+        "name: upper\ndescription: in Skills",
+        "Upper.",
+    );
+    if other.join(".sasacode/skills").exists() {
+        let host = FakeHost::new(other.clone(), serde_json::json!({}));
+        let dirs = vec![other.join(".sasacode/skills")];
+        host.load("skills", create_skills_plugin(dirs, SkillsOptions::default()))
+            .await
+            .unwrap();
+        assert!(host.system_prompt("base").await.contains("- upper: in Skills"));
+    }
+}
+
+/// A project skills folder that is not there gets no read rule: a link made at that path afterwards
+/// must not put its target inside the rule.
+#[tokio::test]
+async fn a_missing_project_skills_folder_gets_no_read_rule() {
+    let root = tempfile::tempdir().unwrap();
+    let root = std::fs::canonicalize(root.path()).unwrap();
+    let global = root.join("global");
+    skill(&global, "g", "name: g\ndescription: global", "Global.");
+    let proj = root.join("proj");
+    std::fs::create_dir_all(&proj).unwrap();
+    let host = FakeHost::new(proj.clone(), serde_json::json!({}));
+    let dirs = vec![global.clone(), proj.join(".sasacode/skills")];
+    host.load("skills", create_skills_plugin(dirs, SkillsOptions::default()))
+        .await
+        .unwrap();
+    assert_eq!(read_rules(&host), vec![format!("read({}/**)", global.display())]);
+
+    // The same folder, there and of its own: the rule is added.
+    let own = proj.join(".sasacode/skills");
+    skill(&own, "mine", "name: mine\ndescription: the project's", "Mine.");
+    let host = FakeHost::new(proj.clone(), serde_json::json!({}));
+    let dirs = vec![global.clone(), own.clone()];
+    host.load("skills", create_skills_plugin(dirs, SkillsOptions::default()))
+        .await
+        .unwrap();
+    assert_eq!(
+        read_rules(&host),
+        vec![
+            format!("read({}/**)", global.display()),
+            format!("read({}/**)", own.display())
+        ]
+    );
+}

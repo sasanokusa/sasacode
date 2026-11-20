@@ -36,7 +36,6 @@ indexmap.workspace = true
 # web/net plugins (web_fetch, web_search, image-*, openai-codex)
 encoding_rs.workspace = true
 unicode-normalization.workspace = true
-percent-encoding.workspace = true
 rand.workspace = true
 lol_html = "3.0.3"
 flate2 = "1"
@@ -47,6 +46,10 @@ http = "1"
 bytes.workspace = true
 # jev-guard: what a glob argument names (Bun.Glob scanSync)
 globset.workspace = true
+
+# regular_file: open what a hook reads without waiting on a FIFO
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
 
 [dev-dependencies]
 sasacode-testing.workspace = true

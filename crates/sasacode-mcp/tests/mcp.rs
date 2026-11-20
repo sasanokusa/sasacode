@@ -47,9 +47,20 @@ fn servers(list: Vec<(&str, McpServerConfig)>) -> McpServers {
     list.into_iter().map(|(n, c)| (n.to_string(), c)).collect()
 }
 
+/// A server with no `cwd` starts in a folder under the sasacode home, which a test must not create
+/// in the real one: these start where the test runs.
+fn pinned(mut servers: McpServers) -> McpServers {
+    for s in servers.values_mut() {
+        if let sasacode_mcp::McpTransportConfig::Stdio { cwd, .. } = &mut s.transport {
+            cwd.get_or_insert_with(|| ".".to_string());
+        }
+    }
+    servers
+}
+
 async fn load(servers: McpServers, settings: Value) -> Arc<FakeHost> {
     let host = FakeHost::new(std::env::current_dir().unwrap(), json!({ "mcp": settings }));
-    host.load("mcp", create_mcp_plugin(servers)).await.unwrap();
+    host.load("mcp", create_mcp_plugin(pinned(servers))).await.unwrap();
     host
 }
 
@@ -59,7 +70,7 @@ async fn load_raw(servers: McpServers, settings: Value) -> (Arc<FakeHost>, Serve
     let slot: Arc<Mutex<Option<ServerStates>>> = Arc::default();
     let s = slot.clone();
     host.load("mcp", move |api| async move {
-        *s.lock().unwrap() = Some(connect_servers(&api, servers, None));
+        *s.lock().unwrap() = Some(connect_servers(&api, pinned(servers), None));
         Ok(())
     })
     .await

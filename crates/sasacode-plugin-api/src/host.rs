@@ -3,23 +3,25 @@
 
 use std::collections::{BTreeMap, HashSet};
 use std::path::PathBuf;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Mutex, OnceLock, RwLock};
 
-/// Where sasacode keeps its files: $SASACODE_HOME, or ~/.sasacode.
+/// Where sasacode keeps its files: $SASACODE_HOME, or ~/.sasacode. It exits when neither is known.
 pub fn sasacode_home() -> PathBuf {
-    if let Some(h) = std::env::var_os("SASACODE_HOME") {
-        return PathBuf::from(h);
-    }
-    home_dir().join(".sasacode")
+    env_path("SASACODE_HOME")
+        .or_else(|| home_dir().map(|h| h.join(".sasacode")))
+        .unwrap_or_else(|| {
+            eprintln!("sasacode: HOME is not set: set SASACODE_HOME to the folder for its files");
+            std::process::exit(1)
+        })
 }
 
-/// The user's home directory ($HOME, else %USERPROFILE%, like Node's os.homedir()).
-pub fn home_dir() -> PathBuf {
-    std::env::var_os("HOME")
-        .filter(|h| !h.is_empty())
-        .or_else(|| std::env::var_os("USERPROFILE"))
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."))
+/// $HOME, else %USERPROFILE% (like Node's os.homedir()); an empty value counts as unset.
+pub fn home_dir() -> Option<PathBuf> {
+    env_path("HOME").or_else(|| env_path("USERPROFILE"))
+}
+
+fn env_path(name: &str) -> Option<PathBuf> {
+    std::env::var_os(name).filter(|v| !v.is_empty()).map(PathBuf::from)
 }
 
 fn hidden() -> &'static Mutex<HashSet<String>> {
@@ -33,6 +35,33 @@ pub fn hide_from_children<I: IntoIterator<Item = S>, S: Into<String>>(names: I) 
     for n in names {
         h.insert(n.into());
     }
+}
+
+fn secrets() -> &'static RwLock<Vec<String>> {
+    static S: OnceLock<RwLock<Vec<String>>> = OnceLock::new();
+    S.get_or_init(Default::default)
+}
+
+/// Keys, tokens and header values that every record sasacode keeps shows as `[REDACTED]`. Under 8
+/// characters is ignored (ordinary words would go too).
+pub fn hide_secrets<I: IntoIterator<Item = S>, S: AsRef<str>>(values: I) {
+    let mut list = secrets().write().unwrap_or_else(|e| e.into_inner());
+    for v in values.into_iter().map(|v| v.as_ref().to_string()) {
+        if v.chars().count() >= 8 && !list.contains(&v) {
+            list.push(v);
+        }
+    }
+    list.sort_by_key(|s| std::cmp::Reverse(s.len()));
+}
+
+/// `text` without the values given to [`hide_secrets`] (longest first).
+pub fn redact_secrets(text: &str) -> std::borrow::Cow<'_, str> {
+    let list = secrets().read().unwrap_or_else(|e| e.into_inner());
+    let mut out = std::borrow::Cow::Borrowed(text);
+    for s in list.iter().filter(|s| text.contains(s.as_str())) {
+        out = out.replace(s.as_str(), "[REDACTED]").into();
+    }
+    out
 }
 
 /// The environment for a child process: this one's minus hidden variables, plus `extra`.
@@ -70,7 +99,7 @@ pub fn save_output(prefix: &str, content: &str) -> std::io::Result<PathBuf> {
     });
     let rand: String = uuid::Uuid::new_v4().simple().to_string().chars().take(6).collect();
     let file = dir.join(format!("{prefix}-{}-{rand}.log", sasacode_ai::now_ms()));
-    write_private(&file, content.as_bytes())?;
+    write_private(&file, redact_secrets(content).as_bytes())?;
     Ok(file)
 }
 
@@ -85,7 +114,7 @@ pub fn detach_session(cmd: &mut tokio::process::Command) {
     {
         // SAFETY: the closure runs in the forked child before exec. setsid(2) is async-signal-safe,
         // allocates nothing and touches no state shared with the parent; it is the only call made.
-        // This is the one `unsafe` in the code base (rust/DECISIONS.md ADR-012).
+        // One of the few `unsafe` blocks in the code base (rust/DECISIONS.md ADR-012).
         #[allow(unsafe_code)]
         unsafe {
             cmd.pre_exec(|| nix::unistd::setsid().map(|_| ()).map_err(std::io::Error::from));
@@ -118,4 +147,20 @@ pub fn write_private(path: &std::path::Path, data: &[u8]) -> std::io::Result<()>
         o.mode(0o600);
     }
     o.open(path)?.write_all(data)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hidden_values_are_replaced_longest_first_and_short_ones_are_ignored() {
+        hide_secrets(["host-t-secret-12345", "host-t-secret-1234567", "tiny", "1234567"]);
+        let shown = redact_secrets("a host-t-secret-1234567 b host-t-secret-12345 c tiny 1234567");
+        assert_eq!(shown, "a [REDACTED] b [REDACTED] c tiny 1234567");
+        assert!(matches!(
+            redact_secrets("nothing to hide"),
+            std::borrow::Cow::Borrowed(_)
+        ));
+    }
 }

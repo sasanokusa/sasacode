@@ -71,11 +71,16 @@ impl Output {
         });
         Output { tx }
     }
+    /// What goes out hides the values sasacode keeps out of its records (keys, tokens, headers).
     pub fn stdout(&self, s: impl Into<String>) {
-        let _ = self.tx.send(Out::Stdout(s.into()));
+        let _ = self
+            .tx
+            .send(Out::Stdout(sasacode_plugin_api::redact_secrets(&s.into()).into_owned()));
     }
     pub fn stderr(&self, s: impl Into<String>) {
-        let _ = self.tx.send(Out::Stderr(s.into()));
+        let _ = self
+            .tx
+            .send(Out::Stderr(sasacode_plugin_api::redact_secrets(&s.into()).into_owned()));
     }
     pub async fn flushed(&self) {
         let (tx, rx) = tokio::sync::oneshot::channel();
@@ -86,16 +91,7 @@ impl Output {
 }
 
 /// ESC shows as ␛; other control characters but newline and tab are dropped.
-pub fn plain(s: &str) -> String {
-    s.chars()
-        .filter_map(|c| match c {
-            '\x1b' => Some('␛'),
-            '\n' | '\t' => Some(c),
-            '\x00'..='\x1f' | '\x7f'..='\u{9f}' => None,
-            _ => Some(c),
-        })
-        .collect()
-}
+pub use sasacode_host::plain;
 
 fn stop_hint(cause: StopCause) -> Option<&'static str> {
     match cause {

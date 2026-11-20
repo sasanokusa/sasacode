@@ -34,6 +34,8 @@ GUIが使うのは、すでにあるヘッドレスの出力と制御だけ（[R
 画面を作るうえで効いてくる、プロトコルの性質：
 
 - 承認は1件ずつ、順に届く。1つの応答に呼び出しが複数あっても、まとめては聞かれず、それぞれ実行の直前に聞かれる。だから承認カードは1枚で足りる。bashやeditのように並行して走れないツールは、その呼び出しが終わってから次が聞かれる。readのように並行できるツールは、許可されるとすぐ走り出すので、走っている最中に次が聞かれることがある（`crates/sasacode-agent/src/tool_exec.rs`）。
+- 承認カードと信頼カードに出す、設定やモデルから来た文字列（コマンド、引数、差分、パス、理由、ルール、MCPサーバーの名前など）は、CLIの`plain()`（`crates/sasacode-host/src/text.rs`）と同じ処理（`crates/sasacode-gui/src/plain.rs`。テストで突き合わせる）を通す。ESCは`␛`で見せ、ほかの制御文字（C0、DEL、C1）と双方向制御文字は落とす。承認カードの呼び出しは高さ260の枠でスクロールし、収まらないときは「続きがあります」と「すべて表示」（枠を外して全文を出す）を出す。
+- 信頼カードは、`sasacode trust --json`の`items`の下に、`mcpServerDetails`（コマンドと引数、またはURL、作業フォルダ、環境変数とヘッダーの名前（値は出ない）、`disabled`などの上書き、同名のグローバルのサーバーに重ねること）、`model`、`judgeModel`、`models`、`modelOverrides`と`pluginSettings`（キーと値。長い値は切るが、コマンド、URL、モデル、パスの値は切らない）を1行ずつ出す。これらのない古いCLIでは`items`だけを出す。
 - 拒否された呼び出し、規則やプラグインに止められた呼び出し、中断で走らなかった呼び出しには`tool_start` / `tool_end`が出ない。あるのは結果のメッセージだけで、本文の出だし（`The user denied this tool call.`など）で見分ける。
 - セッションログにはツール結果の`details`が残らない。読み込んだ会話では、差分は呼び出しの引数から作り（行番号と前後の行はない）、終了コード、所要時間、承認の記録は出せない。
 - 実行中に送ったメッセージは、次のターンで新しいユーザーメッセージとしてモデルに渡る。中断のあとに渡るときは、先頭に`[The user interrupted the previous response.]`というテキストの部品が付く（ユーザーの言葉ではないので、画面には出さない）。
@@ -48,16 +50,16 @@ CLIのソースが正。`crates/sasacode-protocol/tests/fixtures`に実際の実
 GUIはリリースに入っていない。`sasacode gui install`が、このマシンでビルドして入れる。
 
 ```bash
-sasacode gui install                     # このsasacodeの版のタグ（v<版>）からビルドして入れる
+sasacode gui install                     # このsasacodeをビルドしたコミットからビルドして入れる（手元でビルドしたsasacodeはタグv<版>から）
 sasacode gui install --path <チェックアウト>   # sasacodeのチェックアウトからビルドして入れる（開発中の版）
 ```
 
 - Rust（cargo）が要る。cargoはPATH、`CARGO_HOME`の`bin`、`~/.cargo/bin`の順に探す（rustupで入れた直後の、PATHがまだ通っていないシェルでも見つかる）。どこにもなければ、[rustup.rs](https://rustup.rs)を案内して、終了コード1で止まる。OSごとのRustの入れ方は書かない（rustupのページが案内する）。ワークスペースの`rust-version`（1.88）より古いRustでは、cargoがその旨を出して止まる。
-- 中身は`cargo install --locked --force --root ~/.sasacode/gui`で、ソースは`--git https://github.com/sasanokusa/sasacode --tag v<版> sasacode-gui`か、`--path <チェックアウト>/crates/sasacode-gui`。`--locked`で、リポジトリの`Cargo.lock`（CIが確かめた版）のとおりにビルドする。窓は`~/.sasacode/gui/bin/sasacode-gui`（`SASACODE_HOME`があればその下）に入り、PATHには入れない。
+- 中身は`cargo install --locked --force --root ~/.sasacode/gui`で、ソースは`--git https://github.com/sasanokusa/sasacode --rev <コミット> sasacode-gui`か、`--path <チェックアウト>/crates/sasacode-gui`。コミットは、リリースのワークフローがビルド時に環境変数`SASACODE_COMMIT`で渡し、バイナリに埋め込まれている（タグは付け替えられるが、コミットは付け替えられないため）。手元でビルドしたsasacodeにはコミットがないので、`--tag v<版>`でビルドする。`--locked`で、リポジトリの`Cargo.lock`（CIが確かめた版）のとおりにビルドする。窓は`~/.sasacode/gui/bin/sasacode-gui`（`SASACODE_HOME`があればその下）に入り、PATHには入れない。
 - cargoは`~/.sasacode/gui`で動かす。今のフォルダのプロジェクトの`rust-toolchain.toml`で、別のツールチェーンが選ばれないようにするため。環境変数は、bashなどの子プロセスと同じく、APIキーなどを除いて渡す。
-- タグからのビルドは、毎回はじめからになる（`cargo install`は使い捨てのフォルダでビルドする）。M1 Pro（AC電源、クレートはダウンロード済み）で154秒と163秒（同じ版の1回目と2回目）。sasacodeを更新するたびに、この時間がかかる。`--path`ではチェックアウトの`target`を使うので、初回は124秒、2回目は2秒だった。
+- コミットやタグからのビルドは、毎回はじめからになる（`cargo install`は使い捨てのフォルダでビルドする）。M1 Pro（AC電源、クレートはダウンロード済み）で154秒と163秒（同じ版の1回目と2回目）。sasacodeを更新するたびに、この時間がかかる。`--path`ではチェックアウトの`target`を使うので、初回は124秒、2回目は2秒だった。
 - `SASACODE_GUI_GIT`で、ソースを取るリポジトリを変えられる（ミラーやテスト用）。
-- タグのない版（リリース前のビルド）では、引数なしではビルドできない。cargoのエラーのあとに、`--path`でチェックアウトからビルドするよう案内する。
+- リリース版は、埋め込まれたコミットからビルドするので、タグがあるかどうかに関わらない（コミットが取れなければ、cargoのエラーだけが出る）。手元でビルドしたsasacode（コミットを知らない）では、タグ`v<版>`がまだなければ引数なしではビルドできない。そのとき、cargoのエラーのあとに、`--path`でチェックアウトからビルドするよう案内する。
 - `install`という名前のフォルダを開くときは、`sasacode gui ./install`と書く。
 
 ### 版と更新
@@ -124,7 +126,7 @@ Codex、Claude Code、T3 CodeのGUIと比べて足したもの。比べた表と
 - `/btw 質問`で、会話を読んだうえでの脇の質問に答えさせる。答えは窓の上に出て、会話のログには残らない。
 - `⌘F`で、会話を合うやり取りだけに絞る（Escで閉じる）。メッセージの下には送った時刻（「3分前」など）が出る。`/export`で会話をMarkdownにしてクリップボードへ写す（下端のバーに「コピーしました」が出る）。
 - 画像を添えたメッセージは、ログの中では画像プラグインの`[Image 1: 絶対パス]`になっている。ログから読み込んだ会話では`@パス`に戻して表示し、「やり直す」や「直して送り直す」でもその形で送るので、画像プラグインが画像をもう一度読む（ファイルが消えていれば付かない）。
-- インスペクタのgitタブ（`⌘5`）：ブランチ、まだプッシュしていないコミットの数、コミットしていないファイルとその差分。ファイルごとにステージ、外す、取り消す（2度押す）、エディタで開く、フォルダで表示。コミット（何もステージしていなければすべて）、プッシュ（上流がなければ`-u origin`）、PRの作成（`gh pr create --fill`）。差分の行をクリックすると`@パス:行`が入力欄に入る。下の帯にはブランチ名が出て、押すとコピーする。
+- インスペクタのgitタブ（`⌘5`）：初めてのフォルダでは、gitを自分からは走らせず「gitの状態を表示する」を出す。押すか、信頼カードで信頼すると、そのフォルダを`~/.sasacode/git-folders.json`に実パスで覚え、以後は状態、スナップショット、差分、ファイル一覧、マージ済みブランチの整理でgitを使う（この一覧が無いときの最初の1回は、以前に開いたフォルダとsasacodeが会話を保存しているフォルダを覚えたものとして扱う。GUIが作ったワークツリーも覚える）。一覧はCLIと共有し、GUIから起動したCLIの`git-context`と`jev-guard`も、この一覧にあるフォルダでだけgitを走らせる（[README](../README.md#gitを走らせるフォルダ)）。ブランチ、まだプッシュしていないコミットの数、コミットしていないファイルとその差分。ファイルごとにステージ、外す、取り消す（2度押す）、エディタで開く、フォルダで表示。コミット（何もステージしていなければすべて）、プッシュ（上流がなければ`-u origin`）、PRの作成（`gh pr create --fill`）。差分の行をクリックすると`@パス:行`が入力欄に入る。下の帯にはブランチ名が出て、押すとコピーする。
 - 下の帯の「コンテキストN%」は、直近の入力がモデルのコンテキスト長のどれだけかを示す（75%で黄、90%で赤）。
 - 窓が後ろにあるあいだに実行が終わる、承認を待つ、止まると、OSの通知で知らせる（macOSはosascript、Linuxは`notify-send`。Windowsでは出さない）。実行中はコンピュータをスリープさせない（macOSは`caffeinate -i`、Linuxは`systemd-inhibit`。画面は消えてよい。Windowsではしない）。
 - コマンドパレット（`⌘⇧P`）は、コマンド、タブ、テーマ、拡大、最近使ったモデル（ログに残るもの）、会話のあるほかのフォルダを探して実行する。ほかのフォルダは新しい窓で開く。`/worktree`は、新しいブランチ（`sasacode/<日時>`）のgit worktreeを`$SASACODE_HOME/worktrees/`に作り、新しい窓で開く。
@@ -219,7 +221,7 @@ cargo test -p sasacode-gui -- --ignored snapshots   # 主な状態をtarget/snap
 
 ## 未決事項
 
-- `sasacode gui install`（2026-11-18）を確かめたのはmacOSだけ。WindowsとLinuxでのビルドは、CIで`cargo build`が通ることしか確かめていない。Windowsでは、窓が開いているあいだに入れ直すと、動いている`sasacode-gui.exe`を置き換えられずにcargoが失敗するはず（確かめていない）。そのときもタグがないことを疑う案内が出る。
+- `sasacode gui install`（2026-11-18）を確かめたのはmacOSだけ。WindowsとLinuxでのビルドは、CIで`cargo build`が通ることしか確かめていない。Windowsでは、窓が開いているあいだに入れ直すと、動いている`sasacode-gui.exe`を置き換えられずにcargoが失敗するはず（確かめていない）。手元でビルドしたsasacodeでは、そのときもタグがないことを疑う案内が出る（リリース版では出ない）。
 - 入力ごとの再起動で体感が許せるか。遅ければ、`--control stdio` に「`agent_end` の後も終了せず次の入力を待つ」モードを足す。
 - TUIとGUIが同じセッションを同時に開いたときの扱い。`/gui`は進行中の会話を窓で開くので、この状態になりやすい。今は防がず、開いたときに「続きはどちらか一方で進める」と表示するだけ。
 - `sasacode gui`と`/gui`からの起動で確かめたこと（macOS、2026-11-16、偽のモデルサーバー）：`cargo install --locked --path crates/sasacode-gui`で入れた`sasacode-gui`が、PATHから見つかって`sasacode gui <フォルダ>`で起動し、sasacodeの終了後も残る。その窓から送信すると返答が表示される。その会話をTUIで再開して`/gui`を打つと`--session <id>`つきで起動し、TUIの終了後も残る。その窓は会話を読み込んだ状態で開き、続きを送ると同じ会話のログに追記される。確かめていないこと：WindowsとLinuxで、sasacodeの終了後に窓が残るか（起動のしかたはバックグラウンド実行と同じ`detached`）。

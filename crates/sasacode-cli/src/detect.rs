@@ -65,7 +65,7 @@ pub async fn detect_endpoint(
     let mut last_error = "no response".to_string();
     for list_url in &candidates {
         let req = with_headers(
-            sasacode_ai::http::client().get(list_url.as_str()),
+            sasacode_ai::http::api_client().get(list_url.as_str()),
             headers.iter().map(|(k, v)| (k, v)),
         );
         let res = match fetch(signal, req).await {

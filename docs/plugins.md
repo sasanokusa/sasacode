@@ -24,7 +24,7 @@ sasacodeのツール・コマンド・フックは、どれもプラグインが
 | --- | --- |
 | `command` / `args` | stdioのサーバーを起動するコマンドと引数。`command`があればstdioのサーバー、なければ`url`のサーバーとして読む |
 | `env` | stdioのサーバーに渡す環境変数。サーバーが受け取るのは、`HOME`・`LOGNAME`・`PATH`・`SHELL`・`TERM`・`USER`（Windowsでは`APPDATA`・`PATH`・`USERPROFILE`など）と、ここに書いたものだけ。値の`${VAR}`は起動時に環境変数から展開する |
-| `cwd` | stdioのサーバーの作業ディレクトリ。既定はsasacodeの作業ディレクトリ |
+| `cwd` | stdioのサーバーの作業ディレクトリ。既定は、グローバルの`~/.sasacode/config.json`に書いたサーバーなら、プロジェクトの外にある専用のフォルダ（`<sasacodeのホーム>/tmp/mcp/<サーバー名>`。名前の英数字・`_`・`-`以外は`%XX`にする。Unixでは0700）。プロジェクトの`.sasacode/config.json`に、起動のしかた（`command`、または`url`）まで書いたサーバー（信頼したあと）なら、sasacodeの作業ディレクトリ。グローバルのサーバーに`disabled`や`timeout`だけを足したときは、グローバルのサーバーのまま。`${SASACODE_PROJECT}`と書くと、sasacodeの作業ディレクトリ（プロジェクト）になる（`"${SASACODE_PROJECT}/tools"`のように続けてもよい）。このほかの`${VAR}`は展開しない。相対パスは、sasacodeを起動したディレクトリから見る |
 | `url` / `headers` | Streamable HTTPのサーバー。どちらも`${VAR}`を展開する |
 | `disabled` | `true`なら接続しない |
 | `alwaysLoad` | ツールの遅延ロードが有効でも、このサーバーのツールの定義を常に送る |
@@ -36,6 +36,7 @@ sasacodeのツール・コマンド・フックは、どれもプラグインが
 - サーバーのpromptsは`mcp__<server>__<prompt>`という名前のスラッシュコマンドになる。
 - 落ちたサーバーは、間隔を空けて5回まで自動で再接続する（`plugins.settings.mcp.reconnectDelayMs`で間隔を縮められる）。`/mcp`で接続の状態を見て、`/mcp reconnect [name]`で手動でつなぎ直す。フッターには`MCP <接続中>/<全体>`を出す。
 - サーバーのツールの一覧が変わったら、一覧から外れたツールはモデルに渡さなくなる。
+- 既定の作業ディレクトリをプロジェクトの外にするのは、`npx`や`uvx`がカレントの`node_modules`、`uv.toml`、`pyproject.toml`を先に見るためである。グローバルのサーバーでプロジェクトの中身（ファイルや`node_modules`）に頼るものには、`"cwd": "${SASACODE_PROJECT}"`を足す。同梱の`free-search`も`browsr`も、同じ専用のフォルダで起動する。
 - プロジェクトの`.sasacode/config.json`に書いたサーバーは、プロジェクトを信頼するまで起動しない（[README](../README.md#プロジェクトの信頼)）。信頼したあとでサーバーの設定が変わると、また確認を出す。
 - `plugins.disabled`に`mcp`と書くと、`mcpServers`のサーバーを1つもつながない。
 
@@ -114,6 +115,7 @@ description: Write release notes from the commits since the last tag.
 | `maxChars` | `16000` | 出力全体の文字数の上限。1000〜60000 |
 
 - 作業ディレクトリの中だけを読む。Gitの外部diff・textconv・fsmonitorは使わず、変更もfetchもしない。権限は通常のreadとして判定する。
+- gitを走らせてよいフォルダ（`~/.sasacode/git-folders.json`）でなければ、gitを呼ばずにそう返す（[README](../README.md#gitを走らせるフォルダ)）。
 - 作業ツリーの状態はどの`scope`でも出すので、branchのパッチに入らない未コミットの変更もわかる。
 - 未追跡のファイルは名前だけで、サブモジュールの差分は対象外。ステージで変えて作業ツリーで戻した箇所は`working`では相殺されるので、要るなら`staged`も調べる。
 - 上限を超えた出力は、省いたことを明記する。Gitの各プロセスは15秒・8 MiBまでで、超える差分はエラーになる（`patch: false`か、ファイルを個別に読む）。upstreamがなければ`base`を指定する。
@@ -233,6 +235,7 @@ description: Write release notes from the commits since the last tag.
   OpenRouterとVercelは、チャット用にキーを持っているだけの人に判定を送らないよう、名前を指定したときだけ使う。`endpoint`と`apiKeyEnv`で接続先のURLとキーの変数を変えられる（プロキシなど）。実際のAPIで確かめたのは`commandcode`と`chat`だけで、`typesafe` / `openrouter` / `vercel`は公開されている仕様どおりの形で送る（テストは模擬サーバー）。
 - `chat`はJevの代わりにチャットモデルへ同じ質問をし、JSONで答えさせる。確率が較正されていない代用品で、遅い。実際のコマンドで比べると、DeepSeek V4.1 Flashは止めるべき呼び出しをJevより多く通した（[ベンチマーク](benchmarks.md)）。ローカルモデルは1回に数十秒かかり、実用的でない。Jevに接続できない環境で、判定の仕組みだけを使いたいとき向け。
 - 有効にすると、ツール呼び出しの内容（コマンド、変更されうるパスとそのgitの状態、ユーザーの直近の依頼）が接続先に送られる。APIキーやトークンらしき文字列は、送る前に伏せる（ベストエフォート）。
+- gitを走らせてよいフォルダ（`~/.sasacode/git-folders.json`）でなければ、対象のgitの状態を読まず、戻せるとは見なさない（[README](../README.md#gitを走らせるフォルダ)）。
 - 判定を変えるのは次の場合だけ。
   - 確認なしで実行されるはずだった呼び出し（allowルール、`auto`モード）：危険なら拒否、要確認なら確認に回す。
   - `agent`モードで確認に回るはずだった呼び出し：安全なら確認なしで実行する（モデルによる判定の代わり）。Jevが判断を保留したときは、これまでどおりモデルが判定する。
@@ -247,7 +250,7 @@ description: Write release notes from the commits since the last tag.
 
 ### free-search
 
-キー不要でローカルで動くWeb検索のMCPサーバー（複数の検索エンジン、ページの取得、文書の読み取り）。有効にすると、`uvx free-search-mcp`を`free-search`という名前のstdioのMCPサーバーとしてつなぐ。ツールは`mcp__free-search__<tool>`になり、ほかのMCPのツールと同じ権限確認を通る。[uv](https://docs.astral.sh/uv/)が入っていないと接続できない。`/mcp`とステータス行には、`mcpServers`のサーバーと並んで出る（`mcpServers`に同じ名前があれば、そちらを使う）。`mcp`プラグインを無効にしても、free-searchだけで動く。設定はない。
+キー不要でローカルで動くWeb検索のMCPサーバー（複数の検索エンジン、ページの取得、文書の読み取り）。有効にすると、`uvx free-search-mcp`を`free-search`という名前のstdioのMCPサーバーとしてつなぐ。ツールは`mcp__free-search__<tool>`になり、ほかのMCPのツールと同じ権限確認を通る。[uv](https://docs.astral.sh/uv/)が入っていないと接続できない。プロジェクトの外の専用のフォルダで起動するので、`uvx`はプロジェクトの`uv.toml`や`pyproject.toml`を読まない。`/mcp`とステータス行には、`mcpServers`のサーバーと並んで出る（`mcpServers`に同じ名前があれば、そちらを使う）。`mcp`プラグインを無効にしても、free-searchだけで動く。設定はない。
 
 ```json
 { "plugins": { "enabled": ["free-search"] } }
@@ -376,7 +379,7 @@ pub const PLUGINS: &[Bundled] = &[
 | `log(message)` | `SASACODE_DEBUG`があるときだけstderrに出す |
 
 - ツールは`ToolDef::new(名前, 説明, 引数のJSON Schema, ToolKind, 本体)`で作り、`.concurrent`・`.always_load`・`.summary`・`.match_target`・`.paths`・`.permissions_as`を足して`.into_ref()`で渡す（`Tool`トレイトを直接実装してもよい）。`ToolKind`は`Read` / `Edit` / `Exec` / `Other`で、既定のeditsモードで確認なしに動くのは作業ディレクトリ内のRead / Editだけ。本体が`Err`を返すと、エラーの結果としてモデルに返り、ループは止まらない。
-- 本体の`ToolContext`には`cwd`、`signal`（中断）、`on_update`、`call_tool`（ほかのツールを、検証・フック・権限の判定を通して呼ぶ）がある。
+- 本体の`ToolContext`には`cwd`、`signal`（中断）、`on_update`、`call_tool`（ほかのツールを、検証・フック・権限の判定を通して呼ぶ）、`read_rule`（そのツールがあるパスを読むことに、denyやaskのルールが当たるか。ディレクトリを歩いて見つけたファイルのように、権限の判定を通っていないパスに使う）がある。
 - フックは`crates/sasacode-plugin-api/src/hooks.rs`の`hook`にある：`SessionStart`、`SessionEnd`、`UserPrompt`、`SystemPrompt`、`BeforeRequest`、`StreamDelta`、`AssistantMessage`、`ToolCallRaw`、`ToolCall`、`Permission`、`ToolResult`、`TurnEnd`、`Usage`、`AgentEnd`、`ContextLimit`。ハンドラは登録の順に呼ばれ、`Ok(None)`なら変えず、`Ok(Some(結果))`で変え、`Err`はプラグインのエラーとして表示して次のハンドラに進む。第2引数の`HookContext`の`agent`は、メインのエージェントなら`None`、サブエージェントなら実行ごとに違う値になる。
 - コマンドを実行するプラグインは、`child_env`か`apply_child_env`で環境変数を渡す（`~/.sasacode/.env`から読んだキーを子プロセスに渡さないため）。長い出力は`save_output`で`~/.sasacode/tmp`に保存できる。
 

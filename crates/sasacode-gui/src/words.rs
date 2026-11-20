@@ -284,6 +284,9 @@ words! {
     viewed_n: "{n}/{all}件見た", "{n}/{all} viewed";
     default_sure: "{branch}に直接書き込みます。もう一度押すと続けます", "This goes straight to {branch}. Press again to go on";
     git_init: "ここでgitを始める", "Start git here";
+    /// The git tab in a folder git has not been run in from here: it is, once asked.
+    git_unread: "このフォルダのgitの状態はまだ読んでいません。読むと、リポジトリの設定にあるプログラムが動くことがあります。", "This folder's git status has not been read yet. Reading it can start programs the repository's config names.";
+    git_show: "gitの状態を表示する", "Show the git status";
     pull: "取り込む", "Pull";
     behind: "↓{n}", "↓{n}";
     update_branch: "ベースを取り込む", "Update from base";
@@ -388,6 +391,10 @@ words! {
     args_how: "JSONのまま直します。直した呼び出しも、拒否のルールとプラグインの確認を受け直します", "Edit the JSON. The edited call is checked again against the deny rules and the plugins";
     args_send: "この引数で許可", "Allow with these";
     args_bad: "引数はJSONのオブジェクトで書いてください（{error}）", "The arguments must be a JSON object ({error})";
+    /// "Always" on the approval card: the rule it adds, and what a rule of a tool's name alone allows.
+    appr_rule: "足すルール：", "Rule it adds: ";
+    appr_rule_any: "（このツールは、どんな引数でも許可されます）", "(this tool is allowed with any arguments)";
+    always_tool: "この会話ではこのツールを許可", "Allow this tool in this conversation";
     judged_allow: "判定役が許可", "The judge allowed it";
     judged_ask: "判定役が確認に回した", "The judge asked you";
     allowed_head: "この会話で常に許可したもの", "Always allowed in this conversation";
@@ -403,6 +410,30 @@ words! {
     trust_save: "信頼する", "Trust";
     trust_once: "このウィンドウでだけ使う", "Use in this window only";
     trust_partial: "プラグインのコードをすべては読めなかったので、信頼を保存できません", "Its plugins' code could not all be read, so trust cannot be saved";
+    /// What the folder's config would turn on, line by line under the trust card's items.
+    trust_mcp: "MCPサーバー「{name}」", "MCP server “{name}”";
+    trust_runs: "起動するもの：", "Starts: ";
+    trust_command_unused: "command（空なので何も起動しない）：", "command (empty, so nothing is started): ";
+    trust_command_not_text: "command（文字列でないので何も起動しない）：", "command (not a string, so nothing is started): ";
+    trust_url: "接続先：", "Connects to: ";
+    trust_cwd: "作業フォルダ：", "Working folder: ";
+    trust_env: "環境変数（名前だけ）：", "Environment variables (names only): ";
+    trust_headers: "ヘッダー（名前だけ）：", "Headers (names only): ";
+    trust_args: "引数：", "Arguments: ";
+    trust_disabled: "disabled：", "disabled: ";
+    trust_always_load: "alwaysLoad：", "alwaysLoad: ";
+    trust_timeout: "timeout：", "timeout: ";
+    trust_tool_names: "toolNames：", "toolNames: ";
+    trust_overlays: "同じ名前のグローバルのサーバーに重ねて使う", "Applied on top of the global server of the same name";
+    trust_model: "モデル：", "Model: ";
+    trust_judge: "判定モデル：", "Judge model: ";
+    trust_models: "モデルの一覧：", "Models: ";
+    trust_overrides: "modelOverrides：", "modelOverrides: ";
+    trust_plugin_settings: "プラグインの設定：", "Plugin settings: ";
+    /// The approval card's call, longer than the card shows.
+    appr_more: "続きがあります（スクロールするか、すべて表示）", "There is more (scroll, or show all)";
+    appr_all: "すべて表示", "Show all";
+    appr_less: "たたむ", "Show less";
     ext_title: "プラグイン・スキル・MCP", "Plugins, skills and MCP";
     ext_plugins: "プラグイン", "Plugins";
     ext_skills: "スキル", "Skills";

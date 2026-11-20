@@ -1,5 +1,6 @@
 //! `sasacode web-search install` / `/web-search install` (`packages/bundled/src/rustxng-install.ts`):
-//! RustXNG's own release binary, checked against the .sha256 published next to it, put where
+//! RustXNG's own release binary, of one release this sasacode names and checked against the SHA256
+//! this file holds for it (not a checksum fetched from where the binary comes from), put where
 //! web_search looks after PATH.
 
 use std::path::{Path, PathBuf};
@@ -10,9 +11,50 @@ use futures::future::BoxFuture;
 use sha2::{Digest, Sha256};
 
 use sasacode_host::t;
-use sasacode_plugin_api::{PluginApi, sasacode_home};
+use sasacode_plugin_api::{PluginApi, apply_child_env, sasacode_home};
 
 pub const RUSTXNG_RELEASES: &str = "https://github.com/sahenjp/RustXNG/releases";
+
+/// The release that is installed. A newer one is taken by changing this and [`PINNED_SHA256`] (the
+/// SHA256 of each file of the release, taken from a download of it) in a sasacode release.
+pub const PINNED_TAG: &str = "v0.32.0";
+
+/// The SHA256 of the release's file for each target (`rustxng-<tag>-<target>`, `.exe` on Windows).
+const PINNED_SHA256: &[(&str, &str)] = &[
+    (
+        "aarch64-apple-darwin",
+        "266dbf2ee7275ba5f6d847d636720d8d0d9e3399489c2388ef96ff28107feeb5",
+    ),
+    (
+        "x86_64-apple-darwin",
+        "c354bed4b0ebcefca907e1119c5f30c63ce7d2a7b97f672cf19f2ad5a9003558",
+    ),
+    (
+        "x86_64-unknown-linux-musl",
+        "cf05d5acc182cb702cc447ad78e65e104014c05fbdc11a00c61d975d4fb630ef",
+    ),
+    (
+        "aarch64-unknown-linux-gnu",
+        "e86adb048c99c8873513227eb8481b932e813082c579063a12b1f34cc82b5a26",
+    ),
+    (
+        "x86_64-pc-windows-msvc",
+        "58ee07c420f5d3787024210c1e2fedc8685b6593ae9d8cfadf56db632950eca1",
+    ),
+];
+
+/// The SHA256 the download of `target` must have. A debug build (the tests) can name another in
+/// `SASACODE_RUSTXNG_SHA256`, for a stand-in binary; a release build cannot be told.
+fn expected_sha256(target: &str) -> Option<String> {
+    #[cfg(debug_assertions)]
+    if let Ok(hash) = std::env::var("SASACODE_RUSTXNG_SHA256") {
+        return Some(hash);
+    }
+    PINNED_SHA256
+        .iter()
+        .find(|(t, _)| *t == target)
+        .map(|(_, hash)| hash.to_string())
+}
 
 fn releases() -> String {
     std::env::var("SASACODE_RUSTXNG_BASE").unwrap_or_else(|_| RUSTXNG_RELEASES.to_string())
@@ -66,30 +108,6 @@ pub fn rustxng_target(platform: &str, arch: &str) -> anyhow::Result<String> {
     Ok(target.to_string())
 }
 
-/// The newest release tag, read from the redirect of …/releases/latest.
-async fn latest_tag(base: &str) -> anyhow::Result<String> {
-    let client = no_redirects();
-    let r = client.head(format!("{base}/latest")).send().await?;
-    let location = r
-        .headers()
-        .get(reqwest::header::LOCATION)
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("")
-        .to_string();
-    let tag = location
-        .rsplit_once("/tag/")
-        .map(|(_, tag)| tag)
-        .filter(|tag| !tag.is_empty() && !tag.contains(['/', '?', '#']));
-    let Some(tag) = tag else {
-        anyhow::bail!(t!(
-            "RustXNG の最新版がわかりません（{base} が {status} を返しました）",
-            base = base,
-            status = r.status().as_u16()
-        ));
-    };
-    Ok(percent_encoding::percent_decode_str(tag).decode_utf8()?.into_owned())
-}
-
 /// A client that reports redirects instead of following them.
 pub(crate) fn no_redirects() -> &'static reqwest::Client {
     static C: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
@@ -123,8 +141,6 @@ pub type LogFn = Arc<dyn Fn(&str) + Send + Sync>;
 /// sasacode home (tests: the environment cannot be changed from inside one).
 #[derive(Clone, Default)]
 pub struct InstallOptions {
-    /// A release tag; the newest one when None.
-    pub tag: Option<String>,
     pub log: Option<LogFn>,
     pub base: Option<String>,
     pub home: Option<PathBuf>,
@@ -132,6 +148,7 @@ pub struct InstallOptions {
 
 /// Run `program --version`; its trimmed output, None when it does not run here. A file just written
 /// can still be open in a child another thread is forking (ETXTBSY): that is tried again briefly.
+/// The environment is the one commands get (without the keys sasacode loaded for itself).
 async fn version_of(program: &Path) -> Option<String> {
     for attempt in 0..5 {
         let mut cmd = tokio::process::Command::new(program);
@@ -139,6 +156,7 @@ async fn version_of(program: &Path) -> Option<String> {
             .stdin(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .kill_on_drop(true);
+        apply_child_env(&mut cmd, &[]);
         match tokio::time::timeout(Duration::from_secs(20), cmd.output()).await {
             Ok(Ok(out)) => {
                 let v = String::from_utf8_lossy(&out.stdout).trim().to_string();
@@ -153,25 +171,27 @@ async fn version_of(program: &Path) -> Option<String> {
     None
 }
 
-/// Download, verify and install rustxng (the newest release, or `tag`); an existing one is replaced.
+/// Download, verify and install rustxng ([`PINNED_TAG`]); an existing one is replaced.
 pub async fn install_rustxng(opts: InstallOptions) -> anyhow::Result<Installed> {
     let base = opts.base.clone().unwrap_or_else(releases);
     let (platform, arch) = this_platform();
     let target = rustxng_target(platform, arch)?;
-    let tag = match &opts.tag {
-        Some(tag) => tag.clone(),
-        None => latest_tag(&base).await?,
+    let tag = PINNED_TAG;
+    let Some(expected) = expected_sha256(&target) else {
+        anyhow::bail!(t!(
+            "RustXNG {tag}の{target}向けのチェックサムはsasacodeが持っていません",
+            tag = tag,
+            target = target
+        ));
     };
     let asset = format!("rustxng-{tag}-{target}{EXE}");
     let url = format!("{base}/download/{tag}/{asset}");
     if let Some(log) = &opts.log {
         log(&t!("{url} をダウンロード中…（RustXNG、AGPL-3.0）", url = url));
     }
-    let sums = get(&format!("{url}.sha256")).await?.text().await?;
-    let expected = sums.split_whitespace().next().unwrap_or("").to_string();
     let body = get(&url).await?.bytes().await?;
     let actual: String = Sha256::digest(&body).iter().map(|b| format!("{b:02x}")).collect();
-    if actual != expected {
+    if !actual.eq_ignore_ascii_case(&expected) {
         anyhow::bail!(t!("{file} のチェックサムが一致しません", file = asset));
     }
     let path = match &opts.home {
@@ -214,6 +234,26 @@ pub fn plugin(_api: PluginApi) -> BoxFuture<'static, anyhow::Result<()>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_target_rustxng_ships_has_a_sha256_for_the_pinned_release() {
+        for (platform, arch) in [
+            ("darwin", "arm64"),
+            ("darwin", "x64"),
+            ("linux", "x64"),
+            ("linux", "arm64"),
+            ("win32", "x64"),
+        ] {
+            let target = rustxng_target(platform, arch).unwrap();
+            let hash = PINNED_SHA256.iter().find(|(t, _)| *t == target).map(|(_, h)| *h);
+            let hash = hash.unwrap_or_else(|| panic!("no SHA256 for {target}"));
+            assert!(
+                hash.len() == 64 && hash.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')),
+                "{target}: {hash}"
+            );
+        }
+        assert_eq!(PINNED_SHA256.len(), 5);
+    }
 
     // web-search-install.test.ts: "the release target for each platform RustXNG ships"
     #[test]

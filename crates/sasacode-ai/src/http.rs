@@ -1,5 +1,5 @@
-//! The shared HTTP client. Every request to a model API or a web page goes through [`client`]: it
-//! installs the TLS crypto provider (ring) once, which reqwest needs before the first connection.
+//! The shared HTTP clients: [`api_client`] for model APIs, [`client`] for the rest. Both install the
+//! TLS crypto provider (ring) once, which reqwest needs before the first connection.
 
 use std::sync::OnceLock;
 
@@ -22,4 +22,11 @@ pub fn builder() -> reqwest::ClientBuilder {
 pub fn client() -> &'static reqwest::Client {
     static C: OnceLock<reqwest::Client> = OnceLock::new();
     C.get_or_init(|| builder().build().unwrap_or_else(|_| reqwest::Client::new()))
+}
+
+/// [`client`] that does not follow redirects, so a key in a header (`x-api-key`) never reaches another host.
+pub fn api_client() -> &'static reqwest::Client {
+    static C: OnceLock<reqwest::Client> = OnceLock::new();
+    let none = reqwest::redirect::Policy::none();
+    C.get_or_init(|| builder().redirect(none).build().unwrap_or_default())
 }

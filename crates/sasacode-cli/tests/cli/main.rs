@@ -14,6 +14,7 @@ mod fork_redact;
 mod gui;
 mod headless;
 mod plugins;
+mod redact;
 mod setup_models;
 mod support;
 mod tui;
