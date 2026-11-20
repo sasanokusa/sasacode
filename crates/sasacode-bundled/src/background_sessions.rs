@@ -383,12 +383,26 @@ async fn job_alive(pid: f64, started_at: f64, exit_path: &Path) -> bool {
         return same;
     }
     let same = match process_start_ms(pid).await {
-        None => true,
+        // Unknown: taken for the job, but asked again on the next polls. Kept on the first miss, a
+        // PowerShell that timed out once on a busy machine left a reused pid's job running for good.
+        None => {
+            let mut misses = START_MISSES.lock().unwrap_or_else(|e| e.into_inner());
+            let n = misses.entry(key.clone()).or_insert(0);
+            *n += 1;
+            if *n < START_ATTEMPTS {
+                return true;
+            }
+            true
+        }
         Some(started) => (started - started_at).abs() < 10_000.0,
     };
     SAME_PROCESS.lock().unwrap_or_else(|e| e.into_inner()).insert(key, same);
     same
 }
+
+/// How often a job's start time is asked for before an unknown answer is kept.
+const START_ATTEMPTS: u32 = 3;
+static START_MISSES: LazyLock<Mutex<HashMap<String, u32>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
 
 /// Send `signal` to the job's process group, else to the process itself. Windows: the whole tree ends now.
 fn signal(pid: f64, sig: KillSignal) -> bool {
