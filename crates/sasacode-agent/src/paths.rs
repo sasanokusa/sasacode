@@ -30,7 +30,10 @@ pub fn root_of_parse(p: &str) -> String {
         let mut parts = rest.splitn(3, is_sep);
         let server = parts.next().unwrap_or("");
         let share = parts.next().unwrap_or("");
-        return format!("\\\\{server}\\{share}\\");
+        // `\\server\share` has no `\` after it: the root is never longer than the path.
+        let mut root = format!("\\\\{server}\\{share}\\");
+        root.truncate(p.len());
+        return root;
     }
     if !b.is_empty() && is_sep(b[0]) {
         return b[0].to_string();

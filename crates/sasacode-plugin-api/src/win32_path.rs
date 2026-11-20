@@ -28,8 +28,12 @@ pub fn win32_open_form(p: &str, streams: bool) -> String {
         let n = n
             .find(if streams && i > 0 { ":" } else { "::$" })
             .map_or(n, |j| &n[..j]);
-        let t = n.trim_end_matches(['.', ' ']);
-        if t.is_empty() { n.to_string() } else { t.to_string() }
+        // `. ` and `.. ` are `.` and `..`; a name of dots and spaces only is otherwise kept.
+        let (t, dots) = (n.trim_end_matches(['.', ' ']), n.trim_end_matches(' '));
+        let t = Some(t).filter(|t| !t.is_empty());
+        t.or(matches!(dots, "." | "..").then_some(dots))
+            .unwrap_or(n)
+            .to_string()
     };
     p.split(['\\', '/'])
         .enumerate()
@@ -214,6 +218,9 @@ mod win32_tests {
         assert_eq!(open(r"C:\p\..\.\a:s\é."), r"C:\p\..\.\a:s\é");
         assert_eq!(open(r"C:\p\x::$data"), r"C:\p\x");
         assert_eq!(open(r"C:\p\.git::$INDEX_ALLOCATION\hooks\x"), r"C:\p\.git\hooks\x");
+        // `. ` and `.. ` are `.` and `..`; other names of dots and spaces only are kept.
+        assert_eq!(open(r"C:\p\.. \x\.  \y"), r"C:\p\..\x\.\y");
+        assert_eq!(open(r"C:\p\...\ .\. .\z"), r"C:\p\...\ .\. .\z");
         // With streams, every name before its first `:`, the drive's aside.
         let streams = |p: &str| win32_open_form(p, true);
         assert_eq!(streams(r"C:\p\.git:$I30:$INDEX_ALLOCATION\x"), r"C:\p\.git\x");
