@@ -2190,11 +2190,12 @@ fn clean_retry_tells_checks_from_commands_that_change_files() {
         assert!(runs_other_commands(cmd), "expected another command: {cmd}");
     }
 
-    // A check next to something else is both; this includes a filter after a pipe.
+    // A check next to something else is both; so is one piped into a command that writes (a reader
+    // after a pipe, `| tail -n 20`, is not something else).
     let mixed = [
         "sed -i 's/a/b/' f.txt && cargo test",
         "rm -rf target; make",
-        "cargo test 2>&1 | tail -n 20",
+        "cargo test 2>&1 | tee log.txt",
     ];
     for cmd in mixed {
         assert!(looks_like_check_command(cmd), "expected check: {cmd}");

@@ -200,10 +200,29 @@ fn classify_segment(segment: &str) -> Segment {
     }
 }
 
+/// A command a pipe feeds to only read it (`cargo test 2>&1 | tail -n 20`): it changes no file.
+fn only_reads_its_input(segment: &str) -> bool {
+    let program = segment.split_whitespace().next().unwrap_or("");
+    let reader = matches!(
+        program,
+        "tail" | "head" | "grep" | "rg" | "wc" | "sort" | "uniq" | "cut" | "cat" | "less"
+    );
+    reader && !segment.contains('>')
+}
+
 /// The parts of a command, classified. Quotes are not parsed: a separator inside a string splits too.
 fn segments(command: &str) -> Vec<Segment> {
     let separated = command.replace("&&", ";").replace("||", ";");
-    separated.split([';', '|', '\n']).map(classify_segment).collect()
+    let pipelines = separated.split([';', '\n']);
+    pipelines
+        .flat_map(|pipeline| {
+            pipeline.split('|').enumerate().map(|(i, segment)| match i {
+                0 => classify_segment(segment),
+                _ if only_reads_its_input(segment) => Segment::Ignored,
+                _ => classify_segment(segment),
+            })
+        })
+        .collect()
 }
 
 /// Some part of the command runs tests, a build, a linter or a type checker.
@@ -427,4 +446,29 @@ pub fn plugin(api: PluginApi) -> BoxFuture<'static, anyhow::Result<()>> {
         });
         Ok(())
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_check_piped_into_a_reader_is_still_only_a_check() {
+        for command in [
+            "cargo test 2>&1 | tail -n 20",
+            "cargo test 2>&1 | grep FAILED | head",
+            "pytest -q | tail -5",
+        ] {
+            assert!(looks_like_check_command(command), "{command}");
+            assert!(!runs_other_commands(command), "{command}");
+        }
+        // A reader first, or one that writes a file, may change something.
+        for command in [
+            "cargo test | tail -n 20 > out.txt",
+            "cat a.txt | cargo test",
+            "cargo test | tee log.txt",
+        ] {
+            assert!(runs_other_commands(command), "{command}");
+        }
+    }
 }
