@@ -27,6 +27,7 @@ pub(crate) mod net_util;
 pub mod openai_codex;
 pub mod permission_presets;
 pub mod progress_notes;
+pub(crate) mod project_bin;
 pub mod repair;
 pub mod repetition_guard;
 pub mod rustxng_install;

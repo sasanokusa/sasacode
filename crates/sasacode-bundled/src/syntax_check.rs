@@ -8,7 +8,10 @@
 //! The external checkers (bun / node / python) run without approval, so they must never run the
 //! project's code: they get the text on stdin and no path, run in an empty private directory (bun
 //! reads `bunfig.toml` and `.env` from its working directory), Python runs isolated (`-I -S`), and
-//! a binary that lives inside the project is never started.
+//! a binary that lives inside the project is never started. bun's macros (`import … with { type:
+//! "macro" }`, which run the imported function while the text is transpiled) are switched off, and
+//! bun is only used once a probe has shown that this bun refuses them: an older bun that does not
+//! is not used (node checks plain JavaScript instead).
 //!
 //! settings: { externalCheck?: boolean (default true), timeoutMs?: number (default 1500), maxBytes?: number (default 524288) }
 
@@ -24,10 +27,10 @@ use serde_json::Value;
 use tokio::io::AsyncWriteExt;
 
 use sasacode_ai::UserContent;
-use sasacode_plugin_api::win32_path::without_verbatim;
 use sasacode_plugin_api::{PluginApi, ToolResultResult, child_env, create_private_dir, hook, sasacode_home};
 use sasacode_tools::util::resolve_path;
 
+use crate::project_bin::ProjectRoot;
 use crate::repair::js::num_setting;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -374,21 +377,26 @@ try:
 except SyntaxError as e:
     sys.exit('syntax-check:%d:%s: %s' % (e.lineno or 1, type(e).__name__, e.msg))";
 
-const BUN_SCRIPT: &str = "new Bun.Transpiler({ loader: process.argv[1] }).transformSync(await Bun.stdin.text())";
+/// `macro: false`: the transpiler does not run the functions a macro import names.
+const BUN_SCRIPT: &str =
+    "new Bun.Transpiler({ loader: process.argv[1], macro: false }).transformSync(await Bun.stdin.text())";
 
-/// `p` with its links resolved, spelled as programs take it (no `\\?\` on Windows); `p` itself
-/// when it cannot be resolved.
-fn real_path(p: &Path) -> PathBuf {
-    match std::fs::canonicalize(p) {
-        Ok(real) => PathBuf::from(without_verbatim(&real.to_string_lossy())),
-        Err(_) => p.to_path_buf(),
-    }
+/// What bun says where a macro call is, with macros off. It is not a syntax error.
+const MACROS_OFF: &str = "Macros are disabled";
+
+/// Text for the probe: a macro import from a place that does not exist, so that nothing can run
+/// even by a bun that ignores `macro: false`.
+const MACRO_PROBE: &str =
+    "import { x } from \"/sasacode-syntax-check-no-such-directory/m.ts\" with { type: \"macro\" };\nx();\n";
+
+/// Which bun programs refuse macros, by path: asked once per process.
+fn macro_probes() -> &'static Mutex<HashMap<PathBuf, bool>> {
+    static P: OnceLock<Mutex<HashMap<PathBuf, bool>>> = OnceLock::new();
+    P.get_or_init(Mutex::default)
 }
 
 struct Checker {
-    /// The project: the working directory as given, and with its links resolved.
-    root: PathBuf,
-    root_real: PathBuf,
+    project: ProjectRoot,
     external: bool,
     timeout_ms: u64,
     /// Where the external checkers run. `None` inside: there is no such place, they do not run.
@@ -398,8 +406,7 @@ struct Checker {
 impl Checker {
     fn new(root: &Path, external: bool, timeout_ms: u64) -> Self {
         Checker {
-            root: root.to_path_buf(),
-            root_real: real_path(root),
+            project: ProjectRoot::new(root),
             external,
             timeout_ms,
             child_cwd: OnceLock::new(),
@@ -409,8 +416,7 @@ impl Checker {
     /// `found` with its links resolved, unless that is inside the project: nothing the model can
     /// write there is started or used as a working directory.
     fn outside(&self, found: &Path) -> Option<PathBuf> {
-        let real = real_path(found);
-        (!real.starts_with(&self.root_real) && !real.starts_with(&self.root)).then_some(real)
+        self.project.outside(found)
     }
 
     /// An empty directory of the user's own (the shared temp directory is anyone's to write).
@@ -424,18 +430,13 @@ impl Checker {
             .as_deref()
     }
 
-    /// `found` as it is, when neither it nor what it links to is in the project: a version
-    /// manager's shim goes by the name it is started under.
     fn as_found(&self, found: PathBuf) -> Option<PathBuf> {
-        let dir_inside = found
-            .parent()
-            .is_some_and(|dir| real_path(dir).starts_with(&self.root_real));
-        (!dir_inside && !found.starts_with(&self.root) && self.outside(&found).is_some()).then_some(found)
+        self.project.as_found(found)
     }
 
     /// bun or node from PATH.
     fn tool(&self, name: &str) -> Option<PathBuf> {
-        self.as_found(which::which(name).ok()?)
+        self.project.find(name)
     }
 
     fn python(&self) -> Option<PathBuf> {
@@ -447,7 +448,7 @@ impl Checker {
     /// through the venv, Python reads its `pyvenv.cfg` and runs its `.pth` files even when
     /// isolated, and the model can write both.
     fn python_from(&self, on_path: Option<PathBuf>) -> Option<PathBuf> {
-        let venv = self.root.join(".venv");
+        let venv = self.project.root.join(".venv");
         [venv.join("bin").join("python"), venv.join("Scripts").join("python.exe")]
             .into_iter()
             .chain(on_path.clone())
@@ -462,6 +463,26 @@ impl Checker {
 
     async fn run(&self, program: &Path, args: &[&str], text: &str) -> Option<String> {
         run_external(program, args, text, self.child_cwd()?, self.timeout_ms).await
+    }
+
+    /// Does this bun refuse macros? Only then is it used: from a bun that runs them, transpiling
+    /// the model's text would run the model's code. Anything but bun's own "Macros are disabled"
+    /// (cannot resolve, no such option, no answer in time) counts as "no", and is remembered.
+    async fn bun_refuses_macros(&self, bun: &Path) -> bool {
+        let known = macro_probes().lock().unwrap_or_else(|e| e.into_inner()).get(bun).copied();
+        if let Some(known) = known {
+            return known;
+        }
+        let Some(cwd) = self.child_cwd() else {
+            return false;
+        };
+        let out = run_external(bun, &["-e", BUN_SCRIPT, "ts"], MACRO_PROBE, cwd, self.timeout_ms.max(5000)).await;
+        let refuses = out.is_some_and(|e| e.contains(MACROS_OFF));
+        macro_probes()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(bun.to_path_buf(), refuses);
+        refuses
     }
 
     async fn inspect(&self, path: &Path, text: &str) -> Option<SyntaxIssue> {
@@ -479,7 +500,9 @@ impl Checker {
     }
 
     async fn check_js(&self, ext: &str, text: &str) -> Option<SyntaxIssue> {
-        if let Some(bun) = self.tool("bun") {
+        if let Some(bun) = self.tool("bun")
+            && self.bun_refuses_macros(&bun).await
+        {
             return self.check_bun(&bun, ext, text).await;
         }
         if !matches!(ext, "js" | "mjs" | "cjs") {
@@ -496,15 +519,23 @@ impl Checker {
             _ => "jsx",
         };
         let err = self.run(bun, &["-e", BUN_SCRIPT, loader], text).await?;
-        // A parse error names its place in the text ("at input.tsx:2:31"); the rest is bun's own trouble.
-        if !err.contains("at input.") {
-            return None;
+        // A parse error names its place in the text ("at input.tsx:2:31"); the rest is bun's own
+        // trouble, and so is a macro call, which is refused rather than run.
+        let mut error: Option<&str> = None;
+        for l in err.lines() {
+            let l = l.trim();
+            if l.starts_with("error:") {
+                error = Some(l);
+            } else if l.starts_with("at input.")
+                && let Some(summary) = error.take().filter(|e| !e.contains(MACROS_OFF))
+            {
+                return Some(SyntaxIssue {
+                    line: parse_line_number(l),
+                    message: summary.to_string(),
+                });
+            }
         }
-        let summary = err.lines().find(|l| l.trim_start().starts_with("error:"))?;
-        Some(SyntaxIssue {
-            line: parse_line_number(&err),
-            message: summary.trim().to_string(),
-        })
+        None
     }
 
     async fn check_node(&self, node: &Path, ext: &str, text: &str) -> Option<SyntaxIssue> {
@@ -809,12 +840,76 @@ mod tests {
         // As the plugin runs it: in its own directory.
         let c = Checker::new(root, true, 20_000);
         let cwd = c.child_cwd().expect("a private directory").to_path_buf();
-        assert!(!cwd.starts_with(&c.root_real), "{cwd:?}");
+        assert!(!cwd.starts_with(&c.project.root_real), "{cwd:?}");
         let issue = c.inspect(&root.join("app.ts"), bad).await;
         let issue = issue.expect("a broken file is still reported");
         assert_eq!(issue.line, 1, "{issue:?}");
         assert_eq!(c.inspect(&root.join("app.ts"), ok).await, None);
         assert!(!marker.exists(), "the project's preload ran");
+    }
+
+    /// A macro import runs the function it names while bun transpiles the text: the text comes from
+    /// the model, so macros are off, and neither the macro nor the refusal is reported.
+    #[tokio::test]
+    async fn bun_runs_no_macro_and_a_macro_import_is_no_syntax_error() {
+        let dir = project();
+        let root = dir.path();
+        let marker = root.join("MARK_MACRO");
+        let macro_file = root.join("m.ts");
+        std::fs::write(
+            &macro_file,
+            format!(
+                "import {{ writeFileSync }} from \"node:fs\";\nexport function x() {{ writeFileSync({:?}, \"x\"); return 1; }}\n",
+                marker.to_string_lossy()
+            ),
+        )
+        .unwrap();
+        let text = format!(
+            "import {{ x }} from {:?} with {{ type: \"macro\" }};\nexport const a: number = x();\n",
+            macro_file.to_string_lossy()
+        );
+
+        let c = Checker::new(root, true, 20_000);
+        let Some(bun) = c.tool("bun") else {
+            eprintln!("skipped: no bun");
+            return;
+        };
+        // The fixture is live: a transpiler left to its defaults does run the macro.
+        let cwd = c.child_cwd().expect("a private directory").to_path_buf();
+        let live = std::process::Command::new(&bun)
+            .args([
+                "-e",
+                "new Bun.Transpiler({ loader: 'ts' }).transformSync(await Bun.stdin.text())",
+            ])
+            .current_dir(&cwd)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .and_then(|mut child| {
+                use std::io::Write;
+                child.stdin.take().expect("stdin").write_all(text.as_bytes())?;
+                child.wait()
+            });
+        if live.is_err() || !marker.exists() {
+            eprintln!("skipped: this bun does not run macros");
+            return;
+        }
+        std::fs::remove_file(&marker).unwrap();
+
+        // As the plugin runs it: whether or not this bun can refuse them, nothing runs.
+        assert_eq!(c.inspect(&root.join("app.ts"), &text).await, None);
+        assert!(!marker.exists(), "the macro ran");
+        if c.bun_refuses_macros(&bun).await {
+            assert_eq!(c.check_bun(&bun, "ts", &text).await, None);
+            assert!(!marker.exists(), "the macro ran");
+            // A real error next to a macro import is still reported.
+            let broken = format!("{text}export function f(x: number {{\n  return x;\n}}\n");
+            let issue = c.check_bun(&bun, "ts", &broken).await.expect("a broken file is reported");
+            assert_eq!(issue.line, 3, "{issue:?}");
+            assert!(!issue.message.contains(MACROS_OFF), "{issue:?}");
+            assert!(!marker.exists(), "the macro ran");
+        }
     }
 
     /// JSX in plain .js and casts in .ts are no errors for bun.
@@ -871,7 +966,7 @@ mod tests {
         let bin = root.join(".venv").join("bin");
         std::fs::create_dir_all(&bin).unwrap();
         let c = Checker::new(root, true, 1500);
-        let inside = |p: &Path| p.starts_with(&c.root_real) || p.starts_with(&c.root);
+        let inside = |p: &Path| p.starts_with(&c.project.root_real) || p.starts_with(&c.project.root);
 
         // A file of the project, however it is named, is not an interpreter to start.
         std::fs::write(bin.join("python"), "#!/bin/sh\ntouch pwned\n").unwrap();
