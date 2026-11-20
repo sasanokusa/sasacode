@@ -125,7 +125,13 @@ impl Lock {
                     }
                     return Ok(Lock { path, mark });
                 }
-                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                // Windows answers "access denied" for a lock still being deleted or a folder under its name.
+                Err(e)
+                    if e.kind() == std::io::ErrorKind::AlreadyExists
+                        || (cfg!(windows)
+                            && e.kind() == std::io::ErrorKind::PermissionDenied
+                            && std::fs::symlink_metadata(&path).is_ok()) =>
+                {
                     if is_stale(&path, stale) {
                         take_over(&path, &mark, stale);
                     }
