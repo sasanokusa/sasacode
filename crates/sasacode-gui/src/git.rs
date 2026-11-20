@@ -340,7 +340,7 @@ fn top(cwd: &Path) -> Option<std::path::PathBuf> {
 pub fn commit_context(cwd: &Path) -> Result<(String, String), String> {
     let top = top(cwd).ok_or_else(|| "not a git repository".to_owned())?;
     let log = git(&top, &["log", "-10", "--format=%s"]).unwrap_or_default();
-    let staged = git(&top, &["diff", "--cached", "--quiet"]).is_err();
+    let staged = git(&top, &shown("diff", &["--cached", "--quiet"])).is_err();
     let mut change = if staged {
         git(&top, &shown("diff", &["--cached"]))?
     } else {
@@ -800,7 +800,7 @@ pub fn apply(cwd: &Path, op: &Op, branch: Option<&str>) -> Result<String, String
             }
         }
         Op::Commit(message) => {
-            let staged = git(&top, &["diff", "--cached", "--quiet"]).is_err();
+            let staged = git(&top, &shown("diff", &["--cached", "--quiet"])).is_err();
             if !staged {
                 git(&top, &["add", "-A"])?;
             }
@@ -1394,63 +1394,34 @@ mod tests {
         );
     }
 
-    /// A folder whose repository config starts a program that leaves `marker` when git reads the
-    /// working tree; and the same folder made to look like a repository with no `.git`.
+    /// A repository whose config starts a program that leaves `marker` when git reads the working
+    /// tree, with a change not committed.
     #[cfg(unix)]
-    fn monitored(dir: &Path, marker: &Path) {
-        let config = format!("\tfsmonitor = \"touch '{}'; false\"\n", marker.display());
-        let repo = dir.join("repo");
-        std::fs::create_dir_all(&repo).unwrap();
-        for args in [
-            &["init", "-q", "-b", "main"][..],
-            &["config", "commit.gpgsign", "false"],
-        ] {
-            git(&repo, args).unwrap();
-        }
+    fn monitored(repo: &Path, marker: &Path) {
+        std::fs::create_dir_all(repo).unwrap();
+        git(repo, &["init", "-q", "-b", "main"]).unwrap();
         std::fs::write(repo.join("a.txt"), "one\n").unwrap();
-        git(&repo, &["add", "-A"]).unwrap();
-        git(
-            &repo,
-            &[
-                "-c",
-                "user.email=t@example.invalid",
-                "-c",
-                "user.name=t",
-                "commit",
-                "-q",
-                "-m",
-                "first",
-            ],
-        )
-        .unwrap();
+        git(repo, &["add", "-A"]).unwrap();
+        let who = [
+            "-c",
+            "user.email=t@example.invalid",
+            "-c",
+            "user.name=t",
+            "-c",
+            "commit.gpgsign=false",
+        ];
+        git(repo, &[&who[..], &["commit", "-q", "-m", "first"]].concat()).unwrap();
         std::fs::write(repo.join("a.txt"), "two\n").unwrap();
-        let at = repo.join(".git/config");
-        let mut text = std::fs::read_to_string(&at).unwrap();
-        text = text.replacen("[core]\n", &format!("[core]\n{config}"), 1);
-        std::fs::write(&at, text).unwrap();
-        // No `.git`: what a repository holds, at the top of the folder.
-        let bare = dir.join("bare");
-        for sub in ["objects", "refs"] {
-            std::fs::create_dir_all(bare.join(sub)).unwrap();
-        }
-        std::fs::write(bare.join("HEAD"), "ref: refs/heads/main\n").unwrap();
-        std::fs::write(
-            bare.join("config"),
-            format!(
-                "[core]\n\trepositoryformatversion = 0\n\tbare = false\n\tworktree = {}\n{config}",
-                bare.display()
-            ),
-        )
-        .unwrap();
+        let command = format!("touch '{}'; false", marker.display());
+        git(repo, &["config", "core.fsmonitor", &command]).unwrap();
     }
 
     #[cfg(unix)]
     #[test]
     fn reading_a_repository_starts_no_program_its_config_names() {
         let dir = tempfile::tempdir().unwrap();
-        let marker = dir.path().join("marker");
-        monitored(dir.path(), &marker);
-        let (repo, bare) = (dir.path().join("repo"), dir.path().join("bare"));
+        let (repo, marker) = (dir.path().join("repo"), dir.path().join("marker"));
+        monitored(&repo, &marker);
         // git as anyone runs it there does start it: what follows is not idle.
         let plain = Command::new("git")
             .args(["status", "--porcelain"])
@@ -1471,10 +1442,38 @@ mod tests {
         let _ = commits(&repo);
         let _ = crate::composer::project_files(&repo, true);
         assert!(!marker.exists(), "a program from the repository's config ran");
-        // Not a repository unless named: nothing is read, and nothing started.
-        assert_eq!(status(&bare), Status::default());
-        assert!(snapshot(&bare).is_none());
-        let _ = crate::composer::project_files(&bare, true);
-        assert!(!marker.exists(), "a program from the folder's config ran");
+        // The git another program (gh) runs is told the same through its environment.
+        if std::env::var_os("GIT_CONFIG_COUNT").is_none() {
+            let mut c = Command::new("git");
+            guard_env(&mut c);
+            let out = c.args(["status", "--porcelain"]).current_dir(&repo).output().unwrap();
+            assert!(out.status.success());
+            assert!(
+                !marker.exists(),
+                "a program from the repository's config ran under gh's git"
+            );
+        }
+    }
+
+    #[test]
+    fn a_bare_repository_in_the_folder_is_not_read_unless_named() {
+        let dir = tempfile::tempdir().unwrap();
+        let bare = dir.path().join("b.git");
+        Command::new("git")
+            .args(["init", "-q", "--bare"])
+            .arg(&bare)
+            .output()
+            .unwrap();
+        // Found there by a git not told otherwise; not by the window's.
+        let plain = Command::new("git")
+            .args(["rev-parse", "--git-dir"])
+            .current_dir(&bare)
+            .output()
+            .unwrap();
+        if plain.status.success() {
+            assert!(git(&bare, &["rev-parse", "--git-dir"]).is_err());
+        }
+        let named = ["--git-dir", bare.to_str().unwrap(), "rev-parse", "--is-bare-repository"];
+        assert_eq!(git(dir.path(), &named).as_deref(), Ok("true"));
     }
 }

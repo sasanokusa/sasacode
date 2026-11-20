@@ -2463,7 +2463,7 @@ impl App {
         if bare {
             spec.cwd = self.bare_folder();
         }
-        let (repo, cwd) = (self.git.repo && !bare, self.cwd.clone());
+        let (repo, cwd) = (self.git.repo && !bare && self.git_allowed(), self.cwd.clone());
         let Some(chat) = self.chat_mut(key) else {
             return Task::none();
         };
@@ -2742,7 +2742,7 @@ impl App {
         // tree taken as the turn ended, for the git tab's last turn.
         if git {
             tasks.push(self.refresh_git());
-            if key != SIDE && self.git.repo && !self.is_bare(key) {
+            if key != SIDE && self.git.repo && self.git_allowed() && !self.is_bare(key) {
                 let cwd = self.cwd.clone();
                 tasks.push(Task::perform(
                     async move {
