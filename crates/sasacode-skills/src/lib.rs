@@ -127,7 +127,6 @@ pub fn discover_skills(dirs: &[PathBuf]) -> std::io::Result<Vec<Skill>> {
 /// and so is a skill folder or SKILL.md in it that is a link, as it could put any file into the prompt.
 pub fn discover_skills_in(dirs: &[PathBuf], project: Option<&Path>) -> std::io::Result<Vec<Skill>> {
     let mut by_name: IndexMap<String, Skill> = IndexMap::new();
-    let is_link = |p: &Path| std::fs::symlink_metadata(p).is_ok_and(|m| m.file_type().is_symlink());
     for dir in dirs {
         if !dir.exists() {
             continue;
@@ -190,19 +189,43 @@ pub fn project_skills_dir(cwd: &Path, home_skills: &Path) -> Option<PathBuf> {
     Some(cwd.join(".sasacode").join("skills")).filter(|p| p != home_skills)
 }
 
-/// `<cwd>/.sasacode/skills`, missing or a folder of its own: neither it nor `.sasacode` is a link, and
-/// its real path is inside the working directory's.
+/// Whether `p` is a symbolic link, or on Windows a junction or any other reparse point.
+fn is_link(p: &Path) -> bool {
+    let Ok(meta) = std::fs::symlink_metadata(p) else {
+        return false;
+    };
+    if meta.file_type().is_symlink() {
+        return true;
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+        if meta.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            return true;
+        }
+    }
+    false
+}
+
+/// `<cwd>/.sasacode/skills` as a folder of its own: it exists, neither it nor `.sasacode` is a link (or
+/// a junction), and its real path is still `<cwd>/.sasacode/skills`. One that is not there is not
+/// "in place": a link made later at that path must not be covered by what was decided now.
 fn in_place(project: &Path) -> bool {
-    let link = |p: &Path| std::fs::symlink_metadata(p).is_ok_and(|m| m.file_type().is_symlink());
     let Some(cwd) = project.parent().and_then(Path::parent) else {
         return false;
     };
-    if link(project) || project.parent().is_some_and(link) {
+    if is_link(project) || project.parent().is_some_and(is_link) {
         return false;
     }
     match (std::fs::canonicalize(project), std::fs::canonicalize(cwd)) {
-        (Ok(real), Ok(cwd)) => real.starts_with(cwd),
-        (Err(e), _) => e.kind() == std::io::ErrorKind::NotFound,
+        // Spelled as the file system has it: where it folds case, `.sasacode/Skills` is the same folder.
+        (Ok(real), Ok(cwd)) => {
+            let rest: Vec<_> = real.strip_prefix(&cwd).into_iter().flat_map(Path::components).collect();
+            real.is_dir()
+                && matches!(rest.as_slice(), [a, b]
+                    if a.as_os_str().eq_ignore_ascii_case(".sasacode") && b.as_os_str().eq_ignore_ascii_case("skills"))
+        }
         _ => false,
     }
 }

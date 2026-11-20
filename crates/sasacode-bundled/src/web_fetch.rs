@@ -19,7 +19,7 @@ use unicode_normalization::UnicodeNormalization;
 
 use sasacode_plugin_api::{PluginApi, ToolDef, ToolKind, ToolResult, error_result};
 
-use crate::net_guard::{Check, Limit, SYSTEM, get_following};
+use crate::net_guard::{Check, Limit, Route, SYSTEM, get_following};
 use crate::net_util::{collapse_space, js_trim, utf16_len, utf16_slice};
 
 const DEFAULT_MAX: usize = 50_000;
@@ -619,17 +619,22 @@ pub(crate) fn content_type(res: &reqwest::Response) -> String {
 }
 
 /// Whether `url` answers with a document (a quick look, the body is not read). It is on a site this
-/// fetch already reached, and its redirects are judged like any other.
+/// fetch already reached, but the page's host chose it for the agent, so it is judged like any other
+/// URL: its address included.
 async fn exists(url: &str, signal: &CancellationToken) -> bool {
+    exists_via(&SYSTEM, url, signal).await
+}
+
+async fn exists_via(route: &Route, url: &str, signal: &CancellationToken) -> bool {
     let Ok(url) = url::Url::parse(url) else {
         return false;
     };
     let headers = [("user-agent", USER_AGENT)];
     match get_following(
         url,
-        Check::Redirects,
+        Check::All,
         MAX_REDIRECTS,
-        &SYSTEM,
+        route,
         &headers,
         signal,
         Limit::Total(Duration::from_secs(5)),
@@ -801,6 +806,56 @@ pub fn plugin(api: PluginApi) -> BoxFuture<'static, anyhow::Result<()>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A plain-text document on this machine, and how many requests it got.
+    async fn text_server() -> (u16, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let port = listener.local_addr().expect("addr").port();
+        let hits = std::sync::Arc::new(AtomicUsize::new(0));
+        let counted = hits.clone();
+        tokio::spawn(async move {
+            while let Ok((mut socket, _)) = listener.accept().await {
+                counted.fetch_add(1, Ordering::SeqCst);
+                tokio::spawn(async move {
+                    let mut buf = [0u8; 2048];
+                    let _ = socket.read(&mut buf).await;
+                    let reply = "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\ncontent-length: 2\r\nconnection: close\r\n\r\nok";
+                    let _ = socket.write_all(reply.as_bytes()).await;
+                    let _ = socket.shutdown().await;
+                });
+            }
+        });
+        (port, hits)
+    }
+
+    #[tokio::test]
+    async fn the_site_index_check_does_not_connect_to_an_internal_address() {
+        let (port, hits) = text_server().await;
+        let signal = CancellationToken::new();
+        assert!(!exists(&format!("http://127.0.0.1:{port}/llms.txt"), &signal).await);
+        assert!(!exists(&format!("http://localhost:{port}/llms.txt"), &signal).await);
+        assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn the_site_index_check_finds_a_document_at_a_public_address() {
+        fn public_name(_host: String) -> BoxFuture<'static, Result<Vec<std::net::IpAddr>, String>> {
+            Box::pin(async { Ok(vec![std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)]) })
+        }
+        fn nothing_internal(_: &std::net::IpAddr) -> bool {
+            false
+        }
+        let route = Route {
+            lookup: public_name,
+            internal: nothing_internal,
+        };
+        let (port, hits) = text_server().await;
+        let signal = CancellationToken::new();
+        assert!(exists_via(&route, &format!("http://index.test:{port}/llms.txt"), &signal).await);
+        assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
 
     #[test]
     fn code_points_and_entities() {
