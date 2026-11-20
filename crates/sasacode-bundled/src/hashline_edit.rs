@@ -755,6 +755,11 @@ mod tests {
             st.lines_shown(&Caller::Unknown, "f", text),
             Some(vec![false, true, false])
         );
+        // A read that showed lines not the file's keeps the snapshot but forgets its anchors.
+        let state = Mutex::new(st);
+        record_read(&state, &None, "f".into(), text, None);
+        let shown = lock(&state).lines_shown(&Caller::Agent(None), "f", text);
+        assert_eq!(shown, Some(vec![false; 3]));
     }
 
     #[test]

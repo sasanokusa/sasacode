@@ -2616,7 +2616,7 @@ async fn slim_profile_cuts_hashline_and_japanese_read_output_at_line_boundaries(
             reply(vec![call("1", "read", json!({"path": path_str(&jp_file)}))]),
             reply(vec![say("ok")]),
         ],
-        &["hashline-edit", "slim-profile"],
+        &plugins_order(["hashline-edit", "slim-profile"]),
         opts(&path_str(dir.path()), &[("slim-profile", json!({"readMaxChars": 600}))]),
     )
     .await;
@@ -3005,6 +3005,51 @@ async fn hash_edit_range_needs_every_line_in_it_shown_not_just_its_ends() {
     assert_eq!(std::fs::read_to_string(&file).unwrap(), "line-01\nmerged\nline-10\n");
 }
 
+/// `names` in the order a run loads them: that of `PLUGINS`.
+fn plugins_order<const N: usize>(mut names: [&'static str; N]) -> [&'static str; N] {
+    names.sort_by_key(|name| sasacode_bundled::PLUGINS.iter().position(|p| p.name == *name));
+    names
+}
+
+#[tokio::test]
+async fn hash_edit_anchors_crlf_and_over_long_lines_as_read_shows_them() {
+    let dir = temp_dir("sasacode-hashline-crlf-");
+    let file = dir.path().join("crlf.txt");
+    let long = "y".repeat(2500);
+    std::fs::write(&file, format!("short\r\n{long}\r\nend\r\n")).unwrap();
+    let f = path_str(&file);
+    let (h1, h2) = (line_hash("short"), line_hash(&long));
+    let s = setup(
+        vec![
+            reply(vec![call("1", "read", json!({"path": f}))]),
+            reply(vec![call(
+                "2",
+                "hash_edit",
+                json!({"path": f, "start": format!("2:{h2}"), "content": "long"}),
+            )]),
+            reply(vec![call(
+                "3",
+                "hash_edit",
+                json!({"path": f, "start": format!("1:{h1}"), "content": "first"}),
+            )]),
+            reply(vec![say("done")]),
+        ],
+        &["hashline-edit"],
+        opts(&path_str(dir.path()), &[]),
+    )
+    .await;
+    s.agent.prompt_text("crlf").await.unwrap();
+    let reqs = s.requests();
+    let read_out = last(&reqs[1]).text();
+    assert!(
+        read_out.contains(&format!("2:{h2}|yyy")) && read_out.contains("[line truncated"),
+        "{read_out}"
+    );
+    assert!(last(&reqs[2]).text().contains("Edited"), "{}", last(&reqs[2]).text());
+    assert!(last(&reqs[3]).text().contains("Edited"), "{}", last(&reqs[3]).text());
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), "first\r\nlong\r\nend\r\n");
+}
+
 #[tokio::test]
 async fn hash_edit_trusts_no_anchor_of_a_line_slim_profile_cut_from_the_read() {
     let dir = temp_dir("sasacode-hashline-slim-cut-");
@@ -3018,10 +3063,6 @@ async fn hash_edit_trusts_no_anchor_of_a_line_slim_profile_cut_from_the_read() {
     let f = path_str(&file);
     let (h2, h60) = (line_hash("line-002 padding text"), line_hash("line-060 padding text"));
 
-    // Loaded as a run loads them: in `PLUGINS` order.
-    let order = |name: &str| sasacode_bundled::PLUGINS.iter().position(|p| p.name == name);
-    let mut names = ["hashline-edit", "slim-profile"];
-    names.sort_by_key(|name| order(name));
     let s = setup(
         vec![
             reply(vec![call("1", "read", json!({"path": f}))]),
@@ -3037,7 +3078,7 @@ async fn hash_edit_trusts_no_anchor_of_a_line_slim_profile_cut_from_the_read() {
             )]),
             reply(vec![say("done")]),
         ],
-        &names,
+        &plugins_order(["hashline-edit", "slim-profile"]),
         opts(&path_str(dir.path()), &[("slim-profile", json!({"readMaxChars": 800}))]),
     )
     .await;
