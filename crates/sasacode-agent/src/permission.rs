@@ -354,8 +354,9 @@ fn escape_extglob(s: &str) -> String {
 }
 
 /// A compiled glob as Bun.Glob matched it: `*` stops at `/`, `**` crosses it, `\` escapes. Kept: a walk asks per file.
-/// Folded (glob_path) outside `[…]` after its backslashes are read, so `\B` is a `B` folded, not `\b`.
-fn glob(pattern: &str, fold: Option<bool>) -> regex::bytes::Regex {
+/// Folded (glob_path) outside `[…]` after its backslashes are read, so `\B` is a `B` folded, not `\b`. With `ci`
+/// (deny and ask rules) it matches any case, but for a negated class.
+fn glob(pattern: &str, fold: Option<bool>, ci: bool) -> regex::bytes::Regex {
     static SEEN: OnceLock<Mutex<HashMap<String, regex::bytes::Regex>>> = OnceLock::new();
     let seen = SEEN.get_or_init(Mutex::default);
     let mut seen = seen.lock().unwrap_or_else(|e| e.into_inner());
@@ -363,36 +364,35 @@ fn glob(pattern: &str, fold: Option<bool>) -> regex::bytes::Regex {
         seen.clear();
     }
     let g = seen
-        .entry(format!("{fold:?}{pattern}"))
-        .or_insert_with(|| compile_glob(pattern, fold));
+        .entry(format!("{fold:?}{ci}{pattern}"))
+        .or_insert_with(|| compile_glob(pattern, fold, ci));
     g.clone()
 }
 
-fn compile_glob(pattern: &str, fold: Option<bool>) -> regex::bytes::Regex {
+fn compile_glob(pattern: &str, fold: Option<bool>, ci: bool) -> regex::bytes::Regex {
     let built = globset::GlobBuilder::new(&bun_glob_syntax(pattern, fold))
         .literal_separator(true)
         .backslash_escape(true)
         .empty_alternates(true)
         .build();
     match built {
-        Ok(g) => char_regex(&g, fold),
+        Ok(g) => char_regex(&g, fold, ci),
         // An unparsable pattern (an unclosed `[`) is taken literally, never as matching nothing:
         // a deny rule must not disappear.
         Err(_) => globset::GlobBuilder::new(&escape_glob(&folded(bun_glob_syntax(pattern, None), fold)))
             .literal_separator(true)
             .backslash_escape(true)
             .build()
-            .map(|g| char_regex(&g, None))
+            .map(|g| char_regex(&g, None, ci))
             // INFALLIBLE: every special character is escaped.
-            .unwrap_or_else(|_| char_regex(&globset::Glob::new("").expect("empty glob"), None)),
+            .unwrap_or_else(|_| char_regex(&globset::Glob::new("").expect("empty glob"), None, ci)),
     }
 }
 
 /// globset's regex reads bytes (its `?` and `[!a]` take one byte of `ß`); Bun.Glob read characters. The same regex
 /// with its bytes of a character (`\xc3\x9f`) put back as that character, read over characters; `.` takes a newline
-/// too (a name may hold one). Folded in full, a class `[…]` matches any case; in lower case (an allow rule's) no
-/// wider than its letters lowered: an ASCII class in ASCII case (`ſ` is not `s` to it), another as written.
-fn char_regex(g: &globset::Glob, fold: Option<bool>) -> regex::bytes::Regex {
+/// too (a name may hold one). Folded, a class `[…]` matches any case, as the file systems that fold case do.
+fn char_regex(g: &globset::Glob, fold: Option<bool>, ci: bool) -> regex::bytes::Regex {
     let (mut out, mut bytes, mut it) = (String::new(), Vec::new(), g.regex().trim_start_matches("(?-u)").chars());
     let mut start = 0;
     while let Some(ch) = it.next() {
@@ -408,18 +408,24 @@ fn char_regex(g: &globset::Glob, fold: Option<bool>) -> regex::bytes::Regex {
         }
         out.push_str(&String::from_utf8_lossy(&std::mem::take(&mut bytes)));
         match (ch, esc) {
-            ('[', None) if fold.is_some() => start = out.len(),
-            (']', None) if fold.is_some() => {
+            ('[', None) if fold.is_some() || ci => start = out.len(),
+            (']', None) if fold.is_some() || ci => {
                 let class = format!("[{}]", out.split_off(start));
-                let any = (fold == Some(true) || class.starts_with("[^")).then_some("i");
-                let flags = any.or(class.is_ascii().then_some("i-u")).unwrap_or_default();
+                let flags = match (ci, class.starts_with("[^")) {
+                    (false, _) => "i",
+                    (true, negated) => ["", "-i"][negated as usize],
+                };
                 out.push_str(&format!("(?{flags}:{class})"));
             }
             _ => out.extend([ch].into_iter().chain(esc).chain(hex.chars())),
         }
     }
     out.push_str(&String::from_utf8_lossy(&bytes));
-    let re = |r: &str| regex::bytes::RegexBuilder::new(r).dot_matches_new_line(true).build();
+    let re = |r: &str| {
+        (regex::bytes::RegexBuilder::new(r).dot_matches_new_line(true))
+            .case_insensitive(ci)
+            .build()
+    };
     // INFALLIBLE in practice: globset's own regex, read over bytes, is the fallback.
     re(&out).or_else(|_| re(g.regex())).expect("globset's regex")
 }
@@ -502,8 +508,8 @@ fn rule_matches(rule: &ParsedRule, c: &PermissionCheck, for_allow: bool) -> bool
     // absolute pattern is the user's own path: its fixed part is resolved (/var → /private/var).
     let pattern = path_pattern(pattern, &c.cwd);
     // .ENV is .env where the file system folds case (#98). Whether a path's volume does cannot be told reliably, so
-    // deny and ask rules hit as written, lowered or folded in full (`ß` is `ss`; folded alone, `[!a-z]x` misses `Sx`).
-    // Allow rules fold to lower case only where the working directory does.
+    // deny and ask rules hit in any case as written, or folded in full (`ß` is `ss`). Allow rules hit as written or,
+    // only where the working directory folds case, in lower case.
     let real_cwd = try_real_path(&c.cwd).unwrap_or_else(|| c.cwd.clone());
     let spellings: Vec<String> = paths
         .iter()
@@ -526,15 +532,15 @@ fn rule_matches(rule: &ParsedRule, c: &PermissionCheck, for_allow: bool) -> bool
     };
     sources.dedup();
     let hit = |fold: Option<bool>| {
-        let globs: Vec<regex::bytes::Regex> = sources.iter().map(|g| glob(g, fold)).collect();
+        let globs: Vec<regex::bytes::Regex> = sources.iter().map(|g| glob(g, fold, !for_allow)).collect();
         move |p: &String| globs.iter().any(|g| g.is_match(glob_path(p, fold).as_bytes()))
     };
-    if for_allow {
-        return spellings.iter().all(hit(folds_case(&real_cwd).then_some(false)));
+    let fold = [Some(true), folds_case(&real_cwd).then_some(false)][for_allow as usize];
+    let (exact, folded) = (hit(None), hit(fold));
+    match for_allow {
+        true => spellings.iter().all(|p| exact(p) || folded(p)),
+        false => spellings.iter().any(|p| exact(p) || folded(p)),
     }
-    [None, Some(false), Some(true)]
-        .into_iter()
-        .any(|f| spellings.iter().any(hit(f)))
 }
 
 /// A path as written and, on Windows, as Win32 opens it (`.git.` is `.git`; with `streams`, `a:s` is `a` too).

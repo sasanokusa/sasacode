@@ -381,7 +381,7 @@ fn globs_match_as_bun_glob_did() {
         if WINDOWS && path.contains('\\') {
             continue;
         }
-        if glob(pattern, None).is_match(path.as_bytes()) != want {
+        if glob(pattern, None, false).is_match(path.as_bytes()) != want {
             wrong.push(format!("{pattern:?} {path:?}: bun {want}"));
         }
     }
@@ -416,7 +416,7 @@ fn backslash_escapes_read_as_bun_glob_did() {
         ("/p/\\{a,b}", "/p/a", false),
     ] {
         assert_eq!(
-            glob(pattern, None).is_match(path.as_bytes()),
+            glob(pattern, None, false).is_match(path.as_bytes()),
             want,
             "{pattern:?} {path:?}"
         );
@@ -698,7 +698,7 @@ fn rules_match_names_holding_a_newline() {
 
 /// A class `[…]` is read as written, and matches any case where names are compared folded: a deny rule's
 /// `[A-_]` takes `A1` under `SECRETS`, `[ß]` takes `ß` and `ẞ` under `DIR`; an allow rule's `[0-Z]` never takes
-/// `_`, nor `[İ]` an `i`, nor `[a-z]` an `ſ`.
+/// `_`, nor `[İ]` an `i` (the file systems that fold case take `ſ` for `s`, not `İ` for `i`).
 #[test]
 fn a_class_is_read_as_written_and_matches_any_case_where_names_fold() {
     let tmp = tempfile::Builder::new().prefix("sasacode-perm-").tempdir().unwrap();
@@ -738,10 +738,45 @@ fn a_class_is_read_as_written_and_matches_any_case_where_names_fold() {
     for path in ["i.txt", "I.txt"] {
         assert_eq!(allow("read([İ].txt)", path), Ask, "{path}");
     }
-    assert_eq!(allow("read([a-z]x)", "ſx"), Ask);
+    assert_eq!(allow("read([a-z]x)", "ſx"), if folds { Allow } else { Ask });
     // A class ends at `\]` as globset reads it; the rest is folded as any name.
     let p = policy(M::Auto, json!({ "deny": ["read(k[a\\]Secret])"] }));
     assert_eq!(d(&p, &call(read_tool(), "KASECRET]", &dir)), Deny);
+}
+
+/// A deny or ask rule's class takes a letter in any case as one letter, as the file system names it (`ẞ`, `İ` and
+/// `ᾈ` fold to more than one); an allow rule's class still matches its letters as written.
+#[test]
+fn a_class_takes_a_letter_in_any_case_as_one_letter() {
+    let tmp = tempfile::Builder::new().prefix("sasacode-perm-").tempdir().unwrap();
+    let dir = tmp.path().to_string_lossy().to_string();
+    std::fs::create_dir(tmp.path().join("dir")).unwrap();
+    let folds = tmp.path().join("DIR").exists();
+    let p = policy(
+        M::Auto,
+        json!({ "deny": ["read(dir/[ẞ].txt)", "read(dir/[İ].txt)", "read(dir/[ᾈ].txt)"] }),
+    );
+    for path in [
+        "DIR/ẞ.txt",
+        "dir/ß.txt",
+        "DIR/ß.txt",
+        "DIR/İ.txt",
+        "DIR/ᾈ.txt",
+        "dir/ᾀ.txt",
+    ] {
+        assert_eq!(d(&p, &call(read_tool(), path, &dir)), Deny, "{path}");
+    }
+    assert_eq!(d(&p, &call(read_tool(), "dir/x.txt", &dir)), Allow);
+    let allow = |rule: &str, path: &str| {
+        d(
+            &policy(M::Ask, json!({ "allow": [rule] })),
+            &call(read_tool(), path, &dir),
+        )
+    };
+    assert_eq!(allow("read(dir/[Ä].txt)", "dir/Ä.txt"), Allow);
+    assert_eq!(allow("read(dir/[Ä].txt)", "dir/ä.txt"), if folds { Allow } else { Ask });
+    assert_eq!(allow("read(dir/[A-Zä]*)", "dir/A"), Allow);
+    assert_eq!(allow("read(dir/[A-Zä]*)", "dir/_"), Ask);
 }
 
 /// A folded rule reads its backslashes as written: `\B` is a `B` (so any case of it), `\b` stays a backspace.
