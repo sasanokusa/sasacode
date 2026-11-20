@@ -417,9 +417,12 @@ fn header_map(headers: &[(String, String)]) -> anyhow::Result<reqwest::header::H
     Ok(map)
 }
 
-/// `ANTHROPIC_CUSTOM_HEADERS` / `OPENAI_CUSTOM_HEADERS`: `Name: value` lines.
-fn custom_headers(env: &str) -> Vec<(String, String)> {
-    let Some(text) = read_env(env) else { return Vec::new() };
+/// `ANTHROPIC_CUSTOM_HEADERS` / `OPENAI_CUSTOM_HEADERS`: `Name: value` lines; none unless `on` (the
+/// built-in provider the variable is for). After the defaults, before the model's (`{ ...custom, ...defaultHeaders }`).
+fn custom_headers(on: bool, var: &str) -> Vec<(String, String)> {
+    let Some(text) = read_env(var).filter(|_| on) else {
+        return Vec::new();
+    };
     text.split('\n')
         .filter_map(|line| {
             line.find(':')
@@ -440,15 +443,6 @@ impl ApiClient {
         let mut headers = Vec::new();
         for (n, v) in &defaults {
             set_header(&mut headers, n, v);
-        }
-        let env = if flavor == Flavor::Anthropic {
-            "ANTHROPIC_CUSTOM_HEADERS"
-        } else {
-            "OPENAI_CUSTOM_HEADERS"
-        };
-        // `{ ...custom, ...defaultHeaders }`: the model's headers win over the environment's.
-        for (n, v) in custom_headers(env) {
-            set_header(&mut headers, &n, &v);
         }
         for (n, v) in model_headers.into_iter().flatten() {
             set_header(&mut headers, n, v);
@@ -491,12 +485,14 @@ impl ApiClient {
         if let Some(t) = read_env("ANTHROPIC_AUTH_TOKEN").filter(|_| env) {
             defaults.push(("authorization".to_string(), format!("Bearer {t}")));
         }
+        defaults.extend(custom_headers(env, "ANTHROPIC_CUSTOM_HEADERS"));
         Self::new(Flavor::Anthropic, base_url, max_retries, defaults, model_headers, fetch)
     }
 
-    /// `new OpenAI({ apiKey, baseURL, maxRetries, defaultHeaders, fetch })`; OPENAI_ORG_ID/_PROJECT_ID to OpenAI only.
+    /// `new OpenAI({ apiKey, baseURL, maxRetries, defaultHeaders, fetch })`; the OPENAI_* variables only when `env`.
     pub fn openai(
         api_key: &str,
+        env: bool,
         base_url: &str,
         max_retries: u32,
         model_headers: Option<&BTreeMap<String, String>>,
@@ -506,14 +502,14 @@ impl ApiClient {
             ("accept".to_string(), "application/json".to_string()),
             ("user-agent".to_string(), USER_AGENT.to_string()),
         ];
-        let openai = crate::types::has_origin(Some(base_url), "https://api.openai.com");
-        if let Some(org) = read_env("OPENAI_ORG_ID").filter(|_| openai) {
+        if let Some(org) = read_env("OPENAI_ORG_ID").filter(|_| env) {
             defaults.push(("openai-organization".to_string(), org));
         }
-        if let Some(project) = read_env("OPENAI_PROJECT_ID").filter(|_| openai) {
+        if let Some(project) = read_env("OPENAI_PROJECT_ID").filter(|_| env) {
             defaults.push(("openai-project".to_string(), project));
         }
         defaults.push(("authorization".to_string(), format!("Bearer {api_key}")));
+        defaults.extend(custom_headers(env, "OPENAI_CUSTOM_HEADERS"));
         Self::new(Flavor::OpenAi, base_url, max_retries, defaults, model_headers, fetch)
     }
 
@@ -1044,13 +1040,17 @@ mod tests {
 
     #[test]
     fn url_joining_drops_one_slash() {
-        let c = ApiClient::openai("k", "https://h/v1/", 0, None, None);
+        let c = ApiClient::openai("k", true, "https://h/v1/", 0, None, None);
         assert_eq!(
             c.url("/chat/completions").unwrap().as_str(),
             "https://h/v1/chat/completions"
         );
-        let c = ApiClient::openai("k", "https://h/v1", 0, None, None);
+        let c = ApiClient::openai("k", true, "https://h/v1", 0, None, None);
         assert_eq!(c.url("/responses").unwrap().as_str(), "https://h/v1/responses");
-        assert!(ApiClient::openai("k", "not a url", 0, None, None).url("/x").is_err());
+        assert!(
+            ApiClient::openai("k", true, "not a url", 0, None, None)
+                .url("/x")
+                .is_err()
+        );
     }
 }

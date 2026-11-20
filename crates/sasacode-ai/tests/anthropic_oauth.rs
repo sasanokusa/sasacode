@@ -236,7 +236,11 @@ fn a_key_or_anthropic_auth_token_wins_over_the_credentials() {
 fn the_anthropic_variables_go_to_the_anthropic_provider_only() {
     if !in_child(
         "the_anthropic_variables_go_to_the_anthropic_provider_only",
-        &[("ANTHROPIC_API_KEY", "sk-env"), ("ANTHROPIC_AUTH_TOKEN", "tok-env")],
+        &[
+            ("ANTHROPIC_API_KEY", "sk-env"),
+            ("ANTHROPIC_AUTH_TOKEN", "tok-env"),
+            ("ANTHROPIC_CUSTOM_HEADERS", "x-team: t1"),
+        ],
     ) {
         return;
     }
@@ -263,6 +267,7 @@ fn the_anthropic_variables_go_to_the_anthropic_provider_only() {
             (s.header("x-api-key").as_deref(), s.header("authorization")),
             (Some("own"), None)
         );
+        assert_eq!(s.header("x-team"), None);
         // The anthropic provider: both.
         let (fetch, sent) = fixed(|| Reply::Status(400, "{}".into()));
         let client = ApiClient::anthropic(None, true, "https://api.anthropic.com", 0, None, Some(fetch));
@@ -270,32 +275,35 @@ fn the_anthropic_variables_go_to_the_anthropic_provider_only() {
         let s = sent.lock().unwrap()[0].clone();
         assert_eq!(s.header("x-api-key").as_deref(), Some("sk-env"));
         assert_eq!(s.header("authorization").as_deref(), Some("Bearer tok-env"));
+        assert_eq!(s.header("x-team").as_deref(), Some("t1"));
         set_default_credentials(None);
     });
 }
 
 #[test]
-fn the_openai_organization_and_project_go_to_openais_api_only() {
+fn the_openai_variables_go_to_the_openai_providers_only() {
     if !in_child(
-        "the_openai_organization_and_project_go_to_openais_api_only",
-        &[("OPENAI_ORG_ID", "org-1"), ("OPENAI_PROJECT_ID", "proj-1")],
+        "the_openai_variables_go_to_the_openai_providers_only",
+        &[
+            ("OPENAI_ORG_ID", "org-1"),
+            ("OPENAI_PROJECT_ID", "proj-1"),
+            ("OPENAI_CUSTOM_HEADERS", "x-team: t1"),
+        ],
     ) {
         return;
     }
     runtime().block_on(async {
-        let sent_to = |base: &'static str| async move {
+        let sent_with = |env: bool| async move {
             let (fetch, sent) = fixed(|| Reply::Status(400, "{}".into()));
-            let client = ApiClient::openai("k", base, 0, None, Some(fetch));
+            let client = ApiClient::openai("k", env, "https://h.example/v1", 0, None, Some(fetch));
             let _ = client
                 .post("/chat/completions", &json!({}), &[], &CancellationToken::new())
                 .await;
             let s = sent.lock().unwrap()[0].clone();
-            (s.header("openai-organization"), s.header("openai-project"))
+            ["openai-organization", "openai-project", "x-team"].map(|h| s.header(h))
         };
-        assert_eq!(
-            sent_to("https://api.openai.com/v1").await,
-            (Some("org-1".into()), Some("proj-1".into()))
-        );
-        assert_eq!(sent_to("https://openrouter.ai/api/v1").await, (None, None));
+        let some = |v: &str| Some(v.to_string());
+        assert_eq!(sent_with(true).await, [some("org-1"), some("proj-1"), some("t1")]);
+        assert_eq!(sent_with(false).await, [None, None, None]);
     });
 }

@@ -33,6 +33,7 @@ pub fn openai_client(req: &Request) -> ApiClient {
     let key = req.api_key.as_deref().filter(|k| !k.is_empty()).unwrap_or("none");
     ApiClient::openai(
         key,
+        matches!(req.model.provider.as_str(), "openai" | "openai-chat"),
         req.model.base_url.as_deref().unwrap_or(OPENAI_BASE),
         req.max_retries.unwrap_or(8),
         req.model.headers.as_ref(),
