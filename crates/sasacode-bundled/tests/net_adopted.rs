@@ -489,3 +489,143 @@ async fn bg_start_judges_shows_and_runs_in_the_directory_it_is_given() {
         first_text(&started)
     );
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn bg_start_gives_the_judge_the_paths_in_its_command_from_the_directory_it_runs_in() {
+    use sasacode_bundled::jev_guard::{CallFacts, build_state};
+    let root = temp_dir("sasacode-adopted-");
+    let home = root.path().join("home");
+    let work = root.path().join("work");
+    std::fs::create_dir_all(work.join("sub")).unwrap_or_else(|e| panic!("{e}"));
+    std::fs::create_dir_all(&home).unwrap_or_else(|e| panic!("{e}"));
+    let b = fake(
+        background_sessions::plugin,
+        &work,
+        bg_settings(&home, 50),
+        Entries::default(),
+    )
+    .await;
+    let tool = b.tool("bg_start");
+    let (work_s, home_s) = (s(&work), s(&home));
+    let state = |v: Value| {
+        let (tool, work_s, home_s) = (tool.clone(), work_s.clone(), home_s.clone());
+        async move {
+            let args = obj(v);
+            build_state(&CallFacts {
+                tool: &*tool,
+                args: &args,
+                cwd: &work_s,
+                user_request: None,
+                home: &home_s,
+                trusted: false,
+            })
+            .await
+        }
+    };
+    let targets = |st: &serde_json::Map<String, Value>| -> Vec<(String, bool)> {
+        st.get("targets")
+            .and_then(Value::as_array)
+            .map(|a| {
+                a.iter()
+                    .map(|t| {
+                        (
+                            t["path"].as_str().unwrap_or("").to_string(),
+                            t["location"] == "inside the workspace",
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+
+    // No directory named: a path in the command is a target, as it is for bash.
+    let plain = state(json!({ "command": "rm -rf ~/.ssh build" })).await;
+    assert_eq!(
+        targets(&plain),
+        vec![("~/.ssh".to_string(), false), ("build".to_string(), true),]
+    );
+
+    // A directory named: it is a target too, and the command's relative paths are its own.
+    let named = state(json!({ "command": "rm -rf ~/.ssh build ../up", "cwd": "sub" })).await;
+    assert_eq!(
+        targets(&named),
+        vec![
+            (s(&work.join("sub")), true),
+            (s(&home.join(".ssh")), false),
+            (s(&work.join("sub/build")), true),
+            (s(&work.join("up")), true),
+        ]
+    );
+    let elsewhere = state(json!({ "command": "rm -rf build", "cwd": s(root.path()) })).await;
+    assert_eq!(
+        targets(&elsewhere),
+        vec![(s(root.path()), false), (s(&root.path().join("build")), false),]
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn bg_start_always_allow_covers_the_command_in_the_directory_it_was_shown_for_only() {
+    use sasacode_agent::permission::{PermissionCheck, PermissionPolicy};
+    let root = temp_dir("sasacode-adopted-");
+    let home = root.path().join("home");
+    let work = root.path().join("work");
+    let (a, b) = (root.path().join("a"), root.path().join("b"));
+    for d in [&work, &a, &b] {
+        std::fs::create_dir_all(d).unwrap_or_else(|e| panic!("{e}"));
+    }
+    let h = load_plugin(
+        "background-sessions",
+        background_sessions::plugin,
+        &s(&work),
+        bg_settings(&home, 400),
+    )
+    .await;
+    let tool = h.tool("bg_start");
+    let call = |v: Value| PermissionCheck {
+        tool: tool.clone(),
+        args: obj(v),
+        cwd: s(&work),
+    };
+    // The directory the session is in, spelled any way, is the command alone; another is part of it.
+    let own = obj(json!({ "command": "make", "cwd": "sub/.." }));
+    assert_eq!(tool.match_target(&own).as_deref(), Some("make"));
+    assert_eq!(
+        tool.match_target(&obj(json!({ "command": "make", "cwd": s(&work) })))
+            .as_deref(),
+        Some("make")
+    );
+    assert_eq!(
+        tool.match_target(&obj(json!({ "command": "make", "cwd": s(&a) })))
+            .as_deref(),
+        Some(format!("make (in {})", s(&a)).as_str())
+    );
+
+    // "Always allow" in a: the rule is for a.
+    let rules = PermissionPolicy::rules_for(&call(json!({ "command": "make", "cwd": s(&a) })));
+    assert_eq!(rules, vec![format!("bg_start(make (in {}))", s(&a))]);
+    h.agent
+        .permissions()
+        .add_rules(&sasacode_plugin_api::PermissionRules {
+            allow: rules,
+            ..Default::default()
+        })
+        .unwrap_or_else(|e| panic!("{e}"));
+    let decide = |v: Value| h.agent.permissions().check(&call(v)).decision;
+    assert_eq!(decide(json!({ "command": "make", "cwd": s(&a) })), Decision::Allow);
+    assert_eq!(decide(json!({ "command": "make", "cwd": s(&b) })), Decision::Ask);
+    assert_eq!(decide(json!({ "command": "make" })), Decision::Ask);
+
+    // "Always allow" in the session's own directory: the rule is the command, and a is not covered.
+    let own_rules = PermissionPolicy::rules_for(&call(json!({ "command": "ls" })));
+    assert_eq!(own_rules, vec!["bg_start(ls)".to_string()]);
+    h.agent
+        .permissions()
+        .add_rules(&sasacode_plugin_api::PermissionRules {
+            allow: own_rules,
+            ..Default::default()
+        })
+        .unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(decide(json!({ "command": "ls" })), Decision::Allow);
+    assert_eq!(decide(json!({ "command": "ls", "cwd": s(&work) })), Decision::Allow);
+    assert_eq!(decide(json!({ "command": "ls", "cwd": s(&a) })), Decision::Ask);
+}

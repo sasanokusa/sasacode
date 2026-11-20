@@ -241,9 +241,10 @@ async fn pin_unjudged(url: &url::Url, route: &Route) -> (bool, Option<reqwest::C
 ///
 /// Where a redirect stays on the first URL's origin (scheme, host and port), `Check::Redirects` does not
 /// judge it: it is the place the first URL already reached, and nothing new can be seen there. It is
-/// connected to the addresses the first URL's name resolved to (the name is not resolved again, where
-/// an answer that changed could lead somewhere the first URL never went); when the name could not be
-/// resolved here (behind a proxy, say), such a redirect is judged like any other.
+/// connected to the address the first URL was reached at (the name is not resolved again, where an
+/// answer that changed could lead somewhere the first URL never went, and one of several addresses is
+/// not tried in place of the one that answered); when the name could not be resolved here or the
+/// address reached is not known (behind a proxy, say), such a redirect is judged like any other.
 ///
 /// Behind an HTTP proxy (reqwest reads the environment's) the proxy resolves the name and makes the
 /// connection, so the pinning here does not apply; the check of the resolved address still runs.
@@ -324,6 +325,14 @@ pub(crate) async fn get_following(
         let res = send_within(req, signal, deadline.saturating_duration_since(Instant::now()))
             .await
             .map_err(GetError::failed)?;
+        if check == Check::Redirects && hops == 0 && first_client.is_some() {
+            // The name may have answered with several addresses: a redirect to the same origin goes
+            // to the one that was reached, not to whichever of them answers next. When it is not
+            // known (a proxy made the connection), that redirect is judged like any other.
+            let reached = res.remote_addr().and_then(|a| pinned_client(&next, &[a.ip()]).ok());
+            first_again = reached.is_some();
+            first_client = reached;
+        }
         let location = if res.status().is_redirection() {
             res.headers()
                 .get(reqwest::header::LOCATION)
@@ -826,6 +835,52 @@ mod tests {
         assert_eq!(answer.text, format!("200 ok:{}/next", site.port));
         assert_eq!(ANSWERS.load(Ordering::SeqCst), 1);
         assert_eq!(site.hits(), 2);
+    }
+
+    #[tokio::test]
+    async fn a_redirect_on_the_first_origin_stays_on_the_one_address_reached_when_the_name_has_several() {
+        // The name answers with two addresses, the second an internal one. The first is reached and
+        // then stops answering: the redirect to the same origin must fail there, not go on to the
+        // other address.
+        fn two_answers(_host: String) -> BoxFuture<'static, Result<Vec<IpAddr>, String>> {
+            Box::pin(async { Ok(vec![IpAddr::V4(Ipv4Addr::LOCALHOST), IpAddr::V6(Ipv6Addr::LOCALHOST)]) })
+        }
+        fn only_v6_is_internal(ip: &IpAddr) -> bool {
+            ip.is_ipv6()
+        }
+        let reached = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let port = reached.local_addr().expect("addr").port();
+        // This machine may have no IPv6 loopback: then there is nothing to tell apart.
+        let Ok(inside) = TcpListener::bind(("::1", port)).await else {
+            return;
+        };
+        let inside_hits = Arc::new(AtomicUsize::new(0));
+        let counted = inside_hits.clone();
+        tokio::spawn(async move {
+            while let Ok((mut socket, _)) = inside.accept().await {
+                counted.fetch_add(1, Ordering::SeqCst);
+                let _ = socket
+                    .write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 2\r\nconnection: close\r\n\r\nok")
+                    .await;
+            }
+        });
+        // One request answered, a redirect to the same origin; then the listener is gone.
+        tokio::spawn(async move {
+            let (mut socket, _) = reached.accept().await.expect("accept");
+            let mut buf = vec![0u8; 4096];
+            let _ = socket.read(&mut buf).await;
+            let reply = "HTTP/1.1 302 Found\r\nlocation: /next\r\ncontent-length: 0\r\nconnection: close\r\n\r\n";
+            let _ = socket.write_all(reply.as_bytes()).await;
+            let _ = socket.shutdown().await;
+            drop(reached);
+        });
+        let route = Route {
+            lookup: two_answers,
+            internal: only_v6_is_internal,
+        };
+        let outcome = get(&format!("http://two.test:{port}/"), Check::Redirects, 10, &route).await;
+        assert_eq!(inside_hits.load(Ordering::SeqCst), 0, "connected to the other address");
+        assert!(outcome.is_err(), "answered by the other address");
     }
 
     #[tokio::test]

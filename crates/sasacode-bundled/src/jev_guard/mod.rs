@@ -755,10 +755,40 @@ pub async fn build_state(f: &CallFacts<'_>) -> JsonObject {
         Some(c) => call.insert("command".into(), json!(clip(&redact(c), 4000))),
         None => call.insert("arguments".into(), json!(clip(&redact(&stringify(f.args)), 4000))),
     };
-    let written = f
-        .tool
-        .paths(f.args, Path::new(f.cwd))
-        .unwrap_or_else(|| command.as_deref().map(path_args).unwrap_or_default());
+    // Where the command runs, when the call names a directory: its relative paths are that
+    // directory's.
+    let run_dir = f
+        .args
+        .get("cwd")
+        .and_then(Value::as_str)
+        .filter(|c| !c.is_empty())
+        .map(|c| expand(c, f.cwd, f.home));
+    let in_command = |text: &str| -> Vec<String> {
+        path_args(text)
+            .into_iter()
+            .map(|p| match &run_dir {
+                Some(dir) => expand(&p, dir, f.home),
+                None => p,
+            })
+            .collect()
+    };
+    // A tool's own paths (the directory a command runs in) do not stand in for the command's.
+    let command_text = match f.args.get("command").and_then(Value::as_str) {
+        Some(c) => Some(c.to_string()),
+        None if f.tool.kind() == ToolKind::Exec => command.clone(),
+        None => None,
+    };
+    let written = match f.tool.paths(f.args, Path::new(f.cwd)) {
+        Some(mut own) => {
+            for p in command_text.as_deref().map(in_command).unwrap_or_default() {
+                if !own.contains(&p) {
+                    own.push(p);
+                }
+            }
+            own
+        }
+        None => command.as_deref().map(in_command).unwrap_or_default(),
+    };
     let top = match f.trusted {
         true => git(f.cwd, &["rev-parse", "--show-toplevel"]).await,
         false => None,
