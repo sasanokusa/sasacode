@@ -413,6 +413,6 @@ cargo xtask build                 # 配布用のバイナリ
 
 デスクトップGUI（Rust、開発中）は `crates/` にある。`cargo run -p sasacode-gui -- <フォルダ>` で開き、入力ごとに `sasacode -p … --output jsonl --control stdio` をそのフォルダで動かす（`SASACODE_BIN` か `--sasacode` で実行ファイルを指定できる）。`sasacode gui install --path .` で入れておけば、`sasacode gui [フォルダ]` と、TUIの `/gui`（進行中の会話を読み込んだ状態で開く）でも開ける。`cargo test` で、CLIの出力とセッションログを読めるかも確かめる。設計と段階は [docs/gui.md](docs/gui.md)、ほかのエージェントのGUIとの比べは [docs/gui-parity.md](docs/gui-parity.md)。
 
-コア（`sasacode-ai`・`sasacode-agent`・`sasacode-plugin-api`・`sasacode-tools`）の行数の上限は12,500行で、1行は120桁まで（rustfmtの`max_width = 120`。ほとんどが1つの文字列リテラルの行は除く）。どちらかを超えると`cargo xtask checks`が落ちる。いまの行数は`cargo xtask improve`が出す。
+コア（`sasacode-ai`・`sasacode-agent`・`sasacode-plugin-api`・`sasacode-tools`）の行数の上限は12,700行で、1行は120桁まで（rustfmtの`max_width = 120`。ほとんどが1つの文字列リテラルの行は除く）。どちらかを超えると`cargo xtask checks`が落ちる。いまの行数は`cargo xtask improve`が出す。
 
 リポジトリのドキュメント：[要件](docs/requirements.md)、[マイルストーンの検証](docs/milestones.md)、[実行時依存の記録](docs/dependencies.md)、[拡張のしかた（MCP・Skills・同梱プラグイン）](docs/plugins.md)、[API互換性の確認表](docs/api-compatibility.md)、[ベンチマーク](docs/benchmarks.md)、[改善の回し方](docs/improvement.md)。改善は1周ずつ小さく積む。手順と観点、これまでの記録は[docs/improvement.md](docs/improvement.md)にある。

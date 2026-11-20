@@ -8,7 +8,7 @@ use std::process::ExitCode;
 
 use crate::checks::{CORE_LINE_BUDGET, CheckResult, READMES, core_lines, root, run_checks, walk};
 
-/// `12045 / 12500 (455 left)   sasacode-ai 3887 · sasacode-agent 4501 · …`.
+/// `12045 / 12700 (655 left)   sasacode-ai 3887 · sasacode-agent 4501 · …`.
 fn core_line(root: &Path) -> (String, i64) {
     let lines = core_lines(root);
     let per_crate: Vec<String> = lines

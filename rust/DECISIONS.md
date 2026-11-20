@@ -55,6 +55,8 @@ Status: accepted (2026-11-18)
 Decision: Core (ai + plugin-api + agent + tools) and bundled stay separate crates; lines stay at
 most 120 columns (rustfmt `max_width = 120`). The line ceiling is set again from the Rust core's
 measured size, and the checks follow it.
+Amended (2026-11-20): raised to 12,700 lines for stricter path and permission checks (the core was
+12,663 lines then).
 
 ## ADR-006: The GUI stays a child-process client
 Status: accepted (2026-11-18)

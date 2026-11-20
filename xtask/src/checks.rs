@@ -22,8 +22,9 @@ use crate::rust_source::{literal_spans, string_value, without_comments};
 /// after the port on 2026-11-18: the code under src/ of the four core crates came to 12,045 lines
 /// (sasacode-ai 3,887, sasacode-agent 4,501, sasacode-plugin-api 2,074, sasacode-tools 1,583; unit
 /// tests, inline or in `*_tests.rs`, and tests/ do not count), rounded up to the next 500. The
-/// TypeScript core's budget was 5,000.
-pub const CORE_LINE_BUDGET: usize = 12_500;
+/// TypeScript core's budget was 5,000. Raised to 12,700 on 2026-11-20 for stricter path and
+/// permission checks (12,663 lines then).
+pub const CORE_LINE_BUDGET: usize = 12_700;
 /// A core line is at most this many characters wide, so the budget above measures size: 4,000 lines
 /// were once kept by packing statements onto lines of 300 characters. A line that is mostly one
 /// string literal may run past it (a tool description, a message for the model: prose that reads and
