@@ -13,11 +13,17 @@ use sasacode_plugin_api::{apply_child_env, sasacode_home};
 /// Where the source comes from by default (`SASACODE_GUI_GIT` for tests and mirrors).
 pub const REPO: &str = "https://github.com/sasanokusa/sasacode";
 const VERSION: &str = env!("CARGO_PKG_VERSION");
+/// The commit this release was built from, put in by the release workflow (`SASACODE_COMMIT`). A
+/// tag can be moved; the commit cannot. A build made by hand does not have it.
+const COMMIT: Option<&str> = option_env!("SASACODE_COMMIT");
 
 /// What cargo builds the window from.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Source {
-    /// This sasacode's own release tag (`v<version>`) of the repository.
+    /// The commit this sasacode's release was built from.
+    Commit { git: String, rev: String },
+    /// This sasacode's own release tag (`v<version>`) of the repository: for a build made by hand,
+    /// which does not know its commit.
     Tag { git: String, tag: String },
     /// The sasacode-gui crate of a checkout (`--path`): a development build, whose tag may not exist.
     Checkout(PathBuf),
@@ -26,20 +32,38 @@ pub enum Source {
 impl Source {
     fn describe(&self) -> String {
         match self {
+            Source::Commit { git, rev } => format!("{git} {rev}"),
             Source::Tag { git, tag } => format!("{git} {tag}"),
             Source::Checkout(dir) => dir.display().to_string(),
         }
     }
 }
 
-/// The source for `--path <dir>` (the repository or its crates/sasacode-gui), else this version's tag.
+/// The source for `--path <dir>` (the repository or its crates/sasacode-gui), else the commit this
+/// release was built from, else (a build made by hand) this version's tag.
 pub fn source_for(path: Option<&Path>, git: Option<&str>) -> anyhow::Result<Source> {
+    source_for_commit(path, git, COMMIT)
+}
+
+/// [`source_for`] with the commit the release was built from given (None: not known).
+pub fn source_for_commit(path: Option<&Path>, git: Option<&str>, commit: Option<&str>) -> anyhow::Result<Source> {
     let Some(dir) = path else {
         let git = git.filter(|g| !g.is_empty()).unwrap_or(REPO).to_string();
-        return Ok(Source::Tag {
-            git,
-            tag: format!("v{VERSION}"),
-        });
+        return match commit.filter(|c| !c.is_empty()) {
+            // A full commit hash and nothing else: it goes to `--rev`, which also takes a branch or a tag.
+            Some(rev) if rev.len() == 40 && rev.bytes().all(|b| b.is_ascii_hexdigit()) => Ok(Source::Commit {
+                git,
+                rev: rev.to_ascii_lowercase(),
+            }),
+            Some(rev) => anyhow::bail!(t!(
+                "this sasacode was built from \"{rev}\", which is not a commit hash: build from a checkout with sasacode gui install --path <checkout>",
+                rev = rev
+            )),
+            None => Ok(Source::Tag {
+                git,
+                tag: format!("v{VERSION}"),
+            }),
+        };
     };
     // cargo runs elsewhere (below), so the path must not depend on this folder.
     let dir = &std::path::absolute(dir)?;
@@ -103,6 +127,9 @@ pub fn cargo_args(source: &Source, root: &Path) -> Vec<OsString> {
         .collect();
     args.push(root.as_os_str().to_owned());
     match source {
+        Source::Commit { git, rev } => {
+            args.extend(["--git", git.as_str(), "--rev", rev.as_str(), "sasacode-gui"].map(OsString::from));
+        }
         Source::Tag { git, tag } => {
             args.extend(["--git", git.as_str(), "--tag", tag.as_str(), "sasacode-gui"].map(OsString::from));
         }
@@ -147,9 +174,9 @@ pub async fn gui_install(args: &[String]) -> anyhow::Result<i32> {
     };
     let home = sasacode_home();
     let root = gui_root_in(&home);
-    // From a tag cargo builds in a folder it throws away; from a checkout, in the checkout's target.
+    // From a commit or tag cargo builds in a folder it throws away; from a checkout, in the checkout's target.
     let building = match &source {
-        Source::Tag { .. } => t!(
+        Source::Commit { .. } | Source::Tag { .. } => t!(
             "building sasacode-gui with {cargo} from {source} (a few minutes: cargo builds it from scratch every time)",
             cargo = cargo.display(),
             source = source.describe()
@@ -181,7 +208,9 @@ pub async fn gui_install(args: &[String]) -> anyhow::Result<i32> {
                 code = code,
                 tag = tag
             ),
-            Source::Checkout(_) => t!("cargo could not build sasacode-gui (exit code {code})", code = code),
+            Source::Commit { .. } | Source::Checkout(_) => {
+                t!("cargo could not build sasacode-gui (exit code {code})", code = code)
+            }
         };
         eprintln!("{line}");
         return Ok(code);

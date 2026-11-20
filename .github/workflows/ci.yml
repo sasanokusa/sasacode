@@ -20,6 +20,20 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: rustup update stable && rustup default stable && rustup component add rustfmt clippy
       - run: cargo fmt --all --check
+      # The installers are scripts that no compiler reads: a syntax error in one would only show when
+      # someone installs. install.sh is read by sh, install.ps1 by PowerShell's own parser.
+      - if: runner.os == 'Linux'
+        run: sh -n scripts/install.sh
+      - if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile("$PWD/scripts/install.ps1", [ref]$tokens, [ref]$errors)
+          if ($errors) {
+            $errors | ForEach-Object { Write-Host "install.ps1:$($_.Extent.StartLineNumber): $($_.Message)" }
+            exit 1
+          }
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       # The GUI's tests draw Japanese. With no font that has it, cosmic-text shapes each line again
       # with every font installed before giving up, and the tests took minutes instead of seconds.
@@ -43,3 +57,14 @@ jobs:
           SASACODE_E2E_BIN="$bin" cargo test --locked --package sasacode-testing --test cli_e2e
       # The checks once more, printed next to the core's headroom (docs/improvement.md).
       - run: cargo xtask improve
+  audit:
+    # The locked dependencies against the RustSec advisory database. Only an advisory that names a
+    # version in Cargo.lock as affected fails the job: a warning (a crate no longer maintained, a
+    # yanked version) is printed and left at that.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
+        with:
+          tool: cargo-audit
+      - run: cargo audit

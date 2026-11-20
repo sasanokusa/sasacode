@@ -37,10 +37,10 @@ irm https://sasanokusa.com/sasacode/install.ps1 | iex
 - Also on npm: `npm install -g sasacode`. The npm package is a small launcher: its first run downloads the binary of the same version from GitHub Releases, checks its SHA256 and keeps it in `~/.sasacode/npm-bin`. Update with `npm install -g sasacode@latest`.
 - Single binaries for macOS (arm64 / x64), Linux (x64 / arm64, glibc / musl) and Windows (x64 / arm64). Every x64 build runs on CPUs without AVX2 (the same file is also published under the baseline names used up to 0.15).
 - The installer and the binary come from the latest [GitHub release](https://github.com/sasanokusa/sasacode/releases) and are checked against SHA256. The sasanokusa.com URLs redirect to the latest release's `install.sh` / `install.ps1`.
-- SHA256 only catches a broken download. That a file was built by this repository's GitHub Actions is proved by the signed provenance attached to releases from v0.9.8: `gh attestation verify sasacode-darwin-arm64.tar.gz --repo sasanokusa/sasacode` (on a file downloaded from the release; `install.sh` too).
+- SHA256 only catches a broken download. That a file was built by this repository's GitHub Actions is proved by the signed provenance attached to releases from v0.9.8: `gh attestation verify sasacode-darwin-arm64.tar.gz --repo sasanokusa/sasacode` (on a file downloaded from the release; `install.sh` too). When `gh` is installed and signed in, `install.sh`, `sasacode update` and the npm launcher run this check themselves and stop without installing if it fails. Without a usable `gh` they say the check was skipped and go on, so run the command above yourself.
 - `SASACODE_VERSION=v0.20.1` pins a version and `SASACODE_INSTALL_DIR` changes where it goes (both installers).
 - `sasacode update` updates in place (the same checks as the installer; `--check` only reports). A newer version is mentioned quietly once at startup (`"updateCheck": false` turns it off). Installed from source, run `git pull` and the `cargo install` below again.
-- RustXNG, which web search (`web_search`) uses, installs with `sasacode web-search install` (`/web-search install` in the TUI): the official release, checksum-checked, into `~/.sasacode/bin`, usable without a restart. Running it again updates to the newest release.
+- RustXNG, which web search (`web_search`) uses, installs with `sasacode web-search install` (`/web-search install` in the TUI): the official release sasacode names (v0.32.0 for now), checked against a checksum sasacode holds, into `~/.sasacode/bin`, usable without a restart. Only that release is installed; a newer one comes with an update of sasacode.
 - The desktop GUI (in progress) is not in the release: `sasacode gui install` builds it on this machine (it needs [Rust](https://rustup.rs); without it, it says how to get it and stops). It goes in `~/.sasacode/gui/bin`, and `sasacode update` does not update it: after updating sasacode, run `sasacode gui install` again ([docs/gui.md](docs/gui.md)).
 
 From source ([Rust](https://www.rust-lang.org/) 1.88 or later):
@@ -84,9 +84,9 @@ sasacode -r <id> -p "go on"          # continue a session by id (a conversation 
 | `sasacode trust [--yes] [--json]` | Whether this folder is trusted, and what trust would enable (`{"cwd","trusted","needed","complete","items","plugins","mcpServers","endpoints","allow","mode","mcpServerDetails","model","judgeModel","models","modelOverrides","pluginSettings"}`; `mcpServerDetails` gives each server's command and arguments, or URL, and the names of its environment variables and headers, never their values). `--yes` saves the trust, as answering "y" at the start-up question does. 0.20 does not load project plugins, so `plugins` is empty and `complete` is always `true` |
 | `sasacode login [status\|logout]` | Sign in with a ChatGPT plan (for `openai-codex/…` models) |
 | `sasacode update [--check] [tag]` | Download and install the newest release (checksum-verified; `--check` only reports) |
-| `sasacode web-search install [tag]` | Install RustXNG for the `web_search` tool (checksum-verified) |
+| `sasacode web-search install` | Install RustXNG for the `web_search` tool (checksum-verified) |
 | `sasacode gui [folder]` | Open the desktop GUI on a folder (`sasacode gui install` puts it in; [docs/gui.md](docs/gui.md)) |
-| `sasacode gui install [--path <dir>]` | Build the desktop GUI on this machine with Rust (from this version's tag; from a checkout with `--path`) |
+| `sasacode gui install [--path <dir>]` | Build the desktop GUI on this machine with Rust (from the commit this version was built from; from a checkout with `--path`) |
 | `-h, --help` / `-v, --version` | Print the usage / the version |
 
 `sasacode plugin` is gone in 0.20. Run, it says that the plugins now ship with sasacode (the optional ones are turned on with `plugins.enabled`) and that tools are added with MCP servers or Skills ([extending sasacode](docs/plugins.md)), and exits with an error.

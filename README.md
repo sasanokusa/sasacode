@@ -37,10 +37,10 @@ irm https://sasanokusa.com/sasacode/install.ps1 | iex
 - npmからも `npm install -g sasacode` で入れられる。npmのパッケージは起動用の小さなスクリプトで、初回の実行時に同じ版のバイナリをGitHub Releasesから取得してSHA256を検証し、`~/.sasacode/npm-bin` に置く。更新は `npm install -g sasacode@latest`。
 - macOS（arm64 / x64）、Linux（x64 / arm64、glibc / musl）、Windows（x64 / arm64）の単一バイナリ。x64版はどれもAVX2のないCPUでも動く（0.15までのbaseline版の名前でも、同じものを置いている）。
 - インストーラーもバイナリも、[GitHub Releases](https://github.com/sasanokusa/sasacode/releases) の最新版から取得してSHA256を検証する。sasanokusa.comのURLは、最新リリースの `install.sh` / `install.ps1` へのリダイレクト。
-- SHA256が防ぐのは壊れたダウンロードまで。ファイルがこのリポジトリのGitHub Actionsでビルドされたものかは、v0.9.8以降のリリースに付けた署名つきの来歴で確かめられる（`gh attestation verify sasacode-darwin-arm64.tar.gz --repo sasanokusa/sasacode`。リリースから落としたファイルに対して。`install.sh` も同じ）。
+- SHA256が防ぐのは壊れたダウンロードまで。ファイルがこのリポジトリのGitHub Actionsでビルドされたものかは、v0.9.8以降のリリースに付けた署名つきの来歴で確かめられる（`gh attestation verify sasacode-darwin-arm64.tar.gz --repo sasanokusa/sasacode`。リリースから落としたファイルに対して。`install.sh` も同じ）。`gh` が入っていてログイン済みなら、`install.sh` と `sasacode update`、npmのランチャーがこの検証を自動で行い、通らなければ入れずに止まる。`gh` がないかログインしていないときは、検証しなかったと表示して先へ進むので、上のコマンドで自分で確かめる。
 - `SASACODE_VERSION=v0.20.1` で版を固定でき、`SASACODE_INSTALL_DIR` で置き場所を変えられる（どちらのインストーラーでも）。
 - 更新は`sasacode update`（インストーラーと同じ検証つき。`--check`で確認だけ）。新しい版が出ていると起動時に一度だけ静かに知らせる（`"updateCheck": false`で止める）。ソースから入れた場合は、`git pull`のあと下の`cargo install`をもう一度実行する。
-- Web検索（`web_search`）に使うRustXNGは `sasacode web-search install`（TUIでは `/web-search install`）で入る。公式リリースをチェックサムで確かめて `~/.sasacode/bin` に置き、再起動しなくても使える。もう一度実行すると最新版に更新する。
+- Web検索（`web_search`）に使うRustXNGは `sasacode web-search install`（TUIでは `/web-search install`）で入る。sasacodeが決めた版（今はv0.32.0）の公式リリースを、sasacodeが持つチェックサムで確かめて `~/.sasacode/bin` に置き、再起動しなくても使える。入るのはその版だけで、新しい版はsasacodeの更新で入る。
 - デスクトップGUI（開発中）は配布物に入っておらず、`sasacode gui install`でこのマシンでビルドして入れる（[Rust](https://rustup.rs)が要る。ないときは入れ方を案内して止まる）。`~/.sasacode/gui/bin`に入り、`sasacode update`では更新されない。sasacodeを更新したら、もう一度`sasacode gui install`を実行する（[docs/gui.md](docs/gui.md)）。
 
 ソースから使う場合（[Rust](https://www.rust-lang.org/)1.88以上）は次のとおり。
@@ -84,9 +84,9 @@ sasacode -r <id> -p "続き"            # セッション ID を指定して続�
 | `sasacode trust [--yes] [--json]` | このフォルダを信頼しているかと、信頼すると有効になるもの（`{"cwd","trusted","needed","complete","items","plugins","mcpServers","endpoints","allow","mode","mcpServerDetails","model","judgeModel","models","modelOverrides","pluginSettings"}`。`mcpServerDetails`はサーバーごとに起動するコマンドと引数かURLと、環境変数とヘッダーの名前（値は出さない））。`--yes` で、起動時の確認に「y」と答えたのと同じく信頼を保存する。0.20はプロジェクトのプラグインを読まないので、`plugins` は空、`complete` は常に `true` |
 | `sasacode login [status\|logout]` | ChatGPTプランでログイン（`openai-codex/…` のモデル用） |
 | `sasacode update [--check] [tag]` | 最新のリリースを取得して入れ替える（チェックサムを検証。`--check`なら確認だけ） |
-| `sasacode web-search install [tag]` | `web_search`が使うRustXNGを入れる（チェックサムを検証） |
+| `sasacode web-search install` | `web_search`が使うRustXNGを入れる（チェックサムを検証） |
 | `sasacode gui [folder]` | デスクトップGUIをフォルダで開く（`sasacode gui install`で入れる。[docs/gui.md](docs/gui.md)） |
-| `sasacode gui install [--path <dir>]` | デスクトップGUIを、このマシンでRustを使ってビルドして入れる（この版のタグから。`--path`ではチェックアウトから） |
+| `sasacode gui install [--path <dir>]` | デスクトップGUIを、このマシンでRustを使ってビルドして入れる（この版をビルドしたコミットから。`--path`ではチェックアウトから） |
 | `-h, --help` / `-v, --version` | 使い方 / 版を出す |
 
 `sasacode plugin`は0.20でなくなった。実行すると、プラグインはsasacodeに同梱になったこと（既定で無効のものは`plugins.enabled`で有効にする）と、ツールはMCPサーバーかSkillsで足すこと（[拡張のしかた](docs/plugins.md)）を示して、エラーで終わる。

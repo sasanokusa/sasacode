@@ -36,7 +36,6 @@ indexmap.workspace = true
 # web/net plugins (web_fetch, web_search, image-*, openai-codex)
 encoding_rs.workspace = true
 unicode-normalization.workspace = true
-percent-encoding.workspace = true
 rand.workspace = true
 lol_html = "3.0.3"
 flate2 = "1"

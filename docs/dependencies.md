@@ -19,7 +19,6 @@
 | `bytes` | ai、bundled | ストリームで受け取る本文 | — |
 | `http` | bundled | `diagnostics`が観測した応答を、元のバイト列のまま組み立て直す | — |
 | `url` | ai、bundled、tui、cli | URLの組み立てと解釈 | — |
-| `percent-encoding` | bundled | URLのエンコードとデコード（RustXNGのリリースの名前など） | — |
 | `regex` | ai、plugin-api、agent、bundled、tui、cli | 正規表現 | — |
 | `fancy-regex` | plugin-api、bundled | TS版の正規表現が使っていた先読み・後読み・後方参照（`regex`にはない。`rust/PORTING.md`）。引数の検証の`pattern`と`text-tool-calls`など | — |
 | `globset` | agent、bundled | 権限ルールのパス（`edit(src/**)`など）の照合と、jev-guardでのglobの展開（TS版の`Bun.Glob`の代わり） | — |
@@ -31,7 +30,7 @@
 | `unicode-normalization` | agent、bundled | 権限ルールの照合（NFC / NFD）、`web_fetch`と`web_search` | — |
 | `dirs` | tui | ホームディレクトリ | — |
 | `which` | mcp（Windows）、bundled、cli | 実行ファイルを探す（browsr、gui、RustXNG、WindowsのMCPサーバー、`gui install`のcargo） | — |
-| `nix` | plugin-api、tools、mcp、cli（Unix） | プロセスグループへのシグナル、`setsid`、ファイルの操作を、`unsafe`を自分で書かずに行う（例外は`setsid`の1か所。ADR-012） | `libc`を直接使う：`unsafe`が要る |
+| `nix` | plugin-api、tools、mcp、cli（Unix） | プロセスグループへのシグナル、`setsid`、ファイルの操作を、`unsafe`を自分で書かずに行う（`nix`の関数のうち、`pre_exec`のクロージャで`setsid`を呼ぶ1か所だけは、`pre_exec`の呼び出しが`unsafe`。下の「`unsafe`の場所」） | `libc`を直接使う：`unsafe`が要る |
 | `win32job` | tools（Windows） | bashで止めたコマンドが始めたプロセスを、Windowsのジョブオブジェクトでまとめて終わらせる。`taskkill /T /F`のあとも、コマンドが始めたプロセスが残って出力を握り続けることがあった（CIで30秒） | `windows`を直接使う：`unsafe`が要る。`process-wrap`：`wait()`がジョブの全プロセスの終わりを待つので、`&`で残したプロセスまで待ってしまう |
 | `libc` | tools、tui、bundled（tuiとbundledはUnix） | エラー番号（`ENOENT`など）からTS版と同じ文面を作る。TUIでは端末の応答を待って読む。bundledでは、権限の判定より前にフックが読むファイルを、FIFOで待たされないように`O_NONBLOCK`で開く | `nix`：bundledには入っておらず、定数1つのために機能を足すことになる |
 | `lol_html` | bundled | `web_fetch`で、ページから本文とリンクを取り出す（ストリーミングで読むHTMLの書き換え） | — |
@@ -43,6 +42,14 @@
 | `pulldown-cmark` | tui | 返答のMarkdownの表示 | — |
 | `unicode-segmentation` | tui | 入力欄を書記素の単位で編集する | — |
 | `unicode-width` | bundled | 表示幅（`/usage`のグラフ）。ratatuiも同じ版の幅を使う | — |
+
+`unsafe`のブロックは、ワークスペース全体で5か所ある（`grep -rn "unsafe" crates --include=*.rs`で数えられる）。
+
+- `crates/sasacode-plugin-api/src/host.rs`：bashの子プロセスを新しいセッションに置くため、`pre_exec`のクロージャで`setsid`を呼ぶ（Unix。ADR-012）。
+- `crates/sasacode-cli/src/main.rs`：起動時、スレッドが1つのうちに、空のキーの環境変数を`remove_var`し、`~/.sasacode/.env`のキーを`set_var`する（2か所。ADR-012）。
+- `crates/sasacode-gui/src/main.rs`：Finderやランチャーから起動したとき、ログインシェルの環境変数を`set_var`する（Unix）。Windowsでは、ウィンドウの位置が画面に収まるかを調べるため、`MonitorFromRect`を呼ぶ。
+
+CLIのクレートに`unsafe`を足すときは、ADR（`rust/DECISIONS.md`）に理由を書く。guiの2か所には、コードのSAFETYコメントだけがある。
 
 MCPのクライアントは、公式のRust SDK（`rmcp`）を使わずに書いた（`crates/sasacode-mcp`）。必要なのは小さなクライアントで、`rmcp`ではプロトコルの版、clientInfo、環境変数、stderr、タイムアウトなどの既定をほとんど上書きすることになるため（`rust/research/mcp.md`）。`rmcp`はテスト用のサーバーとしてだけ使う。
 
