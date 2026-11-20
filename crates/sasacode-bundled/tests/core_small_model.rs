@@ -19,7 +19,9 @@ use sasacode_ai::{
 use sasacode_bundled::clean_retry::looks_like_check_command;
 use sasacode_bundled::hashline_edit::line_hash;
 use sasacode_bundled::syntax_check::check_rust_syntax;
-use sasacode_plugin_api::{Decision, Lang, PermissionMode, PermissionRules, ToolDef, ToolKind, ToolResult, hook};
+use sasacode_plugin_api::{
+    Decision, Lang, PermissionMode, PermissionRules, SessionStartEvent, ToolDef, ToolKind, ToolResult, hook,
+};
 use sasacode_testing::{ReplayOptions, ReplayProvider};
 use support_core::*;
 
@@ -2240,4 +2242,364 @@ async fn slim_profile_cuts_hashline_and_japanese_read_output_at_line_boundaries(
     let n: usize = num.parse().expect("line number");
     assert!(n > 90 && hash.len() == 2, "broken tail prefix: {first_tail}");
     assert!(body.starts_with("日本語の行-"), "broken tail body: {first_tail}");
+}
+
+#[tokio::test]
+async fn hash_edit_ignores_subagent_hooks_mid_batch_and_keeps_pending_until_batch_ends() {
+    let dir = temp_dir("sasacode-hashline-subagent-batch-");
+    let file = dir.path().join("mod.rs");
+    let other = dir.path().join("other.txt");
+    std::fs::write(&file, "fn a() {\n    x();\n}\nfn b() {\n}\n").unwrap();
+    std::fs::write(&other, "hello\n").unwrap();
+    let f = path_str(&file);
+    let o = path_str(&other);
+    let hx = line_hash("    x();");
+    let hz = line_hash("    z();");
+    let h_brace = line_hash("}");
+
+    // Same-turn batch: [hash_edit(1), task(...), hash_edit(2)].
+    // hash_edit(1) inserts 2 lines so `fn a()`'s `}` moves to line 5 (inside hash_edit(1)'s
+    // shown_range 1..=6 -> pending_fresh_lines). The subagent runs AssistantMessage + read
+    // (ToolResult) mid-batch; those events must NOT promote main's pending lines or clear main's
+    // active_batch_ids, so hash_edit(2) reusing stale `5:<h_brace>` must still be rejected.
+    // Once the batch completes, main's pending lines promote so turn 3 can use `4:<hz>`.
+    let s = setup(
+        vec![
+            reply(vec![call("1", "read", json!({"path": f}))]),
+            reply(vec![
+                call(
+                    "2",
+                    "hash_edit",
+                    json!({
+                        "path": f,
+                        "start": format!("2:{hx}"),
+                        "mode": "insert_after",
+                        "content": "    y();\n    z();"
+                    }),
+                ),
+                call(
+                    "3",
+                    "task",
+                    json!({"description": "read other", "prompt": "read other.txt"}),
+                ),
+                call(
+                    "4",
+                    "hash_edit",
+                    json!({"path": f, "start": format!("5:{h_brace}"), "content": "} // b"}),
+                ),
+            ]),
+            // Subagent turn 1 + turn 2
+            reply(vec![call("s1", "read", json!({"path": o}))]),
+            reply(vec![say("sub done")]),
+            // Main turn 3: fresh anchor from hash_edit(1) must now be promoted
+            reply(vec![call(
+                "5",
+                "hash_edit",
+                json!({"path": f, "start": format!("4:{hz}"), "content": "    z2();"}),
+            )]),
+            reply(vec![say("done")]),
+        ],
+        &["hashline-edit", "subagent"],
+        opts(&path_str(dir.path()), &[]),
+    )
+    .await;
+    s.agent.prompt_text("batch with subagent").await.unwrap();
+
+    let reqs = s.requests();
+    let batch_results = json_of(&reqs[4].messages);
+    assert!(
+        batch_results.contains("Stale anchor") && batch_results.contains("lines 5-5"),
+        "{batch_results}"
+    );
+    assert!(last(&reqs[5]).text().contains("Edited"), "{}", last(&reqs[5]).text());
+    assert_eq!(
+        std::fs::read_to_string(&file).unwrap(),
+        "fn a() {\n    x();\n    y();\n    z2();\n}\nfn b() {\n}\n"
+    );
+}
+
+#[tokio::test]
+async fn hash_edit_two_edits_in_one_turn_keep_both_pending_sets_and_prefix_unchanged_keeps_above() {
+    let dir = temp_dir("sasacode-hashline-two-edits-");
+    let file = dir.path().join("multi.txt");
+    let other = dir.path().join("aux.txt");
+    let initial = (1..=12).map(|i| format!("line-{i:02}")).collect::<Vec<_>>().join("\n") + "\n";
+    std::fs::write(&file, &initial).unwrap();
+    std::fs::write(&other, "aux\n").unwrap();
+    let f = path_str(&file);
+    let o = path_str(&other);
+    let h1 = line_hash("line-01");
+    let h2 = line_hash("line-02");
+    let h9 = line_hash("line-09");
+    let h2_new = line_hash("line-02-edited");
+    let h9_new = line_hash("line-09-edited");
+
+    // 1. Batch of 3 calls [hash_edit(line 2), hash_edit(line 9), read(other)] so BOTH edits run
+    //    with batch_pending == true and write into pending_fresh_lines. Next turn must accept fresh
+    //    anchors returned by BOTH edits without re-reading.
+    let s = setup(
+        vec![
+            reply(vec![call("1", "read", json!({"path": f}))]),
+            reply(vec![
+                call(
+                    "2",
+                    "hash_edit",
+                    json!({"path": f, "start": format!("2:{h2}"), "content": "line-02-edited"}),
+                ),
+                call(
+                    "3",
+                    "hash_edit",
+                    json!({"path": f, "start": format!("9:{h9}"), "content": "line-09-edited"}),
+                ),
+                call("4", "read", json!({"path": o})),
+            ]),
+            reply(vec![
+                call(
+                    "5",
+                    "hash_edit",
+                    json!({"path": f, "start": format!("2:{h2_new}"), "content": "line-02-v2"}),
+                ),
+                call(
+                    "6",
+                    "hash_edit",
+                    json!({"path": f, "start": format!("9:{h9_new}"), "content": "line-09-v2"}),
+                ),
+            ]),
+            reply(vec![say("done")]),
+        ],
+        &["hashline-edit"],
+        opts(&path_str(dir.path()), &[]),
+    )
+    .await;
+    s.agent.prompt_text("two edits").await.unwrap();
+    let reqs = s.requests();
+    let turn3_out = json_of(&reqs[3].messages);
+    assert!(
+        turn3_out.contains("lines 2-2") && turn3_out.contains("lines 9-9"),
+        "{turn3_out}"
+    );
+    assert!(!turn3_out.contains("Stale anchor"), "{turn3_out}");
+    let disk = std::fs::read_to_string(&file).unwrap();
+    assert!(disk.contains("line-02-v2\n") && disk.contains("line-09-v2\n"), "{disk}");
+
+    // 2. Also test a 2-edit batch (without trailing read) so the 2nd edit has batch_pending == false
+    //    and still carries prev.pending_fresh_lines from the 1st edit into the next turn.
+    std::fs::write(&file, &initial).unwrap();
+    let s2 = setup(
+        vec![
+            reply(vec![call("1", "read", json!({"path": f}))]),
+            reply(vec![
+                call(
+                    "2",
+                    "hash_edit",
+                    json!({"path": f, "start": format!("2:{h2}"), "content": "line-02-edited"}),
+                ),
+                call(
+                    "3",
+                    "hash_edit",
+                    json!({"path": f, "start": format!("9:{h9}"), "content": "line-09-edited"}),
+                ),
+            ]),
+            reply(vec![call(
+                "4",
+                "hash_edit",
+                json!({"path": f, "start": format!("2:{h2_new}"), "content": "line-02-v3"}),
+            )]),
+            reply(vec![say("done")]),
+        ],
+        &["hashline-edit"],
+        opts(&path_str(dir.path()), &[]),
+    )
+    .await;
+    s2.agent.prompt_text("two edits direct").await.unwrap();
+    let reqs2 = s2.requests();
+    assert!(last(&reqs2[3]).text().contains("Edited"), "{}", last(&reqs2[3]).text());
+    assert!(std::fs::read_to_string(&file).unwrap().contains("line-02-v3\n"));
+
+    // 3. External change below end_line+1 accepted via prefix_unchanged must retain n < unchanged_before_end
+    //    so a follow-up edit at line 1 (above line 5's shown_range 3..=7) succeeds without re-read,
+    //    while a follow-up edit below end_line (line 10, outside 3..=7) is rejected as stale.
+    std::fs::write(&file, &initial).unwrap();
+    let h5 = line_hash("line-05");
+    let h10 = line_hash("line-10");
+    let s3 = setup(
+        vec![
+            reply(vec![call("1", "read", json!({"path": f}))]),
+            // External edit strictly below line 6 (modifies line 12).
+            reply(vec![call(
+                "2",
+                "edit",
+                json!({"path": f, "old_string": "line-12", "new_string": "line-12-ext"}),
+            )]),
+            // Accepted via prefix_unchanged (lines 1..=6 match). shown_range is 3..=7.
+            reply(vec![call(
+                "3",
+                "hash_edit",
+                json!({"path": f, "start": format!("5:{h5}"), "content": "line-05-edited"}),
+            )]),
+            // Line 1 (< unchanged_before_end = 5, outside 3..=7) must still be fresh!
+            reply(vec![call(
+                "4",
+                "hash_edit",
+                json!({"path": f, "start": format!("1:{h1}"), "content": "line-01-edited"}),
+            )]),
+            // Line 10 (> end_line = 5, outside 3..=7) must NOT stay fresh after external change!
+            reply(vec![call(
+                "5",
+                "hash_edit",
+                json!({"path": f, "start": format!("10:{h10}"), "content": "line-10-edited"}),
+            )]),
+            reply(vec![say("done")]),
+        ],
+        &["hashline-edit"],
+        opts(&path_str(dir.path()), &[]),
+    )
+    .await;
+    s3.agent.prompt_text("prefix unchanged").await.unwrap();
+    let reqs3 = s3.requests();
+    assert!(last(&reqs3[3]).text().contains("Edited"), "{}", last(&reqs3[3]).text());
+    assert!(last(&reqs3[4]).text().contains("Edited"), "{}", last(&reqs3[4]).text());
+    assert!(
+        last(&reqs3[5]).text().contains("Stale anchor"),
+        "{}",
+        last(&reqs3[5]).text()
+    );
+}
+
+#[tokio::test]
+async fn hash_edit_rejects_equal_length_external_change_with_matching_context() {
+    let dir = temp_dir("sasacode-hashline-equal-len-");
+    let file = dir.path().join("code.rs");
+    let before = [
+        "fn one() {",
+        "    step_a();",
+        "    step_b();",
+        "}",
+        "",
+        "}",
+        "",
+        "fn two() {",
+        "    step_c();",
+        "}",
+    ]
+    .join("\n")
+        + "\n";
+    std::fs::write(&file, &before).unwrap();
+    let f = path_str(&file);
+    let h_brace = line_hash("}");
+
+    // External change keeps the exact same line count (10 lines) AND identical [line-1, line, line+1]
+    // around line 6 ("", "}", ""), but modifies interior lines 2-3 above line 6.
+    let s = setup(
+        vec![
+            reply(vec![call("1", "read", json!({"path": f}))]),
+            reply(vec![call(
+                "2",
+                "edit",
+                json!({
+                    "path": f,
+                    "old_string": "    step_a();\n    step_b();",
+                    "new_string": "    changed_a();\n    changed_b();"
+                }),
+            )]),
+            reply(vec![call(
+                "3",
+                "hash_edit",
+                json!({"path": f, "start": format!("6:{h_brace}"), "content": "} // edited"}),
+            )]),
+            reply(vec![say("done")]),
+        ],
+        &["hashline-edit"],
+        opts(&path_str(dir.path()), &[]),
+    )
+    .await;
+    s.agent.prompt_text("equal length external").await.unwrap();
+    let reqs = s.requests();
+    let out = last(&reqs[3]).text();
+    assert!(out.contains("changed since your last read"), "{out}");
+    assert!(!std::fs::read_to_string(&file).unwrap().contains("} // edited"));
+}
+
+#[tokio::test]
+async fn hash_edit_clears_state_on_session_start_and_evicts_lru_over_64_files() {
+    let dir = temp_dir("sasacode-hashline-session-lru-");
+    let secret = dir.path().join("secret.txt");
+    std::fs::write(&secret, "TOP_SECRET_LINE=xyz\n").unwrap();
+    let sec = path_str(&secret);
+
+    // 1. SessionStart (/new) must clear recorded files so a hash mismatch in the new session
+    //    neither treats the file as read nor leaks file lines.
+    let s = setup(
+        vec![
+            reply(vec![call("1", "read", json!({"path": sec}))]),
+            reply(vec![say("read done")]),
+            reply(vec![call(
+                "2",
+                "hash_edit",
+                json!({"path": sec, "start": "1:00", "content": "overwrite"}),
+            )]),
+            reply(vec![say("done")]),
+        ],
+        &["hashline-edit"],
+        opts(&path_str(dir.path()), &[]),
+    )
+    .await;
+    s.agent.prompt_text("session 1").await.unwrap();
+    s.agent.reset(Vec::new());
+    s.agent
+        .hooks()
+        .emit::<hook::SessionStart>(SessionStartEvent {
+            session_id: Some("new-session".into()),
+            resumed: false,
+        })
+        .await;
+    s.agent.prompt_text("session 2").await.unwrap();
+    let reqs = s.requests();
+    let mismatch = last(&reqs[3]).text();
+    assert!(
+        mismatch.contains("Hash mismatch at") && mismatch.contains("Read"),
+        "{mismatch}"
+    );
+    assert!(!mismatch.contains("TOP_SECRET_LINE"), "leaked across /new: {mismatch}");
+
+    // 2. Capping tracked files at 64 entries evicts the least recently used file.
+    let l = load_plugin("builtin-tools", builtin_tools, &path_str(dir.path()), json!({})).await;
+    assert!(l.host.load("hashline-edit", bundled("hashline-edit")).await);
+    let mut paths = Vec::new();
+    for i in 0..65 {
+        let p = dir.path().join(format!("f{i:02}.txt"));
+        std::fs::write(&p, format!("SECRET_{i:02}=val\n")).unwrap();
+        paths.push(path_str(&p));
+    }
+    for p in &paths[..64] {
+        let r = l.invoke("read", json!({"path": p})).await;
+        assert!(!r.is_error(), "{}", text_of(&r));
+    }
+    // Touch f00 so it becomes MRU and f01 becomes LRU.
+    let r = l.invoke("read", json!({"path": &paths[0]})).await;
+    assert!(!r.is_error(), "{}", text_of(&r));
+    // Read the 65th file (f64) -> evicts f01.
+    let r = l.invoke("read", json!({"path": &paths[64]})).await;
+    assert!(!r.is_error(), "{}", text_of(&r));
+
+    // Evicted f01 must not count as recorded (must not leak file lines on hash mismatch).
+    let r_evicted = l
+        .invoke("hash_edit", json!({"path": &paths[1], "start": "1:00", "content": "x"}))
+        .await;
+    let t_evicted = text_of(&r_evicted);
+    assert!(t_evicted.contains("Hash mismatch at"), "{t_evicted}");
+    assert!(!t_evicted.contains("SECRET_01=val"), "evicted f01 leaked: {t_evicted}");
+
+    // Refreshed f00 and newly read f64 stay recorded.
+    let r_kept = l
+        .invoke("hash_edit", json!({"path": &paths[0], "start": "1:00", "content": "x"}))
+        .await;
+    assert!(text_of(&r_kept).contains("SECRET_00=val"), "{}", text_of(&r_kept));
+    let r_new = l
+        .invoke(
+            "hash_edit",
+            json!({"path": &paths[64], "start": "1:00", "content": "x"}),
+        )
+        .await;
+    assert!(text_of(&r_new).contains("SECRET_64=val"), "{}", text_of(&r_new));
 }
