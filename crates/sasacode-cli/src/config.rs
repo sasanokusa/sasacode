@@ -182,7 +182,7 @@ fn mode_strength(m: &str) -> u8 {
 
 /// Routers reach many companies with one key, so which model they serve decides where the
 /// conversation and code go.
-const ROUTERS: [&str; 1] = ["openrouter"];
+pub(crate) const ROUTERS: [&str; 1] = ["openrouter"];
 
 fn num(v: Option<&Value>) -> Option<f64> {
     v.and_then(Value::as_f64)
@@ -204,17 +204,19 @@ pub fn user_default_model(global: &Config) -> String {
     crate::setup::default_model(builtin_providers(), codex)
 }
 
-/// The providers the user's own config sends conversations to: those of its model (or the default
-/// one), models and judgeModel, and of the model `-m` gave. A provider the config only sets up
+/// The providers the user's own config sends conversations to: those of its model, models and
+/// judgeModel, of the model `-m` gave, and of the default model when neither `-m` nor the config
+/// names a model (as the run decides what it starts with). A provider the config only sets up
 /// (`providers`) is not one of them.
 fn user_providers(global: &Config, cli_model: Option<&str>, default_model: impl FnOnce() -> String) -> Vec<String> {
     let mut specs = strings(global.get("models"));
     specs.extend(cli_model.map(str::to_string));
     specs.extend(global.get("judgeModel").and_then(Value::as_str).map(str::to_string));
-    specs.push(match global.get("model").and_then(Value::as_str) {
-        Some(m) => m.to_string(),
-        None => default_model(),
-    });
+    match global.get("model").and_then(Value::as_str) {
+        Some(m) => specs.push(m.to_string()),
+        None if cli_model.is_none() => specs.push(default_model()),
+        None => {}
+    }
     specs.iter().map(|s| provider_of(s).to_string()).collect()
 }
 

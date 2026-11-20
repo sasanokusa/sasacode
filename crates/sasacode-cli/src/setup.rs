@@ -205,22 +205,67 @@ fn merge_provider(base: Option<&ProviderConfig>, over: &Value) -> ProviderConfig
     serde_json::from_value(v).unwrap_or_default()
 }
 
-/// [`Resolve`] for a model the model itself names (a subagent's `model`): only on a provider the
-/// user chose (`picked`, see [`chosen_providers`]), so the conversation never goes to a provider the
-/// user did not choose, however many keys they have set for other tools. Checked before any request;
-/// the error says which providers can be used.
-pub(crate) fn limited_resolve(resolve: Resolve, providers: Providers, picked: Vec<String>) -> Resolve {
+/// The current model of the session, as "<provider>/<model>" (it changes with /model and -r).
+pub(crate) type CurrentModel = Arc<dyn Fn() -> Option<String> + Send + Sync>;
+
+/// Whether `allowed`, a model the user chose, lets the session use `spec`: the same provider, and on
+/// a router (which serves many companies' models) the same company, `openrouter/<company>/...`, or
+/// that very model when it names no company.
+pub(crate) fn admits(allowed: &str, spec: &str) -> bool {
+    let provider = crate::config::provider_of(allowed);
+    if provider != crate::config::provider_of(spec) {
+        return false;
+    }
+    if !crate::config::ROUTERS.contains(&provider) {
+        return true;
+    }
+    let rest = |s: &str| s.get(provider.len() + 1..).unwrap_or_default().to_string();
+    match rest(allowed).split_once('/') {
+        Some((company, _)) => rest(spec).split_once('/').is_some_and(|(c, _)| c == company),
+        None => allowed == spec,
+    }
+}
+
+/// How the error names what `allowed` lets the session use.
+fn admitted(allowed: &str) -> String {
+    let provider = crate::config::provider_of(allowed);
+    if !crate::config::ROUTERS.contains(&provider) {
+        return provider.to_string();
+    }
+    match allowed.get(provider.len() + 1..).and_then(|r| r.split_once('/')) {
+        Some((company, _)) => format!("{provider}/{company}/*"),
+        None => allowed.to_string(),
+    }
+}
+
+/// [`Resolve`] for a model named at run time (a subagent's `model`, the model a plugin's settings
+/// name): only one [`admits`] allows, from the models the user chose (`picked`, see
+/// [`chosen_models`]) and the session's current model, so the conversation never goes to a provider
+/// the user did not choose, however many keys they have set for other tools. Checked before any
+/// request; the error says what can be used.
+pub(crate) fn limited_resolve(
+    resolve: Resolve,
+    providers: Providers,
+    picked: Vec<String>,
+    current: CurrentModel,
+) -> Resolve {
     Arc::new(move |spec: &str| {
-        let name = crate::config::provider_of(spec);
-        if !picked.iter().any(|p| p == name) {
+        let mut allowed = picked.clone();
+        allowed.extend(current());
+        if !allowed.iter().any(|a| admits(a, spec)) {
             let list = providers.read().unwrap_or_else(|e| e.into_inner());
-            let names: Vec<&str> = list
-                .keys()
-                .map(String::as_str)
-                .filter(|n| picked.iter().any(|p| p == n))
-                .collect();
+            let mut names: Vec<String> = Vec::new();
+            for a in allowed
+                .iter()
+                .filter(|a| list.contains_key(crate::config::provider_of(a)))
+            {
+                let name = admitted(a);
+                if !names.contains(&name) {
+                    names.push(name);
+                }
+            }
             anyhow::bail!(
-                "\"{spec}\": {name} is not one of the providers you chose for this session (your config, -m, or the default model); use a model from one of: {}",
+                "\"{spec}\" is not on one of the providers you chose for this session (your config, a trusted project's config, -m, or the current model); use a model from one of: {}",
                 names.join(", ")
             );
         }
@@ -228,13 +273,14 @@ pub(crate) fn limited_resolve(resolve: Resolve, providers: Providers, picked: Ve
     })
 }
 
-/// The providers the user chose: those their own (global) config names in `model`, `judgeModel`,
-/// `models`, `modelOverrides` and the models of plugin settings, the one `-m` named, and the default
-/// model's when neither `-m` nor the config names a model. What only the project's config names
-/// does not count, trusted or not, and nor does a key that is merely set.
-pub(crate) fn chosen_providers(global: &Config, cli_model: Option<&str>) -> Vec<String> {
-    let user = Settings::of(global);
-    let mut specs: Vec<String> = cli_model.map(str::to_string).into_iter().collect();
+/// The models the user chose: those the config in effect (their own, with a trusted project's laid
+/// over it) names in `model`, `judgeModel`, `models`, `modelOverrides` and the models of plugin
+/// settings, and the model the session starts with (`-m`, the config's, or the default). An
+/// untrusted project's config only keeps models on providers the user's own config already uses
+/// (see `split_project_config`), and a key that is merely set does not count.
+pub(crate) fn chosen_models(config: &Config, start: &str) -> Vec<String> {
+    let user = Settings::of(config);
+    let mut specs: Vec<String> = vec![start.to_string()];
     specs.extend(user.model.clone());
     specs.extend(user.judge_model.clone());
     specs.extend(user.models.clone().unwrap_or_default());
@@ -252,17 +298,13 @@ pub(crate) fn chosen_providers(global: &Config, cli_model: Option<&str>) -> Vec<
             .filter_map(|s| s.get("model")?.as_str().map(str::to_string));
         specs.extend(models);
     }
-    if cli_model.is_none() && user.model.is_none() {
-        specs.push(crate::config::user_default_model(global));
-    }
-    let mut names: Vec<String> = Vec::new();
-    for spec in &specs {
-        let name = crate::config::provider_of(spec);
-        if !names.iter().any(|n| n == name) {
-            names.push(name.to_string());
+    let mut out: Vec<String> = Vec::new();
+    for spec in specs {
+        if !out.contains(&spec) {
+            out.push(spec);
         }
     }
-    names
+    out
 }
 
 fn get_key(providers: &Providers) -> GetKey {
@@ -442,9 +484,16 @@ pub async fn setup(mut opts: SetupOptions) -> anyhow::Result<Arc<Harness>> {
     agent_opts.permissions = Some(Arc::new(PermissionPolicy::new(mode, &permissions.rules)?));
     let key = get_key(&providers);
     agent_opts.get_api_key = Some(key.clone());
-    let picked = chosen_providers(&loaded.global, opts.model.as_deref());
+    let picked = chosen_models(&config, &model_spec);
+    // Filled once the agent exists: what /model and -r switched to is the user's choice too.
+    let session: Arc<OnceLock<Agent>> = Arc::new(OnceLock::new());
     agent_opts.resolve_model = Some({
-        let resolve = limited_resolve(resolve.clone(), providers.clone(), picked);
+        let session = session.clone();
+        let current: CurrentModel = Arc::new(move || {
+            let m = session.get()?.model();
+            Some(format!("{}/{}", m.provider, m.id))
+        });
+        let resolve = limited_resolve(resolve.clone(), providers.clone(), picked, current);
         Arc::new(move |s: &str| resolve(s))
     });
     let max_turns = opts
@@ -455,6 +504,7 @@ pub async fn setup(mut opts: SetupOptions) -> anyhow::Result<Arc<Harness>> {
     agent_opts.max_retries = settings.max_retries.map(|n| n as u32);
     agent_opts.tool_search = settings.tool_search_config();
     let agent = Agent::new(agent_opts);
+    let _ = session.set(agent.clone());
 
     let catalog = ModelCatalog::new(providers.clone(), key.clone(), {
         let agent = agent.clone();

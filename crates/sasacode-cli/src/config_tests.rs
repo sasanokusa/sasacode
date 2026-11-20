@@ -327,6 +327,17 @@ fn without_a_model_in_the_global_config_the_default_ones_provider_is_the_users()
 }
 
 #[test]
+fn the_default_models_provider_is_not_the_users_when_the_model_flag_names_a_model() {
+    let project = obj(json!({ "judgeModel": "anthropic/claude-opus-5" }));
+    let default = || "anthropic/claude-opus-5".to_string();
+    let (safe, _) = split_project_config_with(&project, &Config::new(), None, default);
+    assert_eq!(sorted_keys(&safe), ["judgeModel"]);
+    let (safe, elevated) = split_project_config_with(&project, &Config::new(), Some("ollama/q"), default);
+    assert!(safe.is_empty());
+    assert_eq!(sorted_keys(&elevated), ["judgeModel"]);
+}
+
+#[test]
 fn the_trust_list_shows_what_each_entry_runs_and_sets_on_one_line_without_control_characters() {
     english(|| {
         let long = "y".repeat(300);
