@@ -1209,13 +1209,17 @@ fn start_dir(args: &sasacode_ai::JsonObject, cwd: &Path) -> Option<PathBuf> {
     Some(PathBuf::from(sasacode_tools::util::resolve_path(named, cwd)))
 }
 
-/// What the permission rules see of a `bg_start`: the command, and the directory when it is not the
-/// session's own. "Always allow" makes its rule from this, so a command allowed here is not allowed
-/// in another directory.
+/// What the permission rules see of a `bg_start`: the command, or, in a directory other than the
+/// session's, `cd '<dir>' && <command>` as bash would be written. Deny and ask rules still meet the
+/// command as one piece of the chain; "always allow" makes its rule from the whole, and a rule for the
+/// command alone does not cover the `cd`, so a command allowed here is not allowed elsewhere.
 fn start_target(args: &sasacode_ai::JsonObject, session_cwd: &Path) -> String {
     let command = args.get("command").and_then(Value::as_str).unwrap_or("").to_string();
     match start_dir(args, session_cwd) {
-        Some(dir) if !same_dir(&dir, session_cwd) => format!("{command} (in {})", dir.display()),
+        Some(dir) if !same_dir(&dir, session_cwd) => {
+            let dir = dir.display().to_string().replace('\'', "'\\''");
+            format!("cd '{dir}' && {command}")
+        }
         _ => command,
     }
 }

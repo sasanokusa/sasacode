@@ -597,12 +597,12 @@ async fn bg_start_always_allow_covers_the_command_in_the_directory_it_was_shown_
     assert_eq!(
         tool.match_target(&obj(json!({ "command": "make", "cwd": s(&a) })))
             .as_deref(),
-        Some(format!("make (in {})", s(&a)).as_str())
+        Some(format!("cd '{}' && make", s(&a)).as_str())
     );
 
     // "Always allow" in a: the rule is for a.
     let rules = PermissionPolicy::rules_for(&call(json!({ "command": "make", "cwd": s(&a) })));
-    assert_eq!(rules, vec![format!("bg_start(make (in {}))", s(&a))]);
+    assert_eq!(rules, vec![format!("bg_start(cd '{}' && make)", s(&a))]);
     h.agent
         .permissions()
         .add_rules(&sasacode_plugin_api::PermissionRules {
@@ -628,4 +628,18 @@ async fn bg_start_always_allow_covers_the_command_in_the_directory_it_was_shown_
     assert_eq!(decide(json!({ "command": "ls" })), Decision::Allow);
     assert_eq!(decide(json!({ "command": "ls", "cwd": s(&work) })), Decision::Allow);
     assert_eq!(decide(json!({ "command": "ls", "cwd": s(&a) })), Decision::Ask);
+
+    // A deny rule written for bash meets the command in another directory too.
+    h.agent
+        .permissions()
+        .add_rules(&sasacode_plugin_api::PermissionRules {
+            deny: vec!["bash(rm -rf build)".into()],
+            ..Default::default()
+        })
+        .unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(decide(json!({ "command": "rm -rf build" })), Decision::Deny);
+    assert_eq!(
+        decide(json!({ "command": "rm -rf build", "cwd": s(&a) })),
+        Decision::Deny
+    );
 }
