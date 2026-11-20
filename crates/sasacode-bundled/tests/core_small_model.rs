@@ -10,7 +10,7 @@ use std::sync::Arc;
 use serde_json::{Value, json};
 
 use sasacode_agent::agent::{Agent, AgentOptions};
-use sasacode_agent::permission::PermissionPolicy;
+use sasacode_agent::permission::{PermissionCheck, PermissionPolicy};
 use sasacode_agent::plugins::{PluginHost, PluginHostOptions};
 use sasacode_agent::session::SessionFile;
 use sasacode_ai::{
@@ -18,7 +18,7 @@ use sasacode_ai::{
 };
 use sasacode_bundled::hashline_edit::line_hash;
 use sasacode_bundled::syntax_check::check_rust_syntax;
-use sasacode_plugin_api::{Lang, PermissionMode, PermissionRules};
+use sasacode_plugin_api::{Decision, Lang, PermissionMode, PermissionRules};
 use sasacode_testing::{ReplayOptions, ReplayProvider};
 use support_core::*;
 
@@ -832,4 +832,349 @@ async fn slim_profile_adds_concise_rules_and_caps_oversized_read_and_bash_output
         "{}",
         last(&reqs[2]).text()
     );
+}
+
+#[tokio::test]
+async fn hash_edit_reports_permissions_as_edit_and_enforces_edit_rules_without_leaking_unread_files() {
+    let dir = temp_dir("sasacode-hashline-perm-");
+    let env_file = dir.path().join(".env");
+    let ok_file = dir.path().join("ok.txt");
+    std::fs::write(&env_file, "SECRET_TOKEN=super-secret-value\nOTHER=1\n").unwrap();
+    std::fs::write(&ok_file, "alpha\nbeta\n").unwrap();
+
+    let l = load_plugin(
+        "hashline-edit",
+        bundled("hashline-edit"),
+        &path_str(dir.path()),
+        json!({}),
+    )
+    .await;
+    let tool = l.tool("hash_edit");
+    assert_eq!(tool.permissions_as().as_deref(), Some("edit"));
+    assert_eq!(
+        tool.paths(&obj(json!({"path": ".env"})), dir.path()),
+        Some(vec![path_str(&env_file)])
+    );
+
+    let rules = PermissionRules {
+        deny: vec!["edit(**/.env)".into()],
+        ..Default::default()
+    };
+    let perm = Arc::new(PermissionPolicy::new(PermissionMode::Edits, &rules).unwrap());
+    let env_verdict = perm.check(&PermissionCheck {
+        tool: tool.clone(),
+        args: obj(json!({"path": ".env", "start": "1:00", "content": "x"})),
+        cwd: path_str(dir.path()),
+    });
+    assert_eq!(env_verdict.decision, Decision::Deny);
+    let ok_verdict = perm.check(&PermissionCheck {
+        tool,
+        args: obj(json!({"path": "ok.txt", "start": "1:00", "content": "x"})),
+        cwd: path_str(dir.path()),
+    });
+    assert_eq!(ok_verdict.decision, Decision::Allow);
+
+    // Even if only `read(**/.env)` is denied (so `hash_edit` reaches execution), a mismatch on an
+    // unread file must not print file lines.
+    let s = setup(
+        vec![
+            reply(vec![call(
+                "1",
+                "hash_edit",
+                json!({"path": path_str(&env_file), "start": "1:00", "content": "x"}),
+            )]),
+            reply(vec![say("done")]),
+        ],
+        &["hashline-edit"],
+        opts(&path_str(dir.path()), &[]),
+    )
+    .await;
+    let read_deny_rules = PermissionRules {
+        deny: vec!["read(**/.env)".into()],
+        ..Default::default()
+    };
+    s.agent.set_permissions(Arc::new(
+        PermissionPolicy::new(PermissionMode::Edits, &read_deny_rules).unwrap(),
+    ));
+    s.agent.prompt_text("probe").await.unwrap();
+    let reqs = s.requests();
+    let out = last(&reqs[1]).text();
+    assert!(out.contains("Hash mismatch at"), "{out}");
+    assert!(!out.contains("super-secret-value"), "leaked unread content: {out}");
+}
+
+#[tokio::test]
+async fn hash_edit_returns_fresh_anchors_and_rejects_stale_brace_anchor_after_insert() {
+    let dir = temp_dir("sasacode-hashline-stale-");
+    let file = dir.path().join("mod.rs");
+    let original = [
+        "fn first() {",
+        "    let a = 1;",
+        "    let b = 2;",
+        "}",
+        "fn middle() {",
+        "    let m1 = 1;",
+        "    let m2 = 2;",
+        "    let m3 = 3;",
+        "}",
+        "fn second() {",
+        "}",
+        "fn third() {",
+        "    done();",
+        "}",
+    ]
+    .join("\n")
+        + "\n";
+    std::fs::write(&file, &original).unwrap();
+    let f = path_str(&file);
+    let h2 = line_hash("    let a = 1;");
+    let h_brace = line_hash("}");
+    let h_inserted = line_hash("    let a3 = 4;");
+
+    // 1. Read -> insert 2 lines at line 2 -> reuse stale `11:<h_brace>` (old line 9 `}` shifted
+    //    to line 11!) -> must be rejected, then edit line 4 using fresh anchor from result, then
+    //    re-read and edit line 13 `}` using fresh anchor from read.
+    let s = setup(
+        vec![
+            reply(vec![call("1", "read", json!({"path": f}))]),
+            reply(vec![call(
+                "2",
+                "hash_edit",
+                json!({
+                    "path": f,
+                    "start": format!("2:{h2}"),
+                    "mode": "insert_after",
+                    "content": "    let a2 = 3;\n    let a3 = 4;"
+                }),
+            )]),
+            // Old line 11 (`fn second`'s `}`) is stale after +2 shift; line 11 now holds `fn middle`'s `}`!
+            reply(vec![call(
+                "3",
+                "hash_edit",
+                json!({"path": f, "start": format!("11:{h_brace}"), "content": "} // second"}),
+            )]),
+            // Fresh anchor `4:<h_inserted>` returned by call 2 must work without re-reading.
+            reply(vec![call(
+                "4",
+                "hash_edit",
+                json!({"path": f, "start": format!("4:{h_inserted}"), "content": "    let a3 = 40;"}),
+            )]),
+            // Re-read, then edit line 13 (`fn second`'s shifted `}`).
+            reply(vec![call("5", "read", json!({"path": f}))]),
+            reply(vec![call(
+                "6",
+                "hash_edit",
+                json!({"path": f, "start": format!("13:{h_brace}"), "content": "} // second"}),
+            )]),
+            reply(vec![say("done")]),
+        ],
+        &["hashline-edit"],
+        opts(&path_str(dir.path()), &[]),
+    )
+    .await;
+    s.agent.prompt_text("edit safely").await.unwrap();
+    let reqs = s.requests();
+
+    // Call 2 returns fresh anchors for the edited region.
+    let insert_out = last(&reqs[2]).text();
+    assert!(
+        insert_out.contains(&format!("4:{h_inserted}|    let a3 = 4;")),
+        "{insert_out}"
+    );
+
+    // Call 3 was rejected instead of silently corrupting `fn middle`'s `}` at line 11.
+    let stale_out = last(&reqs[3]).text();
+    assert!(
+        stale_out.contains("Stale anchor") && stale_out.contains("Re-read"),
+        "{stale_out}"
+    );
+
+    // Call 4 (using fresh anchor from call 2) and Call 6 (after re-read) both succeeded.
+    assert!(last(&reqs[4]).text().contains("Edited"), "{}", last(&reqs[4]).text());
+    assert!(last(&reqs[6]).text().contains("Edited"), "{}", last(&reqs[6]).text());
+
+    let disk = std::fs::read_to_string(&file).unwrap();
+    let lines: Vec<&str> = disk.lines().collect();
+    assert_eq!(lines[3], "    let a3 = 40;");
+    assert_eq!(lines[10], "}", "middle()'s closing brace at line 11 must be untouched");
+    assert_eq!(
+        lines[12], "} // second",
+        "second()'s closing brace at line 13 should be edited"
+    );
+
+    // 2. Same-turn batch: insert 2 lines + reuse stale `}` within the same turn must also reject.
+    let file2 = dir.path().join("batch.rs");
+    std::fs::write(&file2, "fn a() {\n    x();\n}\nfn b() {\n}\n").unwrap();
+    let f2 = path_str(&file2);
+    let hx = line_hash("    x();");
+    let s2 = setup(
+        vec![
+            reply(vec![call("1", "read", json!({"path": f2}))]),
+            reply(vec![
+                call(
+                    "2",
+                    "hash_edit",
+                    json!({
+                        "path": f2,
+                        "start": format!("2:{hx}"),
+                        "mode": "insert_after",
+                        "content": "    y();\n    z();"
+                    }),
+                ),
+                call(
+                    "3",
+                    "hash_edit",
+                    json!({"path": f2, "start": format!("5:{h_brace}"), "content": "} // b"}),
+                ),
+            ]),
+            reply(vec![say("done")]),
+        ],
+        &["hashline-edit"],
+        opts(&path_str(dir.path()), &[]),
+    )
+    .await;
+    s2.agent.prompt_text("batch").await.unwrap();
+    let batch_reqs = s2.requests();
+    let second_call_out = json_of(&batch_reqs[2].messages);
+    assert!(second_call_out.contains("Stale anchor"), "{second_call_out}");
+    assert_eq!(
+        std::fs::read_to_string(&file2).unwrap(),
+        "fn a() {\n    x();\n    y();\n    z();\n}\nfn b() {\n}\n"
+    );
+
+    // 3. External edit on disk between `read` and `hash_edit` must reject stale `}` anchor.
+    let file3 = dir.path().join("ext.rs");
+    std::fs::write(&file3, &original).unwrap();
+    let f3 = path_str(&file3);
+    let s3 = setup(
+        vec![
+            reply(vec![call("1", "read", json!({"path": f3}))]),
+            reply(vec![call(
+                "2",
+                "edit",
+                json!({
+                    "path": f3,
+                    "old_string": "    let a = 1;",
+                    "new_string": "    let a = 1;\n    let x1 = 1;\n    let x2 = 2;"
+                }),
+            )]),
+            reply(vec![call(
+                "3",
+                "hash_edit",
+                json!({"path": f3, "start": format!("11:{h_brace}"), "content": "} // ext"}),
+            )]),
+            reply(vec![say("done")]),
+        ],
+        &["hashline-edit"],
+        opts(&path_str(dir.path()), &[]),
+    )
+    .await;
+    s3.agent.prompt_text("external edit").await.unwrap();
+    let ext_reqs = s3.requests();
+    let ext_out = last(&ext_reqs[3]).text();
+    assert!(ext_out.contains("changed since your last read"), "{ext_out}");
+}
+
+#[tokio::test]
+async fn hashline_edit_strips_prefixes_from_hash_edit_content_and_edit_args() {
+    let dir = temp_dir("sasacode-hashline-strip-");
+    let file = dir.path().join("app.ts");
+    std::fs::write(&file, "const a = 1;\nconst b = 2;\nconst c = 3;\n").unwrap();
+    let f = path_str(&file);
+    let h1 = line_hash("const a = 1;");
+    let h2 = line_hash("const b = 2;");
+    let h3 = line_hash("const c = 3;");
+
+    let s = setup(
+        vec![
+            reply(vec![call("1", "read", json!({"path": f}))]),
+            // hash_edit content with N:hh| on every non-empty line gets stripped
+            reply(vec![call(
+                "2",
+                "hash_edit",
+                json!({
+                    "path": f,
+                    "start": format!("1:{h1}"),
+                    "end": format!("2:{h2}"),
+                    "content": format!("1:{h1}|const a = 10;\n2:{h2}|const b = 20;")
+                }),
+            )]),
+            // edit old_string & new_string with N:hh| on every non-empty line get stripped via ToolCall hook
+            reply(vec![call(
+                "3",
+                "edit",
+                json!({
+                    "path": f,
+                    "old_string": format!("2:{h2}|const b = 20;\n3:{h3}|const c = 3;"),
+                    "new_string": format!("2:{h2}|const b = 200;\n3:{h3}|const c = 300;")
+                }),
+            )]),
+            // Mixed prefixed + non-empty unprefixed lines must NOT be stripped
+            reply(vec![call(
+                "4",
+                "edit",
+                json!({
+                    "path": f,
+                    "old_string": format!("1:{h1}|const a = 10;\nconst b = 200;"),
+                    "new_string": "const a = 99;\nconst b = 200;"
+                }),
+            )]),
+            reply(vec![say("done")]),
+        ],
+        &["hashline-edit"],
+        opts(&path_str(dir.path()), &[]),
+    )
+    .await;
+    s.agent.prompt_text("strip prefixes").await.unwrap();
+    let reqs = s.requests();
+    assert!(last(&reqs[2]).text().contains("Edited"), "{}", last(&reqs[2]).text());
+    assert!(last(&reqs[3]).text().contains("Edited"), "{}", last(&reqs[3]).text());
+    assert!(
+        last(&reqs[4]).text().contains("old_string not found"),
+        "{}",
+        last(&reqs[4]).text()
+    );
+    assert_eq!(
+        std::fs::read_to_string(&file).unwrap(),
+        "const a = 10;\nconst b = 200;\nconst c = 300;\n"
+    );
+}
+
+#[tokio::test]
+async fn slim_profile_cuts_hashline_and_japanese_read_output_at_line_boundaries() {
+    let dir = temp_dir("sasacode-slim-hashline-");
+    let jp_file = dir.path().join("jp.txt");
+    let content = (1..=120)
+        .map(|i| format!("日本語の行-{i:03} パディング文字列です"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    std::fs::write(&jp_file, &content).unwrap();
+
+    let s = setup(
+        vec![
+            reply(vec![call("1", "read", json!({"path": path_str(&jp_file)}))]),
+            reply(vec![say("ok")]),
+        ],
+        &["hashline-edit", "slim-profile"],
+        opts(&path_str(dir.path()), &[("slim-profile", json!({"readMaxChars": 600}))]),
+    )
+    .await;
+    s.agent.set_permissions(policy(PermissionMode::Auto));
+    s.agent.prompt_text("read jp").await.unwrap();
+    let reqs = s.requests();
+    let out = last(&reqs[1]).text();
+    assert!(out.contains("[slim-profile: truncated"), "{out}");
+
+    let parts: Vec<&str> = out.split('\n').collect();
+    let marker = parts
+        .iter()
+        .position(|l| l.contains("[slim-profile: truncated"))
+        .expect("marker");
+    // Tail starts cleanly on a complete line with full `N:hh|` prefix, never mid-prefix (e.g. `3:ab|`).
+    let first_tail = parts[marker + 1];
+    let (prefix, body) = first_tail.split_once('|').expect("hashline pipe in tail");
+    let (num, hash) = prefix.split_once(':').expect("colon in tail");
+    let n: usize = num.parse().expect("line number");
+    assert!(n > 90 && hash.len() == 2, "broken tail prefix: {first_tail}");
+    assert!(body.starts_with("日本語の行-"), "broken tail body: {first_tail}");
 }
