@@ -365,6 +365,66 @@ async fn web_fetch_lists_the_links_of_the_part_it_shows_and_a_missing_page_point
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn web_fetch_reads_the_url_it_was_given_on_this_machine_but_stops_at_a_redirect_to_an_internal_address() {
+    let hits = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counted = hits.clone();
+    let inner = serve(Router::new().fallback(move || {
+        let counted = counted.clone();
+        async move {
+            counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            "the internal page"
+        }
+    }))
+    .await;
+    let target = format!("http://127.0.0.1:{}/inner", inner.port);
+    let outer = serve(Router::new().fallback(move |uri: Uri| {
+        let target = target.clone();
+        async move {
+            match uri.path() {
+                "/start" => (StatusCode::FOUND, [(header::LOCATION, target)]).into_response(),
+                "/login-first" => (StatusCode::FOUND, [(header::LOCATION, "/plain".to_string())]).into_response(),
+                _ => ([(header::CONTENT_TYPE, "text/plain")], "the page you asked for").into_response(),
+            }
+        }
+    }))
+    .await;
+    let st = setup(vec![], &["web-fetch"], SetupOpts::default()).await;
+    // The URL the user approved is read even though it is on this machine.
+    let plain = first_text(
+        &st.exec("web_fetch", json!({ "url": format!("{}/plain", outer.origin()) }))
+            .await,
+    );
+    assert!(plain.contains("the page you asked for"), "{plain}");
+    // A redirect within the same origin (a dev server sending you to its login page) is followed.
+    let same = first_text(
+        &st.exec("web_fetch", json!({ "url": format!("{}/login-first", outer.origin()) }))
+            .await,
+    );
+    assert!(
+        same.contains(&format!("(redirected from {}/login-first)", outer.origin()))
+            && same.contains("the page you asked for"),
+        "{same}"
+    );
+    // Its redirect to another internal address is not followed, and the error says so.
+    let refused = st
+        .exec("web_fetch", json!({ "url": format!("{}/start", outer.origin()) }))
+        .await;
+    assert!(refused.is_error());
+    let text = first_text(&refused);
+    assert!(
+        text.contains(&format!(
+            "Fetch failed: redirect to http://127.0.0.1:{}/inner refused: not a public address",
+            inner.port
+        )),
+        "{text}"
+    );
+    assert!(!text.contains("the internal page"));
+    assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 0);
+    outer.stop().await;
+    inner.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn web_search_starts_rustxng_on_first_use_with_rustxng_idle_timeout_shares_it_and_it_exits_when_idle() {
     let port = free_port();
     let opts = SetupOpts::settings(&[(

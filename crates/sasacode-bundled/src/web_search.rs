@@ -2,7 +2,6 @@
 //! (https://github.com/sahenjp/RustXNG), a keyless SearXNG-compatible metasearch server, so the agent
 //! finds URLs instead of guessing them.
 
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::path::Path;
 use std::sync::{Arc, LazyLock, Mutex};
 use std::time::Duration;
@@ -20,68 +19,11 @@ use sasacode_plugin_api::{
     apply_child_env, error_result, hook,
 };
 
+pub use crate::net_guard::private_address;
+use crate::net_guard::{Check, Limit, SYSTEM, get_following};
 use crate::net_util::{js_num_str, js_trim, js_words, setting_number, setting_str, utf16_len, utf16_prefix};
-use crate::rustxng_install::{InstallOptions, RUSTXNG_RELEASES, install_rustxng, managed_rustxng, no_redirects};
+use crate::rustxng_install::{InstallOptions, RUSTXNG_RELEASES, install_rustxng, managed_rustxng};
 use crate::web_fetch::{USER_AGENT, content_type, html_to_text, read_capped, readable, send_within};
-
-/// An IPv6 address as its eight 16-bit words, `::` filled in with zeros; nothing for anything else.
-/// A zone (`fe80::1%eth0`) is accepted as Node's `isIP` accepts it, and does not count.
-fn ipv6_words(ip: &str) -> Option<[u16; 8]> {
-    let v = ip.to_lowercase();
-    let addr = v.split_once('%').map_or(v.as_str(), |(a, _)| a);
-    addr.parse::<Ipv6Addr>().ok().map(|a| a.segments())
-}
-
-/// The IPv4 an address means: itself for an IPv4, and for an IPv6 that carries one its last 32 bits —
-/// written in dotted decimal (`::ffff:127.0.0.1`) or in hexadecimal (`::ffff:7f00:1`, which the URL
-/// parser keeps as written and so used to be judged as an unknown, public IPv6). Nothing for an
-/// address that really is IPv6.
-fn carried_ipv4(ip: &str) -> Option<[u8; 4]> {
-    if let Ok(v4) = ip.parse::<Ipv4Addr>() {
-        return Some(v4.octets());
-    }
-    let w = ipv6_words(ip)?;
-    let v4 = |hi: u16, lo: u16| [(hi >> 8) as u8, (hi & 0xff) as u8, (lo >> 8) as u8, (lo & 0xff) as u8];
-    // An IPv4-mapped (`::ffff:`) address, or the older IPv4-compatible one (all zero): a fetch to
-    // either goes to the IPv4 they carry, so both are judged as that address.
-    if w[..5].iter().all(|x| *x == 0) && (w[5] == 0xffff || w[5] == 0) {
-        return Some(v4(w[6], w[7]));
-    }
-    // NAT64's well-known prefix (64:ff9b::/96, RFC 6052): a NAT64 gateway connects to the IPv4 in the
-    // last 32 bits, and DNS64 answers a name with such an address (#83).
-    if w[0] == 0x64 && w[1] == 0xff9b && w[2..6].iter().all(|x| *x == 0) {
-        return Some(v4(w[6], w[7]));
-    }
-    // 6to4 (2002::/16) carries its IPv4 in bits 16-47.
-    if w[0] == 0x2002 {
-        return Some(v4(w[1], w[2]));
-    }
-    None
-}
-
-/// Loopback, private, link-local (cloud metadata), shared, unspecified and multicast addresses.
-pub fn private_address(ip: &str) -> bool {
-    if let Some([a, b, _, _]) = carried_ipv4(ip) {
-        return a == 0
-            || a == 10
-            || a == 127
-            || a >= 224
-            || (a == 169 && b == 254)
-            || (a == 172 && (16..=31).contains(&b))
-            || (a == 192 && b == 168)
-            || (a == 100 && (64..=127).contains(&b));
-    }
-    let v = ip.to_lowercase();
-    let w = ipv6_words(ip);
-    // A real IPv6, then: unspecified and loopback, unique local (fc/fd), link-local (fe80..), multicast (ff),
-    // and NAT64's local-use prefix (64:ff9b:1::/48, RFC 8215), whose IPv4 are the site's own.
-    v == "::"
-        || v == "::1"
-        || ["fc", "fd", "fe8", "fe9", "fea", "feb", "ff"]
-            .iter()
-            .any(|p| v.starts_with(p))
-        || w.is_some_and(|w| w[0] == 0x64 && w[1] == 0xff9b && w[2] == 1)
-}
 
 const DEFAULT_PORT: f64 = 47888.0;
 /// Seconds without a request before the sidecar exits (RUSTXNG_IDLE_TIMEOUT).
@@ -197,67 +139,31 @@ pub fn matches_query(query: &str, r: &SearxResult, first: bool) -> bool {
     found >= if first { 1 } else { terms.len().min(2) }
 }
 
-/// Whether a URL's host is on the public internet (what a page an engine returned may be read from).
-async fn public_host(url: &url::Url) -> Result<bool, String> {
-    let host = url.host_str().unwrap_or("");
-    let host = host.strip_prefix('[').unwrap_or(host);
-    let host = host.strip_suffix(']').unwrap_or(host);
-    if host == "localhost" || host.ends_with(".localhost") {
-        return Ok(false);
-    }
-    let addresses: Vec<String> = if host.parse::<IpAddr>().is_ok() {
-        vec![host.to_string()]
-    } else {
-        tokio::net::lookup_host((host, 0))
-            .await
-            .map_err(|e| e.to_string())?
-            .map(|a| a.ip().to_string())
-            .collect()
-    };
-    Ok(!addresses.is_empty() && !addresses.iter().any(|a| private_address(a)))
-}
-
 static REFERENCE: LazyLock<Regex> = LazyLock::new(|| {
     // INFALLIBLE: a fixed pattern.
     Regex::new(r"\[([^\]]*)\]\[\d+\]").expect("fixed pattern")
 });
 
 /// A result page's main text (furniture and menus left out), at most TEXT_CHARS + 1 characters.
-/// The URL comes from the engine, not the user: unless `any_host`, it and every redirect must be public.
+/// The URL comes from the engine, not the user: unless `any_host`, it and every redirect must be public,
+/// each judged when it is reached and connected to the address that was judged.
 async fn page_text(url: &str, signal: &CancellationToken, any_host: bool) -> Result<String, String> {
-    let mut next = url::Url::parse(url).map_err(|_| "Invalid URL".to_string())?;
-    let mut hops = 0;
-    // The 15 seconds run from the last request's start over its body too.
-    let mut started;
-    let res = loop {
-        if next.scheme() != "http" && next.scheme() != "https" {
-            return Err(format!("not http(s): {}:", next.scheme()));
-        }
-        if !any_host && !public_host(&next).await? {
-            return Err("not a public address".into());
-        }
-        let req = no_redirects()
-            .get(next.clone())
-            .header("user-agent", USER_AGENT)
-            .header("accept", "text/html,text/plain;q=0.9");
-        started = tokio::time::Instant::now();
-        let res = send_within(req, signal, Duration::from_secs(15)).await?;
-        let location = if res.status().is_redirection() {
-            res.headers()
-                .get(reqwest::header::LOCATION)
-                .and_then(|v| v.to_str().ok())
-                .map(str::to_string)
-        } else {
-            None
-        };
-        let Some(location) = location else { break res };
-        drop(res);
-        if hops >= 5 {
-            return Err("too many redirects".into());
-        }
-        hops += 1;
-        next = next.join(&location).map_err(|_| "Invalid URL".to_string())?;
-    };
+    let first = url::Url::parse(url).map_err(|_| "Invalid URL".to_string())?;
+    let check = if any_host { Check::Never } else { Check::All };
+    let headers = [("user-agent", USER_AGENT), ("accept", "text/html,text/plain;q=0.9")];
+    // The 15 seconds run from the last request's start over the body too.
+    let followed = get_following(
+        first,
+        check,
+        5,
+        &SYSTEM,
+        &headers,
+        signal,
+        Limit::PerHop(Duration::from_secs(15)),
+    )
+    .await
+    .map_err(|e| e.message)?;
+    let (res, next, started) = (followed.res, followed.url, followed.started);
     let type_ = content_type(&res);
     if !res.status().is_success() {
         return Err(res.status().as_u16().to_string());
@@ -759,81 +665,4 @@ pub fn plugin(api: PluginApi) -> BoxFuture<'static, anyhow::Result<()>> {
 /// [`format_results`] of a plain JSON answer, for callers holding the server's JSON.
 pub fn format_json(query: &str, data: &Value) -> String {
     format_results(query, &SearxResponse::from_value(data))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    // bundled.test.ts: "privateAddress: loopback, private, link-local and the like, IPv4 and IPv6"
-    #[test]
-    fn private_address_loopback_private_link_local_and_the_like_ipv4_and_ipv6() {
-        let internal = [
-            "127.0.0.1",
-            "10.1.2.3",
-            "172.16.0.1",
-            "172.31.255.255",
-            "192.168.1.1",
-            "169.254.169.254",
-            "100.64.0.1",
-            "0.0.0.0",
-            "::1",
-            "fd00::1",
-            "fe80::1",
-            "::ffff:127.0.0.1",
-            // The same addresses written in hexadecimal: the URL parser keeps them as written, so they
-            // must be judged by the IPv4 they mean (#55).
-            "::ffff:7f00:1",
-            "::ffff:7f00:0001",
-            "0:0:0:0:0:ffff:7f00:1",
-            "::ffff:a00:1",
-            "::ffff:a9fe:a9fe",
-            "::ffff:6440:0",
-            "::ffff:c0a8:1",
-            "::ffff:0:0",
-        ];
-        for ip in internal {
-            assert_eq!((ip, private_address(ip)), (ip, true));
-        }
-        for ip in [
-            "8.8.8.8",
-            "172.32.0.1",
-            "1.1.1.1",
-            "2606:4700::1111",
-            "::ffff:8.8.8.8",
-            "::ffff:100:63",
-            "::ffff:a9fd:1",
-            "::ffff:c0a7:1",
-        ] {
-            assert_eq!((ip, private_address(ip)), (ip, false));
-        }
-        // NAT64 (#83): the well-known prefix is judged by the IPv4 it carries, the local-use one is the
-        // site's own; 6to4 likewise.
-        for ip in [
-            "64:ff9b::127.0.0.1",
-            "64:ff9b::7f00:1",
-            "64:ff9b::a9fe:a9fe",
-            "64:ff9b::c0a8:101",
-            "64:ff9b:1::8.8.8.8",
-            "2002:7f00:1::1",
-            "2002:a00:1::",
-        ] {
-            assert_eq!((ip, private_address(ip)), (ip, true));
-        }
-        for ip in [
-            "64:ff9b::8.8.8.8",
-            "64:ff9b::808:808",
-            "2002:808:808::1",
-            "64:ff9b:2::7f00:1",
-        ] {
-            assert_eq!((ip, private_address(ip)), (ip, false));
-        }
-    }
-
-    #[test]
-    fn private_address_accepts_a_zone_and_judges_upper_case() {
-        assert!(private_address("fe80::1%eth0"));
-        assert!(private_address("::FFFF:7F00:1"));
-        assert!(!private_address("2606:4700::1111%en0"));
-    }
 }

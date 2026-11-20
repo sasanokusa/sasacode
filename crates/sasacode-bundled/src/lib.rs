@@ -23,6 +23,7 @@ pub mod gui;
 pub mod image_attach;
 pub mod image_slim;
 pub mod loop_guard;
+pub(crate) mod net_guard;
 pub(crate) mod net_util;
 pub mod openai_codex;
 pub mod permission_presets;

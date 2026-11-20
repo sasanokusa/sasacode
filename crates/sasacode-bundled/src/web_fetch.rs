@@ -19,11 +19,14 @@ use unicode_normalization::UnicodeNormalization;
 
 use sasacode_plugin_api::{PluginApi, ToolDef, ToolKind, ToolResult, error_result};
 
+use crate::net_guard::{Check, Limit, SYSTEM, get_following};
 use crate::net_util::{collapse_space, js_trim, utf16_len, utf16_slice};
 
 const DEFAULT_MAX: usize = 50_000;
 /// Read at most this much of a response: a huge page must not fill memory.
 const MAX_BYTES: usize = 10_000_000;
+/// Redirects followed before giving up.
+const MAX_REDIRECTS: usize = 10;
 
 pub const USER_AGENT: &str = "sasacode (+https://github.com/sasanokusa/sasacode)";
 
@@ -615,11 +618,25 @@ pub(crate) fn content_type(res: &reqwest::Response) -> String {
         .unwrap_or_default()
 }
 
-/// Whether `url` answers with a document (a quick look, the body is not read).
+/// Whether `url` answers with a document (a quick look, the body is not read). It is on a site this
+/// fetch already reached, and its redirects are judged like any other.
 async fn exists(url: &str, signal: &CancellationToken) -> bool {
-    let req = sasacode_ai::http::client().get(url).header("user-agent", USER_AGENT);
-    match send_within(req, signal, Duration::from_secs(5)).await {
-        Ok(res) => res.status().is_success() && !content_type(&res).contains("html"),
+    let Ok(url) = url::Url::parse(url) else {
+        return false;
+    };
+    let headers = [("user-agent", USER_AGENT)];
+    match get_following(
+        url,
+        Check::Redirects,
+        MAX_REDIRECTS,
+        &SYSTEM,
+        &headers,
+        signal,
+        Limit::Total(Duration::from_secs(5)),
+    )
+    .await
+    {
+        Ok(found) => found.res.status().is_success() && !content_type(&found.res).contains("html"),
         Err(_) => false,
     }
 }
@@ -656,29 +673,37 @@ async fn fetch_page(
         None => "start from a page you have fetched and follow its links".to_string(),
     };
     let deadline = Duration::from_secs(30);
-    let req = sasacode_ai::http::client()
-        .get(url)
-        .header("user-agent", USER_AGENT)
-        .header("accept", "text/html,text/plain,application/json,*/*");
-    let started = tokio::time::Instant::now();
-    let res = match send_within(req, &signal, deadline).await {
-        Ok(res) => res,
+    let limit = Limit::Total(deadline);
+    let headers = [
+        ("user-agent", USER_AGENT),
+        ("accept", "text/html,text/plain,application/json,*/*"),
+    ];
+    // The URL the user was asked about is fetched as it is (a dev server on this machine is fine); each
+    // redirect is a new place, judged and connected to the address that was judged.
+    let followed = match get_following(url, Check::Redirects, MAX_REDIRECTS, &SYSTEM, &headers, &signal, limit).await {
+        Ok(followed) => followed,
         Err(e) => {
-            let hint = if signal.is_cancelled() {
+            let hint = if signal.is_cancelled() || e.refused {
                 String::new()
             } else {
                 format!("\n[Do not guess another URL: {instead}.]")
             };
-            return Ok(error_result(format!("Fetch failed: {e}{hint}")));
+            return Ok(error_result(format!("Fetch failed: {}{hint}", e.message)));
         }
     };
+    let (res, started) = (followed.res, followed.started);
     let type_ = content_type(&res);
     let status = res.status();
-    let final_url = res.url().to_string();
+    let final_url = followed.url.to_string();
+    // Where the page really came from, said when it is not where the URL pointed.
+    let via = followed
+        .redirected_from
+        .map(|from| format!(" (redirected from {from})"))
+        .unwrap_or_default();
     let texty = ["text", "json", "xml", "javascript"].iter().any(|k| type_.contains(k));
     if !texty && !type_.is_empty() {
         return Ok(error_result(format!(
-            "{} {type_}: not a text document.",
+            "{} {type_}: not a text document.{via}",
             status.as_u16()
         )));
     }
@@ -703,7 +728,10 @@ async fn fetch_page(
     } else {
         String::new()
     };
-    let mut parts = vec![format!("[{} {final_url}{cut}]", status.as_u16()), slice.to_string()];
+    let mut parts = vec![
+        format!("[{} {final_url}{via}{cut}]", status.as_u16()),
+        slice.to_string(),
+    ];
     if let Some(list) = link_list(slice, &links) {
         parts.push(format!("Links:\n{list}"));
     }
