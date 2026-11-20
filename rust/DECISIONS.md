@@ -27,7 +27,7 @@ command replaces an earlier one (a bundled plugin's, or an MCP server's tool wit
 a plugin on disk taking the place of the bundled plugin of the same name is gone with the loader.
 Outside extension is MCP and Skills only. The official plugins
 (ask-user, git-context, project-checks, workflows) and jev-guard become bundled, disabled by
-default. Of the user's personal plugins only free-search is ported (bundled, disabled by default).
+default (ask-user was turned on later, ADR-011). Of the user's personal plugins only free-search is ported (bundled, disabled by default).
 Consequences: Requirements P2/P3 are read as "no privileged path inside the binary". The plugin-api
 version number is kept for the record only.
 
@@ -105,6 +105,8 @@ installs in `~/.sasacode/plugins` are no longer loaded; the plugin names stay th
 `plugins.settings` for them keep working once enabled.
 jev-guard's own switch, `plugins.settings["jev-guard"].enabled: true`, also turns it on, so
 configs written for the installed plugin keep working.
+Amended 2026-11-19 (the user's call, v0.20.1): ask-user is on by default; `plugins.disabled` turns it off.
+The other five stay off. A config that names it in `plugins.enabled` is unaffected.
 
 ## ADR-012: Two `unsafe` sites: setsid before exec for bash, and the environment at startup
 Status: accepted (2026-11-18)

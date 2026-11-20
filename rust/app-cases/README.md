@@ -15,7 +15,7 @@ rust-anything app replay . --build "$PWD/target/debug/sasacode"
 
 Changed by hand after recording, because 0.20 changes them on purpose (rust/DECISIONS.md):
 
-- `version`, `version-short`: 0.20.0 (ADR-007).
+- `version`, `version-short`: the workspace version, 0.20.1 (ADR-007).
 - `help`, `help-ja`: the four `sasacode plugin …` lines are gone (ADR-002).
 - `plugin-list`: `sasacode plugin` now fails with the message that it was removed (ADR-002).
 - `help`, `help-ja`: `--trust-project` no longer names project plugins, which 0.20 does not load (ADR-002).
