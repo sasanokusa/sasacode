@@ -275,22 +275,20 @@ fn a_rule_naming_a_folder_with_extglob_matches_that_folder_131() {
 }
 
 #[test]
-fn where_the_fs_folds_case_a_deny_rule_holds_in_any_case_nfd_matches_nfc_98() {
+fn a_deny_rule_holds_in_any_case_nfd_matches_nfc_98() {
     let tmp = tempfile::Builder::new().prefix("sasacode-perm-").tempdir().unwrap();
     let dir = tmp.path().to_string_lossy().to_string();
     std::fs::write(tmp.path().join(".env"), "API_KEY=topsecret").unwrap();
     std::fs::create_dir(tmp.path().join("secrets")).unwrap();
-    let folds = tmp.path().join(".ENV").exists();
     let p = policy(
         M::Edits,
         json!({ "deny": ["read(.env)", "read(secrets/**)", "edit(secrets/**)", "read(が.txt)"] }),
     );
     let check = |tool: ToolRef, path: &str| d(&p, &call(tool, path, &dir));
-    let either = |yes: bool| if yes { Deny } else { Allow };
     assert_eq!(check(read_tool(), ".env"), Deny);
-    assert_eq!(check(read_tool(), ".ENV"), either(folds));
-    assert_eq!(check(read_tool(), "Secrets/key.txt"), either(folds));
-    assert_eq!(check(edit_tool(), "SECRETS/key.txt"), either(folds));
+    assert_eq!(check(read_tool(), ".ENV"), Deny);
+    assert_eq!(check(read_tool(), "Secrets/key.txt"), Deny);
+    assert_eq!(check(edit_tool(), "SECRETS/key.txt"), Deny);
     let nfd: String = "が.txt".nfd().collect();
     assert_eq!(check(read_tool(), &nfd), Deny);
     assert_eq!(check(read_tool(), "other.txt"), Allow);
@@ -383,7 +381,7 @@ fn globs_match_as_bun_glob_did() {
         if WINDOWS && path.contains('\\') {
             continue;
         }
-        if glob(pattern).is_match(path) != want {
+        if glob(pattern, None).is_match(path) != want {
             wrong.push(format!("{pattern:?} {path:?}: bun {want}"));
         }
     }
@@ -412,7 +410,7 @@ fn backslash_escapes_read_as_bun_glob_did() {
         ("/p/\\{a,b}", "/p/{a,b}", true),
         ("/p/\\{a,b}", "/p/a", false),
     ] {
-        assert_eq!(glob(pattern).is_match(path), want, "{pattern:?} {path:?}");
+        assert_eq!(glob(pattern, None).is_match(path), want, "{pattern:?} {path:?}");
     }
 }
 
@@ -490,8 +488,8 @@ async fn a_link_before_a_dotdot_cannot_move_a_call_away_from_the_path_judged() {
     );
 }
 
-/// Where the file system folds case, a deny or ask rule also takes letters that fold to another
-/// (`ſ` to `s`, `ς` to `σ`) as that one; an allow rule matches no more than in lower case.
+/// A deny or ask rule also takes letters that fold to another (`ſ` to `s`, `ς` to `σ`) as that one; an allow rule
+/// matches no more than in lower case, and only where the file system folds case.
 #[test]
 fn deny_and_ask_rules_fold_letters_that_fold_to_another_allow_rules_do_not() {
     let tmp = tempfile::Builder::new().prefix("sasacode-perm-").tempdir().unwrap();
@@ -501,12 +499,11 @@ fn deny_and_ask_rules_fold_letters_that_fold_to_another_allow_rules_do_not() {
     let rules = json!({ "deny": ["read(secrets/**)"], "ask": ["edit(σ/**)"], "allow": ["read(docs/**)"] });
     let p = policy(M::Auto, rules);
     let check = |tool: ToolRef, path: &str| d(&p, &call(tool, path, &dir));
-    let either = |yes: bool, no: Decision| if yes { Deny } else { no };
     assert_eq!(check(read_tool(), "secrets/key"), Deny);
-    assert_eq!(check(read_tool(), "ſecrets/key"), either(folds, Allow));
-    assert_eq!(check(read_tool(), "ſECRETS/key"), either(folds, Allow));
-    assert_eq!(check(edit_tool(), "ς/x"), if folds { Ask } else { Allow });
-    assert_eq!(check(edit_tool(), "Σ/x"), if folds { Ask } else { Allow });
+    assert_eq!(check(read_tool(), "ſecrets/key"), Deny);
+    assert_eq!(check(read_tool(), "ſECRETS/key"), Deny);
+    assert_eq!(check(edit_tool(), "ς/x"), Ask);
+    assert_eq!(check(edit_tool(), "Σ/x"), Ask);
     // An allow rule is no wider than before: `ſ` is not `s` to it.
     let ask = policy(M::Ask, json!({ "allow": ["read(docs/**)", "read(ſrc/**)"] }));
     let check = |path: &str| d(&ask, &call(read_tool(), path, &dir));
@@ -539,8 +536,11 @@ fn edits_mode_asks_before_a_write_that_could_make_a_folder_a_git_repository() {
     put("config");
     put("objects/a.txt");
     put("refs/notes.md");
+    put("hooks/x");
     for path in [
         "config",
+        "config.worktree",
+        "hooks/x",
         "objects/a.txt",
         "objects/x/y",
         "refs/notes.md",
@@ -555,6 +555,8 @@ fn edits_mode_asks_before_a_write_that_could_make_a_folder_a_git_repository() {
         "config",
         "CONFIG",
         "conﬁg",
+        "config.worktree",
+        "hooks/pre-commit",
         "objects/a.txt",
         "objects/ab/cd",
         "refs/heads/x",
@@ -578,42 +580,83 @@ fn edits_mode_asks_before_a_write_that_could_make_a_folder_a_git_repository() {
     assert_eq!(write("wt/config"), Ask);
     assert_eq!(write("lk/config"), Ask);
     assert_eq!(write("wt/objects/x"), Allow);
+    // A folder named otherwise with a HEAD and objects/ or refs/ but no config is a repository too (a bare one, or
+    // one a `.git` file points at).
+    put("my.git/HEAD");
+    put("my.git/objects/info/x");
+    put("other/HEAD");
+    put("other/refs/heads/main");
+    for path in [
+        "my.git/hooks/pre-commit",
+        "my.git/config.worktree",
+        "my.git/config",
+        "other/hooks/post-checkout",
+    ] {
+        assert_eq!(write(path), Ask, "{path}");
+    }
     // Reading is not writing.
     assert_eq!(d(&edits(), &call(read_tool(), "config", &cwd)), Allow);
     assert_eq!(d(&edits(), &call(read_tool(), "HEAD", &cwd)), Allow);
 }
 
-/// Where the file system folds case in full (APFS takes `ß` as `ss` and `ﬁ` as `fi`), deny and ask rules hold for
-/// such names too. The volume the path is on counts
-/// as well as the working directory's.
+/// A file system may fold case in full (APFS takes `ß` and `ẞ` as `ss` and `ﬁ` as `fi`), so deny and ask rules hold
+/// for such names too, whatever the working directory's file system.
 #[test]
-fn deny_and_ask_rules_fold_names_in_full_where_the_file_system_does() {
+fn deny_and_ask_rules_fold_names_in_full() {
     let tmp = tempfile::Builder::new().prefix("sasacode-perm-").tempdir().unwrap();
     let dir = tmp.path().to_string_lossy().to_string();
     std::fs::create_dir(tmp.path().join("secrets")).unwrap();
-    let folds = tmp.path().join("SECRETS").exists();
     let rules = json!({ "deny": ["read(secrets/**)", "read(config.txt)"], "ask": ["edit(strasse/**)"] });
     let p = policy(M::Auto, rules);
     let check = |tool: ToolRef, path: &str| d(&p, &call(tool, path, &dir));
-    let either = |yes: bool, d: Decision| if yes { d } else { Allow };
-    assert_eq!(check(read_tool(), "conﬁg.txt"), either(folds, Deny));
-    assert_eq!(check(read_tool(), "CONﬁG.TXT"), either(folds, Deny));
-    assert_eq!(check(edit_tool(), "ﬆraße/x"), either(folds, Ask));
-    assert_eq!(check(edit_tool(), "STRASSE/x"), either(folds, Ask));
+    assert_eq!(check(read_tool(), "conﬁg.txt"), Deny);
+    assert_eq!(check(read_tool(), "CONﬁG.TXT"), Deny);
+    assert_eq!(check(edit_tool(), "ﬆraße/x"), Ask);
+    assert_eq!(check(edit_tool(), "STRAẞE/x"), Ask);
+    assert_eq!(check(edit_tool(), "STRASSE/x"), Ask);
     assert_eq!(check(read_tool(), "other.txt"), Allow);
-    // The working directory ("/") has no letters to tell by; the path's folder does.
+    // The working directory ("/") has no letters to tell by.
     let abs = policy(M::Auto, json!({ "deny": [format!("read({dir}/secrets/**)")] }));
-    assert_eq!(
-        d(&abs, &call(read_tool(), &format!("{dir}/SECRETS/k"), "/")),
-        either(folds, Deny)
-    );
-    assert_eq!(
-        d(&abs, &call(read_tool(), &format!("{dir}/ſECRETS/k"), "/")),
-        either(folds, Deny)
-    );
+    assert_eq!(d(&abs, &call(read_tool(), &format!("{dir}/SECRETS/k"), "/")), Deny);
+    assert_eq!(d(&abs, &call(read_tool(), &format!("{dir}/ſECRETS/k"), "/")), Deny);
     // An allow rule is no wider: `ß` is not `ss` to it.
     let ask = policy(M::Ask, json!({ "allow": ["read(strasse/**)"] }));
     assert_eq!(d(&ask, &call(read_tool(), "straße/a", &dir)), Ask);
+}
+
+/// Deny and ask rules fold where the working directory's file system does not tell (a folder that does not exist, a
+/// case-sensitive root over a volume that folds); allow rules then match as written.
+#[test]
+fn deny_rules_fold_case_where_the_working_directory_does_not() {
+    let p = policy(
+        M::Auto,
+        json!({ "deny": ["read(.env)", "read(.ssh/**)"], "ask": ["edit(/mnt/c/keys/**)"] }),
+    );
+    let check = |tool: ToolRef, path: &str| d(&p, &call(tool, path, CWD));
+    assert_eq!(check(read_tool(), ".ENV"), Deny);
+    assert_eq!(check(read_tool(), ".ẞh/id"), Deny);
+    assert_eq!(check(read_tool(), ".ßH/id"), Deny);
+    assert_eq!(check(read_tool(), ".SSH/id"), Deny);
+    assert_eq!(check(edit_tool(), "/mnt/c/KEYS/a"), Ask);
+    assert_eq!(check(read_tool(), "src/a.rs"), Allow);
+    let ask = policy(M::Ask, json!({ "allow": ["read(docs/**)"] }));
+    assert_eq!(d(&ask, &call(read_tool(), "docs/a", CWD)), Allow);
+    // Windows always folds case.
+    let want = if cfg!(windows) { Allow } else { Ask };
+    assert_eq!(d(&ask, &call(read_tool(), "DOCS/a", CWD)), want);
+}
+
+/// A folded rule reads its backslashes as written: `\B` is a `B` (so any case of it), `\b` stays a backspace.
+#[cfg(unix)]
+#[test]
+fn a_folded_rule_reads_backslashes_before_folding() {
+    let p = policy(M::Auto, json!({ "deny": ["read(a\\Bc)", "read(x\\by)"] }));
+    let check = |path: &str| d(&p, &call(read_tool(), path, CWD));
+    for path in ["aBc", "abc", "ABC"] {
+        assert_eq!(check(path), Deny, "{path}");
+    }
+    assert_eq!(check("x\u{8}y"), Deny);
+    assert_eq!(check("xby"), Allow);
 }
 
 /// An allow rule's fixed folders follow the links there when the rule is added (/var is /private/var on macOS),
@@ -673,6 +716,18 @@ fn on_windows_a_path_is_judged_as_win32_opens_it_too() {
     let ask = policy(M::Ask, json!({ "allow": ["read(docs/**)"] }));
     assert_eq!(d(&ask, &call(read_tool(), "docs\\a", &cwd)), Allow);
     assert_eq!(d(&ask, &call(read_tool(), "docs.\\a", &cwd)), Ask);
+}
+
+/// A share named without a `\` after it (`\\server\share`) is a root of its own length.
+#[cfg(windows)]
+#[test]
+fn a_share_without_a_trailing_separator_is_its_own_root() {
+    use crate::paths;
+    assert_eq!(paths::root_of_parse(r"\\srv\sh"), r"\\srv\sh");
+    assert_eq!(paths::root_of_parse(r"\\srv"), r"\\srv");
+    assert_eq!(paths::normalize_abs(r"\\srv\sh"), r"\\srv\sh");
+    assert_eq!(paths::dirname(r"\\srv\sh"), r"\\srv\sh");
+    assert_eq!(real_path(r"\\srv\sh").unwrap(), r"\\srv\sh");
 }
 
 #[test]
