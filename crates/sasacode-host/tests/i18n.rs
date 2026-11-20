@@ -168,10 +168,11 @@ fn the_tables_hold_every_ts_entry() {
     // and the nine of `sasacode list` and `sasacode trust`, ported with the GUI's listings. Then
     // `sasacode gui install`: ten English texts, and the GUI's version note in Japanese. Then the
     // release's build provenance check (`sasacode update`): seven English texts, and one for a
-    // release built from something that is not a commit. RustXNG pinned to one release: two
-    // Japanese texts, in the English table.
-    assert_eq!(TO_EN.len(), 273 + 1 + 2);
-    assert_eq!(TO_JA.len(), 158 + 3 - 1 + 4 + 9 + 10 + 7 + 1);
+    // release built from something that is not a commit. RustXNG pinned to one release: one
+    // Japanese text, in the English table, and the Japanese for the usage of `web-search install` and
+    // for a release base that is not https.
+    assert_eq!(TO_EN.len(), 273 + 1 + 1);
+    assert_eq!(TO_JA.len(), 158 + 3 - 1 + 4 + 9 + 10 + 7 + 1 + 2);
 }
 
 #[test]

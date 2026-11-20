@@ -54,7 +54,7 @@ Subcommands:
   sasacode plugin list --json       the bundled plugins and whether each is on (the GUI asks)
   sasacode login [status|logout]    use a ChatGPT plan instead of an API key (openai-codex/… models)
   sasacode update [--check] [tag]   download and install the newest release (checksum-verified)
-  sasacode web-search install [tag] install RustXNG for the web_search tool (checksum-verified)
+  sasacode web-search install       install RustXNG for the web_search tool (checksum-verified)
   sasacode gui [folder]             open the desktop GUI on a folder (sasacode gui install puts it in)
   sasacode gui install [--path <dir>]   build the desktop GUI on this machine with Rust (docs/gui.md)
   -h, --help

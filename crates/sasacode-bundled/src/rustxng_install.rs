@@ -141,8 +141,6 @@ pub type LogFn = Arc<dyn Fn(&str) + Send + Sync>;
 /// sasacode home (tests: the environment cannot be changed from inside one).
 #[derive(Clone, Default)]
 pub struct InstallOptions {
-    /// A release tag; [`PINNED_TAG`] when None, and nothing else is installed.
-    pub tag: Option<String>,
     pub log: Option<LogFn>,
     pub base: Option<String>,
     pub home: Option<PathBuf>,
@@ -178,14 +176,7 @@ pub async fn install_rustxng(opts: InstallOptions) -> anyhow::Result<Installed> 
     let base = opts.base.clone().unwrap_or_else(releases);
     let (platform, arch) = this_platform();
     let target = rustxng_target(platform, arch)?;
-    let tag = opts.tag.clone().unwrap_or_else(|| PINNED_TAG.to_string());
-    if tag != PINNED_TAG {
-        anyhow::bail!(t!(
-            "RustXNGは{pinned}だけを入れられます（{tag}のチェックサムはsasacodeが持っていません）。新しい版は、sasacodeの更新で入ります",
-            pinned = PINNED_TAG,
-            tag = tag
-        ));
-    }
+    let tag = PINNED_TAG;
     let Some(expected) = expected_sha256(&target) else {
         anyhow::bail!(t!(
             "RustXNG {tag}の{target}向けのチェックサムはsasacodeが持っていません",

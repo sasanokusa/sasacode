@@ -106,28 +106,6 @@ async fn install_the_pinned_release_checksum_checked_into_the_sasacode_bin_then_
     page.stop().await;
 }
 
-#[tokio::test]
-async fn only_the_pinned_release_is_installed() {
-    let _l = lang(Lang::Ja).await;
-    let home = temp_dir("sasacode-rustxng-");
-    for tag in ["v0.31.2", "v99.0.0", "latest"] {
-        let opts = InstallOptions {
-            tag: Some(tag.to_string()),
-            // Nothing listens here: the refusal comes before any download.
-            base: Some("http://127.0.0.1:1".to_string()),
-            home: Some(home.path().to_path_buf()),
-            ..InstallOptions::default()
-        };
-        let e = install_rustxng(opts)
-            .await
-            .err()
-            .map(|e| e.to_string())
-            .unwrap_or_default();
-        assert!(e.contains(PINNED_TAG) && e.contains(tag), "{e}");
-    }
-    assert!(!managed_rustxng_in(home.path()).exists());
-}
-
 /// A shell script whose `--version` names the SASACODE_TEST_SECRET it was started with (or none).
 #[cfg(unix)]
 const LEAKY: &str = "#!/bin/sh\necho \"RustXNG ${SASACODE_TEST_SECRET:-none}\"\n";

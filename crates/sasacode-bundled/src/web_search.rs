@@ -568,15 +568,11 @@ impl WebSearch {
 
     async fn run_command(&self, args: &str) {
         let words = js_words(args);
-        let (sub, tag) = (
-            words.first().copied().unwrap_or(""),
-            words.get(1).map(|s| s.to_string()),
-        );
+        let sub = words.first().copied().unwrap_or("");
         let ui = self.api.ui();
         if sub == "install" {
             let log_api = self.api.clone();
             let opts = InstallOptions {
-                tag,
                 log: Some(Arc::new(move |m: &str| log_api.ui().notify(m, NotifyLevel::Info))),
                 ..InstallOptions::default()
             };
@@ -702,7 +698,7 @@ pub fn plugin(api: PluginApi) -> BoxFuture<'static, anyhow::Result<()>> {
                 }
             },
         )
-        .hint("[install [tag]]")
+        .hint("[install]")
         .complete(|prefix: String| async move {
             if "install".starts_with(&prefix) {
                 vec![SelectOption::new("install", t!("RustXNG を入れる・更新する"))]
