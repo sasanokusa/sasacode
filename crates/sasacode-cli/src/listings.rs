@@ -463,6 +463,8 @@ fn trust_command_in(args: &[String], cwd: &Path, home: &Path, out: &mut dyn Writ
     let project = assess_files(cwd, read_config_files_from(&home.join("config.json"), cwd)?);
     if yes && !project.items.is_empty() && !is_trusted_in(home, &cwd_text, &project) {
         save_trust_in(home, &cwd_text, &project)?;
+        // Its git is trusted with it, as a run that finds the trust kept would decide.
+        let _ = sasacode_protocol::git_folders::add(home, cwd, &[]);
     }
     let status = trust_status(home, cwd, &project)?;
     if parsed.flag("json") {

@@ -188,6 +188,23 @@ async fn plugins_enabled_in_an_untrusted_project_config_is_ignored() {
     assert!(has(&plugins(&*loaded(&t, true).await), "git-context"));
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn git_is_run_only_in_a_folder_allowed_for_it_not_in_a_project_merely_trusted() {
+    let Some(t) = child() else { return };
+    configure(&t, json!({ "plugins": { "enabled": ["git-context"] } }));
+    let cwd = std::path::PathBuf::from(t.cwd());
+    let _h = loaded(&t, true).await;
+    assert!(!sasacode_bundled::project_trust::is_trusted(&cwd));
+    let _h = setup(SetupOptions {
+        no_session: true,
+        git: true,
+        ..SetupOptions::new(t.cwd())
+    })
+    .await
+    .expect("setup");
+    assert!(sasacode_bundled::project_trust::is_trusted(&cwd));
+}
+
 /// What the GUI asks the binary without starting a run (its cli.rs): `plugin list --json` is all
 /// that is left of `sasacode plugin`, the bundled plugins on or off as a run here loads them.
 #[test]

@@ -642,36 +642,9 @@ fn civil(at: std::time::SystemTime) -> (String, String, u32) {
     )
 }
 
-/// The folders sasacode has kept conversations for, the most recently used first: the first
-/// entry of the newest log in each of the home's session folders says where it ran.
+/// The folders sasacode has kept conversations for, the most recently used first.
 pub fn projects(home: &Path) -> Vec<PathBuf> {
-    let Ok(dirs) = std::fs::read_dir(home.join("sessions")) else {
-        return Vec::new();
-    };
-    let mut found: Vec<(std::time::SystemTime, PathBuf)> = dirs
-        .filter_map(Result::ok)
-        .filter_map(|dir| {
-            let newest = std::fs::read_dir(dir.path())
-                .ok()?
-                .filter_map(Result::ok)
-                .filter(|f| f.path().extension().is_some_and(|x| x == "jsonl"))
-                .filter_map(|f| Some((f.metadata().ok()?.modified().ok()?, f.path())))
-                .max_by_key(|(when, _)| *when)?;
-            let first = std::fs::read_to_string(&newest.1).ok()?;
-            let head: serde_json::Value = serde_json::from_str(first.lines().next()?).ok()?;
-            let cwd = PathBuf::from(head["cwd"].as_str()?);
-            cwd.is_dir().then_some((newest.0, cwd))
-        })
-        .collect();
-    found.sort_by_key(|a| std::cmp::Reverse(a.0));
-    // One folder reached through a link (`/var` on macOS is `/private/var`) is listed once. The
-    // real path only tells them apart: it is not shown or opened, as on Windows it is `\\?\C:\…`.
-    let mut seen = std::collections::HashSet::new();
-    found
-        .into_iter()
-        .map(|(_, cwd)| cwd)
-        .filter(|cwd| seen.insert(std::fs::canonicalize(cwd).unwrap_or_else(|_| cwd.clone())))
-        .collect()
+    sasacode_protocol::git_folders::projects(home)
 }
 
 /// Whether `a` and `b` are the same folder, one reached through a link or not.

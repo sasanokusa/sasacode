@@ -4273,28 +4273,41 @@ fn trusting_the_folder_makes_it_known_and_reads_it() {
 #[test]
 fn the_folders_used_before_are_known_after_the_update_and_a_worktree_made_here_is_known() {
     let dir = tempfile::tempdir().unwrap();
-    let (used, other, tree) = (
+    let (home, used, project, other, tree) = (
+        dir.path().join("home"),
         dir.path().join("used"),
+        dir.path().join("project"),
         dir.path().join("other"),
         dir.path().join("tree"),
     );
-    for d in [&used, &other, &tree] {
+    for d in [&used, &project, &other, &tree] {
         std::fs::create_dir_all(d).unwrap();
     }
+    // A conversation the CLI kept in `project`.
+    let log = sasacode_protocol::session_dir(&home, &project);
+    std::fs::create_dir_all(&log).unwrap();
+    let head = serde_json::json!({ "type": "session", "cwd": project.to_string_lossy() });
+    std::fs::write(log.join("a.jsonl"), format!("{head}\n")).unwrap();
     let mut app = window("ja");
-    app.home = None;
+    app.git_home = Some(home.clone());
     app.prefs
         .more
         .folders
         .insert(used.to_string_lossy().into_owned(), Default::default());
     app.seed_git_folders();
-    assert!(app.git_known(&used) && !app.git_known(&other));
-    // Once only: a folder dropped from what was used before is not brought back.
-    app.prefs.more.git_folders.as_mut().unwrap().clear();
+    assert!(app.git_known(&used) && app.git_known(&project) && !app.git_known(&other));
+    // Kept where the CLI reads them.
+    assert!(sasacode_protocol::git_folders::is_known(&home, &used));
+    // Once only: a folder dropped from the list is not brought back.
+    std::fs::write(sasacode_protocol::git_folders::file(&home), "{}").unwrap();
     app.seed_git_folders();
     assert!(!app.git_known(&used));
     let _ = app.update(Msg::WorktreeMade(Ok((tree.clone(), None))));
-    assert!(app.git_known(&tree));
+    assert!(app.git_known(&tree) && sasacode_protocol::git_folders::is_known(&home, &tree));
+    // What the CLI added meanwhile is kept with it.
+    sasacode_protocol::git_folders::add(&home, &other, &[]).unwrap();
+    app.know_git(&used);
+    assert!(sasacode_protocol::git_folders::is_known(&home, &other) && app.git_known(&other));
 }
 
 fn listed_trusted() -> crate::cli::Listing {

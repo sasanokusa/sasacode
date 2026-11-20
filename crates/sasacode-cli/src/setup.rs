@@ -40,6 +40,8 @@ pub struct SetupOptions {
     pub trust_project: bool,
     /// Config files already read for the trust check (see `trust::assess_project`).
     pub preloaded: Option<(ConfigFiles, Vec<String>)>,
+    /// The shipped plugins may run git here (`git_folder::allowed_in`).
+    pub git: bool,
 }
 
 impl SetupOptions {
@@ -55,6 +57,7 @@ impl SetupOptions {
             append_system_prompt: None,
             trust_project: false,
             preloaded: None,
+            git: false,
         }
     }
 }
@@ -493,8 +496,9 @@ pub async fn setup(mut opts: SetupOptions) -> anyhow::Result<Arc<Harness>> {
         disabled_tools: settings.disabled_tools(),
         lang: current_lang(),
     });
-    // The shipped plugins that would run programs a project names (git) wait for its trust.
-    sasacode_bundled::project_trust::set(Path::new(&opts.cwd), trusted);
+    // The shipped plugins that would run programs a repository's config names (git) wait for the
+    // folder to be allowed (`git_folder`).
+    sasacode_bundled::project_trust::set(Path::new(&opts.cwd), opts.git);
     // Built-in tools go through the same API as everything else (P2); they load first.
     host.load(sasacode_tools::PLUGIN_NAME, |api| sasacode_tools::plugin(api).boxed())
         .await;

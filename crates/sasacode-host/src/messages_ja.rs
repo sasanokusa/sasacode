@@ -123,6 +123,10 @@ pub static TO_JA: &[(&str, &str)] = &[
     ),
     ("Trust {cwd}? [y/N] ", "{cwd} を信頼する？ [y/N] "),
     (
+        "Run git in {cwd}? A repository's config can start programs. [y/N] ",
+        "{cwd}でgitを実行してよい？リポジトリの設定はプログラムを起動しうる。[y/N] ",
+    ),
+    (
         "{cwd}: nothing in this project needs trust",
         "{cwd}: このプロジェクトには信頼が要るものがない",
     ),

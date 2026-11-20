@@ -241,9 +241,6 @@ pub struct More {
     pub drafts: BTreeMap<String, String>,
     /// The automations of every folder, by id.
     pub automations: BTreeMap<String, crate::automations::Automation>,
-    /// The folders git is run in without asking, by real path ([`crate::known`]); none before the
-    /// first launch that kept them.
-    pub git_folders: Option<BTreeMap<String, bool>>,
 }
 
 /// What a folder's window starts with.
@@ -785,7 +782,6 @@ mod tests {
                         last: Some(1_763_100_000),
                     },
                 )]),
-                git_folders: Some(BTreeMap::from([("/w".into(), true)])),
             },
         };
         write(&file, &Layout::default(), &prefs).unwrap();

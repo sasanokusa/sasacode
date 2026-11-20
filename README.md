@@ -41,7 +41,7 @@ irm https://sasanokusa.com/sasacode/install.ps1 | iex
 - `SASACODE_VERSION=v0.20.1` で版を固定でき、`SASACODE_INSTALL_DIR` で置き場所を変えられる（どちらのインストーラーでも）。
 - 更新は`sasacode update`（インストーラーと同じ検証つき。`--check`で確認だけ）。新しい版が出ていると起動時に一度だけ静かに知らせる（`"updateCheck": false`で止める）。ソースから入れた場合は、`git pull`のあと下の`cargo install`をもう一度実行する。
 - Web検索（`web_search`）に使うRustXNGは `sasacode web-search install`（TUIでは `/web-search install`）で入る。sasacodeが決めた版（今はv0.32.0）の公式リリースを、sasacodeが持つチェックサムで確かめて `~/.sasacode/bin` に置き、再起動しなくても使える。入るのはその版だけで、新しい版はsasacodeの更新で入る。
-- デスクトップGUI（開発中）は配布物に入っておらず、`sasacode gui install`でこのマシンでビルドして入れる（[Rust](https://rustup.rs)が要る。ないときは入れ方を案内して止まる）。`~/.sasacode/gui/bin`に入り、`sasacode update`では更新されない。sasacodeを更新したら、もう一度`sasacode gui install`を実行する（[docs/gui.md](docs/gui.md)）。GUIは、初めてのフォルダではgitを自分からは走らせず、gitタブの「gitの状態を表示する」を押すか、フォルダを信頼すると、以後そのフォルダでgitの状態を読む（リポジトリの設定によっては、gitがプログラムを動かすため）。
+- デスクトップGUI（開発中）は配布物に入っておらず、`sasacode gui install`でこのマシンでビルドして入れる（[Rust](https://rustup.rs)が要る。ないときは入れ方を案内して止まる）。`~/.sasacode/gui/bin`に入り、`sasacode update`では更新されない。sasacodeを更新したら、もう一度`sasacode gui install`を実行する（[docs/gui.md](docs/gui.md)）。GUIは、初めてのフォルダではgitを自分からは走らせず、gitタブの「gitの状態を表示する」を押すか、フォルダを信頼すると、以後そのフォルダでgitの状態を読む（リポジトリの設定によっては、gitがプログラムを動かすため）。gitを走らせてよいフォルダの一覧（`~/.sasacode/git-folders.json`）は、CLIと共有する（[gitを走らせるフォルダ](#gitを走らせるフォルダ)）。
 
 ソースから使う場合（[Rust](https://www.rust-lang.org/)1.88以上）は次のとおり。
 
@@ -284,7 +284,16 @@ sasacode -m llama/<モデル名>
 
 - `.sasacode/config.json`の`providers`（エンドポイント）、`modelOverrides`、`plugins`（有効化・無効化と設定）、`mcpServers`、`allow`ルール、全体設定より緩い権限モード、全体設定より大きい`maxTurns`（0は上限なし）と`maxRetries`、全体設定（なければ既定のモデル）が使っていないプロバイダーを指す`model`・`models`・`judgeModel`
 
-これらがあるプロジェクトで起動すると、最初に一覧を出して信頼するかを尋ねる（ヘッドレスでは`--trust-project`）。答えは`~/.sasacode/trust.json`に保存し、上の設定が変わったら再び尋ねる。全体設定の`trustedProjects`に入れたプロジェクトは、尋ねずに信頼する。一覧には、MCPサーバーが起動するコマンドと引数（またはURL）、渡す環境変数とヘッダーの名前（値は出さない）、プラグインの設定と`modelOverrides`のキーと値（長い値は切る）も出す。全体設定と同じプロバイダーの中でのモデルの選択、`thinking`、`instructions`、deny / askルールやツール無効化の追加、より厳しい権限モードや小さい上限などは、信頼しなくても使う。0.15までは`.sasacode/plugins`のプラグインも信頼の対象だったが、0.20からはそのフォルダを読み込まないので、対象から外した（プロジェクトのプラグインがなく、0.15で信頼したプロジェクトは、そのまま信頼される）。プロジェクトが`model`や`judgeModel`を選んだときは、信頼していても警告を出す。
+これらがあるプロジェクトで起動すると、最初に一覧を出して信頼するかを尋ねる（ヘッドレスでは`--trust-project`）。答えは`~/.sasacode/trust.json`に保存し、上の設定が変わったら再び尋ねる。信頼したプロジェクトのフォルダは、gitを走らせてよいフォルダにも加える（`--trust-project`だけのときは、その起動のあいだだけ。下記）。全体設定の`trustedProjects`に入れたプロジェクトは、尋ねずに信頼する。一覧には、MCPサーバーが起動するコマンドと引数（またはURL）、渡す環境変数とヘッダーの名前（値は出さない）、プラグインの設定と`modelOverrides`のキーと値（長い値は切る）も出す。全体設定と同じプロバイダーの中でのモデルの選択、`thinking`、`instructions`、deny / askルールやツール無効化の追加、より厳しい権限モードや小さい上限などは、信頼しなくても使う。0.15までは`.sasacode/plugins`のプラグインも信頼の対象だったが、0.20からはそのフォルダを読み込まないので、対象から外した（プロジェクトのプラグインがなく、0.15で信頼したプロジェクトは、そのまま信頼される）。プロジェクトが`model`や`judgeModel`を選んだときは、信頼していても警告を出す。
+
+### gitを走らせるフォルダ
+
+同梱の`git-context`と`jev-guard`はgitを走らせる。gitはリポジトリの設定（`.git/config`）に書かれたプログラムを起動しうるので、gitを走らせてよいフォルダの一覧（`~/.sasacode/git-folders.json`、実パス）にあるフォルダでだけ走らせる。設定ファイルが無い、または信頼の要る項目が無いだけでは、一覧には入らない。
+
+- どちらかのプラグインが有効で、一覧に無いフォルダで端末から起動すると、一度だけ「このフォルダでgitを実行してよいか」を尋ねる。許可すると一覧に加える。断ると、その起動ではgitを走らせない（断ったことは覚えないので、次の起動でまた尋ねる）。
+- ヘッドレス（`-p`）や、標準入力が端末でないときは尋ねず、一覧にあるときだけ走らせる。
+- 信頼の確認でプロジェクトを信頼したとき（`sasacode trust --yes`を含む）や、GUIで許可したときも一覧に加える。`--trust-project`は、信頼の要る項目があるときに、その起動のあいだだけgitを許す。
+- 一覧が無いときの最初の1回は、sasacodeが会話を保存しているフォルダ（GUIからは、加えてGUIで開いたフォルダ）を一覧に入れる。
 
 ## プラグイン・MCP・Skills
 
@@ -337,10 +346,10 @@ sasacode -m llama/<モデル名>
 | 名前 | 内容 |
 | --- | --- |
 | `hashline-edit` | `read` の各行に `<行番号>:<2桁ハッシュ>|` を付け、空白の完全一致なしで編集できる `hash_edit` ツールを足す。`write` に混入した `N:hh|` 接頭辞も外す（[詳しく](docs/plugins.md#hashline-edit)） |
-| `git-context` | `git_context`ツール。レビューに要るGitの状態・変更の統計・パッチを、1回の呼び出しで返す。読み取りだけで、Gitが要る。信頼していないプロジェクトではgitを呼ばない（[詳しく](docs/plugins.md#git-context)） |
+| `git-context` | `git_context`ツール。レビューに要るGitの状態・変更の統計・パッチを、1回の呼び出しで返す。読み取りだけで、Gitが要る。gitを走らせてよいフォルダでなければgitを呼ばない（[gitを走らせるフォルダ](#gitを走らせるフォルダ)、[詳しく](docs/plugins.md#git-context)） |
 | `project-checks` | `project_checks`・`project_check`ツールと`/checks`。テスト・lint・型検査などを名前で実行し、PASS / FAIL、終了コード、時間、ログを返す。bashと同じ権限ルールで判定する。`verifyOnFinish`に名前を書いた検査は、モデルが作業を終えようとしたときにも確認なしで実行し、落ちていれば出力の末尾を返して続けさせる（[詳しく](docs/plugins.md#project-checks)） |
 | `workflows` | `/workflow`。レビュー・失敗の調査・公開前の確認など、繰り返し使う依頼を呼び出す。設定で足す・上書きする・外すことができる（[詳しく](docs/plugins.md#workflows)） |
-| `jev-guard` | 実行前のツール呼び出しをJevに判定させる。信頼していないプロジェクトでは、対象のGitの状態を読まず、戻せるとは見なさない。有効にする方法は上の「Jevによる実行前判断」にある（[詳しく](docs/plugins.md#jev-guard)） |
+| `jev-guard` | 実行前のツール呼び出しをJevに判定させる。gitを走らせてよいフォルダでなければ、対象のGitの状態を読まず、戻せるとは見なさない。有効にする方法は上の「Jevによる実行前判断」にある（[詳しく](docs/plugins.md#jev-guard)） |
 | `free-search` | MCPサーバー`uvx free-search-mcp`を`free-search`という名前でつなぐ（キー不要でローカルで動くWeb検索。複数の検索エンジン、ページの取得、文書の読み取り）。ツールは`mcp__free-search__<tool>`になる。[uv](https://docs.astral.sh/uv/)が要る（[詳しく](docs/plugins.md#free-search)） |
 | `clean-retry` | 編集エラーやテスト失敗が連続したとき、変更したファイルをタスク開始前に巻き戻し、失敗要約だけを残した綺麗な履歴でやり直す（[詳しく](docs/plugins.md#clean-retry)） |
 | `slim-profile` | 小型ローカルモデル向けに補助的なプラグイン群（`subagent`、`todo`、`goal`、Web系、Skills など）を自動で省き、指示の簡潔化と `read` / `bash` 単発出力の上限カットを行う（[詳しく](docs/plugins.md#slim-profile)） |

@@ -9,6 +9,7 @@ use sasacode_cli::args::{OptionSpec, boolean, parse_args, string, strings};
 use sasacode_cli::config::{read_config_files, sasacode_home};
 use sasacode_cli::control::control_mode;
 use sasacode_cli::env::{blank_keys, ensure_env_file, parse_env_file};
+use sasacode_cli::git_folder::{ProjectGit, allowed_in, ask_git, runs_git};
 use sasacode_cli::headless::{HeadlessOptions, OutputFormat, run_headless};
 use sasacode_cli::setup::{SetupOptions, read_prompt_file, setup};
 use sasacode_cli::stdin::read_piped_stdin;
@@ -219,14 +220,25 @@ async fn run(args: Vec<String>, cwd: String) -> anyhow::Result<i32> {
     // One trust decision covers the parts of .sasacode/config.json that could run code or send
     // data elsewhere. Asked here, before anything from the project is used.
     let project = assess_project_with(Path::new(&cwd), values.string("model"))?;
-    let mut trusted = values.flag("trust-project") || is_trusted(&cwd, &project);
+    let mut for_good = is_trusted(&cwd, &project);
+    let mut trusted = values.flag("trust-project") || for_good;
     let interactive = print.is_none() && std::io::stdin().is_terminal() && std::io::stderr().is_terminal();
     if !trusted && interactive {
         trusted = ask_trust(&cwd, &project).await;
         if trusted {
             save_trust(&cwd, &project)?;
+            for_good = true;
         }
     }
+    // The shipped plugins that run git do so only in a folder allowed for it: asked once here.
+    let needs_trust = !project.items.is_empty();
+    let said = ProjectGit {
+        trusted: needs_trust && for_good,
+        once: needs_trust && trusted,
+    };
+    let wanted = runs_git(Path::new(&cwd), trusted, &project.files);
+    let ask = interactive.then(|| ask_git(&cwd));
+    let git = allowed_in(&sasacode_home(), Path::new(&cwd), wanted, said, ask).await;
     let max_turns = values
         .string("max-turns")
         .filter(|v| !v.is_empty())
@@ -245,6 +257,7 @@ async fn run(args: Vec<String>, cwd: String) -> anyhow::Result<i32> {
     opts.no_session = values.flag("no-session");
     opts.append_system_prompt = append_system_prompt;
     opts.trust_project = trusted;
+    opts.git = git;
     opts.preloaded = Some((project.files, project.warnings));
     let harness = setup(opts).await?;
     for w in harness.warnings() {

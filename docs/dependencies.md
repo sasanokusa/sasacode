@@ -57,7 +57,7 @@ MCPのクライアントは、公式のRust SDK（`rmcp`）を使わずに書い
 
 ## Rustのクレート（GUI）
 
-デスクトップGUI（`crates/sasacode-gui`、`crates/sasacode-protocol`）が使うもの。`sasacode`コマンドには入らない（先頭の列は検査の対象外にするため、名前をコードの書式にしない）。
+デスクトップGUI（`crates/sasacode-gui`、`crates/sasacode-protocol`）が使うもの。`sasacode`コマンドが使うのは、gitを走らせてよいフォルダの一覧を読み書きする`sasacode-protocol`だけで、その依存（serde / serde_json、sha2）はコマンドがもともと使うもの（先頭の列は検査の対象外にするため、名前をコードの書式にしない）。
 
 | クレート | 使う場所 | 理由 | 検討した代替 |
 | --- | --- | --- | --- |

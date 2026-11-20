@@ -463,9 +463,12 @@ fn a_project_changes_which_plugins_load_only_once_it_is_trusted() {
     d.project(json!({ "plugins": { "disabled": ["todo"], "enabled": ["workflows"] } }));
     let plugins = plugin_listing_in(&d.home, &d.proj).unwrap();
     assert!(enabled(&plugins, "todo") && !enabled(&plugins, "workflows"));
+    assert!(!sasacode_protocol::git_folders::is_known(&d.home, &d.proj));
     d.trust(&["--yes"]);
     let plugins = plugin_listing_in(&d.home, &d.proj).unwrap();
     assert!(!enabled(&plugins, "todo") && enabled(&plugins, "workflows"));
+    // Trusted for good, its folder is one git may run in.
+    assert!(sasacode_protocol::git_folders::is_known(&d.home, &d.proj));
 }
 
 #[test]
@@ -629,8 +632,9 @@ fn a_plain_folder_needs_no_trust() {
         d.trust(&["--yes"]),
         (0, format!("{}: nothing in this project needs trust\n", d.cwd()))
     );
-    // --yes had nothing to save.
+    // --yes had nothing to save, and nothing makes the folder one git may run in.
     assert!(!d.home.join("trust.json").exists());
+    assert!(!sasacode_protocol::git_folders::is_known(&d.home, &d.proj));
 }
 
 #[test]

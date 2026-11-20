@@ -370,3 +370,27 @@ fn without_a_home_directory_or_sasacode_home_it_exits_and_the_project_config_is_
         assert!(!mark.exists(), "{env:?}: the project's server started");
     }
 }
+
+/// A run that is not on a terminal asks nothing before git runs: a folder not kept as allowed is
+/// left alone, and the folders used before are written as known the first time.
+#[test]
+fn a_run_off_the_terminal_does_not_ask_about_git_and_runs_it_only_in_a_folder_kept() {
+    let server = FakeServer::start(vec![Reply::text("ok")]).expect("the fake server");
+    let bin = Bin::new(&fake_config(
+        server.url(),
+        json!({ "plugins": { "enabled": ["git-context"] } }),
+    ));
+    let r = bin.jsonl("hi", &["--no-session"]);
+    assert_eq!(r.code, 0, "{}", r.stderr);
+    assert!(
+        !r.stderr.contains("Run git") && !r.stderr.contains("gitを実行"),
+        "{}",
+        r.stderr
+    );
+    let home = &bin.sb.home;
+    let kept = sasacode_protocol::git_folders::read(home).expect("written the first time");
+    assert!(
+        !kept.contains_key(&sasacode_protocol::git_folders::key(&bin.cwd())),
+        "{kept:?}"
+    );
+}

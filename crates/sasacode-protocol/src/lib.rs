@@ -8,6 +8,7 @@
 
 pub mod control;
 pub mod event;
+pub mod git_folders;
 pub mod message;
 pub mod session;
 

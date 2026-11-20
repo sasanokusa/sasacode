@@ -237,6 +237,10 @@ pub struct App {
     pub(crate) listing: crate::cli::Listing,
     /// The folder's config is trusted for this window's runs only (`--trust-project`).
     pub(crate) trust_once: bool,
+    /// The folders git is run in without asking ([`crate::known`]), as read at launch.
+    pub(crate) git_folders: sasacode_protocol::git_folders::Folders,
+    /// The home they are kept in, shared with the CLI; none keeps them in this window only.
+    pub(crate) git_home: Option<PathBuf>,
     /// The share of the context window where the conversation is summarised, as configured.
     pub(crate) compact_at: Option<f64>,
     /// The picture shown larger is at its own size, not fitted.
@@ -1168,6 +1172,13 @@ impl App {
             plugin_commands: Vec::new(),
             listing: crate::cli::Listing::default(),
             trust_once: false,
+            git_folders: Default::default(),
+            // A window made in a test keeps them to itself: tests run side by side.
+            git_home: if cfg!(test) {
+                None
+            } else {
+                sasacode_protocol::sasacode_home()
+            },
             compact_at: None,
             image_actual: false,
             log: Default::default(),
