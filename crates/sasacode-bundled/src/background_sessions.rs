@@ -197,19 +197,32 @@ fn read_raw_meta(dir: &Path) -> Option<Value> {
     serde_json::from_str(&std::fs::read_to_string(meta_path(dir)).ok()?).ok()
 }
 
+/// Replace meta.json whole: written to a file of its own, then renamed over it. Two sessions writing
+/// it at once with `fs::write` could leave the tail of the longer text after the shorter one (both
+/// truncate, then both write), and the job vanished from the list and from the next start.
+fn replace_meta(dir: &Path, text: &str) -> std::io::Result<()> {
+    static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let tmp = dir.join(format!("meta.json.{}.{n}.tmp", std::process::id()));
+    std::fs::write(&tmp, text)?;
+    std::fs::rename(&tmp, meta_path(dir)).inspect_err(|_| {
+        let _ = std::fs::remove_file(&tmp);
+    })
+}
+
 fn write_meta(job: &mut Job) -> std::io::Result<()> {
     // Another sasacode in this directory may have reported it meanwhile: written back without it, the next start
     // reported the job again (#121).
     if job.meta.notified.is_none() && read_meta(&job.dir).and_then(|m| m.notified) == Some(true) {
         job.meta.notified = Some(true);
     }
-    std::fs::write(meta_path(&job.dir), stringify_pretty(&job.meta.to_value()))?;
-    // That check is not enough on its own: the reporter's write can land between our read and our write (or be
-    // read half-written), and ours then drops the flag. A reporter creates `claimed` before it writes, so once
-    // ours is down, `claimed` shows whether we may have written over one: then write it back with the flag.
+    replace_meta(&job.dir, &stringify_pretty(&job.meta.to_value()))?;
+    // That check is not enough on its own: the reporter's write can land between our read and our write, and
+    // ours then drops the flag. A reporter creates `claimed` before it writes, so once ours is down, `claimed`
+    // shows whether we may have written over one: then write it back with the flag.
     if job.meta.notified.is_none() && job.dir.join("claimed").is_dir() {
         job.meta.notified = Some(true);
-        std::fs::write(meta_path(&job.dir), stringify_pretty(&job.meta.to_value()))?;
+        replace_meta(&job.dir, &stringify_pretty(&job.meta.to_value()))?;
     }
     Ok(())
 }
@@ -730,7 +743,7 @@ impl Bg {
             && let Some(Value::Object(mut fresh)) = read_raw_meta(dir)
         {
             fresh.insert("killed".into(), Value::Bool(true));
-            let _ = std::fs::write(meta_path(dir), stringify_pretty(&Value::Object(fresh)));
+            let _ = replace_meta(dir, &stringify_pretty(&Value::Object(fresh)));
         }
         // Never signal a process that is not the job's: it ended, and its pid may now be another's.
         if own != Some(true) && !job_alive(m.pid, m.started_at, &exit_path_of(dir)).await {
@@ -1460,7 +1473,11 @@ mod tests {
                 let barrier = std::sync::Barrier::new(2);
                 std::thread::scope(|s| {
                     s.spawn(|| {
+                        // Longer than the reporter's text, as an adopted job's (an mtime's fraction in
+                        // finishedAt): a torn write would leave its tail after the shorter one.
                         let mut job = to_job(meta.clone(), &dir);
+                        job.meta.command = "x".repeat(300);
+                        job.meta.finished_at = Some(1_795_126_537_691.651_4);
                         barrier.wait();
                         let _ = write_meta(&mut job);
                     });
