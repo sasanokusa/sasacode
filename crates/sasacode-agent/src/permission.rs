@@ -375,24 +375,26 @@ fn compile_glob(pattern: &str, fold: Option<bool>) -> regex::bytes::Regex {
         .empty_alternates(true)
         .build();
     match built {
-        Ok(g) => char_regex(&g, fold.is_some()),
+        Ok(g) => char_regex(&g, fold),
         // An unparsable pattern (an unclosed `[`) is taken literally, never as matching nothing:
         // a deny rule must not disappear.
         Err(_) => globset::GlobBuilder::new(&escape_glob(&folded(bun_glob_syntax(pattern, None), fold)))
             .literal_separator(true)
             .backslash_escape(true)
             .build()
-            .map(|g| char_regex(&g, false))
+            .map(|g| char_regex(&g, None))
             // INFALLIBLE: every special character is escaped.
-            .unwrap_or_else(|_| char_regex(&globset::Glob::new("").expect("empty glob"), false)),
+            .unwrap_or_else(|_| char_regex(&globset::Glob::new("").expect("empty glob"), None)),
     }
 }
 
 /// globset's regex reads bytes (its `?` and `[!a]` take one byte of `ß`); Bun.Glob read characters. The same regex
 /// with its bytes of a character (`\xc3\x9f`) put back as that character, read over characters; `.` takes a newline
-/// too (a name may hold one), and with `any_case` each class `[…]` matches any case.
-fn char_regex(g: &globset::Glob, any_case: bool) -> regex::bytes::Regex {
+/// too (a name may hold one). Folded in full, a class `[…]` matches any case; in lower case (an allow rule's) no
+/// wider than its letters lowered: an ASCII class in ASCII case (`ſ` is not `s` to it), another as written.
+fn char_regex(g: &globset::Glob, fold: Option<bool>) -> regex::bytes::Regex {
     let (mut out, mut bytes, mut it) = (String::new(), Vec::new(), g.regex().trim_start_matches("(?-u)").chars());
+    let mut start = 0;
     while let Some(ch) = it.next() {
         let esc = if ch == '\\' { it.next() } else { None };
         let hex: String = if esc == Some('x') {
@@ -406,8 +408,13 @@ fn char_regex(g: &globset::Glob, any_case: bool) -> regex::bytes::Regex {
         }
         out.push_str(&String::from_utf8_lossy(&std::mem::take(&mut bytes)));
         match (ch, esc) {
-            ('[', None) if any_case => out.push_str("(?i:["),
-            (']', None) if any_case => out.push_str("])"),
+            ('[', None) if fold.is_some() => start = out.len(),
+            (']', None) if fold.is_some() => {
+                let class = format!("[{}]", out.split_off(start));
+                let any = (fold == Some(true) || class.starts_with("[^")).then_some("i");
+                let flags = any.or(class.is_ascii().then_some("i-u")).unwrap_or_default();
+                out.push_str(&format!("(?{flags}:{class})"));
+            }
             _ => out.extend([ch].into_iter().chain(esc).chain(hex.chars())),
         }
     }
@@ -436,6 +443,7 @@ fn bun_glob_syntax(pattern: &str, fold: Option<bool>) -> String {
                     Some('r') => out.push('\r'),
                     Some('t') => out.push('\t'),
                     Some(next) => {
+                        in_class &= next != ']'; // globset's class ends at `\]` too
                         out.push(ch);
                         out.push(next);
                     }

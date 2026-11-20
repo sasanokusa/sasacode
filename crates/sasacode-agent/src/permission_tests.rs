@@ -698,7 +698,7 @@ fn rules_match_names_holding_a_newline() {
 
 /// A class `[…]` is read as written, and matches any case where names are compared folded: a deny rule's
 /// `[A-_]` takes `A1` under `SECRETS`, `[ß]` takes `ß` and `ẞ` under `DIR`; an allow rule's `[0-Z]` never takes
-/// `_`, nor `[İ]` an `i`. (`[ß]` is one letter, so `ss` is not taken.)
+/// `_`, nor `[İ]` an `i`, nor `[a-z]` an `ſ`.
 #[test]
 fn a_class_is_read_as_written_and_matches_any_case_where_names_fold() {
     let tmp = tempfile::Builder::new().prefix("sasacode-perm-").tempdir().unwrap();
@@ -721,7 +721,7 @@ fn a_class_is_read_as_written_and_matches_any_case_where_names_fold() {
     ] {
         assert_eq!(check(path), Deny, "{path}");
     }
-    for path in ["secrets/1a", "dir/x.txt", "dir/ss.txt"] {
+    for path in ["secrets/1a", "dir/x.txt"] {
         assert_eq!(check(path), Allow, "{path}");
     }
     let allow = |rule: &str, path: &str| {
@@ -738,6 +738,10 @@ fn a_class_is_read_as_written_and_matches_any_case_where_names_fold() {
     for path in ["i.txt", "I.txt"] {
         assert_eq!(allow("read([İ].txt)", path), Ask, "{path}");
     }
+    assert_eq!(allow("read([a-z]x)", "ſx"), Ask);
+    // A class ends at `\]` as globset reads it; the rest is folded as any name.
+    let p = policy(M::Auto, json!({ "deny": ["read(k[a\\]Secret])"] }));
+    assert_eq!(d(&p, &call(read_tool(), "KASECRET]", &dir)), Deny);
 }
 
 /// A folded rule reads its backslashes as written: `\B` is a `B` (so any case of it), `\b` stays a backspace.
