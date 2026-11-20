@@ -12,7 +12,7 @@
 //!
 //! settings: { externalCheck?: boolean (default true), timeoutMs?: number (default 1500), maxBytes?: number (default 524288) }
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -25,7 +25,7 @@ use tokio::io::AsyncWriteExt;
 
 use sasacode_ai::UserContent;
 use sasacode_plugin_api::win32_path::without_verbatim;
-use sasacode_plugin_api::{PluginApi, ToolResultResult, apply_child_env, create_private_dir, hook, sasacode_home};
+use sasacode_plugin_api::{PluginApi, ToolResultResult, child_env, create_private_dir, hook, sasacode_home};
 use sasacode_tools::util::resolve_path;
 
 use crate::repair::js::num_setting;
@@ -241,11 +241,34 @@ fn char_literal_end(src: &str, i: usize) -> Option<usize> {
     (second == '\'').then_some(i + 1 + first.len_utf8() + 1)
 }
 
-/// Runs a checker with `input` on stdin, in `cwd`. `None`: it passed, did not start, or timed out.
-async fn run_external(program: &Path, args: &[&str], input: &str, cwd: &Path, timeout_ms: u64) -> Option<String> {
+/// The checker's command: in `cwd`, with nothing in its environment that points it at a script.
+fn checker_command(program: &Path, args: &[&str], cwd: &Path) -> tokio::process::Command {
     let mut cmd = tokio::process::Command::new(program);
     cmd.args(args).current_dir(cwd);
-    apply_child_env(&mut cmd, &[]);
+    cmd.env_clear();
+    cmd.envs(checker_env(child_env(&[])));
+    cmd
+}
+
+/// What a shell or a dev tool may point at a script of the project: node and bun run what these name
+/// before reading stdin (`--require`, `--import`, `--preload`, `--config`).
+const CHILD_ENV_REMOVED: [&str; 6] = [
+    "NODE_OPTIONS",
+    "NODE_PATH",
+    "BUN_OPTIONS",
+    "PYTHONPATH",
+    "PYTHONSTARTUP",
+    "PYTHONHOME",
+];
+
+fn checker_env(mut env: BTreeMap<String, String>) -> BTreeMap<String, String> {
+    env.retain(|k, _| !CHILD_ENV_REMOVED.iter().any(|r| k.eq_ignore_ascii_case(r)));
+    env
+}
+
+/// Runs a checker with `input` on stdin, in `cwd`. `None`: it passed, did not start, or timed out.
+async fn run_external(program: &Path, args: &[&str], input: &str, cwd: &Path, timeout_ms: u64) -> Option<String> {
+    let mut cmd = checker_command(program, args, cwd);
     cmd.stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -532,14 +555,21 @@ impl Checker {
 
 #[derive(Default)]
 struct State {
-    /// By call id: the file a call is about to change, and its text.
-    before: HashMap<String, (PathBuf, String)>,
+    /// By agent and call id (a subagent's ids may repeat the main agent's): the file a call is about to
+    /// change, and its text.
+    before: HashMap<(Option<String>, String), (PathBuf, String)>,
     /// Files with an error this plugin reported that have not parsed since.
     reported: HashSet<PathBuf>,
 }
 
 /// Calls whose result never came (an aborted run) must not pile up.
 const MAX_PENDING: usize = 64;
+
+/// One name for a file however a call spelled it (`./a.py`, through a link), so that `reported` and
+/// `before` find it again.
+fn same_file(path: &Path) -> PathBuf {
+    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+}
 
 fn is_edit(name: &str) -> bool {
     matches!(name, "edit" | "write" | "hash_edit")
@@ -557,8 +587,8 @@ pub fn plugin(api: PluginApi) -> BoxFuture<'static, anyhow::Result<()>> {
 
         // The text before the call: what tells an error the edit made from one that was there.
         let (st, root) = (state.clone(), cwd.clone());
-        api.on::<hook::ToolCall, _, _>(move |ev, _ctx| {
-            let (st, root) = (st.clone(), root.clone());
+        api.on::<hook::ToolCall, _, _>(move |ev, ctx| {
+            let (st, root, agent) = (st.clone(), root.clone(), ctx.agent.clone());
             async move {
                 let raw_path = ev.args.get("path").and_then(Value::as_str);
                 if let Some(raw_path) = raw_path.filter(|_| is_edit(&ev.call.name)) {
@@ -570,21 +600,24 @@ pub fn plugin(api: PluginApi) -> BoxFuture<'static, anyhow::Result<()>> {
                         if s.before.len() >= MAX_PENDING {
                             s.before.clear();
                         }
-                        s.before.insert(ev.call.id.clone(), (path, text));
+                        s.before.insert((agent, ev.call.id.clone()), (same_file(&path), text));
                     }
                 }
                 Ok(None)
             }
         });
 
-        api.on::<hook::ToolResult, _, _>(move |ev, _ctx| {
+        let st = state.clone();
+        api.on::<hook::SessionStart, _, _>(move |_, _| {
+            *st.lock().unwrap_or_else(|e| e.into_inner()) = State::default();
+            async { Ok(None) }
+        });
+
+        api.on::<hook::ToolResult, _, _>(move |ev, ctx| {
             let (cwd, checker, st) = (cwd.clone(), checker.clone(), state.clone());
+            let key = (ctx.agent.clone(), ev.call.id.clone());
             async move {
-                let before = st
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .before
-                    .remove(&ev.call.id);
+                let before = st.lock().unwrap_or_else(|e| e.into_inner()).before.remove(&key);
                 if !ev.ran || ev.result.is_error() || !is_edit(&ev.call.name) {
                     return Ok(None);
                 }
@@ -603,15 +636,16 @@ pub fn plugin(api: PluginApi) -> BoxFuture<'static, anyhow::Result<()>> {
                 let Some(text) = read_text(path, max_bytes).await else {
                     return Ok(None);
                 };
+                let file = same_file(path);
                 let Some(issue) = checker.inspect(path, &text).await else {
-                    st.lock().unwrap_or_else(|e| e.into_inner()).reported.remove(path);
+                    st.lock().unwrap_or_else(|e| e.into_inner()).reported.remove(&file);
                     return Ok(None);
                 };
                 // Already failing before this call, and never reported: not something the edit broke
                 // (most likely something the checker cannot read), so nothing for the model to fix.
-                let known = st.lock().unwrap_or_else(|e| e.into_inner()).reported.contains(path);
+                let known = st.lock().unwrap_or_else(|e| e.into_inner()).reported.contains(&file);
                 if !known
-                    && let Some((_, old)) = before.as_ref().filter(|(p, _)| p == path)
+                    && let Some((_, old)) = before.as_ref().filter(|(p, _)| *p == file)
                     && checker.inspect(path, old).await.is_some()
                 {
                     return Ok(None);
@@ -619,7 +653,7 @@ pub fn plugin(api: PluginApi) -> BoxFuture<'static, anyhow::Result<()>> {
                 st.lock()
                     .unwrap_or_else(|e| e.into_inner())
                     .reported
-                    .insert(path.to_path_buf());
+                    .insert(file);
                 let disp = path
                     .strip_prefix(&cwd)
                     .map(|p| p.to_string_lossy().replace('\\', "/"))
@@ -724,6 +758,24 @@ mod tests {
         assert!(bad.message.starts_with("SyntaxError"), "{bad:?}");
         assert_eq!(c.inspect(&root.join("mod.py"), "def f():\n    return 1\n").await, None);
         assert!(!marker.exists(), "the project's ast.py ran");
+    }
+
+    /// `NODE_OPTIONS=--require ./x.js` or `BUN_OPTIONS=--preload ./x.js` set by a shell or a dev tool
+    /// would run project code before the checker reads its input.
+    #[test]
+    fn checkers_get_no_environment_that_loads_a_script() {
+        let env: BTreeMap<String, String> = [
+            ("NODE_OPTIONS", "--require ./evil.js"),
+            ("BUN_OPTIONS", "--preload ./evil.js"),
+            ("NODE_PATH", "."),
+            ("PYTHONPATH", "."),
+            ("PATH", "/usr/bin"),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+        let kept: Vec<String> = checker_env(env).into_keys().collect();
+        assert_eq!(kept, ["PATH"]);
     }
 
     /// bun reads `bunfig.toml` (and its preloads) from its working directory, so that is never the project.
