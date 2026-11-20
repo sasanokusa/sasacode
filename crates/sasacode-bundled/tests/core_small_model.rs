@@ -2335,8 +2335,8 @@ async fn hash_edit_reports_permissions_as_edit_and_enforces_edit_rules_without_l
     });
     assert_eq!(ok_verdict.decision, Decision::Allow);
 
-    // Even if only `read(**/.env)` is denied (so `hash_edit` reaches execution), a mismatch on an
-    // unread file must not print file lines.
+    // Even if only `read(**/.env)` is denied (so `hash_edit` reaches execution), an unread file is
+    // refused without printing its lines.
     let s = setup(
         vec![
             reply(vec![call(
@@ -2360,7 +2360,7 @@ async fn hash_edit_reports_permissions_as_edit_and_enforces_edit_rules_without_l
     s.agent.prompt_text("probe").await.unwrap();
     let reqs = s.requests();
     let out = last(&reqs[1]).text();
-    assert!(out.contains("Hash mismatch at"), "{out}");
+    assert!(out.contains("no current anchors"), "{out}");
     assert!(!out.contains("super-secret-value"), "leaked unread content: {out}");
 }
 
@@ -2751,7 +2751,7 @@ async fn hash_edit_by_a_subagent_is_judged_by_what_the_subagent_was_shown_not_th
     s.agent.prompt_text("delegate an edit").await.unwrap();
     let reqs = s.requests();
     let out = last(&reqs[3]).text();
-    assert!(out.contains("Hash mismatch at") && out.contains("first."), "{out}");
+    assert!(out.contains("no current anchors") && out.contains("first."), "{out}");
     assert!(!out.contains("MAIN_ONLY_LINE"), "judged as the main agent: {out}");
 }
 
@@ -3282,7 +3282,7 @@ async fn hash_edit_clears_state_on_session_start_and_evicts_lru_over_64_files() 
     let reqs = s.requests();
     let mismatch = last(&reqs[3]).text();
     assert!(
-        mismatch.contains("Hash mismatch at") && mismatch.contains("Read"),
+        mismatch.contains("no current anchors") && mismatch.contains("Read"),
         "{mismatch}"
     );
     assert!(!mismatch.contains("TOP_SECRET_LINE"), "leaked across /new: {mismatch}");
@@ -3321,7 +3321,7 @@ async fn hash_edit_clears_state_on_session_start_and_evicts_lru_over_64_files() 
         .invoke("hash_edit", json!({"path": &paths[1], "start": "1:00", "content": "x"}))
         .await;
     let t_evicted = text_of(&r_evicted);
-    assert!(t_evicted.contains("Hash mismatch at"), "{t_evicted}");
+    assert!(t_evicted.contains("no current anchors"), "{t_evicted}");
     assert!(!t_evicted.contains("SECRET_01=val"), "evicted f01 leaked: {t_evicted}");
 
     // Refreshed f00 and newly read f64 stay recorded.
@@ -3336,6 +3336,39 @@ async fn hash_edit_clears_state_on_session_start_and_evicts_lru_over_64_files() 
         )
         .await;
     assert!(text_of(&r_new).contains("SECRET_64=val"), "{}", text_of(&r_new));
+}
+
+#[tokio::test]
+async fn a_file_too_large_to_track_gets_no_anchors_and_hash_edit_refuses_it() {
+    let dir = temp_dir("sasacode-hashline-large-");
+    let big = dir.path().join("big.txt");
+    let line = "x".repeat(99);
+    std::fs::write(&big, format!("{line}\n").repeat(21_000)).unwrap();
+    let b = path_str(&big);
+    let l = load_plugin("builtin-tools", builtin_tools, &path_str(dir.path()), json!({})).await;
+    assert!(l.host.load("hashline-edit", bundled("hashline-edit")).await);
+
+    let r = l.invoke("read", json!({"path": &b, "limit": 3})).await;
+    let out = text_of(&r);
+    assert!(!r.is_error() && out.contains(&format!("1\t{line}")), "{out}");
+    assert!(
+        !out.contains(&format!("1:{}|", line_hash(&line))),
+        "anchors that could never be used: {out}"
+    );
+
+    l.agent
+        .hooks()
+        .emit::<hook::AssistantMessage>(AssistantMessageEvent {
+            message: reply(vec![say("now edit")]),
+            stopped: None,
+        })
+        .await;
+    let anchor = format!("1:{}", line_hash(&line));
+    let r = l
+        .invoke("hash_edit", json!({"path": &b, "start": anchor, "content": "y"}))
+        .await;
+    assert!(r.is_error() && text_of(&r).contains("too large"), "{}", text_of(&r));
+    assert!(std::fs::read_to_string(&big).unwrap().starts_with(&line));
 }
 
 #[test]

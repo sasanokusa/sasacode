@@ -15,12 +15,14 @@
 //!   tool, another agent, the user) forgets every anchor of it: shifted lines can look unchanged.
 //!
 //! Only lines `read` showed as they are on disk get an anchor, and only after slim-profile has cut
-//! the output (it loads first). A file the agent has no snapshot of (never read, too large,
-//! forgotten) is checked by hash alone. When it is unclear which agent made a call, every agent
-//! that has a snapshot of the file must have been shown the lines.
+//! the output (it loads first). A file that cannot have a snapshot (over 2 MB, unreadable) gets no
+//! anchors. Whenever in doubt the edit is refused and the model reads the file again: a file the
+//! agent has no snapshot of (never read, forgotten, after `/resume`), a call whose agent is unclear,
+//! a file that changed between the check and the write. Edits of one file run one at a time.
 
+use std::collections::HashMap;
 use std::ops::Range;
-use std::sync::{Arc, LazyLock, Mutex, MutexGuard};
+use std::sync::{Arc, LazyLock, Mutex, MutexGuard, Weak};
 
 use futures::future::BoxFuture;
 use regex::Regex;
@@ -150,18 +152,34 @@ impl PluginState {
         }
     }
 
-    /// Per line of `text`, the file on disk now: was `caller` shown its anchor, where the line is
-    /// now, before writing its current message? An unknown caller counts as shown only what every
-    /// agent with a snapshot was shown. `None`: no snapshot to go by.
-    fn lines_shown(&mut self, caller: &Caller, key: &str, text: &str) -> Option<Vec<bool>> {
-        match caller {
-            Caller::Agent(id) => self.agent_mut(id).shown_before_now(key, text),
-            Caller::Unknown => self
-                .agents
-                .iter_mut()
-                .filter_map(|(_, agent)| agent.shown_before_now(key, text))
-                .reduce(|all, one| all.iter().zip(one).map(|(a, b)| *a && b).collect()),
-        }
+    /// Per line of `text`, the file on disk now: was `agent` shown its anchor, where the line is
+    /// now, before writing its current message? `None`: no snapshot to go by.
+    fn lines_shown(&mut self, agent: &AgentId, key: &str, text: &str) -> Option<Vec<bool>> {
+        self.agent_mut(agent).shown_before_now(key, text)
+    }
+}
+
+/// One lock per file (by canonical path) that `hash_edit` holds from reading the file to recording
+/// its edit, so two edits of it (say, by parallel subagents) never both start from the same text.
+/// Kept apart from [`PluginState`], which a new session replaces while an edit may hold a lock.
+#[derive(Default)]
+struct FileLocks(Mutex<HashMap<String, Weak<tokio::sync::Mutex<()>>>>);
+
+impl FileLocks {
+    async fn acquire(&self, key: &str) -> tokio::sync::OwnedMutexGuard<()> {
+        let file = {
+            let mut map = self.0.lock().unwrap_or_else(|e| e.into_inner());
+            map.retain(|_, held| held.strong_count() > 0);
+            match map.get(key).and_then(Weak::upgrade) {
+                Some(file) => file,
+                None => {
+                    let file = Arc::default();
+                    map.insert(key.to_string(), Arc::downgrade(&file));
+                    file
+                }
+            }
+        };
+        file.lock_owned().await
     }
 }
 
@@ -261,10 +279,12 @@ pub fn line_hash(line: &str) -> String {
     format!("{:02x}", (h ^ (h >> 8) ^ (h >> 16) ^ (h >> 24)) & 0xff)
 }
 
-fn canonical_key(path: &str) -> String {
+/// The key of a file in snapshots and locks. `None` when the path does not resolve: such a file is
+/// not tracked, so `read` gives it no anchors and `hash_edit` refuses it.
+fn canonical_key(path: &str) -> Option<String> {
     std::fs::canonicalize(path)
+        .ok()
         .map(|p| p.to_string_lossy().into_owned())
-        .unwrap_or_else(|_| path.to_string())
 }
 
 fn str_arg<'a>(args: &'a JsonObject, key: &str) -> &'a str {
@@ -285,7 +305,7 @@ fn shows(body: &str, on_disk: &str) -> bool {
 /// `read` output with the `<n>\t` of each numbered line turned into `<n>:<hash>|`. The hash is
 /// that of the line on disk; the numbers are added to `shown`. `None` when a line differs from the
 /// one on disk (the file changed while it was read): the anchors would not match what was shown.
-fn annotate_read(text: &str, disk_lines: Option<&[&str]>, shown: &mut Vec<usize>) -> Option<String> {
+fn annotate_read(text: &str, disk_lines: &[&str], shown: &mut Vec<usize>) -> Option<String> {
     let mut out: Vec<String> = Vec::new();
     for row in text.split('\n') {
         if let Some(cap) = READ_LINE.captures(row)
@@ -293,10 +313,7 @@ fn annotate_read(text: &str, disk_lines: Option<&[&str]>, shown: &mut Vec<usize>
             && n >= 1
         {
             let body = &cap[2];
-            let on_disk = match disk_lines {
-                Some(lines) => *lines.get(n - 1).filter(|line| shows(body, line))?,
-                None => body,
-            };
+            let on_disk = *disk_lines.get(n - 1).filter(|line| shows(body, line))?;
             out.push(format!("{n}:{}|{body}", line_hash(on_disk)));
             shown.push(n);
         } else {
@@ -388,18 +405,22 @@ fn record_edit(state: &Mutex<PluginState>, agent: &AgentId, key: String, before:
 }
 
 /// Checks one `hash_edit` against `before`, the file on disk, and works out what to write.
-/// `shown` is [`PluginState::lines_shown`] for it. Without `anchors` (the caller is unknown) the
-/// messages print none: no agent would be recorded as shown them.
-fn plan_edit(
-    args: &JsonObject,
-    path: &str,
-    before: &str,
-    shown: Option<&[bool]>,
-    anchors: bool,
-) -> Result<Plan, Refusal> {
-    if before.is_empty() {
+/// `shown` is [`PluginState::lines_shown`] for its agent: without a snapshot nothing is trusted.
+fn plan_edit(args: &JsonObject, path: &str, before: &str, shown: Option<&[bool]>) -> Result<Plan, Refusal> {
+    let lines: Vec<&str> = split_lines(before).into_iter().map(without_cr).collect();
+    // `read` calls a file of one empty line empty too and shows it no anchor.
+    if lines.iter().all(|line| line.is_empty()) && lines.len() <= 1 {
         return Err(format!("{path} is empty. Use write to populate it.").into());
     }
+    if before.len() as u64 > MAX_DISK_HASH_BYTES {
+        return Err(format!("{path} is too large for hash_edit (over 2 MB). Use edit instead.").into());
+    }
+    // An error must not print lines of a file the agent has not read: refuse before anything else.
+    let Some(shown) = shown else {
+        return Err(
+            format!("You hold no current anchors for {path} (not read, or forgotten). Read {path} first.").into(),
+        );
+    };
     let (start, start_hash) = parse_anchor(str_arg(args, "start"))?;
     let (end, end_hash) = match str_arg(args, "end").trim() {
         "" => (start, start_hash.clone()),
@@ -407,10 +428,8 @@ fn plan_edit(
     };
     let mode = args.get("mode").and_then(Value::as_str).unwrap_or("replace");
     let content = str_arg(args, "content");
-    let lines: Vec<&str> = split_lines(before).into_iter().map(without_cr).collect();
     let total = lines.len();
 
-    // An error must not print lines of a file the agent has not read (`shown` is `None`).
     if end < start || end > total {
         return Err(
             format!("Lines {start}-{end} are not a range in {path} ({total} lines). Re-read {path} first.").into(),
@@ -418,7 +437,7 @@ fn plan_edit(
     }
     // Every line in the range, not just its ends: they are what gets replaced. A shown line has the
     // hash it had then, as any change but the agent's own `hash_edit` forgets every anchor.
-    if shown.is_some_and(|shown| !shown[start - 1..end].iter().all(|&s| s)) {
+    if !shown[start - 1..end].iter().all(|&s| s) {
         return Err(format!(
             "Stale anchor at {path} lines {start}-{end}: the file changed since your last read of these lines, they moved, or you have not read all of them. Re-read {path} before editing."
         )
@@ -428,9 +447,6 @@ fn plan_edit(
         let found = line_hash(lines[line - 1]);
         if found == *expected {
             continue;
-        }
-        if shown.is_none() || !anchors {
-            return Err(format!("Hash mismatch at {path} line {line}. Read {path} first.").into());
         }
         let nearby = line.saturating_sub(4)..(line + 3).min(total);
         return Err(Refusal {
@@ -462,8 +478,15 @@ fn plan_edit(
     next.extend(&lines[replaced.end..]);
     let newline = if before.contains("\r\n") { "\r\n" } else { "\n" };
     let mut after = next.join(newline);
-    if before.ends_with('\n') && !next.is_empty() {
+    // A last line that is empty needs a line break after it, or it is not a line at all: without
+    // one, deleting `b` from `a\n\nb` would also take the empty line above it.
+    if !next.is_empty() && (before.ends_with('\n') || next.last() == Some(&"")) {
         after.push_str(newline);
+    }
+    // The anchors printed below and the snapshot both count lines as `split_lines` does.
+    let written: Vec<&str> = split_lines(&after).into_iter().map(without_cr).collect();
+    if !after.is_empty() && written != next {
+        return Err(format!("This edit cannot be done by line anchors. Use edit or write on {path} instead.").into());
     }
     if after == before {
         return Err("No changes made (replacement matches existing lines)."
@@ -477,18 +500,24 @@ fn plan_edit(
     let last = (replaced.start + new_lines.len()).saturating_sub(1).max(first);
     let from = first.saturating_sub(EDIT_CONTEXT_LINES);
     let to = (last + EDIT_CONTEXT_LINES + 1).min(next.len());
-    let region = if next.is_empty() {
-        "File is now empty.".to_string()
-    } else if !anchors {
-        format!("Re-read {path} before editing it again.")
+    let (region, shown) = if next.iter().all(|line| line.is_empty()) && next.len() <= 1 {
+        ("File is now empty.".to_string(), 0..0)
+    } else if after.len() as u64 > MAX_DISK_HASH_BYTES {
+        (
+            "The file is now over 2 MB, too large for anchors: use edit to change it again.".to_string(),
+            0..0,
+        )
     } else {
-        format!("Updated lines {}-{to}:\n{}", from + 1, anchored(&next, from..to))
+        (
+            format!("Updated lines {}-{to}:\n{}", from + 1, anchored(&next, from..to)),
+            from + 1..to + 1,
+        )
     };
     Ok(Plan {
         after,
         replaced,
         added: new_lines.len(),
-        shown: from + 1..to + 1,
+        shown,
         summary: format!("Edited {path} (lines {start}-{end}, {mode}). {region}"),
     })
 }
@@ -497,10 +526,22 @@ async fn execute_hash_edit(
     args: JsonObject,
     ctx: ToolContext,
     state: Arc<Mutex<PluginState>>,
+    locks: Arc<FileLocks>,
 ) -> anyhow::Result<ToolResult> {
-    let caller = lock(&state).caller_of(&args);
     let path = resolve_path(str_arg(&args, "path"), &ctx.cwd);
-    let key = canonical_key(&path);
+    let Some(key) = canonical_key(&path) else {
+        return Ok(ToolResult::error(format!(
+            "File not found: {path}. Use write to create it."
+        )));
+    };
+    // The `ToolCall` hook noted who sent these arguments. Unsure, nothing is trusted: borrowing
+    // another agent's snapshot could edit lines this one never saw.
+    let Caller::Agent(agent) = lock(&state).caller_of(&args) else {
+        return Ok(ToolResult::error(format!(
+            "hash_edit could not tell which agent sent this call, so it did not run. Re-read {path} and send it again, or use edit."
+        )));
+    };
+    let _file = locks.acquire(&key).await;
     let Ok(bytes) = tokio::fs::read(&path).await else {
         return Ok(ToolResult::error(format!(
             "File not found: {path}. Use write to create it."
@@ -511,16 +552,13 @@ async fn execute_hash_edit(
             "{path} is not valid UTF-8; edit it with bash instead."
         )));
     };
-    let shown = lock(&state).lines_shown(&caller, &key, &before);
-    let anchors = caller != Caller::Unknown;
-    let plan = match plan_edit(&args, &path, &before, shown.as_deref(), anchors) {
+    let shown = lock(&state).lines_shown(&agent, &key, &before);
+    let plan = match plan_edit(&args, &path, &before, shown.as_deref()) {
         Ok(plan) => plan,
         Err(refusal) => {
-            if let Caller::Agent(agent) = &caller
-                && !refusal.shown.is_empty()
-            {
+            if !refusal.shown.is_empty() {
                 let printed: Vec<usize> = refusal.shown.collect();
-                record_read(&state, agent, key, &before, Some(&printed));
+                record_read(&state, &agent, key, &before, Some(&printed));
             }
             return Ok(ToolResult::error(refusal.message));
         }
@@ -528,13 +566,16 @@ async fn execute_hash_edit(
     if ctx.signal.is_cancelled() {
         return Ok(ToolResult::error("Interrupted by the user; the file was not changed."));
     }
+    // Something outside `hash_edit` (another tool, the user) may have written the file meanwhile.
+    if tokio::fs::read(&path).await.ok().as_deref() != Some(before.as_bytes()) {
+        return Ok(ToolResult::error(format!(
+            "{path} changed while hash_edit was working on it; the edit was not written. Re-read {path} before editing."
+        )));
+    }
     tokio::fs::write(&path, &plan.after)
         .await
         .map_err(|e| fs_error(&e, "open", &path))?;
-    // After an unknown caller's edit no snapshot follows it, so every agent must read the file again.
-    if let Caller::Agent(agent) = &caller {
-        record_edit(&state, agent, key, &before, &plan);
-    }
+    record_edit(&state, &agent, key, &before, &plan);
 
     let mut details = JsonObject::new();
     details.insert("path".into(), json!(path));
@@ -547,6 +588,7 @@ pub fn plugin(api: PluginApi) -> BoxFuture<'static, anyhow::Result<()>> {
     Box::pin(async move {
         let cwd = api.cwd();
         let state: Arc<Mutex<PluginState>> = Arc::default();
+        let locks: Arc<FileLocks> = Arc::default();
 
         api.on::<hook::SystemPrompt, _, _>(|ev, _ctx| async move {
             let prompt = format!(
@@ -620,8 +662,12 @@ pub fn plugin(api: PluginApi) -> BoxFuture<'static, anyhow::Result<()>> {
                     return Ok(None);
                 }
                 let path = resolve_path(str_arg(&ev.call.input, "path"), &cwd);
-                let disk = tracked_text(&path).await;
-                let disk_lines = disk.as_deref().map(split_lines);
+                // No snapshot can be kept of this file, so `hash_edit` would refuse every anchor:
+                // show none.
+                let (Some(key), Some(disk)) = (canonical_key(&path), tracked_text(&path).await) else {
+                    return Ok(None);
+                };
+                let disk_lines = split_lines(&disk);
 
                 let mut result = ev.result;
                 let mut shown = Vec::new();
@@ -635,13 +681,11 @@ pub fn plugin(api: PluginApi) -> BoxFuture<'static, anyhow::Result<()>> {
                     .collect();
                 let annotated: Option<Vec<String>> = parts
                     .iter()
-                    .map(|text| annotate_read(text, disk_lines.as_deref(), &mut shown))
+                    .map(|text| annotate_read(text, &disk_lines, &mut shown))
                     .collect();
                 // Shown text that is not the file's (it changed while being read): forget every anchor.
-                if let Some(text) = &disk {
-                    let lines = annotated.as_ref().map(|_| &shown[..]);
-                    record_read(&st, &ctx.agent, canonical_key(&path), text, lines);
-                }
+                let lines = annotated.as_ref().map(|_| &shown[..]);
+                record_read(&st, &ctx.agent, key, &disk, lines);
                 let Some(annotated) = annotated.filter(|_| !shown.is_empty()) else {
                     return Ok(None);
                 };
@@ -669,7 +713,7 @@ pub fn plugin(api: PluginApi) -> BoxFuture<'static, anyhow::Result<()>> {
                     "additionalProperties": false
                 }),
                 ToolKind::Edit,
-                move |args, ctx| execute_hash_edit(args, ctx, state.clone()),
+                move |args, ctx| execute_hash_edit(args, ctx, state.clone(), locks.clone()),
             )
             .always_load(true)
             .permissions_as("edit")
@@ -734,32 +778,168 @@ mod tests {
         assert_eq!(st.in_flight.len(), MAX_IN_FLIGHT);
     }
 
-    #[test]
-    fn an_unknown_caller_needs_every_agent_with_a_snapshot_to_have_been_shown_the_lines() {
-        let mut st = PluginState::default();
-        let text = "a\nb\nc\n";
-        let sub = Some("sub-1".to_string());
-        assert_eq!(st.lines_shown(&Caller::Unknown, "f", text), None);
-        for (agent, lines) in [(&None, vec![1, 2]), (&sub, vec![2, 3])] {
-            let state = st.agent_mut(agent);
-            let mut snapshot = Snapshot::of(text);
-            snapshot.show(lines, state.message);
-            state.message += 1;
-            state.store("f".into(), snapshot);
+    /// One file in a temporary directory and the plugin's state, to run `hash_edit` on.
+    struct Fixture {
+        dir: tempfile::TempDir,
+        path: String,
+        key: String,
+        state: Arc<Mutex<PluginState>>,
+        locks: Arc<FileLocks>,
+    }
+
+    fn fixture(text: &str) -> Fixture {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("f.txt");
+        std::fs::write(&file, text).unwrap();
+        let path = file.to_string_lossy().into_owned();
+        Fixture {
+            key: canonical_key(&path).unwrap(),
+            path,
+            dir,
+            state: Arc::default(),
+            locks: Arc::default(),
         }
-        assert_eq!(
-            st.lines_shown(&Caller::Agent(None), "f", text),
-            Some(vec![true, true, false])
+    }
+
+    fn text_of(result: &ToolResult) -> String {
+        result.content.iter().filter_map(UserContent::as_text).collect()
+    }
+
+    impl Fixture {
+        fn disk(&self) -> String {
+            std::fs::read_to_string(&self.path).unwrap()
+        }
+
+        /// `agent` read every line of the file, then began a new message.
+        fn read_all(&self, agent: &AgentId) {
+            let text = self.disk();
+            let lines: Vec<usize> = (1..=split_lines(&text).len()).collect();
+            record_read(&self.state, agent, self.key.clone(), &text, Some(&lines));
+            lock(&self.state).agent_mut(agent).message += 1;
+        }
+
+        /// Replaces line `n` with `content`, by the anchor it has on disk now.
+        fn replace(&self, n: usize, content: &str) -> JsonObject {
+            let anchor = format!("{n}:{}", line_hash(split_lines(&self.disk())[n - 1]));
+            let args = json!({"path": self.path, "start": anchor, "content": content});
+            args.as_object().unwrap().clone()
+        }
+
+        /// Runs `hash_edit`, its `ToolCall` hook first when `agent` is given.
+        async fn hash_edit(&self, agent: Option<&AgentId>, args: JsonObject) -> ToolResult {
+            let id = format!("{agent:?}{}", str_arg(&args, "start"));
+            if let Some(agent) = agent {
+                lock(&self.state).note_call(agent.clone(), id.clone(), args.clone());
+            }
+            let ctx = ToolContext::new(self.dir.path());
+            let result = execute_hash_edit(args, ctx, self.state.clone(), self.locks.clone()).await;
+            // As the `ToolResult` hook does.
+            lock(&self.state).in_flight.retain(|c| c.call_id != id);
+            result.unwrap()
+        }
+    }
+
+    #[tokio::test]
+    async fn an_agent_without_a_snapshot_of_the_file_is_refused_even_when_the_hashes_match() {
+        let f = fixture("a\nb\n");
+        let sub = Some("sub-1".to_string());
+        // Only the subagent read it (or the main agent's snapshot was evicted, or the session resumed).
+        f.read_all(&sub);
+        let out = f.hash_edit(Some(&None), f.replace(1, "x")).await;
+        assert!(out.is_error() && text_of(&out).contains("Read"), "{}", text_of(&out));
+        assert_eq!(f.disk(), "a\nb\n");
+        let out = f.hash_edit(Some(&sub), f.replace(1, "x")).await;
+        assert!(!out.is_error(), "{}", text_of(&out));
+        assert_eq!(f.disk(), "x\nb\n");
+    }
+
+    #[tokio::test]
+    async fn a_call_whose_agent_is_unclear_is_refused_even_when_an_agent_has_read_the_file() {
+        let f = fixture("a\nb\n");
+        let sub = Some("sub-1".to_string());
+        f.read_all(&None);
+        f.read_all(&sub);
+        // No `ToolCall` hook noted it.
+        let out = f.hash_edit(None, f.replace(1, "x")).await;
+        assert!(
+            text_of(&out).contains("could not tell which agent"),
+            "{}",
+            text_of(&out)
         );
-        assert_eq!(
-            st.lines_shown(&Caller::Unknown, "f", text),
-            Some(vec![false, true, false])
+        // Two agents sent exactly these arguments.
+        lock(&f.state).note_call(sub.clone(), "s".into(), f.replace(1, "x"));
+        let out = f.hash_edit(Some(&None), f.replace(1, "x")).await;
+        assert!(
+            text_of(&out).contains("could not tell which agent"),
+            "{}",
+            text_of(&out)
         );
-        // A read that showed lines not the file's keeps the snapshot but forgets its anchors.
-        let state = Mutex::new(st);
-        record_read(&state, &None, "f".into(), text, None);
-        let shown = lock(&state).lines_shown(&Caller::Agent(None), "f", text);
-        assert_eq!(shown, Some(vec![false; 3]));
+        assert_eq!(f.disk(), "a\nb\n");
+    }
+
+    #[tokio::test]
+    async fn parallel_hash_edits_of_one_file_never_lose_an_edit() {
+        for _ in 0..20 {
+            // One agent, two lines: the second edit starts from the first one's result.
+            let f = fixture("a\nb\nc\nd\n");
+            f.read_all(&None);
+            let (one, two) = (f.replace(1, "A"), f.replace(3, "C"));
+            let (r1, r2) = tokio::join!(f.hash_edit(Some(&None), one), f.hash_edit(Some(&None), two));
+            assert!(!r1.is_error() && !r2.is_error(), "{} / {}", text_of(&r1), text_of(&r2));
+            assert_eq!(f.disk(), "A\nb\nC\nd\n");
+
+            // Two agents: the second finds the file changed by someone else and must read it again.
+            let f = fixture("a\nb\nc\nd\n");
+            let sub = Some("sub-1".to_string());
+            f.read_all(&None);
+            f.read_all(&sub);
+            let (one, two) = (f.replace(1, "A"), f.replace(3, "C"));
+            let (r1, r2) = tokio::join!(f.hash_edit(Some(&None), one), f.hash_edit(Some(&sub), two));
+            let edited: Vec<bool> = [&r1, &r2].iter().map(|r| !r.is_error()).collect();
+            match edited[..] {
+                [true, false] => assert_eq!(f.disk(), "A\nb\nc\nd\n"),
+                [false, true] => assert_eq!(f.disk(), "a\nb\nC\nd\n"),
+                _ => panic!("{} / {} / {}", text_of(&r1), text_of(&r2), f.disk()),
+            }
+            let refused = if edited[0] { &r2 } else { &r1 };
+            assert!(text_of(refused).contains("Re-read"), "{}", text_of(refused));
+        }
+    }
+
+    fn plan(before: &str, args: Value) -> Result<Plan, Refusal> {
+        let shown = vec![true; split_lines(before).len()];
+        plan_edit(args.as_object().unwrap(), "f", before, Some(&shown))
+    }
+
+    #[test]
+    fn an_edit_that_ends_in_an_empty_line_keeps_it_and_prints_only_lines_that_exist() {
+        // Deleting `b` from `a\n\nb` (no final line break) leaves `a` and the empty line.
+        let p = plan(
+            "a\n\nb",
+            json!({"start": format!("3:{}", line_hash("b")), "content": ""}),
+        );
+        let p = p.ok().unwrap();
+        assert_eq!(split_lines(&p.after), vec!["a", ""]);
+        assert!(p.shown.end - 1 <= 2, "{:?}", p.shown);
+        // Inserting `c` and an empty line after the last line, again without a final line break.
+        let args = json!({"start": format!("2:{}", line_hash("b")), "mode": "insert_after", "content": "c\n\n"});
+        let p = plan("a\nb", args).ok().unwrap();
+        assert_eq!(split_lines(&p.after), vec!["a", "b", "c", ""]);
+        assert!(p.summary.contains(&format!("4:{}|", line_hash(""))), "{}", p.summary);
+        assert_eq!(p.shown, 1..5);
+        // Emptied out: no anchors.
+        let p = plan("a", json!({"start": format!("1:{}", line_hash("a")), "content": "\n"}));
+        let p = p.ok().unwrap();
+        assert!(p.shown.is_empty() && p.summary.contains("now empty"), "{}", p.summary);
+    }
+
+    #[test]
+    fn a_file_of_one_line_break_is_empty_to_hash_edit_as_to_read() {
+        for before in ["\n", "\r\n"] {
+            let refused = plan(before, json!({"start": format!("1:{}", line_hash("")), "content": "x"}));
+            let message = refused.err().unwrap().message;
+            assert!(message.contains("Use write"), "{message}");
+        }
     }
 
     #[test]
@@ -767,13 +947,13 @@ mod tests {
         let disk = ["one", "two", "x".repeat(30).leak()];
         let read = "     1\tone\n     2\ttwo\n     3\txxxxx… [line truncated, 30 chars]\n[note]";
         let mut shown = Vec::new();
-        let out = annotate_read(read, Some(&disk), &mut shown).expect("same as disk");
+        let out = annotate_read(read, &disk, &mut shown).expect("same as disk");
         assert!(out.starts_with(&format!("1:{}|one\n", line_hash("one"))), "{out}");
         assert_eq!(shown, vec![1, 2, 3]);
         // The file changed between `read` and the hook: line 2 is no longer what was shown.
         let changed = ["one", "TWO", "x"];
-        assert_eq!(annotate_read(read, Some(&changed), &mut Vec::new()), None);
-        assert_eq!(annotate_read("     4\tfour", Some(&disk), &mut Vec::new()), None);
+        assert_eq!(annotate_read(read, &changed, &mut Vec::new()), None);
+        assert_eq!(annotate_read("     4\tfour", &disk, &mut Vec::new()), None);
     }
 
     #[test]
