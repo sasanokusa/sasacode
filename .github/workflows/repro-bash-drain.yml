@@ -1,0 +1,46 @@
+# Temporary, removed before merge: how often bash loses a quick command's output on Windows,
+# on main and on this branch. long_output_is_bounded_and_saved came back with no output once (#171).
+name: repro-bash-drain
+on: pull_request
+permissions:
+  contents: read
+jobs:
+  repro:
+    strategy:
+      fail-fast: false
+      matrix:
+        ref: [main, head]
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ matrix.ref == 'main' && 'main' || github.event.pull_request.head.sha }}
+      - run: rustup update stable && rustup default stable
+      - name: build the test
+        shell: bash
+        run: |
+          cargo test -p sasacode-bundled --test core_project_checks --no-run --locked --message-format=json \
+            | jq -r 'select(.target.name == "core_project_checks" and .executable != null) | .executable' \
+            | head -n 1 > exe.txt
+          cat exe.txt
+      - name: run it 400 times, 8 loops at once
+        shell: bash
+        run: |
+          exe=$(cygpath -u "$(cat exe.txt)")
+          for j in 1 2 3 4 5 6 7 8; do
+            (
+              f=0
+              for i in $(seq 1 50); do
+                "$exe" long_output_is_bounded_and_saved --exact --test-threads=1 > "out-$j.txt" 2>&1 || {
+                  f=$((f + 1))
+                  cp "out-$j.txt" "failed-$j-$i.txt"
+                }
+              done
+              echo "$f" > "count-$j.txt"
+            ) &
+          done
+          wait
+          total=$(awk '{ s += $1 } END { print s }' count-*.txt)
+          echo "${{ matrix.ref }}: failed $total of 400"
+          for f in failed-*.txt; do [ -f "$f" ] && { echo "== $f"; tail -n 20 "$f"; break; }; done
+          test "$total" -eq 0

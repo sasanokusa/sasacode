@@ -248,6 +248,22 @@ fn bash_abort_kills_the_whole_process_group() {
 }
 
 #[tokio::test]
+async fn bash_ends_when_the_pipes_close_or_shortly_after_exit_when_a_background_job_keeps_them() {
+    let d = sandbox();
+    // Output in flight when the shell exits is waited for, not cut at a fixed moment.
+    for _ in 0..20 {
+        let r = run(&BashTool, d.path(), json!({ "command": "printf '%040000d' 0" })).await;
+        assert!(out(&r).contains("truncated"), "{}", out(&r));
+    }
+    // A job left running keeps the pipes open: the call ends anyway, with what the shell printed.
+    let t0 = Instant::now();
+    let r = run(&BashTool, d.path(), json!({ "command": "sleep 3 & echo hi" })).await;
+    assert!(t0.elapsed() < Duration::from_millis(2500), "{:?}", t0.elapsed());
+    assert!(out(&r).starts_with("hi\n"), "{}", out(&r));
+    assert_eq!(r.details.as_ref().unwrap()["exitCode"], 0);
+}
+
+#[tokio::test]
 async fn bash_a_character_split_across_two_writes_stays_whole() {
     let d = sandbox();
     // "あ" is e3 81 82: the first two bytes, a pause, then the last one.
