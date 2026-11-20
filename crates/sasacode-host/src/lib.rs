@@ -8,8 +8,10 @@ pub mod messages_ja;
 pub mod models;
 pub mod notes;
 pub mod sessions;
+pub mod text;
 
 pub use i18n::*;
 pub use models::*;
 pub use notes::*;
 pub use sessions::*;
+pub use text::{plain, plain_clipped, plain_line};

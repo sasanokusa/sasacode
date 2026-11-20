@@ -473,8 +473,9 @@ impl UiBridge for Bridge {
     fn interactive(&self) -> bool {
         true
     }
+    // Plugin and MCP server messages carry text from config, servers and models.
     fn notify(&self, message: &str, level: NotifyLevel) {
-        self.0.notify(message, level_color(level));
+        self.0.notify(plain(message), level_color(level));
     }
     async fn show_text(&self, options: ShowTextOptions) {
         let _ = self
@@ -618,7 +619,7 @@ impl App {
             chat.push((
                 next_id,
                 Box::new(Notice::colored(
-                    &t("警告: {warning}", &[("warning", &w)]),
+                    &t("警告: {warning}", &[("warning", &plain(&w))]),
                     theme::yellow,
                 )),
             ));
@@ -1429,7 +1430,11 @@ impl App {
                 self.add_chat(Box::new(Notice::colored(
                     &t(
                         "プラグイン {plugin} の {hook} ハンドラでエラー: {error}",
-                        &[("plugin", &plugin), ("hook", &hook), ("error", &error)],
+                        &[
+                            ("plugin", &plain(&plugin)),
+                            ("hook", &plain(&hook)),
+                            ("error", &plain(&error)),
+                        ],
                     ),
                     theme::red,
                 )));
@@ -1932,7 +1937,7 @@ impl App {
             t("なし", &[])
         };
         let mut parts = vec![
-            theme::gray(&format!("{}/{}", model.provider, model.id)),
+            theme::gray(&plain(&format!("{}/{}", model.provider, model.id))),
             theme::gray(&t("推論: {level}", &[("level", &level)])),
             if mode == PermissionMode::Auto {
                 theme::red(&theme::bold(&mode_text))

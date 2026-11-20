@@ -151,7 +151,10 @@ fn main() {
         match run(args, cwd).await {
             Ok(code) => code,
             Err(e) => {
-                eprintln!("{}", t!("sasacode: {error}", error = format!("{e:#}")));
+                eprintln!(
+                    "{}",
+                    t!("sasacode: {error}", error = sasacode_host::plain(&format!("{e:#}")))
+                );
                 1
             }
         }
@@ -244,7 +247,7 @@ async fn run(args: Vec<String>, cwd: String) -> anyhow::Result<i32> {
     opts.preloaded = Some((project.files, project.warnings));
     let harness = setup(opts).await?;
     for w in harness.warnings() {
-        eprintln!("{}", t!("warning: {warning}", warning = w));
+        eprintln!("{}", t!("warning: {warning}", warning = sasacode_host::plain(&w)));
     }
     // As if "always" had been answered for each: a window that starts a process per message keeps
     // its grants this way.
