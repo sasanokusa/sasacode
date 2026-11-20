@@ -9,7 +9,7 @@
 # Environment:
 #   SASACODE_VERSION       version to install, e.g. v0.5.0 (default: the latest release)
 #   SASACODE_INSTALL_DIR   where to put the binary (default: ~/.local/bin)
-#   SASACODE_DOWNLOAD_BASE releases URL, https only (default: https://github.com/sasanokusa/sasacode/releases)
+#   SASACODE_DOWNLOAD_BASE releases URL, https only, or http to localhost (default: https://github.com/sasanokusa/sasacode/releases)
 set -eu
 
 # Everything that runs is in main, called on the last line: a script that arrives only in part (a
@@ -21,17 +21,20 @@ DEFAULT_BASE="https://github.com/$REPO_SLUG/releases"
 say() { printf '%s\n' "$*"; }
 die() { printf 'sasacode install: %s\n' "$*" >&2; exit 1; }
 
-# https only, TLS 1.2 or newer, also after a redirect.
+# https only (http to this machine is the one exception: a test server), TLS 1.2 or newer, also
+# after a redirect. PROTO is what curl may speak; main widens it for a base on this machine.
+PROTO='=https'
+
 fetch() { # url [outfile]
   if command -v curl >/dev/null 2>&1; then
     if [ $# -eq 2 ]; then
-      curl -fsSL --proto '=https' --proto-redir '=https' --tlsv1.2 --retry 3 -o "$2" "$1"
+      curl -fsSL --proto "$PROTO" --proto-redir "$PROTO" --tlsv1.2 --retry 3 -o "$2" "$1"
     else
-      curl -fsSL --proto '=https' --proto-redir '=https' --tlsv1.2 --retry 3 "$1"
+      curl -fsSL --proto "$PROTO" --proto-redir "$PROTO" --tlsv1.2 --retry 3 "$1"
     fi
   elif command -v wget >/dev/null 2>&1; then
-    # BusyBox's wget has no --https-only: the https:// check on the base (in main) stands in for it.
-    if wget --help 2>&1 | grep -q -- --https-only; then
+    # BusyBox's wget has no --https-only: the check on the base (in main) stands in for it.
+    if [ "$PROTO" = '=https' ] && wget --help 2>&1 | grep -q -- --https-only; then
       if [ $# -eq 2 ]; then wget -q --https-only -O "$2" "$1"; else wget -q --https-only -O - "$1"; fi
     else
       if [ $# -eq 2 ]; then wget -q -O "$2" "$1"; else wget -q -O - "$1"; fi
@@ -71,7 +74,9 @@ main() {
   VERSION="${SASACODE_VERSION:-}"
   case "$BASE" in
     https://*) ;;
-    *) die "SASACODE_DOWNLOAD_BASE must be an https:// URL" ;;
+    http://localhost | http://localhost[:/]* | http://127.0.0.1 | http://127.0.0.1[:/]* | http://\[::1\] | http://\[::1\][:/]*)
+      PROTO='=http,https' ;;
+    *) die "SASACODE_DOWNLOAD_BASE must be an https:// URL (http is allowed only for localhost)" ;;
   esac
 
   # ── platform ──────────────────────────────────────────────────────
@@ -107,7 +112,7 @@ main() {
   # is read from the redirect of …/latest/download/ itself (…/download/<version>/…): the
   # …/releases/latest page can lag behind it for a while after a release.
   if [ -z "$VERSION" ] && command -v curl >/dev/null 2>&1; then
-    VERSION="$(curl -fsSI --proto '=https' --tlsv1.2 "$BASE/latest/download/SHA256SUMS" 2>/dev/null | tr -d '\r' |
+    VERSION="$(curl -fsSI --proto "$PROTO" --tlsv1.2 "$BASE/latest/download/SHA256SUMS" 2>/dev/null | tr -d '\r' |
       sed -n 's|^[Ll]ocation: .*/download/\([^/]*\)/SHA256SUMS.*|\1|p' | head -n 1)" || VERSION=""
   fi
   if [ -n "$VERSION" ]; then url="$BASE/download/$VERSION"; else url="$BASE/latest/download"; fi

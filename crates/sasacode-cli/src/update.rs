@@ -33,6 +33,52 @@ pub fn download_base() -> String {
     std::env::var("SASACODE_DOWNLOAD_BASE").unwrap_or_else(|_| OFFICIAL_RELEASES.into())
 }
 
+/// Whether `url` is one releases may be fetched from: https, or http to this machine (a test server).
+pub fn is_secure_url(url: &str) -> bool {
+    let Ok(parsed) = url::Url::parse(url) else { return false };
+    match parsed.scheme() {
+        "https" => true,
+        "http" => match parsed.host() {
+            Some(url::Host::Domain(name)) => name.eq_ignore_ascii_case("localhost"),
+            Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+            Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+            None => false,
+        },
+        _ => false,
+    }
+}
+
+/// The release base must be an https URL (http only for this machine).
+fn require_secure(base: &str) -> anyhow::Result<()> {
+    if is_secure_url(base) {
+        return Ok(());
+    }
+    anyhow::bail!(t!(
+        "{base} is not an https URL (http is allowed only for localhost)",
+        base = base
+    ))
+}
+
+/// The client that downloads a release: a redirect to anything but https (or this machine) stops it.
+fn download_client() -> &'static reqwest::Client {
+    static C: LazyLock<reqwest::Client> = LazyLock::new(|| {
+        let policy = reqwest::redirect::Policy::custom(|attempt| {
+            if attempt.previous().len() >= 10 {
+                attempt.error("too many redirects")
+            } else if is_secure_url(attempt.url().as_str()) {
+                attempt.follow()
+            } else {
+                attempt.error("redirected to a URL that is not https")
+            }
+        });
+        sasacode_ai::http::builder()
+            .redirect(policy)
+            .build()
+            .unwrap_or_else(|_| sasacode_ai::http::client().clone())
+    });
+    &C
+}
+
 pub fn current_version() -> &'static str {
     VERSION
 }
@@ -66,6 +112,7 @@ fn no_redirect_client() -> &'static reqwest::Client {
 /// The newest release tag, read from the redirect of …/latest/download/…: the releases page can
 /// lag behind the actual latest release for a while (scripts/install.sh pins versions the same way).
 pub async fn latest_release(base: &str) -> anyhow::Result<String> {
+    require_secure(base)?;
     static TAG: LazyLock<Option<regex::Regex>> =
         LazyLock::new(|| regex::Regex::new(r"/download/([^/]+)/SHA256SUMS").ok());
     let r = no_redirect_client()
@@ -536,7 +583,8 @@ async fn install(
     let ReleaseFiles { archive, binary } = files;
     let dir = TempDir::new("sasacode-update-")?;
     let _ = writeln!(out, "{}", t!("downloading {url} …", url = format!("{url}/{archive}")));
-    let client = sasacode_ai::http::client();
+    require_secure(url)?;
+    let client = download_client();
     let get = |u: String| client.get(u).header(reqwest::header::USER_AGENT, USER_AGENT);
     let sums = get(format!("{url}/SHA256SUMS")).send().await?.text().await?;
     let body = get(format!("{url}/{archive}")).send().await?.bytes().await?;

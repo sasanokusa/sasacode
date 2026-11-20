@@ -8,7 +8,7 @@
 # Environment:
 #   SASACODE_VERSION       version to install, e.g. v0.11.0 (default: the latest release)
 #   SASACODE_INSTALL_DIR   where to put sasacode.exe (default: %LOCALAPPDATA%\Programs\sasacode)
-#   SASACODE_DOWNLOAD_BASE releases URL, https only (default: https://github.com/sasanokusa/sasacode/releases)
+#   SASACODE_DOWNLOAD_BASE releases URL, https only, or http to localhost (default: https://github.com/sasanokusa/sasacode/releases)
 #   SASACODE_NO_MODIFY_PATH set to leave the user's PATH alone
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue' # Invoke-WebRequest is many times slower with the progress bar
@@ -46,7 +46,7 @@ function Test-Attestation($file, $base) {
 
 function Install-Sasacode {
   $base = if ($env:SASACODE_DOWNLOAD_BASE) { $env:SASACODE_DOWNLOAD_BASE.TrimEnd('/') } else { $DefaultBase }
-  if (-not $base.StartsWith('https://')) { Fail 'SASACODE_DOWNLOAD_BASE must be an https:// URL' }
+  if ($base -notmatch '^(https://|http://(localhost|127\.0\.0\.1|\[::1\])([:/]|$))') { Fail 'SASACODE_DOWNLOAD_BASE must be an https:// URL (http is allowed only for localhost)' }
   $installDir = if ($env:SASACODE_INSTALL_DIR) { $env:SASACODE_INSTALL_DIR } else { Join-Path $env:LOCALAPPDATA 'Programs\sasacode' }
   $version = $env:SASACODE_VERSION
 

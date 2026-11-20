@@ -333,3 +333,80 @@ async fn a_file_that_fails_the_provenance_check_stops_the_update() {
     .unwrap();
     assert!(!log.exists());
 }
+
+#[test]
+fn releases_come_over_https_or_from_this_machine_only() {
+    for ok in [
+        "https://github.com/sasanokusa/sasacode/releases",
+        "https://example.com:8443/x",
+        "http://127.0.0.1:8080",
+        "http://localhost:9",
+        "http://LOCALHOST/x",
+        "http://[::1]:80/x",
+    ] {
+        assert!(is_secure_url(ok), "{ok}");
+    }
+    for bad in [
+        "http://github.com/sasanokusa/sasacode/releases",
+        "http://127.0.0.1.example.com/x",
+        "http://localhost.example.com/x",
+        "http://example.com@127.0.0.1.evil.test/",
+        "ftp://127.0.0.1/x",
+        "file:///etc/passwd",
+        "127.0.0.1:80",
+        "",
+    ] {
+        assert!(!is_secure_url(bad), "{bad}");
+    }
+}
+
+#[tokio::test]
+async fn a_release_base_that_is_not_https_is_refused_before_anything_is_asked() {
+    english();
+    let e = latest_release("http://releases.example.com")
+        .await
+        .unwrap_err()
+        .to_string();
+    assert_eq!(
+        e,
+        "http://releases.example.com is not an https URL (http is allowed only for localhost)"
+    );
+    let files = release_files("test");
+    let target = tempfile::tempdir().unwrap().path().join("sasacode");
+    let e = install(
+        "http://releases.example.com/download/v9.9.9",
+        &files,
+        &target,
+        &mut Vec::new(),
+    )
+    .await
+    .unwrap_err()
+    .to_string();
+    assert!(e.contains("is not an https URL"), "{e}");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_download_that_redirects_away_from_https_is_stopped() {
+    english();
+    let files = release_files("test");
+    // A server whose files are somewhere else: over http, and not on this machine.
+    let redirector = TestServer::start(move |req| {
+        if req.path.ends_with("/SHA256SUMS") {
+            Res::redirect("http://downloads.example.invalid/SHA256SUMS")
+        } else {
+            Res::text(404, "not here")
+        }
+    });
+    let target = tempfile::tempdir().unwrap().path().join("sasacode");
+    let e = install(
+        &format!("{}/download/v9.9.9", redirector.url()),
+        &files,
+        &target,
+        &mut Vec::new(),
+    )
+    .await
+    .unwrap_err()
+    .to_string();
+    assert!(e.contains("error following redirect") || e.contains("redirect"), "{e}");
+}

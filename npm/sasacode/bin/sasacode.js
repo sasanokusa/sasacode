@@ -58,10 +58,31 @@ function readSafe(path) {
   }
 }
 
+/** https, or http to this machine (a test server): releases come from nowhere else. */
+function secure(url) {
+  try {
+    const { protocol, hostname } = new URL(url);
+    return protocol === "https:" || (protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(hostname.toLowerCase()));
+  } catch {
+    return false;
+  }
+}
+
 async function download(url) {
-  const res = await fetch(url);
-  if (!res.ok) die(`download failed: ${url} (${res.status})`);
-  return Buffer.from(await res.arrayBuffer());
+  // Redirects are followed by hand, so that none of them can lead away from https.
+  let at = url;
+  for (let hops = 0; hops < 10; hops++) {
+    if (!secure(at)) die(`${at} is not an https URL (http is allowed only for localhost)`);
+    const res = await fetch(at, { redirect: "manual" });
+    const next = res.headers.get("location");
+    if (res.status >= 300 && res.status < 400 && next) {
+      at = new URL(next, at).href;
+      continue;
+    }
+    if (!res.ok) die(`download failed: ${url} (${res.status})`);
+    return Buffer.from(await res.arrayBuffer());
+  }
+  return die(`download failed: ${url} (too many redirects)`);
 }
 
 /**
