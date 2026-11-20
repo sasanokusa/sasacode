@@ -41,6 +41,8 @@ struct ParsedRule {
     tool: Regex,
     pattern: Option<String>,
     source: String,
+    /// An allow rule's absolute pattern and its links as resolved when it was added.
+    real: Option<(String, String)>,
 }
 
 #[derive(Debug, Default)]
@@ -96,7 +98,16 @@ impl PermissionPolicy {
         ];
         for (list, which) in lists {
             for s in list {
-                let parsed = parse_rule(s).ok_or_else(|| anyhow::anyhow!("invalid permission rule: {s}"))?;
+                let mut parsed = parse_rule(s).ok_or_else(|| anyhow::anyhow!("invalid permission rule: {s}"))?;
+                // An allow rule follows the links there now; one made later, or the rule added again, does not
+                // take it elsewhere.
+                if which == 0 && r.allow.iter().any(|a| a.source == *s) {
+                    continue;
+                }
+                let abs = parsed.pattern.as_deref().map(|p| path_pattern(p, "."));
+                if let Some(p) = abs.filter(|p| which == 0 && paths::is_absolute(p)) {
+                    parsed.real = Some((p.clone(), real_pattern(&p)));
+                }
                 match which {
                     0 => r.allow.push(parsed),
                     1 => r.ask.push(parsed),
@@ -158,7 +169,8 @@ impl PermissionPolicy {
         // Through a symlink, a path inside the project can point anywhere: judge where it really goes.
         let cwd = try_real_path(&c.cwd).unwrap_or_else(|| c.cwd.clone());
         let real: Vec<String> = paths_of(c)
-            .into_iter()
+            .iter()
+            .flat_map(|p| spellings(p, true))
             .map(|p| try_real_path(&p).unwrap_or(p))
             .collect();
         let inside_cwd = real.iter().all(|p| is_inside(p, &cwd));
@@ -223,13 +235,22 @@ fn runs_code_re() -> &'static Regex {
 }
 
 /// Edits under .git (hooks, config) or .sasacode (plugins, rules) run code at the next git command or start (#127).
-/// Git takes a folder with HEAD, objects/ and refs/ for a repository: a HEAD, or a config beside them, could make one.
+/// Git takes a folder with a HEAD and a config or commondir for a repository: a write that could make or point one
+/// is asked about. Names are compared folded in full (`ﬁ` as `fi`), as a file system that folds case takes them.
 fn runs_code(cwd: &str, p: &str) -> bool {
-    let path = std::path::Path::new(p);
-    let (name, dir) = (path.file_name().unwrap_or_default(), path.parent().unwrap_or(path));
-    let has = |n: &str, is_dir: bool| dir.join(n).metadata().is_ok_and(|m| m.is_dir() == is_dir);
-    let config = name.eq_ignore_ascii_case("config") && has("HEAD", false) && has("objects", true) && has("refs", true);
-    runs_code_re().is_match(&paths::relative(cwd, p)) || name.eq_ignore_ascii_case("HEAD") || config
+    use std::path::Path;
+    let path = Path::new(p);
+    let name = |q: &Path| full_fold(&q.file_name().unwrap_or_default().to_string_lossy());
+    let has = |d: &Path, n: &str| d.join(n).metadata().is_ok_and(|m| !m.is_dir());
+    let repo = |d: &Path| has(d, "HEAD") && (has(d, "config") || has(d, "commondir"));
+    let dir = path.parent().unwrap_or(path);
+    let in_store = |a: &Path| matches!(&*name(a), "objects" | "refs") && a.parent().is_some_and(repo);
+    match &*name(path) {
+        "head" | "commondir" | "gitdir" => true,
+        "config" if has(dir, "HEAD") || has(dir, "commondir") => true,
+        "packed-refs" if repo(dir) => true,
+        _ => path.ancestors().skip(1).any(in_store) || runs_code_re().is_match(&full_fold(&paths::relative(cwd, p))),
+    }
 }
 
 /// Escape `\ * ? [ ] { } ! ( ) + @` with a backslash (`/[\\*?[\]{}!()+@]/g` → `\\$&`).
@@ -263,6 +284,7 @@ fn parse_rule(source: &str) -> Option<ParsedRule> {
         tool,
         pattern: m.get(2).map(|p| p.as_str().to_string()),
         source: source.to_string(),
+        real: None,
     })
 }
 
@@ -429,36 +451,63 @@ fn rule_matches(rule: &ParsedRule, c: &PermissionCheck, for_allow: bool) -> bool
     // but links inside the project are not followed (a repo could point `src` at ~/.ssh). An
     // absolute pattern is the user's own path: its fixed part is resolved (/var → /private/var).
     let pattern = path_pattern(pattern, &c.cwd);
-    // .ENV is .env where the file system folds case (macOS by default): compared as it would be, a
-    // deny rule could be spelled past (#98). Deny and ask rules fold wider than allow rules (glob_path).
+    // .ENV is .env where the file system folds case (macOS by default; for deny and ask rules, the path's volume
+    // too): a rule could be spelled past (#98). Deny and ask rules fold in full (`ß` is `ss`), allow rules to lower.
     let real_cwd = try_real_path(&c.cwd).unwrap_or_else(|| c.cwd.clone());
-    let fold = folds_case(&real_cwd).then_some(!for_allow);
+    let spellings: Vec<String> = paths
+        .iter()
+        .flat_map(|p| spellings(p, !for_allow))
+        .flat_map(|p| [try_real_path(&p).unwrap_or_else(|| p.clone()), p])
+        .collect();
+    let folds = folds_case(&real_cwd) || (!for_allow && spellings.iter().any(|s| folds_case(&existing_dir(s))));
+    let fold = folds.then_some(!for_allow);
     let mut sources: Vec<String> = if paths::is_absolute(&pattern) {
-        [pattern.clone(), real_pattern(&pattern)]
+        // An allow rule's links as they were when it was added; deny and ask rules' as they are.
+        let real = match &rule.real {
+            _ if !for_allow => real_pattern(&pattern),
+            Some((p, real)) if *p == pattern => real.clone(),
+            _ => pattern.clone(),
+        };
+        [pattern, real]
             .iter()
             .map(|g| escape_extglob(&glob_path(g, fold)))
             .collect()
     } else {
-        [c.cwd.clone(), real_cwd]
+        [&c.cwd, &real_cwd]
             .iter()
             .map(|d| anchored(d, &pattern, fold))
             .collect()
     };
     sources.dedup();
     let globs: Vec<globset::GlobMatcher> = sources.iter().map(|g| glob(g)).collect();
-    let hit = |p: &str| {
+    let hit = |p: &String| {
         let gp = glob_path(p, fold);
         globs.iter().any(|g| g.is_match(&gp))
     };
-    let spellings: Vec<String> = paths
-        .iter()
-        .flat_map(|p| [p.clone(), try_real_path(p).unwrap_or_else(|| p.clone())])
-        .collect();
     if for_allow {
-        spellings.iter().all(|s| hit(s))
+        spellings.iter().all(hit)
     } else {
-        spellings.iter().any(|s| hit(s))
+        spellings.iter().any(hit)
     }
+}
+
+/// A path as written and, on Windows, as Win32 opens it (`.git.` is `.git`; with `streams`, `a:s` is `a` too).
+fn spellings(p: &str, streams: bool) -> Vec<String> {
+    let mut v = vec![p.to_string()];
+    let open = |s| paths::resolve(&[&sasacode_plugin_api::win32_path::win32_open_form(p, s)]);
+    if WINDOWS {
+        v.extend([open(false), open(true)].into_iter().take(1 + streams as usize));
+    }
+    v
+}
+
+/// The nearest folder of `p` that exists: the volume a new file would be made on.
+fn existing_dir(p: &str) -> String {
+    let mut d = paths::dirname(p);
+    while !std::path::Path::new(&d).is_dir() && paths::dirname(&d) != d {
+        d = paths::dirname(&d);
+    }
+    d
 }
 
 /// On Windows, `\` as `/`: rules are globs, where `\` escapes (and no Windows name holds `*` or `?`).
@@ -509,25 +558,20 @@ fn anchored(dir: &str, pattern: &str, fold: Option<bool>) -> String {
 }
 
 /// A path or glob as compared, as the file system sees names: on Windows with `/`; NFC (macOS takes NFD as the
-/// same); where it folds case (`Some`) lower case, and when wide `ſ` as `s` and the like (fold_char).
+/// same); where it folds case (`Some`) lower case, and when wide in full (full_fold).
 fn glob_path(p: &str, fold: Option<bool>) -> String {
-    let (s, wide) = (slashes(p), fold == Some(true));
-    let s = if fold.is_some() { s.to_lowercase() } else { s };
-    if s.is_ascii() {
-        return s; // already NFC, and folded as far as fold_char would
-    }
-    let s: String = s.chars().map(|c| fold_char(c, wide)).collect();
-    s.nfc().collect()
+    let s = slashes(p);
+    let s = match fold {
+        Some(true) => full_fold(&s),
+        Some(false) => s.to_lowercase(),
+        None => s,
+    };
+    if s.is_ascii() { s } else { s.nfc().collect() }
 }
 
-/// A letter as its upper case's lower case, where both are one letter: `ſ` is `s`, `ς` is `σ`.
-fn fold_char(c: char, wide: bool) -> char {
-    let low: Vec<char> = c.to_uppercase().flat_map(char::to_lowercase).collect();
-    if wide && low.len() == 1 && c.to_uppercase().len() == 1 {
-        low[0]
-    } else {
-        c
-    }
+/// Each letter as its upper case's lower case, which may be longer: `ſ` is `s`, `ß` is `ss`, `ﬁ` is `fi`.
+fn full_fold(s: &str) -> String {
+    s.to_uppercase().chars().flat_map(char::to_lowercase).collect()
 }
 
 /// Does the file system at `dir` take a name in another case for the same file (Windows; macOS's
@@ -557,7 +601,11 @@ fn folds_case(dir: &str) -> bool {
         })
         .collect();
     let v = same_file(dir, &other) && other != dir;
-    m.lock().unwrap_or_else(|e| e.into_inner()).insert(dir.to_string(), v);
+    let mut m = m.lock().unwrap_or_else(|e| e.into_inner());
+    if m.len() > 512 {
+        m.clear();
+    }
+    m.insert(dir.to_string(), v);
     v
 }
 
