@@ -602,7 +602,9 @@ async fn bg_start_always_allow_covers_the_command_in_the_directory_it_was_shown_
 
     // "Always allow" in a: the rule is for a.
     let rules = PermissionPolicy::rules_for(&call(json!({ "command": "make", "cwd": s(&a) })));
-    assert_eq!(rules, vec![format!("bg_start(cd '{}' && make)", s(&a))]);
+    // A rule's `\` escapes the next character: a Windows path's are doubled.
+    let a_in_rule = s(&a).replace('\\', "\\\\");
+    assert_eq!(rules, vec![format!("bg_start(cd '{a_in_rule}' && make)")]);
     h.agent
         .permissions()
         .add_rules(&sasacode_plugin_api::PermissionRules {

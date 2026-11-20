@@ -549,7 +549,13 @@ fn real(p: &str) -> String {
         head.push_str(&sep);
     }
     while !Path::new(&head).exists() && paths::dirname(&head) != head {
-        rest.insert(0, basename(&head));
+        // The last name as this system splits it (`\` too on Windows; `basename` is POSIX's).
+        let name = head
+            .trim_end_matches(paths::is_sep)
+            .rsplit(paths::is_sep)
+            .next()
+            .unwrap_or_default();
+        rest.insert(0, name.to_string());
         head = paths::dirname(&head);
     }
     // Spelled as realpathSync.native does: no `\\?\` on Windows (its `?` would read as a glob).
